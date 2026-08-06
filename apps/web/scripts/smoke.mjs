@@ -82,6 +82,49 @@ check('非法落点给出中文原因', /不能直接进入|已经在这一列/.
 await page.mouse.up();
 await page.waitForTimeout(300);
 
+// 筛选写进 URL，且顶部状态条点击即应用筛选
+await page.goto(`${base}/projects/${projectId}/board`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(500);
+const totalCards = await page.locator('article').count();
+await page.getByRole('button', { name: /项阻塞/ }).click();
+await page.waitForTimeout(700);
+check('顶部状态条点击应用筛选', page.url().includes('blocked=true'), new URL(page.url()).search);
+check('筛选确实收窄了结果', (await page.locator('article').count()) <= totalCards);
+
+// ★ 旁观模式：浏览器一动不动，只靠 SSE 推动卡片移动。
+//   这是这个产品最有说服力的时刻，也是最容易悄悄坏掉的一条链路
+await page.goto(`${base}/projects/${projectId}/board`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+const headersBefore = await page.locator('section > header').allInnerTexts();
+
+const apiBase = process.env.API_URL ?? 'http://localhost:3000';
+const boardJson = await (await fetch(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
+const gated = boardJson.columns.flatMap((c) => c.items).find((c) => c.humanGateRef);
+
+if (gated) {
+  const detail = await (await fetch(`${apiBase}/api/v1/decisions/${gated.humanGateRef}`)).json();
+  // 决策可能没有指定责任人（未分派），此时随便一个成员都能批
+  const { users } = await (await fetch(`${apiBase}/api/v1/users`)).json();
+  const actorId = detail.decision.assigneeId ?? users[0]?.id;
+
+  const approved = await fetch(`${apiBase}/api/v1/decisions/${gated.humanGateRef}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+    body: JSON.stringify({ note: 'smoke' }),
+  });
+  await page.waitForTimeout(2500);
+  const headersAfter = await page.locator('section > header').allInnerTexts();
+  check(
+    '★ 旁观模式：服务端变更经 SSE 推动卡片移动（页面无任何操作）',
+    approved.ok && JSON.stringify(headersBefore) !== JSON.stringify(headersAfter),
+    approved.ok ? '' : `批准失败 ${approved.status}`,
+  );
+  check('移动后出现汇总提示条', (await page.locator('text=/张卡片/').count()) > 0);
+  await shot('watch');
+} else {
+  console.log('· 跳过旁观模式检查：当前没有待决策卡片');
+}
+
 // 视图切换
 for (const [view, marker] of [['list', 'table'], ['agent', '负载'], ['decision', '处理']]) {
   await page.goto(`${base}/projects/${projectId}/board?view=${view}`, { waitUntil: 'networkidle' });

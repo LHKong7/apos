@@ -48,6 +48,33 @@ describe('认证与错误映射', () => {
     expect(res.json().error.code).toBe('UNAUTHENTICATED');
   });
 
+  /**
+   * `X-User-Id: null` 是客户端很常见的失误（变量是 null 被拼成字符串）。
+   * 不校验格式的话它会一路走到 SQL，报 uuid 语法错误变成 500，
+   * 调用方以为服务端挂了。
+   */
+  it('★ 格式非法的身份头返回 401 而不是 500', async () => {
+    // 身份可选的端点同样不能把格式错误吞成 500
+    for (const url of [
+      '/api/v1/decisions',
+      `/api/v1/projects/${fx.projectId}/board?onlyMine=true`,
+    ]) {
+      for (const bad of ['null', 'undefined', 'admin', '123']) {
+        const res = await app.inject({ method: 'GET', url, headers: { 'x-user-id': bad } });
+        expect(res.statusCode).toBe(401);
+      }
+    }
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${fx.projectId}/requirements`,
+      headers: { 'x-user-id': 'null' },
+      payload: { rawInput: '测试' },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.details.received).toBe('null');
+  });
+
   it('不存在的资源返回 404 且带中文说明', async () => {
     const res = await app.inject({
       method: 'GET',

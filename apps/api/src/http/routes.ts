@@ -46,13 +46,41 @@ export interface AppDeps {
   provider: PlanningProvider;
 }
 
-/** MVP 阶段的身份来源：请求头。真实认证见 docs/tech/09-security.md */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * MVP 阶段的身份来源：请求头。真实认证见 docs/tech/09-security.md
+ *
+ * ★ 必须校验格式。不校验的话，`X-User-Id: null`（客户端常见的
+ *   「变量是 null 被拼成字符串」）会一路走到 SQL，报
+ *   `invalid input syntax for type uuid` 变成 500 —— 调用方以为服务端挂了，
+ *   实际是自己传错了。客户端的错必须以 4xx 的形式还给客户端。
+ */
 function actorFrom(req: { headers: Record<string, unknown> }) {
   const id = req.headers['x-user-id'];
-  if (typeof id !== 'string') {
+  if (typeof id !== 'string' || id === '') {
     throw new ApiError('UNAUTHENTICATED', '缺少 X-User-Id 头');
   }
+  if (!UUID_RE.test(id)) {
+    throw new ApiError('UNAUTHENTICATED', 'X-User-Id 不是合法的用户 ID', { received: id });
+  }
   return { userId: id, actor: humanActor(id) };
+}
+
+/**
+ * 身份可选的端点用这个（列表筛选、看板的「只看需我处理」）。
+ *
+ * 没带头就返回 null，带了就必须合法 —— 「带了但格式不对」不能被当成
+ * 「没带」静默忽略：用户会看到一个「我的待办为空」的页面，
+ * 而真实原因是请求头拼错了。
+ */
+function optionalUserId(req: { headers: Record<string, unknown> }): string | null {
+  const id = req.headers['x-user-id'];
+  if (typeof id !== 'string' || id === '') return null;
+  if (!UUID_RE.test(id)) {
+    throw new ApiError('UNAUTHENTICATED', 'X-User-Id 不是合法的用户 ID', { received: id });
+  }
+  return id;
 }
 
 function corr(req: { headers: Record<string, unknown> }): string {
@@ -306,8 +334,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const q = req.query as Record<string, string | undefined>;
 
+    const userId = optionalUserId(req);
+
     return getBoard(db, id, {
-      onlyMine: q['onlyMine'] === 'true' ? (req.headers['x-user-id'] as string) : undefined,
+      onlyMine: q['onlyMine'] === 'true' && userId ? userId : undefined,
       riskLevel: q['risk']?.split(','),
       executorType: q['executorType'],
       humanGateOnly: q['humanGate'] === 'true',
@@ -531,14 +561,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   // ── 决策 ────────────────────────────────────────────────────────────
   app.get('/api/v1/decisions', async (req) => {
-    const userId = req.headers['x-user-id'];
+    const userId = optionalUserId(req);
     const scope = (req.query as { scope?: string }).scope ?? 'mine';
 
     const rows = await db
       .select()
       .from(decisions)
       .where(
-        scope === 'mine' && typeof userId === 'string'
+        scope === 'mine' && userId
           ? and(eq(decisions.assigneeId, userId), eq(decisions.status, 'pending'))
           : eq(decisions.status, 'pending'),
       )
