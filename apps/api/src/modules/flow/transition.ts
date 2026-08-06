@@ -151,10 +151,21 @@ export async function transition(
     // 同时决定它在看板上停留在哪一列
     let intendedStatus: WorkItemStatus | null = item.previousStatus;
 
+    /**
+     * 状态机自身把任务挂起等人（decision_required / review_conflict）——
+     * 它现在在哪，批准后就该回到哪。
+     *
+     * 少了这一步，Agent 求助、评审冲突这类挂起会因为
+     * STATUS_STAGE['awaiting_decision'] === 'review' 被扔进 Review 列，
+     * 看起来像「已经做完了在审核」（页面文档 05 §5.4）。
+     */
+    if (target === 'awaiting_decision') intendedStatus = from;
+
     if (verdict.requiresHuman) {
       finalStatus = verdict.action.type === 'pause' ? 'blocked' : 'awaiting_decision';
-      intendedStatus = target;
-      createdDecisionId = await createDecisionFor(tx, item, verdict, target);
+      // Policy 把流转拦下来了：本来要去的地方才是批准后的目的地
+      if (target !== 'awaiting_decision') intendedStatus = target;
+      createdDecisionId = await createDecisionFor(tx, item, verdict, intendedStatus ?? target);
     }
 
     // 6. 执行 effects

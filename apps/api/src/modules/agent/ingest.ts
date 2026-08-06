@@ -1,9 +1,19 @@
 import { eq, sql } from 'drizzle-orm';
-import { agentRuns, artifacts, projects, runEvents, workItems, type Database } from '@apos/db';
+import {
+  agentRuns,
+  artifacts,
+  decisionOptions,
+  decisions,
+  projects,
+  runEvents,
+  workItems,
+  type Database,
+} from '@apos/db';
 import {
   agentActor,
   MILESTONE_RUN_EVENTS,
   SYSTEM_ACTOR,
+  type InterventionRequest,
   type RunEvent,
 } from '@apos/contracts';
 import { decideRecovery } from '@apos/domain';
@@ -215,6 +225,99 @@ async function promote(
       return { promoted: Boolean(artifactId), transitioned: false };
     }
 
+    /**
+     * Agent 主动求助 —— PROMOTED_RUN_EVENTS 规定它提升为 decision.created。
+     *
+     * 这是 Agent 唯一能把「我卡住了」变成人类待办的通道：
+     * 不落成 Decision，Agent 的求助就只是一条淹没在执行流里的日志。
+     */
+    case 'intervention_request': {
+      const moved = await transition(db, {
+        workItemId: run.workItemId,
+        trigger: 'decision_required',
+        actor,
+        correlationId,
+      });
+
+      const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
+
+      // transition 里 Policy 也可能建了一条决策。同一时刻只该有一个待办，
+      // 那就把 Agent 的问题补进那一条，而不是再开一条。
+      const request = event.request;
+      const background = renderInterventionBackground(request);
+      const existingId = moved.ok ? moved.createdDecisionId : null;
+
+      const decisionId =
+        existingId ??
+        (
+          await db
+            .insert(decisions)
+            .values({
+              orgId: run.orgId,
+              projectId: run.projectId,
+              workItemId: run.workItemId,
+              runId: run.id,
+              type: 'agent_intervention',
+              status: 'pending',
+              riskLevel: item?.riskLevel ?? 'medium',
+              reversible: true,
+              title: request.question,
+              background,
+              whyHuman: `Agent 主动请求人工介入（${request.reason}）`,
+              consequence:
+                request.urgency === 'blocking'
+                  ? '不处理则该任务无法继续'
+                  : '不处理则该任务只能降级完成',
+              impact: { runId: run.id, reason: request.reason, urgency: request.urgency },
+              dueAt: new Date(Date.now() + (request.urgency === 'blocking' ? 2 : 8) * 3600_000),
+            })
+            .returning({ id: decisions.id })
+        )[0]!.id;
+
+      if (existingId) {
+        // Policy 已经建了一条：补上 Agent 的问题，而不是再开一条待办
+        await db
+          .update(decisions)
+          .set({ background, runId: run.id })
+          .where(eq(decisions.id, existingId));
+      }
+
+      if (request.options?.length) {
+        await db.insert(decisionOptions).values(
+          request.options.map((o, i) => ({
+            decisionId,
+            name: o.label,
+            description: o.description,
+            isRecommended: request.recommendation?.optionId === o.id,
+            confidence:
+              request.recommendation?.optionId === o.id
+                ? String(request.recommendation.confidence)
+                : null,
+            rationale:
+              request.recommendation?.optionId === o.id ? request.recommendation.rationale : null,
+            attributes: { optionId: o.id, consequence: o.consequence },
+            position: i,
+          })),
+        );
+      }
+
+      await emitAndPublish(db, {
+        ...base,
+        type: 'decision.created',
+        subjectType: 'decision',
+        subjectId: decisionId,
+        payload: {
+          workItemId: run.workItemId,
+          runId: run.id,
+          reason: request.reason,
+          urgency: request.urgency,
+          source: 'agent_intervention',
+        },
+      });
+
+      return { promoted: true, transitioned: moved.ok };
+    }
+
     case 'cost': {
       // 成本累加到项目，并在触及阈值时发事件（页面上的成本预警靠它）
       const [project] = await db
@@ -346,6 +449,25 @@ async function handleFailure(
   });
 
   return { promoted: true, transitioned: moved.ok, recovery };
+}
+
+/** 决策页要能不看执行流就明白 Agent 在问什么 —— 把请求展开成可读文本 */
+function renderInterventionBackground(request: InterventionRequest): string {
+  const lines = [request.question];
+
+  if (request.options?.length) {
+    lines.push('', 'Agent 给出的选项：');
+    for (const o of request.options) {
+      lines.push(`- ${o.label}：${o.description}（后果：${o.consequence}）`);
+    }
+  }
+
+  if (request.recommendation) {
+    const r = request.recommendation;
+    lines.push('', `Agent 倾向：${r.optionId}（置信度 ${r.confidence}）—— ${r.rationale}`);
+  }
+
+  return lines.join('\n');
 }
 
 function summarize(event: RunEvent): string {

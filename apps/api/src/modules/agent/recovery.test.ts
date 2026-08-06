@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, events, runEvents, workItems } from '@apos/db';
+import { agentRuns, decisionOptions, decisions, events, runEvents, workItems } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, classifyError } from '@apos/agent-runtimes';
+import type { InterventionRequest, RunEvent } from '@apos/contracts';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent, waitFor, waitForRunEnd } from '../../test/agent-fixtures';
 import { scheduleRound } from '../flow/scheduler';
@@ -145,6 +146,133 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
     expect(failedEvent.payload['consecutiveFailures']).toBe(3);
   });
 });
+
+describe('★ Agent 主动求助 —— 从执行流升级为人类待办', () => {
+  async function raiseIntervention(
+    request: Parameters<typeof interventionEvent>[0],
+  ) {
+    const registry = new RuntimeRegistry();
+    // 保持 Run 处于活跃状态：终态之后到达的事件会被忽略
+    const runtime = new MockRuntime({}, { steps: ['慢步骤'], stepDelayMs: 500 });
+    const agent = await seedAgent(db, fx, { registry, runtime });
+    const item = await createWorkItem(db, fx);
+
+    const dispatched = await dispatchRun(db, registry, {
+      workItemId: item.id,
+      agentId: agent.agentId,
+      correlationId: corr(),
+    });
+    if (!dispatched.ok) throw new Error('派发失败');
+
+    const { ingestRunEvent } = await import('./ingest');
+    const result = await ingestRunEvent(db, {
+      runId: dispatched.runId,
+      event: interventionEvent(request, dispatched.runId),
+      correlationId: corr(),
+    });
+
+    return { item, runId: dispatched.runId, result };
+  }
+
+  it('intervention_request 落成待办决策，并把任务挂起等人', async () => {
+    const { item, runId, result } = await raiseIntervention({
+      reason: 'permission_needed',
+      question: 'Agent 需要使用未授权的工具 WebFetch，是否授权？',
+      urgency: 'blocking',
+    });
+
+    expect(result.promoted).toBe(true);
+    expect(result.transitioned).toBe(true);
+
+    const [decision] = await db
+      .select()
+      .from(decisions)
+      .where(eq(decisions.workItemId, item.id));
+
+    expect(decision!.status).toBe('pending');
+    expect(decision!.type).toBe('agent_intervention');
+    expect(decision!.runId).toBe(runId);
+    // 不处理会怎样 —— 决策页靠它体现紧迫性
+    expect(decision!.consequence).toContain('无法继续');
+
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('awaiting_decision');
+    expect(after!.humanGate).toBe('waiting_for_decision');
+    // ★ 卡片留在执行列而不是跳到 Review —— 它不是「做完了在审核」
+    expect(after!.previousStatus).toBe('executing');
+    expect(after!.stage).toBe('execution');
+
+    const created = await db
+      .select()
+      .from(events)
+      .where(eq(events.type, 'decision.created'));
+    expect(created).toHaveLength(1);
+    expect(created[0]!.payload).toMatchObject({ source: 'agent_intervention' });
+  });
+
+  it('Agent 给出的选项与倾向落成决策选项，人类不用翻执行流', async () => {
+    const { item } = await raiseIntervention({
+      reason: 'ambiguous_requirement',
+      question: '需求没说明超时后是续期还是登出，按哪种实现？',
+      urgency: 'blocking',
+      options: [
+        {
+          id: 'renew',
+          label: '自动续期',
+          description: '有活动就延长会话',
+          consequence: '用户不会被打断，但会话可能长期有效',
+        },
+        {
+          id: 'logout',
+          label: '直接登出',
+          description: '到点即失效',
+          consequence: '更安全，但用户可能丢失未保存内容',
+        },
+      ],
+      recommendation: { optionId: 'renew', confidence: 0.7, rationale: '与现有产品行为一致' },
+    });
+
+    const [decision] = await db
+      .select()
+      .from(decisions)
+      .where(eq(decisions.workItemId, item.id));
+
+    const options = await db
+      .select()
+      .from(decisionOptions)
+      .where(eq(decisionOptions.decisionId, decision!.id));
+
+    expect(options).toHaveLength(2);
+    const recommended = options.find((o) => o.isRecommended);
+    expect(recommended!.name).toBe('自动续期');
+    expect(recommended!.rationale).toContain('产品行为一致');
+    expect(recommended!.attributes).toMatchObject({ optionId: 'renew' });
+    // 后果写进选项属性，决策页可以直接展示「选了会怎样」
+    expect(options.map((o) => (o.attributes as { consequence: string }).consequence)).toEqual([
+      '用户不会被打断，但会话可能长期有效',
+      '更安全，但用户可能丢失未保存内容',
+    ]);
+  });
+});
+
+function interventionEvent(
+  request: {
+    reason: InterventionRequest['reason'];
+    question: string;
+    urgency: InterventionRequest['urgency'];
+    options?: InterventionRequest['options'];
+    recommendation?: InterventionRequest['recommendation'];
+  },
+  runId: string,
+): RunEvent {
+  return {
+    type: 'intervention_request',
+    runId,
+    seq: 999,
+    ts: new Date().toISOString(),
+    request: request as InterventionRequest,
+  };
+}
 
 describe('幂等与重复投递', () => {
   it('★ 同一 (runId, seq) 重复投递只落一次', async () => {

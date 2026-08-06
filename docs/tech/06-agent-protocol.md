@@ -373,7 +373,7 @@ interface AgentRuntimeAdapter {
 
 | 适配器 | 关键实现点 |
 | --- | --- |
-| **Claude Code** | 通过 Agent SDK 启动会话；权限映射为 allowedTools/deniedTools；原生支持流式与成本上报，能力最完整 |
+| **Claude Code** | 通过 Agent SDK 启动会话；权限映射为 tools/allowedTools/disallowedTools + canUseTool；原生支持流式与成本上报，能力最完整。实现细节见 §9.4 |
 | **MCP** | 工具通过 MCP 暴露；MCP 本身不定义"任务"概念，需要在其上包一层任务语义；工具调用可见但推理过程可能不可见 |
 | **HTTP 通用** | 最小契约：`POST /tasks` + webhook 回调；适合企业自建 Agent；能力全靠 manifest 声明 |
 | **Codex / OpenHands** | 各自 CLI/API 封装；重点是事件归一化与错误分类 |
@@ -408,6 +408,80 @@ function normalize(raw: SDKMessage, ctx: RunContext): RunEvent[] {
   }
 }
 ```
+
+### 9.4 Claude Code 适配器实现纪要
+
+代码位置 `packages/agent-runtimes/src/claude-code/`，依赖 `@anthropic-ai/claude-agent-sdk`（可选 peer 依赖，运行时动态加载 —— 不接 Claude Code 的部署不必安装这个包）。
+
+#### 权限：默认拒绝
+
+APOS 的 `AgentPermissions` 映射到 SDK 的四个开关，组合出闭世界语义：
+
+| APOS | SDK | 作用 |
+| --- | --- | --- |
+| `allowedTools` 的基础工具名 | `tools` | 决定 Agent **看得到**哪些工具 |
+| `allowedTools` 原文（含作用域） | `allowedTools` | 决定什么**免确认放行** |
+| `deniedTools` | `disallowedTools` | 黑名单，优先级最高 |
+| 其余一切 | `canUseTool` | 落到适配器手上处置 |
+
+两个额外约束：
+
+- **`settingSources: []`** —— 不加载 user / project / local 配置。否则仓库里的 `.claude/settings.json` 就能把 Policy 拒绝过的工具放回来，权限模型形同虚设。
+- **无 `repo:write` 范围时禁用全部写工具**（`Write` / `Edit` / `MultiEdit` / `NotebookEdit`）。只在 prompt 里写「请不要改文件」不是权限控制。
+
+#### 未授权工具 → 人工决策
+
+`canUseTool` 只在「既没被白名单放行、也没被黑名单拦掉」时触发，恰好就是「Agent 想要一个没给它的能力」。适配器据此分流：
+
+- 命中显式黑名单 → 直接拒绝，不打扰人类（Policy 已经判过了）
+- 未授权 → 发 `intervention_request`（`reason: permission_needed`）并以 `interrupt: true` 拒绝
+
+第二条让 Agent 的求助落成 Decision 待办（`ingest.ts` 的提升规则），而不是让它在缺能力的情况下继续试探。想关掉这个行为可以配 `onUngrantedTool: 'deny'`，此时能力清单里的 `interventionRequest` 同步变为 `false` —— 不静默降级。
+
+#### 凭证与环境隔离
+
+- 凭证读 `APOS_AGENT_ANTHROPIC_API_KEY`，**与平台自用的 `ANTHROPIC_API_KEY` 分开**。未配置时直接拒绝派发，不会悄悄回退到平台 key。要复用必须显式设 `allowInheritedCredentials`，留下审计痕迹。
+- 子进程环境只给 `PATH` / `HOME` / Agent 自己的 key。不做 `{ ...process.env }` —— 那等于把数据库口令和其他服务的 token 一起交给 Agent，绕开资源范围控制。
+
+#### 成本：估算 + 权威值校正
+
+Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需要执行过程中的成本。因此走双轨：
+
+1. 每轮按 `message.usage` 的真实 token × 本地单价表估算，发 `cost` 事件
+2. `result` 到达时发一条差额事件把累计值校正为 `total_cost_usd`，`tokens` 全填 0（ingest 对 token 是累加语义，再报一次会重复计数）
+
+单价表过期只影响过程中的显示，不影响最终账目。另外把 `limits.maxCostUsd` 直接传给 SDK 的 `maxBudgetUsd` —— 预算是运行时侧的硬约束，不用等我们的成本事件追上。
+
+#### 能力与降级
+
+| 能力 | 支持 | 说明 |
+| --- | --- | --- |
+| `pause` | ✗ | SDK 无暂停/恢复语义。按降级矩阵，暂停退化为终止，需二次确认 |
+| `runtimeConstraints` | ✓ | prompt 用 `AsyncIterable` 输入，执行中可注入约束（Approve with Constraints 真正落到运行时） |
+| `terminate` | ✓ | `abortController.abort()` |
+| `statusQuery` | ✓ | 仅限本进程持有的 Run。查不到即视为已终止 —— 会话是本进程的子进程，进程重启后子进程不复存在，这个回答对孤儿 Run 判定是可行动的 |
+| `artifactUpload` | ✓ | Claude Code 没有产物上传通道，适配器从最终回复合成：正文存为 `document`，回复里出现的 PR 链接单列为 `pull_request` |
+| `subAgentDelegation` | ✓ | `task_started` 消息翻译为 `delegation` 事件 |
+
+#### 错误分类
+
+优先用运行时**上报**的结构化信号（`classificationSource: 'reported'`），拿不到才退回文本启发式（标 `'inferred'`，恢复策略对它更保守）：
+
+| 信号 | 分类 |
+| --- | --- |
+| `error_max_budget_usd` | `budget_exceeded`，不可重试 |
+| `error_max_turns` | `timeout`，可重试 |
+| `permission_denials` 非空 | `permission_denied`，不可重试 |
+| `SDKAssistantMessage.error` | 按错误码映射（认证 → `permission_denied`，限流/过载 → `external_unavailable`…） |
+| 模块加载失败 | `runtime_error`，不可重试 —— 部署问题重试多少次都没用 |
+
+**`subtype: 'success'` 不等于任务成功。** 认证失败这类错误会以 `subtype='success'` + `is_error=true` 回来，`result` 文本就是那句报错。只看 subtype 会把彻底失败的 Run 记成 `completed`，任务随即流转到 reviewing，还带上一条以报错为正文的产物。适配器因此用三个信号判定失败：`subtype !== 'success'`、`is_error`、执行中出现过致命错误。`queryStatus` 的终态也直接取 `run_ended` 的 outcome，不各判一次 —— 两处独立判断迟早会打架。
+
+> 这两条都是拿真实 SDK 跑一遍才暴露的，单测里的假 SDK 不会自己造出这种组合。
+
+#### 事件顺序
+
+`subscribe` 把投递串成一条 Promise 链，保证订阅者严格按 `seq` 收到事件。`(runId, seq)` 是 `run_events` 的主键，乱序会让去重和增量更新都失效。`run_started` 在会话真正启动前就发出 —— 会话起不来时也要能看到 Run 开始过。
 
 ---
 

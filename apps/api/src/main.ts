@@ -1,5 +1,5 @@
 import { createDatabase } from '@apos/db';
-import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
+import { ClaudeCodeRuntime, MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { agentRuntimes } from '@apos/db';
 import { buildApp } from './app';
 import { defaultBus } from './modules/event/bus';
@@ -13,11 +13,27 @@ async function main() {
     url: process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos',
   });
 
-  // MVP：注册内存运行时。接入真实 Agent 时在此处替换为对应适配器。
   const registry = new RuntimeRegistry();
   const runtimes = await db.select().from(agentRuntimes);
   for (const rt of runtimes) {
-    if (rt.kind === 'mock') registry.register(rt.id, new MockRuntime());
+    if (rt.kind === 'mock') {
+      registry.register(rt.id, new MockRuntime());
+      continue;
+    }
+
+    if (rt.kind === 'claude_code') {
+      registry.register(
+        rt.id,
+        new ClaudeCodeRuntime({
+          // 凭证与工作目录都从环境读，绝不从数据库里取人类用户的 token
+          workspaceRoot: process.env['AGENT_WORKSPACE_ROOT'],
+          onDiagnostic: (message, detail) => console.warn('[claude-code]', message, detail ?? ''),
+        }),
+      );
+      continue;
+    }
+
+    console.warn(`[runtime] 未知运行时类型 ${rt.kind}（${rt.name}），已跳过注册`);
   }
 
   const deps = {
