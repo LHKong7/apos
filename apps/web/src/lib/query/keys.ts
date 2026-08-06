@@ -20,6 +20,9 @@ export const qk = {
   decisions: (scope: string) => ['decisions', scope] as const,
   decisionsAll: () => ['decisions'] as const,
   decision: (id: string) => ['decision', id] as const,
+  run: (id: string) => ['run', id] as const,
+  runEvents: (id: string, level: string) => ['run', id, 'events', level] as const,
+  runCost: (id: string) => ['run', id, 'cost'] as const,
 };
 
 /** 筛选对象参与 key，必须稳定序列化，否则等价筛选会各自缓存 */

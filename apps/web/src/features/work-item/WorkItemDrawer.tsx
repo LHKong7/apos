@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
@@ -254,7 +255,9 @@ function RunsTab({
       {runs.map((run) => (
         <article key={run.id} className="rounded border border-slate-200 p-2 text-xs">
           <div className="flex items-center gap-2">
-            <span className="font-medium">第 {run.attempt} 次</span>
+            <Link to={`/runs/${run.id}`} className="font-medium hover:underline">
+              第 {run.attempt} 次
+            </Link>
             <span
               className={clsx(
                 'rounded px-1.5 text-[10px]',

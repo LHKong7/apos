@@ -1,9 +1,13 @@
 import type {
   AgentSummary,
   BoardResponse,
+  CostStep,
   DecisionDetail,
   DecisionRow,
   Project,
+  RunControlAction,
+  RunDetail,
+  RunEventPage,
   User,
   WorkItemDetail,
 } from './types';
@@ -106,6 +110,24 @@ export const api = {
     ),
 
   decision: (id: string) => request<DecisionDetail>(`/decisions/${id}`),
+
+  run: (id: string) => request<RunDetail>(`/runs/${id}`),
+
+  runEvents: (id: string, opts: { level: 'brief' | 'detailed'; after?: number }) => {
+    const params = new URLSearchParams({ level: opts.level });
+    if (opts.after !== undefined) params.set('after', String(opts.after));
+    return request<RunEventPage>(`/runs/${id}/events?${params.toString()}`);
+  },
+
+  runCostBreakdown: (id: string) => request<{ steps: CostStep[] }>(`/runs/${id}/cost-breakdown`),
+
+  controlRun: (
+    id: string,
+    body: { action: RunControlAction; reason?: string; constraint?: { type?: string; description: string } },
+  ) => request<{ ok: true; action: RunControlAction }>(`/runs/${id}/control`, {
+    method: 'POST',
+    json: body,
+  }),
 
   // ── 变更 ──────────────────────────────────────────────────────────
   changeStatus: (

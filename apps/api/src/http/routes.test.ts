@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { decisions, requirementClarifications, workItems } from '@apos/db';
-import { RuntimeRegistry } from '@apos/agent-runtimes';
+import { agentRuns, decisions, requirementClarifications, workItems } from '@apos/db';
+import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../test/db';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
+import { dispatchRun } from '../modules/agent/dispatch';
 
 const db = testDb();
 let app: FastifyInstance;
@@ -554,8 +555,8 @@ describe('Agent 回调鉴权', () => {
   });
 });
 
-describe('Run 详情', () => {
-  it('简明模式只返回里程碑事件，详细模式返回全部', async () => {
+describe('Run 详情（页面文档 09）', () => {
+  async function completedRun() {
     const agent = await seedAgent(db, fx, { registry });
     const item = await createWorkItem(db, fx);
 
@@ -565,27 +566,246 @@ describe('Run 详情', () => {
       headers: auth(),
     });
 
-    const { agentRuns } = await import('@apos/db');
     const run = await waitFor(async () => {
       const [r] = await db.select().from(agentRuns).where(eq(agentRuns.workItemId, item.id));
       return r?.status === 'completed' ? r : null;
     }, { label: 'Run 未完成' });
 
+    return { agent, item, run };
+  }
+
+  it('一次查全：输入、指标、产物、关联，前端不用分五次请求', async () => {
+    const { run, item } = await completedRun();
+
+    const res = await app.inject({ method: 'GET', url: `/api/v1/runs/${run.id}`, headers: auth() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    expect(body.run.id).toBe(run.id);
+    expect(body.agent.name).toBe('code-agent-1');
+    expect(body.workItem.id).toBe(item.id);
+
+    // ★ 权限快照：Agent 权限可能在 Run 之后被改，回溯必须看当时的
+    expect(body.input.permissions.allowedTools).toContain('read_file');
+    expect(body.input.goal).toBe(item.title);
+    expect(Array.isArray(body.input.context)).toBe(true);
+
+    // 工具调用按名字聚合 —— 「哪个工具被反复调用」是排障的第一个线索
+    expect(body.metrics.toolCalls.total).toBeGreaterThan(0);
+    expect(Object.keys(body.metrics.toolCalls.byTool).length).toBeGreaterThan(0);
+    expect(body.metrics.tokens.total).toBeGreaterThan(0);
+    expect(body.metrics.durationMs).toBeGreaterThanOrEqual(0);
+
+    expect(body.artifacts.length).toBeGreaterThan(0);
+    expect(body.related.attempts).toHaveLength(1);
+    expect(body.error).toBeNull();
+  });
+
+  /**
+   * ★ 简明与详细的差别是每条事件的深度，不是返回哪些事件。
+   *
+   *   按 level 过滤会让简明模式只剩「启动 / 产出 / 结束」三行 ——
+   *   中间做了什么全没了，而这一页存在的理由就是回答「它做了什么」。
+   */
+  it('★ 简明模式仍返回全部事件，只是不带 payload', async () => {
+    const { run } = await completedRun();
+
     const brief = await app.inject({
       method: 'GET',
-      url: `/api/v1/runs/${run.id}`,
+      url: `/api/v1/runs/${run.id}/events`,
       headers: auth(),
     });
     const detailed = await app.inject({
       method: 'GET',
-      url: `/api/v1/runs/${run.id}?level=detailed`,
+      url: `/api/v1/runs/${run.id}/events?level=detailed`,
       headers: auth(),
     });
 
-    expect(brief.json().events.length).toBeLessThan(detailed.json().events.length);
-    expect(brief.json().events.every((e: { level: string }) => e.level === 'milestone')).toBe(true);
-    expect(detailed.json().events.some((e: { type: string }) => e.type === 'tool_call')).toBe(true);
-    expect(agent.agentId).toBeTruthy();
+    const briefEvents = brief.json().events as { type: string; payload: unknown }[];
+    const detailedEvents = detailed.json().events as { type: string; payload: unknown }[];
+
+    expect(briefEvents.length).toBe(detailedEvents.length);
+    expect(briefEvents.some((e) => e.type === 'tool_call')).toBe(true);
+    // 省掉的是体积大头：推理全文、工具原始参数、上下文明细
+    expect(briefEvents.every((e) => e.payload === null)).toBe(true);
+    expect(detailedEvents.some((e) => e.payload !== null)).toBe(true);
+  });
+
+  it('after 游标只返回新增事件，供执行中的 Run 增量追加', async () => {
+    const { run } = await completedRun();
+
+    const all = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runs/${run.id}/events?level=detailed`,
+      headers: auth(),
+    });
+    const events = all.json().events as { seq: number }[];
+    const midpoint = events[Math.floor(events.length / 2)]!.seq;
+
+    const tail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runs/${run.id}/events?level=detailed&after=${midpoint}`,
+      headers: auth(),
+    });
+
+    expect(tail.json().events.every((e: { seq: number }) => e.seq > midpoint)).toBe(true);
+    expect(tail.json().events.length).toBeLessThan(events.length);
+  });
+
+  /** 成本超支最常见的原因分步骤才看得出来，总数只能告诉你「超了」 */
+  it('成本按步骤拆分，能定位哪一步烧钱', async () => {
+    const { run } = await completedRun();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runs/${run.id}/cost-breakdown`,
+      headers: auth(),
+    });
+
+    const steps = res.json().steps as { step: number | null; costUsd: number }[];
+    expect(steps.length).toBeGreaterThan(1);
+    const total = steps.reduce((sum, s) => sum + s.costUsd, 0);
+    expect(total).toBeCloseTo(Number(run.cost), 4);
+  });
+
+  it('失败的 Run 给出失败分类、Agent 自述与失败步骤', async () => {
+    const registryLocal = new RuntimeRegistry();
+    const runtime = new MockRuntime(
+      {},
+      {
+        outcome: 'failed',
+        steps: ['分析', '尝试定位'],
+        error: {
+          class: 'context_insufficient',
+          message: '无法定位 orders 表结构定义',
+          selfReport: '我需要 orders 表的结构定义，但仓库里没找到 schema 文件。',
+        },
+      },
+    );
+    const agent = await seedAgent(db, fx, { registry: registryLocal, runtime });
+    const item = await createWorkItem(db, fx);
+
+    const dispatched = await dispatchRun(db, registryLocal, {
+      workItemId: item.id,
+      agentId: agent.agentId,
+      correlationId: randomUUID(),
+    });
+    if (!dispatched.ok) throw new Error('派发失败');
+
+    await waitFor(async () => {
+      const [r] = await db.select().from(agentRuns).where(eq(agentRuns.id, dispatched.runId));
+      return r?.status === 'failed' ? r : null;
+    }, { label: 'Run 未失败' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runs/${dispatched.runId}`,
+      headers: auth(),
+    });
+    const error = res.json().error;
+
+    expect(error.class).toBe('context_insufficient');
+    // ★ Agent 自述比堆栈有用得多，是排障效率的核心
+    expect(error.selfReport).toContain('schema 文件');
+    // 失败在哪一步，而不是只说失败了
+    expect(error.failedAt.step).toBe(2);
+    expect(error.failedAt.total).toBe(2);
+  });
+});
+
+describe('★ Run 控制：能力不足要如实报，不能悄悄降级', () => {
+  async function runningRun(runtime: MockRuntime) {
+    const registryLocal = new RuntimeRegistry();
+    const agent = await seedAgent(db, fx, { registry: registryLocal, runtime });
+    const item = await createWorkItem(db, fx);
+
+    const dispatched = await dispatchRun(db, registryLocal, {
+      workItemId: item.id,
+      agentId: agent.agentId,
+      correlationId: randomUUID(),
+    });
+    if (!dispatched.ok) throw new Error('派发失败');
+
+    // 控制指令要走 HTTP，app 用的是外层 registry
+    registry.register(agent.runtimeId, runtime);
+    return dispatched.runId;
+  }
+
+  it('终止必须填原因 —— 不可逆操作要留痕', async () => {
+    const runId = await runningRun(new MockRuntime({}, { steps: ['慢'], stepDelayMs: 800 }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/runs/${runId}/control`,
+      headers: auth(),
+      payload: { action: 'terminate' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json().error.details)).toContain('终止必须填写原因');
+  });
+
+  it('终止成功后写入事件', async () => {
+    const runtime = new MockRuntime({}, { steps: ['慢'], stepDelayMs: 800 });
+    const runId = await runningRun(runtime);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/runs/${runId}/control`,
+      headers: auth(),
+      payload: { action: 'terminate', reason: '需求已作废' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(runtime.controlsFor(runId).map((c) => c.action)).toContain('terminate');
+  });
+
+  /**
+   * 降级矩阵的界面落点：Claude Code 没有暂停语义，点「暂停」实际会变成终止。
+   * 暂停可恢复、终止不可，这个差别对用户是决定性的，必须让他自己选，
+   * 而不是后端替他决定。
+   */
+  it('★ 运行时不支持的能力返回 501 并给出替代动作', async () => {
+    const runId = await runningRun(degradedMockRuntime({ steps: ['慢'], stepDelayMs: 800 }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/runs/${runId}/control`,
+      headers: auth(),
+      payload: { action: 'pause' },
+    });
+
+    expect(res.statusCode).toBe(501);
+    expect(res.json().error.code).toBe('UNSUPPORTED_FEATURE');
+    expect(res.json().error.message).toContain('暂停');
+    expect(res.json().error.details.fallback).toContain('终止');
+  });
+
+  it('已结束的 Run 不能再控制', async () => {
+    const registryLocal = new RuntimeRegistry();
+    const agent = await seedAgent(db, fx, { registry: registryLocal });
+    const item = await createWorkItem(db, fx);
+    const dispatched = await dispatchRun(db, registryLocal, {
+      workItemId: item.id,
+      agentId: agent.agentId,
+      correlationId: randomUUID(),
+    });
+    if (!dispatched.ok) throw new Error('派发失败');
+
+    await waitFor(async () => {
+      const [r] = await db.select().from(agentRuns).where(eq(agentRuns.id, dispatched.runId));
+      return r?.status === 'completed' ? r : null;
+    }, { label: 'Run 未完成' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/runs/${dispatched.runId}/control`,
+      headers: auth(),
+      payload: { action: 'terminate', reason: '试试' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toContain('completed');
   });
 });
 

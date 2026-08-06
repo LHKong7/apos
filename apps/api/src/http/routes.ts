@@ -18,9 +18,9 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
-import { humanActor, WorkItemStatus } from '@apos/contracts';
+import { ACTIVE_RUN_STATUSES, humanActor, WorkItemStatus } from '@apos/contracts';
 import { WORK_ITEM_MACHINE, availableTriggers, manualTriggerFor } from '@apos/domain';
-import type { RuntimeRegistry } from '@apos/agent-runtimes';
+import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { EventBus } from '../modules/event/bus';
 import type { PlanningProvider } from '../modules/planning/provider';
 import {
@@ -37,6 +37,7 @@ import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, notFound, sendError } from './errors';
 import { handleSse } from './sse';
 import { getBoard } from './board';
+import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
 import { serializeEvent } from './serialize';
 
 export interface AppDeps {
@@ -47,6 +48,21 @@ export interface AppDeps {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const LABELS: Record<string, string> = {
+  pause: '暂停',
+  resume: '恢复',
+  terminate: '终止',
+  add_constraint: '追加约束',
+};
+
+/** 能力不支持时的替代动作，直接告诉用户下一步能做什么 */
+const FALLBACK: Record<string, string | null> = {
+  pause: '该运行时只能终止。终止不可恢复，确认后请改用「终止」。',
+  resume: '该运行时不支持恢复，请改用「重试」创建新 Run。',
+  terminate: null,
+  add_constraint: '该运行时不支持执行中注入约束，请终止后补充上下文重试。',
+};
 
 /**
  * MVP 阶段的身份来源：请求头。真实认证见 docs/tech/09-security.md
@@ -542,21 +558,131 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   // ── Run ─────────────────────────────────────────────────────────────
   app.get('/api/v1/runs/:id', async (req) => {
     const { id } = req.params as { id: string };
+    return getRunDetail(db, id);
+  });
+
+  app.get('/api/v1/runs/:id/events', async (req) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { level?: string; after?: string; limit?: string };
+
+    return getRunEvents(db, id, {
+      level: q.level === 'detailed' ? 'detailed' : 'brief',
+      after: q.after !== undefined ? Number(q.after) : undefined,
+      limit: q.limit !== undefined ? Number(q.limit) : undefined,
+    });
+  });
+
+  app.get('/api/v1/runs/:id/cost-breakdown', async (req) => {
+    const { id } = req.params as { id: string };
+    const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
+    if (!run) throw notFound('Run');
+    return { steps: await getCostBreakdown(db, id) };
+  });
+
+  /**
+   * 运行时控制（页面文档 09 §5.1）。
+   *
+   * ★ 能力不足要如实报，不能悄悄降级 —— Claude Code 没有暂停语义，
+   *   点「暂停」实际会变成终止。这个差别对用户是决定性的
+   *   （暂停可恢复、终止不可），必须让他自己选。
+   */
+  const RunControl = z
+    .object({
+      action: z.enum(['pause', 'resume', 'terminate', 'add_constraint']),
+      reason: z.string().optional(),
+      constraint: z
+        .object({
+          type: z.string().default('freeform'),
+          description: z.string().min(1),
+        })
+        .optional(),
+    })
+    .superRefine((v, ctx) => {
+      // 终止是不可逆操作，必须留痕（agent_run.terminated 属于 REASON_REQUIRED_EVENTS）
+      if (v.action === 'terminate' && !v.reason?.trim()) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '终止必须填写原因', path: ['reason'] });
+      }
+      if (v.action === 'add_constraint' && !v.constraint?.description.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '追加约束必须填写内容',
+          path: ['constraint'],
+        });
+      }
+    });
+
+  app.post('/api/v1/runs/:id/control', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = RunControl.parse(req.body);
+
     const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
     if (!run) throw notFound('Run');
 
-    const level = (req.query as { level?: string }).level ?? 'brief';
-    const rows = await db
-      .select()
-      .from(runEvents)
-      .where(
-        level === 'detailed'
-          ? eq(runEvents.runId, id)
-          : and(eq(runEvents.runId, id), eq(runEvents.level, 'milestone')),
-      )
-      .orderBy(runEvents.seq);
+    if (!(ACTIVE_RUN_STATUSES as readonly string[]).includes(run.status)) {
+      throw new ApiError('VERSION_CONFLICT', `Run 已经是 ${run.status} 状态，无法再操作`, {
+        status: run.status,
+      });
+    }
 
-    return { run, events: rows, level };
+    const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
+    if (!agent) throw notFound('Agent');
+    if (!deps.registry.has(agent.runtimeId)) {
+      throw new ApiError('AGENT_UNAVAILABLE', '该 Run 的运行时未注册，无法控制', {
+        runtimeId: agent.runtimeId,
+      });
+    }
+
+    const adapter = deps.registry.get(agent.runtimeId);
+    const command =
+      body.action === 'terminate'
+        ? ({ action: 'terminate', reason: body.reason ?? '人工终止' } as const)
+        : body.action === 'add_constraint'
+          ? ({
+              action: 'add_constraint',
+              constraint: {
+                type: (body.constraint?.type ?? 'freeform') as never,
+                value: null,
+                description: body.constraint!.description,
+                // 运行中注入的约束只能靠 Agent 自觉遵守，如实标注
+                enforcement: 'agent' as const,
+                decisionId: null,
+              },
+            } as const)
+          : ({ action: body.action } as const);
+
+    try {
+      await adapter.control(id, command);
+    } catch (err) {
+      if (err instanceof UnsupportedFeatureError) {
+        // 降级矩阵：不支持的能力如实报回，由调用方决定要不要换个动作
+        throw new ApiError(
+          'UNSUPPORTED_FEATURE',
+          `运行时 ${adapter.kind} 不支持「${LABELS[body.action]}」`,
+          { feature: err.feature, runtimeKind: err.runtimeKind, fallback: FALLBACK[body.action] },
+        );
+      }
+      throw err;
+    }
+
+    await emitAndPublish(db, {
+      orgId: run.orgId,
+      projectId: run.projectId,
+      actor,
+      type: body.action === 'terminate' ? 'agent_run.terminated' : 'agent_run.constraint_added',
+      subjectType: 'agent_run',
+      subjectId: id,
+      payload: {
+        workItemId: run.workItemId,
+        action: body.action,
+        reason: body.reason ?? `人工${LABELS[body.action]}`,
+        constraint: body.constraint?.description ?? null,
+        byUserId: userId,
+      },
+      correlationId: corr(req),
+    });
+
+    return { ok: true, action: body.action };
   });
 
   // ── 决策 ────────────────────────────────────────────────────────────

@@ -137,6 +137,64 @@ for (const [view, marker] of [['list', 'table'], ['agent', '负载'], ['decision
   await shot(view);
 }
 
+// ── Run 详情（页面文档 09）──────────────────────────────────────────
+const boardForRun = await (await fetch(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
+const withRun = boardForRun.columns.flatMap((c) => c.items).find((c) => c.runId);
+
+if (withRun) {
+  await page.goto(`${base}/runs/${withRun.runId}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+
+  const tabs = await page.locator('nav button').allInnerTexts();
+  check('Run 详情渲染出各页签', tabs.length >= 4, tabs.join(' / '));
+
+  await page.getByRole('button', { name: /^执行流/ }).click();
+  await page.waitForTimeout(300);
+  const brief = await page.locator('ol > li').count();
+  await page.getByLabel('详细模式').check();
+  await page.waitForTimeout(900);
+  const detailed = await page.locator('ol > li').count();
+
+  // ★ 简明模式不是「只剩三行」，它要讲完整个故事，只是不展开原始参数
+  check('简明模式仍保留叙事骨架', brief >= 3, `简明 ${brief} 条 / 详细 ${detailed} 条`);
+  check('详细模式条目不少于简明', detailed >= brief);
+
+  await page.getByRole('button', { name: /^输入/ }).click();
+  await page.waitForTimeout(400);
+  const inputText = await page.locator('main').innerText();
+  check('输入页签给出上下文清单与权限快照', inputText.includes('上下文清单') && inputText.includes('权限快照'));
+
+  await page.getByRole('button', { name: /^成本/ }).click();
+  await page.waitForTimeout(600);
+  const costText = await page.locator('main').innerText();
+  check('成本页签按步骤拆分', costText.includes('按步骤分布'));
+  await shot('run');
+}
+
+// 失败的 Run 默认停在错误页签，不让用户自己找
+const failedRun = await (async () => {
+  const items = boardForRun.columns.flatMap((c) => c.items);
+  for (const item of items) {
+    if (!item.runId) continue;
+    const d = await (await fetch(`${apiBase}/api/v1/runs/${item.runId}`)).json();
+    if (d.error) return d.run.id;
+  }
+  return null;
+})();
+
+if (failedRun) {
+  await page.goto(`${base}/runs/${failedRun}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+  const active = await page.locator('nav button.border-b-2').innerText();
+  check('失败的 Run 默认打开错误页签', active.includes('错误'), active);
+  const text = await page.locator('main').innerText();
+  // Agent 用人话解释自己为什么卡住，比堆栈有用得多
+  check('错误页签给出 Agent 自述与失败步骤', /自述/.test(text) && /失败步骤/.test(text));
+  await shot('run-error');
+} else {
+  console.log('· 跳过失败 Run 检查：当前没有失败的 Run');
+}
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

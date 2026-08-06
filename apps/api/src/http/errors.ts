@@ -13,6 +13,8 @@ export type ErrorCode =
   | 'BUDGET_EXCEEDED'
   | 'UNANSWERED_MUST_CONFIRM'
   | 'AGENT_UNAVAILABLE'
+  /** 运行时能力不足（降级矩阵）—— 不是故障，是这个运行时做不到 */
+  | 'UNSUPPORTED_FEATURE'
   | 'RATE_LIMITED'
   | 'INTERNAL';
 
@@ -28,6 +30,8 @@ const STATUS: Record<ErrorCode, number> = {
   BUDGET_EXCEEDED: 422,
   UNANSWERED_MUST_CONFIRM: 422,
   AGENT_UNAVAILABLE: 503,
+  // 501 而不是 4xx：请求本身没问题，是服务端这个运行时不具备该能力
+  UNSUPPORTED_FEATURE: 501,
   RATE_LIMITED: 429,
   INTERNAL: 500,
 };

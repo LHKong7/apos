@@ -313,10 +313,7 @@ async function main() {
   const shapeable = items.filter(
     (i) => i.id !== shipped?.id && i.status !== 'done' && i.status !== 'cancelled',
   );
-  // 失败卡片要能真的派发出去，优先选依赖已满足的（reviewing 的那批天然满足）
-  const failing = reviewed[1] ?? shapeable.find((i) => i.status === 'reviewing');
-  const rest = shapeable.filter((i) => i.id !== failing?.id);
-  const [blocked, risky] = rest;
+  const [blocked, risky] = shapeable;
 
   if (blocked) {
     await db
@@ -330,48 +327,57 @@ async function main() {
     console.log(`  阻塞卡片    ${blocked.title}`);
   }
 
-  // 失败卡片：用会失败的运行时单独派发，走真实失败链路（含恢复决策）
-  if (failing) {
+  /**
+   * 失败卡片。
+   *
+   * 用一张独立任务而不是从计划链里挑 —— 链上的任务依赖没满足时
+   * 根本派发不出去，注入失败样本会静默落空（种子跑完看起来一切正常，
+   * 但界面上的失败态、错误 Tab、恢复决策全都没有数据）。
+   */
+  const [failing] = await db
+    .insert(workItems)
+    .values({
+      orgId,
+      projectId,
+      type: 'bug',
+      status: 'ready',
+      stage: 'execution',
+      title: '支付回调偶发超时',
+      description: '线上每天约 20 笔支付回调超时，需要定位原因。',
+      riskLevel: 'medium',
+      priority: 1,
+      ownerId: lead!.id,
+      estimatedCost: '2.0000',
+      position: 101,
+    })
+    .returning();
+
+  {
     const failRuntime = new MockRuntime(
       {},
       {
         outcome: 'failed',
-        steps: ['尝试复现'],
+        steps: ['复现问题', '定位调用链'],
         error: {
           class: 'context_insufficient',
           message: '无法定位 orders 表的 schema 定义',
-          selfReport: '我需要 orders 表结构来设计索引，但仓库里没找到 schema 文件。',
+          selfReport:
+            '我需要 orders 表的结构定义来判断回调写入是否有锁竞争，' +
+            '但在 order-service 仓库里没有找到 migration 或 schema 文件。' +
+            '可能在其他仓库，或者由 DBA 单独维护。',
         },
       },
     );
     const failRegistry = new RuntimeRegistry();
     failRegistry.register(rt!.id, failRuntime);
 
-    // 已经跑完的任务先拉回 ready，才能重新派发
-    if (failing.status === 'reviewing') {
-      await transition(db, {
-        workItemId: failing.id,
-        trigger: 'review_rejected',
-        actor,
-        reason: '注入失败样本',
-        correlationId,
-      });
-      await transition(db, {
-        workItemId: failing.id,
-        trigger: 'rework_started',
-        actor,
-        reason: '注入失败样本',
-        correlationId,
-      });
-    }
-
     const dispatched = await dispatchRun(db, failRegistry, {
-      workItemId: failing.id,
+      workItemId: failing!.id,
       agentId: agentRows[1]!.id,
       correlationId,
     });
-    await sleep(600);
-    console.log(`  失败卡片    ${failing.title}（${dispatched.ok ? '已派发' : '派发失败'}）`);
+    await sleep(700);
+    console.log(`  失败卡片    ${failing!.title}（${dispatched.ok ? '已失败' : '派发失败'}）`);
   }
 
   // 待决策卡片：高风险 + 超时，用来验证 decision_overdue 的强化展示

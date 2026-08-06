@@ -203,3 +203,123 @@ export interface StreamEvent {
   payload: Record<string, unknown>;
   occurredAt: string;
 }
+
+
+// ── Run 详情（页面文档 09）────────────────────────────────────────────
+
+export interface RunEventRow {
+  seq: number;
+  ts: string;
+  type: string;
+  level: string;
+  summary: string;
+  payload: Record<string, unknown> | null;
+  costDelta: string | null;
+}
+
+export interface RunEventPage {
+  events: RunEventRow[];
+  level: 'brief' | 'detailed';
+  nextCursor: number | null;
+  hasMore: boolean;
+}
+
+export interface RunDetail {
+  run: {
+    id: string;
+    status: string;
+    attempt: number;
+    idempotencyKey: string;
+    stepCurrent: number | null;
+    stepTotal: number | null;
+    stepDescription: string | null;
+    progressNote: string | null;
+    startedAt: string;
+    endedAt: string | null;
+    lastHeartbeatAt: string | null;
+    timeoutAt: string | null;
+  };
+  agent: {
+    id: string;
+    name: string;
+    type: string;
+    model: string | null;
+    runtimeRef: string;
+    costLimitPerRun: string | null;
+  } | null;
+  workItem: { id: string; title: string; status: string; estimatedCost: string | null } | null;
+  project: { id: string; name: string } | null;
+  input: {
+    goal: string;
+    context: {
+      kind?: string;
+      ref?: string;
+      title?: string;
+      content?: string | null;
+      priority?: string;
+      trusted?: boolean;
+    }[];
+    model: string | null;
+    modelConfig: Record<string, unknown> | null;
+    tools: string[];
+    permissions: {
+      allowedTools: string[];
+      deniedTools: string[];
+      resourceScopes: { kind: string; ref: string; access: string }[];
+    } | null;
+  };
+  metrics: {
+    tokens: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      total: number;
+      cacheHitRate: number;
+    };
+    cost: string;
+    estimatedCost: string | null;
+    costLimit: string | null;
+    durationMs: number;
+    toolCalls: { total: number; byTool: Record<string, number> };
+    eventCount: number;
+  };
+  artifacts: {
+    id: string;
+    kind: string;
+    title: string;
+    storage: string;
+    externalUrl: string | null;
+    content: string | null;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }[];
+  interventions: (TimelineEvent & { actorName: string })[];
+  error: {
+    class: string;
+    message: string | null;
+    detail: Record<string, unknown> | null;
+    selfReport: string | null;
+    failedAt: { step: number | null; total: number | null; at: string | null };
+  } | null;
+  related: {
+    previousRun: { id: string; attempt: number; status: string } | null;
+    attempts: { id: string; attempt: number; status: string; cost: string; errorClass: string | null }[];
+    decisions: { id: string; title: string; status: string; type: string }[];
+    policies: {
+      eventId: string;
+      policyId: string | null;
+      policyName: string | null;
+      action: unknown;
+      occurredAt: string;
+    }[];
+  };
+}
+
+export interface CostStep {
+  step: number | null;
+  description: string;
+  costUsd: number;
+  eventCount: number;
+}
+
+export type RunControlAction = 'pause' | 'resume' | 'terminate' | 'add_constraint';

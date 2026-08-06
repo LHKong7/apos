@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
 import { ApiError, api, type BoardFilters } from '../../lib/api/client';
@@ -21,6 +21,7 @@ import { MovedToast } from './MovedToast';
 
 export function BoardPage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
 
@@ -120,10 +121,12 @@ export function BoardPage() {
         if (card.humanGateRef) remind.mutate(card.humanGateRef);
       },
       onTakeover: (card) => takeover.mutate(card),
-      // Run 详情页尚未实现，先退回任务详情的「执行」页签
-      onViewRun: (card) => setOpenCard(card.id),
+      onViewRun: (card) => {
+        if (card.runId) navigate(`/runs/${card.runId}`);
+        else setOpenCard(card.id);
+      },
     }),
-    [retry, remind, takeover],
+    [retry, remind, takeover, navigate],
   );
 
   if (!projectId) return null;

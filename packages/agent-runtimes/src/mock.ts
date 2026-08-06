@@ -226,6 +226,9 @@ export function degradedMockRuntime(script: MockScript = {}): MockRuntime {
       progressReporting: false,
       runtimeConstraints: false,
       selfReportOnFailure: false,
+      // 真实的降级运行时（如 Claude Code）没有暂停语义，
+      // 「残缺」的 mock 却支持暂停会让降级路径测不出来
+      pause: false,
       terminate: false,
       statusQuery: false,
     },
