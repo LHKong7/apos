@@ -356,3 +356,59 @@ export interface AnalyticsItemsResponse {
     elapsedHours: number | null;
   }[];
 }
+
+
+// ── Policy 配置（页面文档 13）──────────────────────────────────────────
+type D = typeof import('@apos/domain');
+
+export type PolicyRow = import('@apos/contracts').Policy & {
+  /** 模板拼接出来的人话解释，不是模型生成的 —— 必须与执行逻辑严格一致 */
+  explanation: string;
+  hits30d: number;
+  avgWaitSeconds: number | null;
+  editable: boolean;
+};
+
+export interface PoliciesResponse {
+  project: { id: string; name: string; autonomyLevel: string };
+  orgPolicies: PolicyRow[];
+  projectPolicies: PolicyRow[];
+  summary: ReturnType<D['auditPolicies']>['summary'];
+  issues: ReturnType<D['auditPolicies']>['issues'];
+  wiredFacts: string[];
+}
+
+export interface PolicyTemplateRow {
+  id: string;
+  scenario: string;
+  name: string;
+  purpose: string;
+  direction: 'tighten' | 'loosen';
+  params: import('@apos/domain').TemplateParam[];
+}
+
+export type SimulationResponse = import('@apos/domain').SimulationResult;
+
+export interface ScenarioTestResponse {
+  context: import('@apos/contracts').PolicyContext;
+  action: import('@apos/contracts').Action;
+  requiresHuman: boolean;
+  matchedPolicyId: string | null;
+  matchedPolicyName: string | null;
+  explanation: string;
+  trace: {
+    policyId: string;
+    name: string;
+    priority: number;
+    scope: 'org' | 'project';
+    state: 'matched' | 'missed' | 'not_evaluated';
+    failedAt: { fact: string; op: string; expected: unknown; actual: unknown } | null;
+  }[];
+}
+
+export interface AutonomyPreview {
+  becomesAuto: string[];
+  becomesGated: string[];
+  autoBefore: number;
+  autoAfter: number;
+}

@@ -106,12 +106,10 @@ export function AnalyticsPage() {
         setDrill(action.label.includes('返工') ? 'rework' : 'wip');
         break;
       case 'create_policy':
-        // Policy 配置页还没有。说清楚现状，并给出现在就能做的替代动作 ——
-        // 静默失败或者假装成功都比这句话糟糕
-        setToast(
-          'Policy 配置页尚未实现。当前可以在项目设置里下调该类操作的自治级别，' +
-            '或联系 tech_lead 添加自动放行规则。',
-        );
+        // ★ 「分析 → 规则」是产品持续降低人类负担的飞轮。
+        //   这个跳转把它接上了：从「这类决策你做了 6 次结果都一样」
+        //   直接走到能创建规则的地方
+        navigate(`/projects/${projectId}/settings/policies`);
         break;
     }
   };

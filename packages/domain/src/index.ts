@@ -10,3 +10,6 @@ export * from './recovery/strategy';
 export * from './flow/matching';
 export * from './graph';
 export * from './analytics';
+export * from './policy/audit';
+export * from './policy/scenarios';
+export * from './policy/templates';

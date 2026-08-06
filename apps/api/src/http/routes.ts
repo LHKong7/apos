@@ -18,10 +18,20 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
-import { ACTIVE_RUN_STATUSES, humanActor, WorkItemStatus } from '@apos/contracts';
+import {
+  ACTIVE_RUN_STATUSES,
+  Action,
+  Condition,
+  humanActor,
+  WorkItemStatus,
+  type PolicyContext,
+} from '@apos/contracts';
 import {
   ANALYTICS_RANGES,
   LAYOUTS,
+  POLICY_TEMPLATES,
+  explainPolicy,
+  templateById,
   WORK_ITEM_MACHINE,
   availableTriggers,
   manualTriggerFor,
@@ -47,6 +57,16 @@ import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
 import { getAnalytics, getAnalyticsItems } from './analytics';
+import {
+  autonomyPreview,
+  deletePolicy,
+  evaluateScenario,
+  getPolicies,
+  getPolicyHistory,
+  runSimulation,
+  savePolicy,
+  togglePolicy,
+} from './policies';
 import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
 import { serializeEvent } from './serialize';
 
@@ -476,6 +496,177 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       : '30d';
 
     return getAnalyticsItems(db, id, kind, range);
+  });
+
+  // ── Policy 配置 ─────────────────────────────────────────────────────
+  // ★ 这些端点只认 X-User-Id（人类身份）。Agent 回调走 run-scoped token，
+  //   到不了这里 —— Agent 不能修改约束自己的规则（产品文档 十）。
+  app.get('/api/v1/projects/:id/policies', async (req) => {
+    const { id } = req.params as { id: string };
+    return getPolicies(db, id);
+  });
+
+  app.get('/api/v1/policy-templates', async () => ({ templates: serializeTemplates() }));
+
+  const PolicyDraftBody = z.object({
+    name: z.string().min(1, '规则必须有名字'),
+    description: z.string().optional(),
+    priority: z.number().int().min(1),
+    condition: z.unknown(),
+    action: z.unknown(),
+    enabled: z.boolean().optional(),
+    /** 模拟发现了与人类判断不一致的历史案例后，用户看过并坚持要保存 */
+    acknowledgeMismatches: z.boolean().optional(),
+  });
+
+  app.post('/api/v1/projects/:id/policies', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = PolicyDraftBody.parse(req.body);
+
+    const result = await savePolicy(
+      db,
+      id,
+      {
+        name: body.name,
+        description: body.description,
+        priority: body.priority,
+        condition: Condition.parse(body.condition),
+        action: Action.parse(body.action),
+        enabled: body.enabled,
+      },
+      userId,
+      { acknowledgeMismatches: body.acknowledgeMismatches },
+    );
+    return reply.code(201).send(result);
+  });
+
+  app.patch('/api/v1/projects/:id/policies/:policyId', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id, policyId } = req.params as { id: string; policyId: string };
+    const body = PolicyDraftBody.parse(req.body);
+
+    return savePolicy(
+      db,
+      id,
+      {
+        name: body.name,
+        description: body.description,
+        priority: body.priority,
+        condition: Condition.parse(body.condition),
+        action: Action.parse(body.action),
+        enabled: body.enabled,
+      },
+      userId,
+      { policyId, acknowledgeMismatches: body.acknowledgeMismatches },
+    );
+  });
+
+  app.post('/api/v1/projects/:id/policies/:policyId/toggle', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id, policyId } = req.params as { id: string; policyId: string };
+    const body = z
+      .object({
+        enabled: z.boolean(),
+        // ★ 停用规则必须填原因（页面文档 13 §8）——
+        //   规则的变更历史本身就是组织知识，「为什么停用」比「停用了」重要
+        reason: z.string().min(1, '停用规则必须填写原因'),
+      })
+      .parse(req.body);
+
+    return togglePolicy(db, id, policyId, body.enabled, body.reason, userId);
+  });
+
+  app.delete('/api/v1/projects/:id/policies/:policyId', async (req) => {
+    actorFrom(req);
+    const { id, policyId } = req.params as { id: string; policyId: string };
+    return deletePolicy(db, id, policyId);
+  });
+
+  /**
+   * 模板 → 条件/动作。
+   *
+   * ★ 这个映射只在后端有一份实现（domain 的 templates.ts）。
+   *   前端跟着算一遍就有两份，迟早对不上 —— 而这一页对不上的后果是
+   *   「界面上写的规则」和「实际执行的规则」不是同一条。
+   *   顺带把人话解释一起返回，编辑器改参数时能实时更新（页面文档 13 §5.6）。
+   */
+  app.post('/api/v1/projects/:id/policies/from-template', async (req) => {
+    const body = z
+      .object({ templateId: z.string(), values: z.record(z.union([z.string(), z.number()])) })
+      .parse(req.body);
+
+    const template = templateById(body.templateId);
+    if (!template) throw notFound('模板');
+
+    const built = template.build(body.values);
+    return { ...built, explanation: explainPolicy(built.condition, built.action) };
+  });
+
+  app.post('/api/v1/projects/:id/policies/simulate', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        condition: z.unknown(),
+        action: z.unknown(),
+        range: z.enum(['7d', '30d', '90d']).default('30d'),
+      })
+      .parse(req.body);
+
+    return runSimulation(
+      db,
+      id,
+      { condition: Condition.parse(body.condition), action: Action.parse(body.action) },
+      body.range,
+    );
+  });
+
+  app.post('/api/v1/projects/:id/policies/evaluate', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ context: z.record(z.unknown()) }).parse(req.body);
+    return evaluateScenario(db, id, body.context as Partial<PolicyContext>);
+  });
+
+  app.post('/api/v1/projects/:id/policies/autonomy-preview', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ to: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
+      .parse(req.body);
+    return autonomyPreview(db, id, body.to);
+  });
+
+  app.patch('/api/v1/projects/:id/autonomy', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ autonomyLevel: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
+      .parse(req.body);
+
+    const [before] = await db.select().from(projects).where(eq(projects.id, id));
+    if (!before) throw notFound('项目');
+
+    await db
+      .update(projects)
+      .set({ autonomyLevel: body.autonomyLevel, updatedAt: new Date() })
+      .where(eq(projects.id, id));
+
+    await emitAndPublish(db, {
+      orgId: before.orgId,
+      projectId: id,
+      type: 'project.autonomy_changed',
+      actor: humanActor(userId),
+      subjectType: 'project',
+      subjectId: id,
+      payload: { from: before.autonomyLevel, to: body.autonomyLevel },
+      correlationId: corr(req),
+    });
+
+    return { ok: true as const, autonomyLevel: body.autonomyLevel };
+  });
+
+  app.get('/api/v1/policies/:policyId/history', async (req) => {
+    const { policyId } = req.params as { policyId: string };
+    return getPolicyHistory(db, policyId);
   });
 
   // ── Work Item ───────────────────────────────────────────────────────
@@ -1033,4 +1224,20 @@ function mapTransitionError(result: Extract<Awaited<ReturnType<typeof transition
     case 'POLICY_DENIED':
       throw new ApiError('POLICY_DENIED', result.message, { verdict: result.verdict });
   }
+}
+
+/**
+ * 模板要发给前端，但 `build` 是函数，序列化不过去。
+ * 前端只需要参数表单的描述，具体条件由后端在创建时用 build 拼出来 ——
+ * 这样「模板 → 规则」的映射只有一份实现，前端改不了它。
+ */
+function serializeTemplates() {
+  return POLICY_TEMPLATES.map((t) => ({
+    id: t.id,
+    scenario: t.scenario,
+    name: t.name,
+    purpose: t.purpose,
+    direction: t.direction,
+    params: t.params,
+  }));
 }

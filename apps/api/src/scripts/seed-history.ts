@@ -116,6 +116,18 @@ export async function seedHistory(ctx: Ctx): Promise<number> {
       if (needsDecision) track.push({ status: 'awaiting_decision', hours: waitHours });
       track.push({ status: 'releasing', hours: 0.3 + rand() });
 
+      /**
+       * 场景形状。让模拟有真东西可看：不同的操作类型 / 环境 / 风险
+       * 组合起来，草稿规则才可能在历史上命中，也才可能撞上
+       * 「人类当时是驳回的」那种案例。
+       */
+      const shape = {
+        risk: rand() < 0.6 ? 'low' : rand() < 0.8 ? 'medium' : 'high',
+        env: (['dev', 'test', 'staging', 'production'] as const)[Math.floor(rand() * 4)]!,
+        operation: (['code_change', 'deploy', 'db_dml', 'read'] as const)[Math.floor(rand() * 4)]!,
+        cost: 0.5 + rand() * 25,
+      };
+
       // 铺时间线
       let cursor = start;
       let previous: WorkItemStatus = 'draft';
@@ -128,7 +140,7 @@ export async function seedHistory(ctx: Ctx): Promise<number> {
           decisionRows.push(decisionFor(ctx, id, title, cursor, step.hours, rand));
         }
         // 每次流转都过一遍 Policy，自动放行的占多数
-        eventRows.push(policyEvent(ctx, id, step.status, cursor, rand));
+        eventRows.push(policyEvent(ctx, id, step.status, cursor, rand, shape));
         previous = step.status;
         cursor += step.hours * HOUR;
       }
@@ -316,12 +328,22 @@ function statusEvent(
   };
 }
 
+/**
+ * ★ 必须带 contextSnapshot。
+ *
+ *   Policy 页的模拟回放（页面文档 13 §5.7，「本页最重要的功能」）
+ *   唯一的数据来源就是这个快照。少了它，模拟永远返回 0 个样本 ——
+ *   而模拟正是让用户敢于放开自动化的那道闸。
+ *   这也正是「每次策略评估都要带 23 项事实快照」这条铁律存在的理由：
+ *   事后补不回来。
+ */
 function policyEvent(
   ctx: Ctx,
   itemId: string,
   status: WorkItemStatus,
   at: number,
   rand: () => number,
+  shape: { risk: string; env: string | null; operation: string; cost: number },
 ): typeof events.$inferInsert {
   const action =
     status === 'awaiting_decision'
@@ -329,6 +351,32 @@ function policyEvent(
       : rand() < 0.85
         ? 'allow'
         : 'allow_and_notify';
+
+  const snapshot = {
+    projectType: 'development',
+    workItemType: 'task',
+    riskLevel: shape.risk,
+    reversible: shape.operation !== 'deploy',
+    externalFacing: false,
+    environment: shape.env,
+    dataSensitivity: 'internal',
+    impactTaskCount: 1 + Math.floor(rand() * 4),
+    impactServices: [],
+    operationType: shape.operation,
+    agentType: 'coder',
+    agentConfidence: Number((0.6 + rand() * 0.38).toFixed(2)),
+    agentSuccessRate: Number((0.7 + rand() * 0.28).toFixed(2)),
+    consecutiveFailures: 0,
+    runCost: Number(shape.cost.toFixed(2)),
+    projectCostSpent: 100,
+    projectBudget: 500,
+    budgetUsedPct: 20,
+    testsResult: rand() < 0.85 ? 'passed' : 'failed',
+    testCoverage: 70 + Math.floor(rand() * 25),
+    securityScan: 'passed',
+    agentReview: rand() < 0.9 ? 'passed' : 'concerns',
+    autonomyLevel: 'agent_led_approval',
+  };
 
   return {
     orgId: ctx.orgId,
@@ -340,6 +388,7 @@ function policyEvent(
     subjectType: 'work_item',
     subjectId: itemId,
     payload: { action: { type: action }, matchedPolicyName: '历史数据', trace: [] },
+    contextSnapshot: snapshot as never,
     correlationId: randomUUID(),
     occurredAt: new Date(at),
   };

@@ -15,6 +15,7 @@ interface Props {
   projectName: string;
   onOpenGraph: () => void;
   onOpenAnalytics: () => void;
+  onOpenPolicies: () => void;
   summary: BoardSummary | undefined;
   view: BoardView;
   filters: BoardFilters;
@@ -34,6 +35,7 @@ export function TopBar({
   projectName,
   onOpenGraph,
   onOpenAnalytics,
+  onOpenPolicies,
   summary,
   view,
   filters,
@@ -83,6 +85,13 @@ export function TopBar({
             className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
           >
             Analytics ↗
+          </button>
+          <button
+            type="button"
+            onClick={onOpenPolicies}
+            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            Policy ↗
           </button>
         </div>
 

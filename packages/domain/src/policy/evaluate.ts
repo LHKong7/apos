@@ -29,7 +29,17 @@ export type ConditionMatchResult =
 const RISK_LEVELS = new Set(Object.keys(RISK_ORDER));
 
 /** 风险等级要按序比较而不是字典序 */
+/**
+ * 把可比较的枚举换成序号，让 `riskLevel >= 'high'` 这类比较成立。
+ *
+ * ★ 数组也要逐项换。
+ *   漏掉这一步的后果非常隐蔽：`riskLevel in ['medium','high']` 里
+ *   actual 被换成了数字、expected 还是字符串数组，`includes` 恒为 false ——
+ *   规则在界面上看着完全正确、保存也不报错，却**永远不会命中**。
+ *   一条以为在保护自己的治理规则实际是死的，比没有这条规则更危险。
+ */
 function comparable(fact: FactKey, value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v) => comparable(fact, v));
   if (fact === 'riskLevel' && typeof value === 'string' && RISK_LEVELS.has(value)) {
     return RISK_ORDER[value as keyof typeof RISK_ORDER];
   }

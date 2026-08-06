@@ -10,6 +10,7 @@ import { isAutoApprove, matchCondition } from './evaluate';
 
 export interface HistoricalSample {
   eventId: string;
+  workItemId: string;
   occurredAt: string;
   context: PolicyContext;
   /** 当时人类的决策结果；null 表示当时未走人工 */
@@ -20,6 +21,7 @@ export interface HistoricalSample {
 
 export interface Mismatch {
   eventId: string;
+  workItemId: string;
   occurredAt: string;
   workItemTitle: string;
   humanDecision: string;
@@ -35,6 +37,8 @@ export interface Suggestion {
 
 export interface SimulationResult {
   totalSamples: number;
+  /** 不一致的评估次数。mismatches 已按任务去重，两者对不上是正常的 */
+  mismatchEvaluations: number;
   /** 草稿规则引用的 fact 在快照中缺失，无法评估的样本数 */
   skippedForMissingFacts: number;
   evaluatedSamples: number;
@@ -145,23 +149,35 @@ export function simulate(draft: Pick<Policy, 'condition' | 'action'>, samples: H
   const evaluated = samples.length - skipped;
   const draftAutoApproves = isAutoApprove(draft.action);
 
-  const mismatches: Mismatch[] = draftAutoApproves
-    ? applicable
-        .filter(
-          (s) => s.humanDecision === 'rejected' || s.humanDecision === 'revision_requested',
-        )
-        .map((s) => ({
-          eventId: s.eventId,
-          occurredAt: s.occurredAt,
-          workItemTitle: s.workItemTitle,
-          humanDecision: s.humanDecision as string,
-          humanNote: s.humanNote,
-          context: s.context,
-        }))
+  const disagreeing = draftAutoApproves
+    ? applicable.filter(
+        (s) => s.humanDecision === 'rejected' || s.humanDecision === 'revision_requested',
+      )
     : [];
 
-  const mismatchIds = new Set(mismatches.map((m) => m.eventId));
-  const consistent = applicable.filter((s) => !mismatchIds.has(s.eventId));
+  /**
+   * ★ 按任务去重。
+   *   一个任务在生命周期里会被评估很多次，每次都产生一个样本；
+   *   不去重的话「发现 10 处不一致」实际只是 4 个任务被数了两三遍。
+   *   用户点进去会发现同一张卡片出现三次，然后就再也不信这个数字了。
+   */
+  const seenItems = new Set<string>();
+  const mismatches: Mismatch[] = [];
+  for (const s of disagreeing) {
+    if (seenItems.has(s.workItemId)) continue;
+    seenItems.add(s.workItemId);
+    mismatches.push({
+      eventId: s.eventId,
+      workItemId: s.workItemId,
+      occurredAt: s.occurredAt,
+      workItemTitle: s.workItemTitle,
+      humanDecision: s.humanDecision as string,
+      humanNote: s.humanNote,
+      context: s.context,
+    });
+  }
+
+  const consistent = applicable.filter((s) => !seenItems.has(s.workItemId));
 
   // 诚实性：必须告知局限（docs/tech/05-policy-engine.md §5.3）
   if (samples.length < 20) {
@@ -186,6 +202,7 @@ export function simulate(draft: Pick<Policy, 'condition' | 'action'>, samples: H
 
   return {
     totalSamples: samples.length,
+    mismatchEvaluations: disagreeing.length,
     skippedForMissingFacts: skipped,
     evaluatedSamples: evaluated,
     wouldAutoHandle: applicable.length,

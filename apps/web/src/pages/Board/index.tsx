@@ -144,6 +144,7 @@ export function BoardPage() {
         projectName={project.data?.project.name ?? '加载中'}
         onOpenGraph={() => navigate(`/projects/${projectId}/graph`)}
         onOpenAnalytics={() => navigate(`/projects/${projectId}/analytics`)}
+        onOpenPolicies={() => navigate(`/projects/${projectId}/settings/policies`)}
         summary={board.data?.summary}
         view={view}
         filters={filters}

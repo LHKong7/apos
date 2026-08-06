@@ -8,8 +8,14 @@ import type {
   DecisionDetail,
   DecisionRow,
   GraphResponse,
+  AutonomyPreview,
+  PoliciesResponse,
+  PolicyRow,
+  PolicyTemplateRow,
   Project,
   RunControlAction,
+  ScenarioTestResponse,
+  SimulationResponse,
   RunDetail,
   RunEventPage,
   User,
@@ -118,6 +124,87 @@ export const api = {
     request<AnalyticsItemsResponse>(
       `/projects/${projectId}/analytics/items?kind=${kind}&range=${range}`,
     ),
+
+  // ── Policy 配置 ────────────────────────────────────────────────────
+  policies: (projectId: string) => request<PoliciesResponse>(`/projects/${projectId}/policies`),
+
+  policyTemplates: () => request<{ templates: PolicyTemplateRow[] }>('/policy-templates'),
+
+  savePolicy: (
+    projectId: string,
+    body: {
+      name: string;
+      description?: string;
+      priority: number;
+      condition: unknown;
+      action: unknown;
+      enabled?: boolean;
+      acknowledgeMismatches?: boolean;
+    },
+    policyId?: string,
+  ) =>
+    request<{ policy: PolicyRow; direction: string; loosenedScenarios: number }>(
+      policyId
+        ? `/projects/${projectId}/policies/${policyId}`
+        : `/projects/${projectId}/policies`,
+      { method: policyId ? 'PATCH' : 'POST', json: body },
+    ),
+
+  togglePolicy: (projectId: string, policyId: string, enabled: boolean, reason: string) =>
+    request<{ ok: true; enabled: boolean }>(
+      `/projects/${projectId}/policies/${policyId}/toggle`,
+      { method: 'POST', json: { enabled, reason } },
+    ),
+
+  deletePolicy: (projectId: string, policyId: string) =>
+    request<{ ok: true }>(`/projects/${projectId}/policies/${policyId}`, { method: 'DELETE' }),
+
+  buildFromTemplate: (
+    projectId: string,
+    templateId: string,
+    values: Record<string, string | number>,
+  ) =>
+    request<{ condition: unknown; action: unknown; explanation: string }>(
+      `/projects/${projectId}/policies/from-template`,
+      { method: 'POST', json: { templateId, values } },
+    ),
+
+  simulatePolicy: (
+    projectId: string,
+    body: { condition: unknown; action: unknown; range?: '7d' | '30d' | '90d' },
+  ) => request<SimulationResponse>(`/projects/${projectId}/policies/simulate`, {
+    method: 'POST',
+    json: body,
+  }),
+
+  testScenario: (projectId: string, context: Record<string, unknown>) =>
+    request<ScenarioTestResponse>(`/projects/${projectId}/policies/evaluate`, {
+      method: 'POST',
+      json: { context },
+    }),
+
+  autonomyPreview: (projectId: string, to: string) =>
+    request<AutonomyPreview>(`/projects/${projectId}/policies/autonomy-preview`, {
+      method: 'POST',
+      json: { to },
+    }),
+
+  setAutonomy: (projectId: string, autonomyLevel: string) =>
+    request<{ ok: true; autonomyLevel: string }>(`/projects/${projectId}/autonomy`, {
+      method: 'PATCH',
+      json: { autonomyLevel },
+    }),
+
+  policyHistory: (policyId: string) =>
+    request<{
+      history: {
+        version: number;
+        direction: string | null;
+        changedBy: string;
+        changedAt: string;
+        snapshot: unknown;
+      }[];
+    }>(`/policies/${policyId}/history`),
 
   workItem: (id: string) => request<WorkItemDetail>(`/work-items/${id}`),
 

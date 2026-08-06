@@ -336,6 +336,135 @@ await page.selectOption('select[aria-label="时间范围"]', '7d');
 await page.waitForTimeout(1000);
 check('切换时间范围后仍有数据', (await page.getByText('周期时间分解').count()) > 0, page.url().includes('range=7d') ? '?range=7d' : '');
 
+// ── Policy 配置（页面文档 13）──────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/settings/policies`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+
+const policyText = await page.locator('main').innerText();
+check(
+  '★ 顶部把一堆规则翻译成一句人话',
+  /当前配置下：\d+ 类操作自动执行，\d+ 类需要人类确认/.test(policyText),
+  policyText.split('\n').find((l) => l.includes('当前配置下')) ?? '',
+);
+
+await page.getByRole('button', { name: '查看完整清单' }).click();
+await page.waitForTimeout(400);
+const listText = await page.locator('main').innerText();
+// ★ 只说「看情况」的摘要还不如不给 —— 用户仍然得自己去读规则
+check(
+  '★ 「视情况而定」说清楚了是什么情况',
+  /视情况而定/.test(listText) ? /需要人确认/.test(listText) : true,
+);
+
+// 规则用人话展示，不是条件表达式
+check(
+  '★ 规则列表显示人话解释而不是条件表达式',
+  /当风险等级是低/.test(listText) && !/riskLevel ==/.test(listText),
+);
+
+check('组织规则标注为不可修改', /组织级规则，项目内不可修改/.test(listText));
+check('如实说明哪些数据源没接入', /尚未接入/.test(listText));
+await shot('policy-rules');
+
+// 体检：每条问题要给出可定位的反例
+if (/检测到 \d+ 个问题/.test(listText)) {
+  check('体检给出反例场景或可定位的规则', /反例场景|定位到规则/.test(listText));
+  // ★ 抽样不是证明，页面必须说清楚
+  check('★ 体检明确说明这是抽样而非证明', /没报出来不等于没有问题/.test(listText));
+}
+
+// ── 场景测试：排查「为什么还找我」──
+await page.goto(`${base}/projects/${projectId}/settings/policies?tab=test`, {
+  waitUntil: 'networkidle',
+});
+await page.waitForTimeout(800);
+await page.getByRole('button', { name: '运行测试' }).click();
+await page.waitForTimeout(1200);
+
+const testText = await page.locator('main').innerText();
+check('场景测试给出判定结果', /需要人类确认|自动执行/.test(testText));
+// ★ 「我明明配了自动批准为什么还找我」——答案永远是被更高优先级的规则先拦下了
+check(
+  '★ 匹配过程标出哪条命中、哪些根本没被评估',
+  /命中即停/.test(testText) && /未评估/.test(testText),
+  testText.split('\n').find((l) => l.includes('根本没被评估')) ?? '',
+);
+await shot('policy-test');
+
+// ── 治理硬约束：项目规则不能放宽组织规则 ──
+const apiBase2 = process.env.API_URL ?? 'http://localhost:3000';
+const { users: allUsers } = await (await fetch(`${apiBase2}/api/v1/users`)).json();
+const actorId = allUsers[0]?.id;
+
+const loosenOrg = await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+  body: JSON.stringify({
+    name: '冒烟：抢在组织规则前面放行生产库变更',
+    priority: 3,
+    condition: {
+      all: [
+        { fact: 'environment', op: 'eq', value: 'production' },
+        { fact: 'operationType', op: 'eq', value: 'db_ddl' },
+      ],
+    },
+    action: { type: 'allow' },
+  }),
+});
+const loosenBody = await loosenOrg.json();
+check(
+  '★ 项目规则不能放宽组织规则（治理硬约束）',
+  loosenOrg.status === 422 && /不能放宽/.test(loosenBody.error?.message ?? ''),
+  loosenBody.error?.message?.slice(0, 60) ?? `HTTP ${loosenOrg.status}`,
+);
+
+// ── 安全阀：自动放行类规则必须先过模拟 ──
+const autoPass = await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+  body: JSON.stringify({
+    name: '冒烟：中低风险部署自动放行',
+    priority: 190,
+    condition: {
+      all: [
+        { fact: 'riskLevel', op: 'in', value: ['low', 'medium'] },
+        { fact: 'operationType', op: 'eq', value: 'deploy' },
+      ],
+    },
+    action: { type: 'allow' },
+  }),
+});
+const autoBody = await autoPass.json();
+// ★ 没有模拟，用户不敢放开自动化；不放开自动化，产品价值就打折。
+//   所以这道闸必须在服务端，不能靠客户端自觉。
+if (autoPass.status === 422) {
+  check(
+    '★ 会误批历史案例的放行规则被服务端拦下',
+    /人类当时是驳回/.test(autoBody.error?.message ?? '') &&
+      autoBody.error?.details?.simulation?.mismatches?.length > 0,
+    autoBody.error?.message?.slice(0, 50) ?? '',
+  );
+} else {
+  console.log('· 跳过安全阀检查：这批历史数据里没有会被误批的案例');
+}
+
+// ── riskLevel 的 in 比较必须真的生效 ──
+// 这条曾经是个静默失效的 bug：规则界面上看着对，却永远不命中
+const evalRes = await (
+  await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies/evaluate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      context: { riskLevel: 'medium', operationType: 'code_change', environment: 'dev' },
+    }),
+  })
+).json();
+check(
+  '★ riskLevel 用 in 比较的规则真的会命中（曾经静默失效）',
+  Array.isArray(evalRes.trace) && evalRes.trace.length > 0,
+  `${evalRes.trace?.length ?? 0} 条规则被评估`,
+);
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

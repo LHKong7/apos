@@ -21,6 +21,9 @@ export const qk = {
   graphAll: (projectId: string) => ['graph', projectId] as const,
   analytics: (projectId: string, range: string, compare: boolean) =>
     ['analytics', projectId, range, compare] as const,
+  policies: (projectId: string) => ['policies', projectId] as const,
+  policyTemplates: () => ['policyTemplates'] as const,
+  policyHistory: (policyId: string) => ['policyHistory', policyId] as const,
   analyticsItems: (projectId: string, kind: string, range: string) =>
     ['analyticsItems', projectId, kind, range] as const,
   workItem: (id: string) => ['workItem', id] as const,

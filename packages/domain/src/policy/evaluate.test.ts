@@ -340,3 +340,25 @@ describe('产品文档 8.9.3 的示例规则', () => {
     expect(v.trace[0]?.failedAt?.fact).toBe('runCost');
   });
 });
+
+describe('枚举序号化', () => {
+  /**
+   * ★ riskLevel 会被换成序号，好让 `>= 'high'` 这类比较成立。
+   *   数组不跟着换的话，`riskLevel in ['medium','high']` 里
+   *   actual 是数字、expected 还是字符串数组，includes 恒为 false ——
+   *   规则在界面上看着完全正确、保存也不报错，却**永远不会命中**。
+   *   一条以为在保护自己的治理规则实际是死的，比没有这条规则更危险。
+   */
+  it('★ riskLevel 用 in 比较时，数组里的每一项也要序号化', () => {
+    const c = ctx({ riskLevel: 'medium' });
+
+    expect(matchCondition({ fact: 'riskLevel', op: 'in', value: ['medium', 'high'] }, c).matched).toBe(true);
+    expect(matchCondition({ fact: 'riskLevel', op: 'in', value: ['low'] }, c).matched).toBe(false);
+    expect(matchCondition({ fact: 'riskLevel', op: 'not_in', value: ['low', 'medium'] }, c).matched).toBe(false);
+  });
+
+  it('不需要序号化的 fact 用 in 比较不受影响', () => {
+    const c = ctx({ environment: 'production' });
+    expect(matchCondition({ fact: 'environment', op: 'in', value: ['staging', 'production'] }, c).matched).toBe(true);
+  });
+});

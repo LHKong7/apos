@@ -1,0 +1,116 @@
+import clsx from 'clsx';
+import type { PolicyRow } from '../../lib/api/types';
+
+/**
+ * 规则列表（页面文档 13 §5.3）。
+ *
+ * ★ 每条规则显示的是**人话解释**，不是条件表达式。
+ *   真正需要设定 Agent 边界的是项目负责人，不是工程师 ——
+ *   `risk == 'low' && cost < 10` 他看不懂，也就不会去管，
+ *   最后治理配置就只剩工程师一个人在维护。
+ *
+ * ★ 命中统计是这一页被低估的部分：命中 0 次说明规则可能写错了，
+ *   命中频繁且结果一致说明可以进一步自动化，平均等待长说明它是流程瓶颈。
+ */
+export function RuleList({
+  title,
+  hint,
+  policies,
+  onEdit,
+  onToggle,
+  onDelete,
+  onHistory,
+  onViewHits,
+  highlightIds,
+}: {
+  title: string;
+  hint: string;
+  policies: PolicyRow[];
+  onEdit: (p: PolicyRow) => void;
+  onToggle: (p: PolicyRow) => void;
+  onDelete: (p: PolicyRow) => void;
+  onHistory: (p: PolicyRow) => void;
+  onViewHits: (p: PolicyRow) => void;
+  highlightIds: Set<string>;
+}) {
+  if (policies.length === 0) {
+    return (
+      <section className="rounded border border-slate-200 bg-white px-3 py-2">
+        <h2 className="text-xs font-medium text-slate-700">{title}</h2>
+        <p className="mt-2 text-center text-xs text-slate-400">还没有项目级规则</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded border border-slate-200 bg-white">
+      <div className="border-b border-slate-100 px-3 py-1.5">
+        <h2 className="text-xs font-medium text-slate-700">
+          {title}（{policies.length}）
+        </h2>
+        <p className="text-[11px] text-slate-400">{hint}</p>
+      </div>
+
+      <ul>
+        {policies.map((p) => (
+          <li
+            key={p.id}
+            className={clsx(
+              'border-b border-slate-100 px-3 py-2 last:border-0',
+              highlightIds.has(p.id) && 'bg-amber-50',
+              !p.enabled && 'opacity-60',
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-400">{p.projectId === null ? '⛓ 组织级' : '📁 项目级'}</span>
+              <span className="font-medium text-slate-900">{p.name}</span>
+              <span className="text-[11px] text-slate-400">优先级 {p.priority}</span>
+              <span className={clsx('text-[11px]', p.enabled ? 'text-green-700' : 'text-slate-400')}>
+                {p.enabled ? '● 启用' : '○ 已停用'}
+              </span>
+            </div>
+
+            {/* ★ 这一行才是给人读的。条件表达式在编辑器里，列表上不出现 */}
+            <p className="mt-0.5 text-xs leading-5 text-slate-600">{p.explanation}</p>
+
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                onClick={() => onViewHits(p)}
+                className={clsx(
+                  'underline',
+                  p.hits30d === 0 ? 'text-slate-400' : 'text-slate-600 hover:text-slate-900',
+                )}
+              >
+                近 30 天命中 {p.hits30d} 次
+              </button>
+
+              {p.editable ? (
+                <>
+                  <Action onClick={() => onEdit(p)}>编辑</Action>
+                  <Action onClick={() => onToggle(p)}>{p.enabled ? '停用' : '启用'}</Action>
+                  <Action onClick={() => onDelete(p)}>删除</Action>
+                </>
+              ) : (
+                <span className="text-slate-400">组织级规则，项目内不可修改</span>
+              )}
+              <Action onClick={() => onHistory(p)}>变更历史</Action>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Action({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50"
+    >
+      {children}
+    </button>
+  );
+}

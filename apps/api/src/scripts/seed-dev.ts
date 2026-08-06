@@ -408,6 +408,62 @@ async function main() {
     console.log(`  待决策卡片  ${risky.title}（${moved.ok ? moved.to : '流转失败'}）`);
   }
 
+  /**
+   * 项目级 Policy。
+   *
+   * 只有组织基线的话，Policy 页上「项目自定义」永远是空的，
+   * 而「只能收紧不能放宽」「冲突检测」这些真正要验的东西
+   * 全都需要至少一条项目规则才跑得到。
+   */
+  {
+    const { policies } = await import('@apos/db');
+    await db.insert(policies).values([
+      {
+        orgId,
+        projectId,
+        name: '低风险任务自动批准',
+        description: '测试通过且成本可控的低风险任务无需人工审批',
+        priority: 100,
+        condition: {
+          all: [
+            { fact: 'riskLevel', op: 'eq', value: 'low' },
+            { fact: 'runCost', op: 'lt', value: 10 },
+          ],
+        },
+        action: { type: 'allow_and_notify', notify: [{ kind: 'project_role', role: 'pm' }] },
+        createdBy: lead!.id,
+      },
+      {
+        orgId,
+        projectId,
+        name: '预算用掉八成后提醒技术负责人',
+        description: '在真正超限之前先打个招呼，别等到卡住才发现',
+        priority: 110,
+        condition: { fact: 'budgetUsedPct', op: 'gte', value: 80 },
+        action: { type: 'ask', assignee: { kind: 'project_role', role: 'tech_lead' } },
+        createdBy: lead!.id,
+      },
+      {
+        // 刻意留一条依赖未接入数据源的规则 —— 它看起来配好了，实际永远不命中。
+        // 这正是 Policy 页体检要抓的那类失效
+        orgId,
+        projectId,
+        name: '安全扫描通过才允许部署',
+        description: '',
+        priority: 120,
+        condition: {
+          all: [
+            { fact: 'securityScan', op: 'eq', value: 'passed' },
+            { fact: 'operationType', op: 'eq', value: 'deploy' },
+          ],
+        },
+        action: { type: 'allow' },
+        createdBy: lead!.id,
+      },
+    ]);
+    console.log('  项目规则    3 条（含一条依赖未接入数据源的，供体检验证）');
+  }
+
   // ── 60 天历史（只给 Analytics 用，不走真实链路，原因见 seed-history.ts）──
   const history = await seedHistory({
     db,

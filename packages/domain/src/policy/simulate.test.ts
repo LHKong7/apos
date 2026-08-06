@@ -39,6 +39,8 @@ function sample(
 ): HistoricalSample {
   return {
     eventId: id,
+    // 每个样本一个独立任务 —— 需要「同一任务多次评估」时在用例里显式覆盖
+    workItemId: `item-${id}`,
     occurredAt: '2026-08-01T10:00:00.000Z',
     context: ctx(overrides),
     humanDecision,
@@ -193,5 +195,30 @@ describe('★ 模拟的诚实性 —— 必须告知局限', () => {
   it('样本充足且缺失少时置信度为 high', () => {
     const samples = Array.from({ length: 60 }, (_, i) => sample(`${i}`, {}));
     expect(simulate(draft, samples).confidence).toBe('high');
+  });
+});
+
+describe('不一致案例去重', () => {
+  /**
+   * ★ 一个任务在生命周期里会被评估很多次，每次都产生一个样本。
+   *   不去重的话「发现 10 处不一致」实际只是 4 个任务被数了两三遍 ——
+   *   用户点进去发现同一张卡片出现三次，就再也不信这个数字了。
+   */
+  it('★ 同一个任务的多次评估只算一处不一致', () => {
+    const samples: HistoricalSample[] = [
+      { ...sample('e1', { riskLevel: 'low' }, 'rejected'), workItemId: 'item-a' },
+      { ...sample('e2', { riskLevel: 'low' }, 'rejected'), workItemId: 'item-a' },
+      { ...sample('e3', { riskLevel: 'low' }, 'rejected'), workItemId: 'item-b' },
+    ];
+
+    const result = simulate(
+      { condition: { fact: 'riskLevel', op: 'eq', value: 'low' }, action: { type: 'allow' } },
+      samples,
+    );
+
+    expect(result.mismatches).toHaveLength(2);
+    expect(result.mismatches.map((m) => m.workItemId).sort()).toEqual(['item-a', 'item-b']);
+    // 原始次数仍然如实给出，两个数字的口径不同，页面各用各的
+    expect(result.mismatchEvaluations).toBe(3);
   });
 });
