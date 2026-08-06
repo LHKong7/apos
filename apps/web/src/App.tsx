@@ -7,8 +7,17 @@ import { useAuthStore } from './stores/auth';
 import { ProjectListPage } from './pages/ProjectList';
 import { BoardPage } from './pages/Board';
 import { RunDetailPage } from './pages/RunDetail';
+import { GraphPage } from './pages/Graph';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
+/**
+ * ★ 外层用 h-screen 而不是 min-h-screen。
+ *
+ *   min-height 不构成「确定高度」，下面所有 flex-1 都没法据此分配，
+ *   会退化成内容高度。执行图的画布因此塌成一百多像素，
+ *   整张图被缩到 17% 摆在正中间 —— 看起来像渲染坏了，实际数据完全正确。
+ *   页面本身不滚动，内部区域各自滚。
+ */
 export function App() {
   const setUsers = useAuthStore((s) => s.setUsers);
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
@@ -18,13 +27,14 @@ export function App() {
   }, [users.data, setUsers]);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-screen flex-col overflow-hidden">
       <TopNav />
       <ConnectionBanner />
       <main className="flex min-h-0 flex-1 flex-col">
         <Routes>
           <Route path="/" element={<ProjectListPage />} />
           <Route path="/projects/:projectId/board" element={<BoardPage />} />
+          <Route path="/projects/:projectId/graph" element={<GraphPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -1,9 +1,11 @@
+import type { LayoutKind } from '@apos/domain';
 import type {
   AgentSummary,
   BoardResponse,
   CostStep,
   DecisionDetail,
   DecisionRow,
+  GraphResponse,
   Project,
   RunControlAction,
   RunDetail,
@@ -101,6 +103,9 @@ export const api = {
     request<BoardResponse>(`/projects/${projectId}/board${boardQueryString(filters)}`),
 
   agents: (projectId: string) => request<{ agents: AgentSummary[] }>(`/projects/${projectId}/agents`),
+
+  graph: (projectId: string, layout: LayoutKind) =>
+    request<GraphResponse>(`/projects/${projectId}/graph?layout=${layout}`),
 
   workItem: (id: string) => request<WorkItemDetail>(`/work-items/${id}`),
 

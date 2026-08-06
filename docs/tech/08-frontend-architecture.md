@@ -292,6 +292,8 @@ const renderer = nodeCount > 100 ? 'canvas' : 'svg';
 
 SVG 便于交互（悬停、点击）但 100+ 节点后卡顿。Canvas 需要自己实现命中检测，但性能好得多。切换阈值需实测校准。
 
+> 现状：只实现了 SVG 一条路。超过 100 节点时页面顶部提示改用「关键路径」高亮聚焦主链，等真出现这么大的图再按实测换渲染器（§11 刻意没做）。
+
 ### 6.4 代码分割
 
 ```typescript
@@ -434,6 +436,7 @@ MVP 只做了看板闭环需要的部分。这里如实记录做了什么、没�
 | 决策抽屉 | `features/decision/DecisionDrawer` | 批准（可附加约束）/ 驳回；「不可代行」在界面上体现 |
 | 手动移动 | `features/work-item/ManualMoveDialog` | 强制填原因 + 分类，落到事件 |
 | Run 详情 | `pages/RunDetail` + `features/run/` | 执行流 / 输入 / 产物 / 成本 / 错误五个页签，简明⇄详细切换，运行时控制 |
+| 执行图 | `pages/Graph` + `features/graph/` | 分层 / 阶段泳道 / 执行者泳道三种布局，关键路径、上下游追溯、结构诊断 |
 | SSE | `lib/sse/` | 单连接多频道、退避重连、事件 → 缓存补丁 |
 | 编辑保护 | `stores/editing` | 远端更新不覆盖正在编辑的字段，冲突留痕 |
 | 通用组件 | `components/` | AssigneeChip、Human Gate 徽标、风险、成本、阻塞时长、空/错状态 |
@@ -442,7 +445,11 @@ MVP 只做了看板闭环需要的部分。这里如实记录做了什么、没�
 
 | 项 | 原因 |
 | --- | --- |
-| Execution Graph / Analytics / Policy 配置 / 集成设置 | 后端还没有对应接口，先做出来只能是假页面 |
+| Analytics / Policy 配置 / 集成设置 | 后端还没有对应接口，先做出来只能是假页面 |
+| 执行图的 Canvas 渲染（§6.3）| 演示数据 8 个节点，SVG 毫无压力。100 节点以上再换，现在换等于自己实现命中检测却测不出收益。超过 100 时页面顶部提示改用「关键路径」高亮聚焦 |
+| 执行图上直接改依赖 | 页面文档 07 §12.1 倾向只读：依赖是计划的一部分，在图上随手一拖就改掉，等于绕过计划批准。诊断给的动作是「让 Agent 重新规划」，改动仍走批准流程 |
+| 时间轴（甘特）布局 | 页面文档 07 §12.4 未定：任务没有真实排期字段，画出来的时间轴是编的 |
+| 执行图导出 | 图是活的，导出的是死的截图。真要分享，链接（`?layout=&highlight=&focus=`）比图片有用 |
 | 虚拟滚动 | 每列首屏 20 张，实测无需虚拟化。列内超过 50 张再引入 TanStack Virtual |
 | Radix UI / React Hook Form | 当前只有两个弹窗、三个表单字段，引入组件库的收益不抵体积 |
 | 权限判定同源（`packages/domain/src/permissions`） | 后端目前只有 `X-User-Id`，还没有角色模型，前端无从判起 |
@@ -466,6 +473,29 @@ Claude Code 没有暂停语义，点「暂停」实际会变成终止。暂停�
 这个差别对用户是决定性的。后端返回 `501 UNSUPPORTED_FEATURE` 并带上替代动作，
 界面把它连同「下一步能做什么」一起显示，而不是替用户做决定。
 
+### 执行图的三个取舍
+
+**关键路径、布局、诊断都在服务端算，前端只负责画。**
+三者互相咬合：主因归因要先有关键路径，「伪串行」诊断要反复重算去掉某条边之后的
+关键路径，泳道分层要先有拓扑序。放到前端就得把这套算法连同环检测一起搬过去，
+而它同时还要喂 `GET /graph` 的 `metrics.primaryCause`。现在一次请求把
+`nodes / edges / layout / metrics / diagnostics` 一起返回，客户端不存在
+「算了一半」的中间态，`@apos/domain/graph` 也只有一份实现。
+
+**诊断宁可少报，不可滥报。**
+「伪串行依赖」第一版在 6 条边里报了 5 条 —— 任何两个前后相接的任务在结构上
+都像可以并行，说了等于没说。改成必须同时满足三个条件才报：去掉这条边后关键路径
+真的缩短、缩短幅度 ≥ 1h、两端执行者不同；再按收益排序取前 2 条。诊断区是这一页
+唯一的「智能」，它一旦变成噪音，用户连带会忽略真正重要的阻塞告警。
+
+**★ 图缩成一个点，问题不在图上。**
+执行图一度渲染在 17%，数据全对却像坏了。根因是 App 外壳用了 `min-h-screen`：
+高度不确定，`flex-1` 就无从结算，画布容器的 `clientHeight` 接近 0，
+「适应窗口」老老实实算出了缩放下限。修法是外壳改 `h-screen overflow-hidden`
+（高度确定，`min-h-0` 一路传下去），并用 ResizeObserver 等尺寸稳定后再 fit ——
+比 `setTimeout` 猜一个延时可靠。这类 bug 单元测试永远碰不到，冒烟里固定了一条
+「适应窗口后缩放 ≥ 40%」来兜。
+
 ### 判定同源的两处
 
 前端不复制后端规则，两边引用同一份实现：
@@ -476,13 +506,12 @@ Claude Code 没有暂停语义，点「暂停」实际会变成终止。暂停�
 ### 本地跑起来
 
 ```bash
-bash scripts/pg-dev.sh                                   # 起 Postgres（开发库 + 测试库）
-DATABASE_URL=…/apos      pnpm db:migrate                 # 两个库都要建表
-DATABASE_URL=…/apos_test pnpm db:migrate
-DATABASE_URL=…/apos pnpm --filter @apos/api seed --reset # 造演示数据（走真实链路）
-DATABASE_URL=…/apos pnpm --filter @apos/api start        # :3000
-pnpm --filter @apos/web dev                              # :5173，/api 反代到 3000
-pnpm --filter @apos/web smoke <projectId>                # 真实浏览器冒烟
+bash scripts/dev-up.sh                                   # Postgres → 迁移 → API(:3000) → Vite(:5173)，幂等
+DATABASE_URL=…/apos pnpm --filter @apos/api seed --reset # 造演示数据（走真实链路，只在空库时需要）
+pnpm --filter @apos/web smoke <projectId>                # 真实浏览器冒烟（看板 / Run / 执行图）
 ```
+
+`dev-up.sh` 里面就是原来那几步（`pg-dev.sh` 起库、两个库分别 `db:migrate`、
+`@apos/api start`、`@apos/web dev`），拆开手动跑也一样。容器回收后重跑一遍即可。
 
 ★ `TEST_DATABASE_URL` 必须与 `DATABASE_URL` 不同 —— 测试在 `beforeEach` 里 TRUNCATE 全表。

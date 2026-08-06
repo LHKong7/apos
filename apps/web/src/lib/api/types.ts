@@ -323,3 +323,14 @@ export interface CostStep {
 }
 
 export type RunControlAction = 'pause' | 'resume' | 'terminate' | 'add_constraint';
+
+
+// ── 执行图（页面文档 07）─────────────────────────────────────────────
+
+export interface GraphResponse {
+  nodes: import('@apos/domain').GraphNode[];
+  edges: import('@apos/domain').GraphEdge[];
+  metrics: import('@apos/domain').GraphMetrics;
+  diagnostics: import('@apos/domain').Diagnostic[];
+  layout: import('@apos/domain').LayoutResult & { kind: import('@apos/domain').LayoutKind };
+}

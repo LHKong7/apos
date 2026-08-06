@@ -19,7 +19,13 @@ import {
   type Database,
 } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, humanActor, WorkItemStatus } from '@apos/contracts';
-import { WORK_ITEM_MACHINE, availableTriggers, manualTriggerFor } from '@apos/domain';
+import {
+  LAYOUTS,
+  WORK_ITEM_MACHINE,
+  availableTriggers,
+  manualTriggerFor,
+  type LayoutKind,
+} from '@apos/domain';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { EventBus } from '../modules/event/bus';
 import type { PlanningProvider } from '../modules/planning/provider';
@@ -37,6 +43,7 @@ import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, notFound, sendError } from './errors';
 import { handleSse } from './sse';
 import { getBoard } from './board';
+import { getGraph } from './graph';
 import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
 import { serializeEvent } from './serialize';
 
@@ -431,6 +438,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         };
       }),
     };
+  });
+
+  /** 执行图（页面文档 07）。布局在服务端算好，前端只负责渲染与交互 */
+  app.get('/api/v1/projects/:id/graph', async (req) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { layout?: string };
+    const layout = (LAYOUTS as readonly string[]).includes(q.layout ?? '')
+      ? (q.layout as LayoutKind)
+      : 'layered';
+
+    return getGraph(db, id, layout);
   });
 
   // ── Work Item ───────────────────────────────────────────────────────

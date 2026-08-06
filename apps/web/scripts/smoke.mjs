@@ -195,6 +195,69 @@ if (failedRun) {
   console.log('· 跳过失败 Run 检查：当前没有失败的 Run');
 }
 
+// ── 执行图（页面文档 07）────────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/graph`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+
+const nodeG = page.locator('svg[aria-label="执行图"] g.cursor-pointer');
+const graphNodes = await nodeG.count();
+check('执行图画出节点', graphNodes > 0, `${graphNodes} 个`);
+
+if (graphNodes > 0) {
+  // ★ 这条检查是有来历的：flex 容器没有确定高度时 clientHeight 读到接近 0，
+  //   适应窗口会算出下限 15%，图缩成中间一个小点 —— 数据全对，看起来却像坏了。
+  //   单元测试碰不到布局，只有真浏览器能发现。
+  const zoomPct = Number((await page.locator('text=/^\\d+%$/').first().innerText()).replace('%', ''));
+  check('★ 适应窗口后缩放比例合理（不是塌成一个点）', zoomPct >= 40, `${zoomPct}%`);
+
+  const bar = await page.locator('h1:has-text("执行图") >> xpath=../..').innerText();
+  check('关键路径信息条给出工期与主因', /关键路径/.test(bar) && /主因/.test(bar), bar.split('\n').find((l) => l.includes('主因')) ?? '');
+  check(
+    '关键路径的边被加粗标出',
+    (await page.locator('path[marker-end="url(#arrow-critical)"]').count()) > 0,
+  );
+  await shot('graph');
+
+  // ★ 上下游追溯：悬停一个节点，无关节点要淡出
+  await nodeG.first().hover();
+  await page.waitForTimeout(400);
+  const dimmed = await page.locator('svg[aria-label="执行图"] g.cursor-pointer[opacity="0.4"]').count();
+  check('★ 悬停节点后无关节点淡出（上下游追溯）', dimmed > 0, `淡出 ${dimmed} / ${graphNodes}`);
+  await page.mouse.move(10, 10);
+  await page.waitForTimeout(300);
+
+  // 每条诊断都必须带可执行动作 —— 只说「有问题」不说「怎么办」等于装饰
+  const panel = page.locator('li:has-text("在图中定位")');
+  const diagCount = await panel.count();
+  if (diagCount > 0) {
+    let allActionable = true;
+    for (let i = 0; i < diagCount; i++) {
+      if ((await panel.nth(i).locator('button').count()) < 2) allActionable = false;
+    }
+    check('★ 每条诊断都带可执行动作，不止是提示', allActionable, `${diagCount} 条`);
+  } else {
+    check('无诊断时明确说「没有发现问题」', (await page.getByText('没有发现结构性问题').count()) > 0);
+  }
+
+  // 右键菜单
+  await nodeG.first().click({ button: 'right' });
+  await page.waitForTimeout(300);
+  check('右键节点弹出操作菜单', (await page.getByRole('button', { name: '查看详情' }).count()) > 0);
+  await page.keyboard.press('Escape');
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.waitForTimeout(300);
+}
+
+// 布局切换换的是同一批节点的摆放，不该丢节点
+for (const [value, label] of [['stage', '阶段泳道'], ['executor', '执行者泳道']]) {
+  await page.selectOption('select[aria-label="布局"]', value);
+  await page.waitForTimeout(1000);
+  const laneCount = await page.locator('svg[aria-label="执行图"] rect[stroke="#e2e8f0"]').count();
+  const after = await nodeG.count();
+  check(`${label}布局可用且节点数不变`, after === graphNodes && laneCount > 0, `${laneCount} 条泳道`);
+  await shot(`graph-${value}`);
+}
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

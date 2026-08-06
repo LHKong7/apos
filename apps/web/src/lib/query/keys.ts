@@ -16,6 +16,9 @@ export const qk = {
   /** 匹配某项目下所有筛选组合的看板缓存 */
   boardAll: (projectId: string) => ['board', projectId] as const,
   agents: (projectId: string) => ['agents', projectId] as const,
+  graph: (projectId: string, layout: string) => ['graph', projectId, layout] as const,
+  /** 匹配某项目下所有布局的图缓存 */
+  graphAll: (projectId: string) => ['graph', projectId] as const,
   workItem: (id: string) => ['workItem', id] as const,
   decisions: (scope: string) => ['decisions', scope] as const,
   decisionsAll: () => ['decisions'] as const,

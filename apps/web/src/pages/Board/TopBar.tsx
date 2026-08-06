@@ -13,6 +13,7 @@ const VIEWS: { key: BoardView; label: string }[] = [
 
 interface Props {
   projectName: string;
+  onOpenGraph: () => void;
   summary: BoardSummary | undefined;
   view: BoardView;
   filters: BoardFilters;
@@ -30,6 +31,7 @@ interface Props {
  */
 export function TopBar({
   projectName,
+  onOpenGraph,
   summary,
   view,
   filters,
@@ -65,6 +67,14 @@ export function TopBar({
               {v.label}
             </button>
           ))}
+          {/* 执行图是独立页面而不是看板的一种视图 —— 它回答的是另一个问题 */}
+          <button
+            type="button"
+            onClick={onOpenGraph}
+            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            执行图 ↗
+          </button>
         </div>
 
         <select
