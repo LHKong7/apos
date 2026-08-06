@@ -1,4 +1,4 @@
-import { ANY_STATE, PREVIOUS_STATE, type WorkItemMachine } from './machine.js';
+import { ANY_STATE, PREVIOUS_STATE, type WorkItemMachine } from './machine';
 
 /**
  * Work Item 状态机 —— docs/tech/04-flow-engine.md §2.1

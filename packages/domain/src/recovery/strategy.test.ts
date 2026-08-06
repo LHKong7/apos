@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ErrorClass } from '@apos/contracts';
-import { decideRecovery, type RecoveryInput } from './strategy.js';
+import { decideRecovery, type RecoveryInput } from './strategy';
 
 function input(overrides: Partial<RecoveryInput> = {}): RecoveryInput {
   return {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { ActorType } from '../common/actor.js';
-import { PolicyContext } from '../policy/index.js';
+import { ActorType } from '../common/actor';
+import { PolicyContext } from '../policy/index';
 
 export const SubjectType = z.enum([
   'project',

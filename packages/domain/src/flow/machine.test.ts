@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STATUS_STAGE, WorkItemStatus, type WorkItemStatus as Status } from '@apos/contracts';
-import { ANY_STATE, availableTriggers, PREVIOUS_STATE, resolveTransition } from './machine.js';
-import { WORK_ITEM_MACHINE } from './work-item-machine.js';
+import { ANY_STATE, availableTriggers, PREVIOUS_STATE, resolveTransition } from './machine';
+import { WORK_ITEM_MACHINE } from './work-item-machine';
 
 const ALL_STATUSES = WorkItemStatus.options;
 

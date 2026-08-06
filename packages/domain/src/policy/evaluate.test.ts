@@ -6,8 +6,8 @@ import {
   type Policy,
   type PolicyContext,
 } from '@apos/contracts';
-import { BASELINE_POLICIES } from './baseline.js';
-import { applyOperator, compile, evaluate, matchCondition } from './evaluate.js';
+import { BASELINE_POLICIES } from './baseline';
+import { applyOperator, compile, evaluate, matchCondition } from './evaluate';
 
 function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
   return {

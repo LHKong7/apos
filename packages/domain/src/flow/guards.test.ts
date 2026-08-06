@@ -5,7 +5,7 @@ import {
   isDependencyMet,
   type DependencyView,
   type GuardContext,
-} from './guards.js';
+} from './guards';
 
 function dep(overrides: Partial<DependencyView> = {}): DependencyView {
   return {

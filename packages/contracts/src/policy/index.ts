@@ -7,8 +7,8 @@ import {
   OperationType,
   ReviewResult,
   RiskLevel,
-} from '../common/enums.js';
-import { WorkItemType } from '../work-item/index.js';
+} from '../common/enums';
+import { WorkItemType } from '../work-item/index';
 
 /**
  * Fact 清单 —— docs/tech/05-policy-engine.md §2.3

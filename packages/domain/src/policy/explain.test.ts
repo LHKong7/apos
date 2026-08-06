@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FACT_KEYS, Operator, type Action, type Condition } from '@apos/contracts';
-import { BASELINE_POLICIES } from './baseline.js';
-import { explainAction, explainCondition, explainPolicy, FACT_LABELS } from './explain.js';
+import { BASELINE_POLICIES } from './baseline';
+import { explainAction, explainCondition, explainPolicy, FACT_LABELS } from './explain';
 
 describe('模板覆盖度', () => {
   it('每个 fact 都有中文标签', () => {

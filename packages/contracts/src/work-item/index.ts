@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { ActorType } from '../common/actor.js';
-import { RiskLevel } from '../common/enums.js';
+import { ActorType } from '../common/actor';
+import { RiskLevel } from '../common/enums';
 
 /** 产品文档 6.3：统一工作对象，13 种可配置类型 */
 export const WorkItemType = z.enum([

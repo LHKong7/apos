@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Policy, PolicyContext } from '@apos/contracts';
-import { requiredFacts, simulate, type HistoricalSample } from './simulate.js';
+import { requiredFacts, simulate, type HistoricalSample } from './simulate';
 
 function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
   return {

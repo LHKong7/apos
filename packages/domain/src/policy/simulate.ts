@@ -1,5 +1,5 @@
 import type { Condition, FactKey, Policy, PolicyContext } from '@apos/contracts';
-import { isAutoApprove, matchCondition } from './evaluate.js';
+import { isAutoApprove, matchCondition } from './evaluate';
 
 /**
  * Policy 模拟回放 —— 页面文档 13 §5.7 / docs/tech/05-policy-engine.md §5
