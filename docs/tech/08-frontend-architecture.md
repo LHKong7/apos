@@ -417,3 +417,53 @@ interface EmptyStateProps {
 3. **移动端支持范围**：决策处理是移动端最有价值的场景（随时随地批准）。是否 MVP 就做移动端优化的决策中心？倾向于做响应式的决策中心与详情页，其余页面桌面优先。
 4. **离线与弱网**：SSE 断开时页面显示缓存数据 + 断线提示。是否需要更强的离线能力（如离线查看已加载数据）？倾向于不需要，这是协作型产品。
 5. **`@apos/contracts` 的体积**：Zod schema 会被打进前端包。如果 schema 很大需要考虑 tree-shaking 或只导出类型（`import type`）+ 运行时校验只在后端。倾向于前端只在表单校验处使用 Zod，其余用 `import type`。
+
+---
+
+## 11. 已实现范围（apps/web）
+
+MVP 只做了看板闭环需要的部分。这里如实记录做了什么、没做什么，避免把设计当成现状。
+
+### 已实现
+
+| 模块 | 文件 | 说明 |
+| --- | --- | --- |
+| 项目列表 | `pages/ProjectList` | 进入看板的入口 |
+| 智能看板 | `pages/Board` | Kanban / List / Agent / 待决策 四视图 |
+| 任务详情抽屉 | `features/work-item/WorkItemDrawer` | 概览 / 执行记录 / 时间线；含补充上下文重试 |
+| 决策抽屉 | `features/decision/DecisionDrawer` | 批准（可附加约束）/ 驳回；「不可代行」在界面上体现 |
+| 手动移动 | `features/work-item/ManualMoveDialog` | 强制填原因 + 分类，落到事件 |
+| SSE | `lib/sse/` | 单连接多频道、退避重连、事件 → 缓存补丁 |
+| 编辑保护 | `stores/editing` | 远端更新不覆盖正在编辑的字段，冲突留痕 |
+| 通用组件 | `components/` | AssigneeChip、Human Gate 徽标、风险、成本、阻塞时长、空/错状态 |
+
+### 刻意没做
+
+| 项 | 原因 |
+| --- | --- |
+| Execution Graph / Analytics / Policy 配置 / 集成设置 | 后端还没有对应接口，先做出来只能是假页面 |
+| 虚拟滚动 | 每列首屏 20 张，实测无需虚拟化。列内超过 50 张再引入 TanStack Virtual |
+| Radix UI / React Hook Form | 当前只有两个弹窗、三个表单字段，引入组件库的收益不抵体积 |
+| 权限判定同源（`packages/domain/src/permissions`） | 后端目前只有 `X-User-Id`，还没有角色模型，前端无从判起 |
+| Run 详情页（页面文档 09） | 暂时退回任务详情的「执行」页签 |
+
+### 判定同源的两处
+
+前端不复制后端规则，两边引用同一份实现：
+
+- **拖拽落点**：`evaluateDrop` → `manualTargetForStage`（`@apos/domain`），后端 PATCH 用 `manualTriggerFor`，同一个状态机推导
+- **卡片归属的列**：`stageFor`（`@apos/contracts`），看板 API 与 SSE 补丁用的是同一个函数
+
+### 本地跑起来
+
+```bash
+bash scripts/pg-dev.sh                                   # 起 Postgres（开发库 + 测试库）
+DATABASE_URL=…/apos      pnpm db:migrate                 # 两个库都要建表
+DATABASE_URL=…/apos_test pnpm db:migrate
+DATABASE_URL=…/apos pnpm --filter @apos/api seed --reset # 造演示数据（走真实链路）
+DATABASE_URL=…/apos pnpm --filter @apos/api start        # :3000
+pnpm --filter @apos/web dev                              # :5173，/api 反代到 3000
+pnpm --filter @apos/web smoke <projectId>                # 真实浏览器冒烟
+```
+
+★ `TEST_DATABASE_URL` 必须与 `DATABASE_URL` 不同 —— 测试在 `beforeEach` 里 TRUNCATE 全表。

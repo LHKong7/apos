@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+      'Microsoft YaHei', sans-serif;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+@layer utilities {
+  /* 看板横向滚动区：列不换行，整体横滚 */
+  .board-scroll {
+    scrollbar-width: thin;
+  }
+  .board-scroll::-webkit-scrollbar {
+    height: 8px;
+  }
+  .board-scroll::-webkit-scrollbar-thumb {
+    @apply rounded bg-slate-300;
+  }
+}

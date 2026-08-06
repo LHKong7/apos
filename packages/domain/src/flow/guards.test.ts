@@ -21,6 +21,8 @@ function dep(overrides: Partial<DependencyView> = {}): DependencyView {
 function guardCtx(overrides: Partial<GuardContext> = {}): GuardContext {
   return {
     status: 'ready',
+    // 默认跨列（planning → execution），WIP 才有意义
+    currentStage: 'planning',
     targetStage: 'execution',
     dependencies: [],
     acceptanceCriteria: [],
@@ -122,6 +124,37 @@ describe('evaluateGuards', () => {
 
   it('未配置 WIP 限制时不拦截', () => {
     expect(evaluateGuards(['wipAvailable'], guardCtx({ stageCount: 999 }))).toEqual([]);
+  });
+
+  /**
+   * 这条不加就会死锁：计划批准后任务都落在 Execution 列的 ready，
+   * 数量一旦超过上限，ready → executing 也会被拦，
+   * 结果是看板上 Execution 列满满当当却一个都没在跑。
+   */
+  it('★ 列内流转不消耗 WIP —— ready → executing 不算进入新列', () => {
+    const failures = evaluateGuards(
+      ['wipAvailable'],
+      guardCtx({
+        currentStage: 'execution',
+        targetStage: 'execution',
+        stageCount: 99,
+        wipLimits: { execution: 3 },
+      }),
+    );
+    expect(failures).toEqual([]);
+  });
+
+  it('跨列进入时仍然按上限拦截', () => {
+    const failures = evaluateGuards(
+      ['wipAvailable'],
+      guardCtx({
+        currentStage: 'execution',
+        targetStage: 'review',
+        stageCount: 4,
+        wipLimits: { review: 4 },
+      }),
+    );
+    expect(failures[0]?.reason).toContain('review 阶段已达 WIP 上限 4');
   });
 
   it('★ Agent 完成但零产出应被拦截', () => {

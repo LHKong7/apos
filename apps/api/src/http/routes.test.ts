@@ -313,6 +313,62 @@ describe('★ 手动状态调整必须留痕', () => {
     expect(res.json().error.details.allowedTriggers).toContain('run_dispatched');
   });
 
+  /**
+   * 目标状态到 trigger 的映射一度是手写表，ready 被写死成 retry_requested，
+   * 于是「返工后重新开始」（changes_requested → ready，走 rework_started）
+   * 在界面上能拖、后端一律 409。同一个目标状态可以从不同来源经不同 trigger 抵达，
+   * 只有状态机知道该用哪个。
+   */
+  it('★ 同一目标状态按来源选 trigger：返工重新开始走得通', async () => {
+    const item = await createWorkItem(db, fx, { status: 'changes_requested' });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/work-items/${item.id}/status`,
+      headers: auth(),
+      payload: { toStatus: 'ready', reason: '按评审意见改完了，重新开始' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().to).toBe('ready');
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/work-items/${item.id}`,
+      headers: auth(),
+    });
+    const changed = detail
+      .json()
+      .timeline.find((e: { type: string }) => e.type === 'work_item.status_changed');
+    expect(changed.payload.trigger).toBe('rework_started');
+  });
+
+  it('人不能伪造只属于系统的 trigger', async () => {
+    const item = await createWorkItem(db, fx, { status: 'executing' });
+
+    // executing → reviewing 有两条路：agent_run_completed（系统）与
+    // human_work_completed（人）。人发起时必须走后者，否则事件流里
+    // 会出现「Agent 报告完成」而实际上没有 Agent 做过任何事
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/work-items/${item.id}/status`,
+      headers: auth(),
+      payload: { toStatus: 'reviewing', reason: '我手工做完了' },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/work-items/${item.id}`,
+      headers: auth(),
+    });
+    const changed = detail
+      .json()
+      .timeline.find((e: { type: string }) => e.type === 'work_item.status_changed');
+    expect(changed.payload.trigger).toBe('human_work_completed');
+  });
+
   it('Guard 未通过时返回 409 与可读原因', async () => {
     const item = await createWorkItem(db, fx, {
       status: 'reviewing',

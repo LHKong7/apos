@@ -16,15 +16,8 @@ export interface EffectContext {
  * 由 transition 合并进同一条 UPDATE —— 保证与状态变更原子。
  */
 const EFFECTS: Record<string, (ctx: EffectContext) => WorkItemPatch> = {
-  /**
-   * 进入决策等待前记住原状态，供 $previous 回退。
-   * 同时打上 Human Gate —— 卡片留在原阶段（见 stageFor），
-   * 靠这个徽标告诉人「这张卡在等你」（页面文档 05 §5.4）。
-   */
-  rememberPreviousStatus: ({ from }) => ({
-    previousStatus: from,
-    humanGate: 'waiting_for_decision' as const,
-  }),
+  /** 进入决策等待前记住原状态，供 $previous 回退 */
+  rememberPreviousStatus: ({ from }) => ({ previousStatus: from }),
 
   clearPreviousStatus: () => ({ previousStatus: null }),
 

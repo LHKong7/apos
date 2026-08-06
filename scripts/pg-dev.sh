@@ -20,10 +20,20 @@ case "${1:-start}" in
     fi
     runuser -u apospg -- pg_ctl -D "$PGDATA" -o "-p $PORT -k /tmp" -l "$PGDATA/log" start
     until pg_isready -h /tmp -p "$PORT" >/dev/null 2>&1; do sleep 0.3; done
-    psql -h /tmp -p "$PORT" -U apos -d postgres -tc \
-      "SELECT 1 FROM pg_database WHERE datname='apos'" | grep -q 1 ||
-      psql -h /tmp -p "$PORT" -U apos -d postgres -c "CREATE DATABASE apos;"
-    echo "postgres ready: postgres://apos@localhost:$PORT/apos"
+    # ★ 开发库与测试库必须分开：测试在 beforeEach 里 TRUNCATE 全表，
+    #   共用一个库的话，跑一次测试就把正在调试的看板数据清空了
+    for dbname in apos apos_test; do
+      psql -h /tmp -p "$PORT" -U apos -d postgres -tc \
+        "SELECT 1 FROM pg_database WHERE datname='$dbname'" | grep -q 1 ||
+        psql -h /tmp -p "$PORT" -U apos -d postgres -c "CREATE DATABASE $dbname;"
+    done
+    echo "postgres ready:"
+    echo "  开发  postgres://apos@localhost:$PORT/apos"
+    echo "  测试  postgres://apos@localhost:$PORT/apos_test"
+    echo
+    echo "首次使用两个库都要建表："
+    echo "  DATABASE_URL=postgres://apos@localhost:$PORT/apos       pnpm db:migrate"
+    echo "  DATABASE_URL=postgres://apos@localhost:$PORT/apos_test  pnpm db:migrate"
     ;;
   stop)
     runuser -u apospg -- pg_ctl -D "$PGDATA" stop

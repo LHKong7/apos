@@ -185,6 +185,16 @@ export async function transition(
         version: item.version + 1,
         updatedAt: new Date(),
         previousStatus: finalStatus === 'awaiting_decision' ? intendedStatus : null,
+        /**
+         * Human Gate 徽标。放在这里而不是某条规则的 effects 里 ——
+         * 它取决于「最终停在哪个状态」，而挂起可能来自两条完全不同的路径：
+         * 状态机自身的 decision_required，或 Policy 把一次普通流转拦下来。
+         * 只在其中一条路径上打徽标，另一条的卡片就只是静静停住，
+         * 看板上看不出它在等人。
+         */
+        ...(finalStatus === 'awaiting_decision'
+          ? { humanGate: 'waiting_for_decision' as const }
+          : {}),
         ...effectPatch,
       })
       .where(and(eq(workItems.id, item.id), eq(workItems.version, item.version)))

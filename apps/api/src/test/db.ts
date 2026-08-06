@@ -3,8 +3,15 @@ import { sql } from 'drizzle-orm';
 import { createDatabase, organizations, projects, users, workItems, type Database } from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
 
+/**
+ * ★ 默认指向 apos_test，绝不是开发库。
+ *
+ * resetDb 会 TRUNCATE 全表 —— 默认值一旦和 DATABASE_URL 相同，
+ * 跑一次测试就把正在调试的数据清空，而且现象是「页面突然 404」，
+ * 很难第一时间联想到是测试干的。
+ */
 export const TEST_DATABASE_URL =
-  process.env['TEST_DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
+  process.env['TEST_DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos_test';
 
 let cached: Database | null = null;
 

@@ -36,6 +36,8 @@ export interface DependencyView {
 
 export interface GuardContext {
   status: WorkItemStatus;
+  /** 任务当前所在阶段 —— 与 targetStage 相同表示这次流转不跨列 */
+  currentStage: string;
   targetStage: string;
   dependencies: DependencyView[];
   acceptanceCriteria: AcceptanceCriterion[];
@@ -97,6 +99,15 @@ export const GUARDS: Record<string, Guard> = {
   },
 
   wipAvailable(ctx) {
+    /**
+     * ★ WIP 限制管的是「进入这一列」，不是「在这一列里前进」。
+     *
+     * ready → executing 就发生在 Execution 列内部，列的占用数根本没变。
+     * 不区分这一点会死锁：计划批准后所有任务都落在 Execution 列的 ready，
+     * 一旦数量超过上限，就再没有任务能开始执行，而看板上明明一个都没在跑。
+     */
+    if (ctx.currentStage === ctx.targetStage) return { ok: true };
+
     const limit = ctx.wipLimits[ctx.targetStage];
     if (limit === undefined) return { ok: true };
     if (ctx.stageCount < limit) return { ok: true };

@@ -92,6 +92,7 @@ export async function buildGuardContext(
 
   return {
     status: item.status,
+    currentStage: item.stage,
     targetStage,
     dependencies: await loadDependencies(tx, item.id),
     acceptanceCriteria: item.acceptanceCriteria,

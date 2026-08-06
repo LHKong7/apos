@@ -2,13 +2,19 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
+    include: ['packages/*/src/**/*.test.{ts,tsx}', 'apps/*/src/**/*.test.{ts,tsx}'],
     environment: 'node',
+    // 前端组件测试要 DOM，其余保持 node（快得多）
+    environmentMatchGlobs: [['apps/web/**', 'jsdom']],
+    setupFiles: ['./apps/web/src/test/setup.ts'],
     globals: false,
     // 集成测试共用一个数据库并在 beforeEach 里 TRUNCATE，
     // 文件级并行会互相清表。整套跑完只需几秒，串行代价可接受。
     fileParallelism: false,
     hookTimeout: 20_000,
+  },
+  esbuild: {
+    jsx: 'automatic',
   },
   resolve: {
     alias: {

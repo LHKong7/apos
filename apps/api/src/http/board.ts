@@ -9,6 +9,7 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
+import { notFound } from './errors';
 import {
   HUMAN_GATE_PRIORITY,
   Stage,
@@ -87,7 +88,8 @@ export async function getBoard(
   filters: BoardFilters = {},
 ): Promise<{ columns: BoardColumn[]; summary: BoardSummary }> {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw new Error('项目不存在');
+  // 抛普通 Error 会被错误处理器归为 500，让调用方以为是服务端故障
+  if (!project) throw notFound('项目');
 
   const conditions = [eq(workItems.projectId, projectId), isNull(workItems.deletedAt)];
   if (filters.riskLevel?.length) {
@@ -232,8 +234,16 @@ async function enrich(db: Database, rows: WorkItemRow[]): Promise<BoardCard[]> {
             }
           : null,
       owner: r.ownerId ? { id: r.ownerId, name: userName.get(r.ownerId) ?? '未知' } : null,
-      humanGate: r.humanGate,
-      humanGateRef: decision?.id ?? r.humanGateRef,
+      /**
+       * ★ 有待办决策时，Gate 一定显示为「在等人」。
+       *
+       * work_items.human_gate 是上一次流转留下的值，会滞后：
+       * 一个任务上可能同时挂着两条决策，批掉其中一条会把它写成 approved，
+       * 而另一条还在等人 —— 卡片却显示「已批准」，还带着「处理 →」按钮。
+       * 待办决策是当下的事实，存量字段只是历史。
+       */
+      humanGate: decision ? 'waiting_for_decision' : r.humanGate,
+      humanGateRef: decision?.id ?? null,
       decisionDueInMinutes: decision?.dueAt
         ? Math.round((decision.dueAt.getTime() - now) / 60_000)
         : null,

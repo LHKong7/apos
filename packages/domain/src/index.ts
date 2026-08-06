@@ -1,5 +1,6 @@
 export * from './flow/machine';
 export * from './flow/work-item-machine';
+export * from './flow/manual';
 export * from './flow/guards';
 export * from './policy/evaluate';
 export * from './policy/baseline';

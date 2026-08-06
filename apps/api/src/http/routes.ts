@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z, ZodError } from 'zod';
 import {
   agentRuns,
+  agents,
   artifacts,
+  decisionOptions,
   decisions,
   events,
   plans,
@@ -12,10 +14,12 @@ import {
   requirementClarifications,
   requirements,
   runEvents,
+  users,
   workItems,
   type Database,
 } from '@apos/db';
 import { humanActor, WorkItemStatus } from '@apos/contracts';
+import { WORK_ITEM_MACHINE, availableTriggers, manualTriggerFor } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import type { EventBus } from '../modules/event/bus';
 import type { PlanningProvider } from '../modules/planning/provider';
@@ -29,6 +33,7 @@ import { scheduleRound } from '../modules/flow/scheduler';
 import { transition } from '../modules/flow/transition';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { ingestRunEvent } from '../modules/agent/ingest';
+import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, notFound, sendError } from './errors';
 import { handleSse } from './sse';
 import { getBoard } from './board';
@@ -95,6 +100,24 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   app.get('/health', async () => ({ ok: true }));
+
+  // ── 身份 ────────────────────────────────────────────────────────────
+  // MVP 用 X-User-Id 头认证，前端需要一份可选身份列表来切换视角
+  // （验证「只看需我处理」和「决策不可代行」都要换人看）
+  app.get('/api/v1/users', async () => {
+    const rows = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatarUrl: users.avatarUrl,
+        orgRole: users.orgRole,
+        approvalScopes: users.approvalScopes,
+      })
+      .from(users)
+      .orderBy(users.name);
+    return { users: rows };
+  });
 
   // ── 项目 ────────────────────────────────────────────────────────────
   app.get('/api/v1/projects', async () => {
@@ -292,6 +315,78 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
   });
 
+  /**
+   * Agent 视图（页面文档 05 §5.7）用。
+   *
+   * 返回负载与当前承担的任务 —— 这是「按 Agent 分泳道」视图的全部数据来源，
+   * 一次查完，避免前端逐个 Agent 拉任务。
+   */
+  app.get('/api/v1/projects/:id/agents', async (req) => {
+    const { id } = req.params as { id: string };
+    const [project] = await db.select().from(projects).where(eq(projects.id, id));
+    if (!project) throw notFound('项目');
+
+    const rows = await db
+      .select({
+        id: agents.id,
+        name: agents.name,
+        type: agents.type,
+        status: agents.status,
+        model: agents.model,
+        skills: agents.skills,
+        maxConcurrency: agents.maxConcurrency,
+        costLimitPerRun: agents.costLimitPerRun,
+        stats: agents.stats,
+      })
+      .from(agents)
+      .where(eq(agents.orgId, project.orgId));
+
+    const items = await db
+      .select()
+      .from(workItems)
+      .where(
+        and(
+          eq(workItems.projectId, id),
+          eq(workItems.executorType, 'agent'),
+          isNull(workItems.deletedAt),
+        ),
+      );
+
+    const runs = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.projectId, id))
+      .orderBy(desc(agentRuns.attempt));
+    const latestRun = new Map<string, (typeof runs)[number]>();
+    for (const r of runs) if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+
+    return {
+      agents: rows.map((a) => {
+        const mine = items.filter((i) => i.executorId === a.id);
+        return {
+          ...a,
+          load: mine.filter((i) => i.status === 'executing').length,
+          todaySpentUsd: runs
+            .filter((r) => r.agentId === a.id)
+            .reduce((sum, r) => sum + Number(r.cost ?? 0), 0),
+          items: mine.map((i) => {
+            const run = latestRun.get(i.id);
+            return {
+              id: i.id,
+              title: i.title,
+              status: i.status,
+              consecutiveFailures: i.consecutiveFailures,
+              progress:
+                run && run.stepCurrent !== null
+                  ? { step: run.stepCurrent, total: run.stepTotal }
+                  : null,
+            };
+          }),
+        };
+      }),
+    };
+  });
+
   // ── Work Item ───────────────────────────────────────────────────────
   app.get('/api/v1/work-items/:id', async (req) => {
     const { id } = req.params as { id: string };
@@ -329,9 +424,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const body = StatusChange.parse(req.body);
 
-    const trigger = triggerFor(body.toStatus);
+    const [current] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!current) throw notFound('任务');
+
+    const trigger = manualTriggerFor(current.status, body.toStatus);
     if (!trigger) {
-      throw new ApiError('INVALID_TRANSITION', `不支持手动切换到 ${body.toStatus}`);
+      throw new ApiError(
+        'INVALID_TRANSITION',
+        `当前状态 ${current.status} 不能手动切换到 ${body.toStatus}`,
+        { from: current.status, allowedTriggers: availableTriggers(WORK_ITEM_MACHINE, current.status) },
+      );
     }
 
     const result = await transition(db, {
@@ -456,6 +558,75 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         dueInMinutes: d.dueAt ? Math.round((d.dueAt.getTime() - now) / 60_000) : null,
       })),
     };
+  });
+
+  app.get('/api/v1/decisions/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
+    if (!decision) throw notFound('决策');
+
+    const options = await db
+      .select()
+      .from(decisionOptions)
+      .where(eq(decisionOptions.decisionId, id))
+      .orderBy(decisionOptions.position);
+
+    const item = decision.workItemId
+      ? (
+          await db.select().from(workItems).where(eq(workItems.id, decision.workItemId))
+        )[0]
+      : null;
+
+    return {
+      decision: {
+        ...decision,
+        dueInMinutes: decision.dueAt
+          ? Math.round((decision.dueAt.getTime() - Date.now()) / 60_000)
+          : null,
+      },
+      options,
+      workItem: item ?? null,
+    };
+  });
+
+  /**
+   * 催办（页面文档 05 §5.6「处理阻塞」）。
+   *
+   * 冷却期存在的理由很实际：阻塞卡片就在眼前，不设冷却会被连点，
+   * 决策人一分钟收十条提醒之后就会把通知静音。
+   */
+  app.post('/api/v1/decisions/:id/remind', async (req) => {
+    const { actor } = actorFrom(req);
+    const { id } = req.params as { id: string };
+
+    const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
+    if (!decision) throw notFound('决策');
+    if (decision.status !== 'pending') {
+      throw new ApiError('VERSION_CONFLICT', '该决策已被处理', { status: decision.status });
+    }
+
+    const cooldownMs = 30 * 60_000;
+    const since = decision.remindedAt ? Date.now() - decision.remindedAt.getTime() : Infinity;
+    if (since < cooldownMs) {
+      throw new ApiError('RATE_LIMITED', '刚刚已经催办过了，请稍后再试', {
+        retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000),
+      });
+    }
+
+    await db.update(decisions).set({ remindedAt: new Date() }).where(eq(decisions.id, id));
+
+    await emitAndPublish(db, {
+      orgId: decision.orgId,
+      projectId: decision.projectId,
+      actor,
+      type: 'decision.reminded',
+      subjectType: 'decision',
+      subjectId: id,
+      payload: { assigneeId: decision.assigneeId, workItemId: decision.workItemId },
+      correlationId: corr(req),
+    });
+
+    return { ok: true, decisionId: id };
   });
 
   app.post('/api/v1/decisions/:id/approve', async (req) => {
@@ -603,28 +774,19 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       throw new ApiError('VALIDATION_FAILED', '必须指定至少一个频道');
     }
 
-    const lastEventId = req.headers['last-event-id'];
+    /**
+     * 浏览器只在 EventSource 自己重连时才带 Last-Event-ID 头。
+     * 前端因为频道变化主动新建连接时带不上，所以同时支持 query 参数。
+     */
+    const header = req.headers['last-event-id'];
+    const fromQuery = (req.query as { lastEventId?: string }).lastEventId;
+    const lastEventId = typeof header === 'string' ? header : fromQuery;
+
     return handleSse(req, reply, deps, {
       channels,
-      lastEventId: typeof lastEventId === 'string' ? lastEventId : undefined,
+      lastEventId: typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined,
     });
   });
-}
-
-/** 手动状态调整支持的目标状态 → trigger */
-function triggerFor(status: string) {
-  const map: Record<string, Parameters<typeof transition>[1]['trigger']> = {
-    ready: 'retry_requested',
-    executing: 'human_work_started',
-    reviewing: 'human_work_completed',
-    waiting_for_release: 'review_passed',
-    changes_requested: 'review_rejected',
-    releasing: 'release_started',
-    acceptance: 'release_completed',
-    done: 'accepted',
-    cancelled: 'cancelled',
-  };
-  return map[status];
 }
 
 /**
