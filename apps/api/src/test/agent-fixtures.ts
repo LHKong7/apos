@@ -22,6 +22,7 @@ export async function seedAgent(
     maxConcurrency?: number;
     costLimitPerRun?: string;
     stats?: Record<string, unknown>;
+    applicableTypes?: ('task' | 'bug' | 'test' | 'research' | 'review' | 'release')[];
   } = {},
 ): Promise<AgentFixture> {
   const runtime = opts.runtime ?? new MockRuntime();
@@ -50,7 +51,7 @@ export async function seedAgent(
       runtimeRef: 'mock:code-1',
       model: 'claude-opus-5',
       skills: opts.skills ?? ['TypeScript', 'SQL 优化'],
-      applicableTypes: ['task', 'bug', 'test'],
+      applicableTypes: opts.applicableTypes ?? ['task', 'bug', 'test', 'research', 'review'],
       allowedTools: opts.allowedTools ?? ['read_file', 'write_file', 'run_tests', 'create_pr'],
       deniedTools: opts.deniedTools ?? ['merge_pr'],
       maxConcurrency: opts.maxConcurrency ?? 3,
