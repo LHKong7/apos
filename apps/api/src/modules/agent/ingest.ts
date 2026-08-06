@@ -8,6 +8,7 @@ import {
 } from '@apos/contracts';
 import { decideRecovery } from '@apos/domain';
 import { emit } from '../event/emitter';
+import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 
 export interface IngestInput {
@@ -173,14 +174,12 @@ async function promote(
 
   switch (event.type) {
     case 'run_started':
-      await db.transaction(async (tx) => {
-        await emit(tx, {
-          ...base,
-          type: 'agent_run.started',
-          subjectType: 'agent_run',
-          subjectId: run.id,
-          payload: { model: event.model, tools: event.toolsAvailable },
-        });
+      await emitAndPublish(db, {
+        ...base,
+        type: 'agent_run.started',
+        subjectType: 'agent_run',
+        subjectId: run.id,
+        payload: { model: event.model, tools: event.toolsAvailable },
       });
       return { promoted: true, transitioned: false };
 
@@ -234,14 +233,12 @@ async function promote(
         const before = ((Number(project.spent) - event.deltaUsd) / Number(project.budget)) * 100;
         for (const threshold of [80, 100]) {
           if (before < threshold && pct >= threshold) {
-            await db.transaction(async (tx) => {
-              await emit(tx, {
-                ...base,
-                type: 'project.budget_threshold_reached',
-                subjectType: 'project',
-                subjectId: run.projectId,
-                payload: { thresholdPct: threshold, spent: project.spent, budget: project.budget },
-              });
+            await emitAndPublish(db, {
+              ...base,
+              type: 'project.budget_threshold_reached',
+              subjectType: 'project',
+              subjectId: run.projectId,
+              payload: { thresholdPct: threshold, spent: project.spent, budget: project.budget },
             });
             return { promoted: true, transitioned: false };
           }
@@ -252,14 +249,12 @@ async function promote(
 
     case 'run_ended': {
       if (event.outcome === 'completed') {
-        await db.transaction(async (tx) => {
-          await emit(tx, {
-            ...base,
-            type: 'agent_run.completed',
-            subjectType: 'agent_run',
-            subjectId: run.id,
-            payload: { summary: event.summary, cost: run.cost, attempt: run.attempt },
-          });
+        await emitAndPublish(db, {
+          ...base,
+          type: 'agent_run.completed',
+          subjectType: 'agent_run',
+          subjectId: run.id,
+          payload: { summary: event.summary, cost: run.cost, attempt: run.attempt },
         });
 
         const moved = await transition(db, {
@@ -275,14 +270,12 @@ async function promote(
         return handleFailure(db, run, correlationId, event.summary);
       }
 
-      await db.transaction(async (tx) => {
-        await emit(tx, {
-          ...base,
-          type: 'agent_run.terminated',
-          subjectType: 'agent_run',
-          subjectId: run.id,
-          payload: { reason: event.summary },
-        });
+      await emitAndPublish(db, {
+        ...base,
+        type: 'agent_run.terminated',
+        subjectType: 'agent_run',
+        subjectId: run.id,
+        payload: { reason: event.summary },
       });
       return { promoted: true, transitioned: false };
     }
@@ -326,25 +319,23 @@ async function handleFailure(
     consecutiveFailures: consecutive,
   });
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      orgId: run.orgId,
-      projectId: run.projectId,
-      actor,
-      correlationId,
-      type: 'agent_run.failed',
-      subjectType: 'agent_run',
-      subjectId: run.id,
-      payload: {
-        errorClass: run.errorClass,
-        errorMessage: run.errorMessage,
-        selfReport: run.agentSelfReport,
-        attempt: run.attempt,
-        consecutiveFailures: consecutive,
-        summary,
-        recovery,
-      },
-    });
+  await emitAndPublish(db, {
+    orgId: run.orgId,
+    projectId: run.projectId,
+    actor,
+    correlationId,
+    type: 'agent_run.failed',
+    subjectType: 'agent_run',
+    subjectId: run.id,
+    payload: {
+      errorClass: run.errorClass,
+      errorMessage: run.errorMessage,
+      selfReport: run.agentSelfReport,
+      attempt: run.attempt,
+      consecutiveFailures: consecutive,
+      summary,
+      recovery,
+    },
   });
 
   const moved = await transition(db, {

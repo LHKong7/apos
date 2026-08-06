@@ -10,6 +10,7 @@ import {
   type Database,
 } from '@apos/db';
 import {
+  stageFor,
   STATUS_STAGE,
   SYSTEM_ACTOR,
   type ActorRef,
@@ -32,6 +33,7 @@ import {
   type WorkItemTrigger,
 } from '@apos/domain';
 import { emit, type EmittedEvent, type Tx } from '../event/emitter';
+import { defaultBus } from '../event/bus';
 import { buildGuardContext, buildPolicyContext } from './context';
 import { applyEffects } from './effects';
 
@@ -145,8 +147,13 @@ export async function transition(
     let finalStatus = target;
     let createdDecisionId: string | null = null;
 
+    // 记住任务「本来要去哪」：决策批准后从这里恢复，
+    // 同时决定它在看板上停留在哪一列
+    let intendedStatus: WorkItemStatus | null = item.previousStatus;
+
     if (verdict.requiresHuman) {
       finalStatus = verdict.action.type === 'pause' ? 'blocked' : 'awaiting_decision';
+      intendedStatus = target;
       createdDecisionId = await createDecisionFor(tx, item, verdict, target);
     }
 
@@ -163,9 +170,10 @@ export async function transition(
       .update(workItems)
       .set({
         status: finalStatus,
-        stage: STATUS_STAGE[finalStatus],
+        stage: stageFor(finalStatus, intendedStatus),
         version: item.version + 1,
         updatedAt: new Date(),
+        previousStatus: finalStatus === 'awaiting_decision' ? intendedStatus : null,
         ...effectPatch,
       })
       .where(and(eq(workItems.id, item.id), eq(workItems.version, item.version)))
@@ -251,12 +259,15 @@ export async function transition(
       ok: true,
       from,
       to: finalStatus,
-      stage: STATUS_STAGE[finalStatus],
+      stage: stageFor(finalStatus, intendedStatus),
       verdict,
       createdDecisionId,
       events: outbox,
     } as const;
   });
+
+  // ★ 事务提交后才发布 —— 订阅者不会看到未提交的状态
+  if (outbox.length > 0) defaultBus.publish(outbox);
 
   return result as TransitionResult;
 }

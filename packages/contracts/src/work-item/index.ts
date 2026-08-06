@@ -81,6 +81,26 @@ export const STATUS_STAGE: Record<WorkItemStatus, Stage> = {
 
 export const TERMINAL_STATUSES: readonly WorkItemStatus[] = ['done', 'cancelled'] as const;
 
+/**
+ * 看板列归属。
+ *
+ * ★ awaiting_decision 不是一个「阶段」，而是一个横切状态：任务可能在
+ *   执行前、执行后、发布前的任意时刻等待人类拍板。直接把它归到 review 列
+ *   会让「等待执行前审批」的任务看起来像「已经做完了在审核」。
+ *
+ *   页面文档 05 §5.4：Human Gate 通过卡片徽标体现，不展开为独立看板列。
+ *   因此这里让卡片留在它本来要去的阶段。
+ */
+export function stageFor(
+  status: WorkItemStatus,
+  previousStatus?: WorkItemStatus | null,
+): Stage {
+  if (status === 'awaiting_decision' && previousStatus) {
+    return STATUS_STAGE[previousStatus];
+  }
+  return STATUS_STAGE[status];
+}
+
 /** 依赖类型（产品文档 8.6.2） */
 export const DependencyType = z.enum([
   'finish_to_start',

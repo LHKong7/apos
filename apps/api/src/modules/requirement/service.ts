@@ -7,6 +7,7 @@ import {
 } from '@apos/db';
 import { humanActor, SYSTEM_ACTOR, type ActorRef } from '@apos/contracts';
 import { emit } from '../event/emitter';
+import { emitAndPublish } from '../event/bus';
 import type { PlanningProvider } from '../planning/provider';
 
 /** 需求完整度六维评分（产品文档 8.2.3） */
@@ -149,23 +150,21 @@ export async function analyzeRequirement(
     })
     .where(eq(requirements.id, req.id));
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'requirement.analyzed',
-      orgId: req.orgId,
-      projectId: req.projectId,
-      actor: input.actor ?? SYSTEM_ACTOR,
-      subjectType: 'requirement',
-      subjectId: req.id,
-      payload: {
-        completeness,
-        questionCount: structured.clarifications.length,
-        mustConfirmCount: mustConfirm,
-        cost: structured.cost,
-        model: structured.model,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'requirement.analyzed',
+    orgId: req.orgId,
+    projectId: req.projectId,
+    actor: input.actor ?? SYSTEM_ACTOR,
+    subjectType: 'requirement',
+    subjectId: req.id,
+    payload: {
+      completeness,
+      questionCount: structured.clarifications.length,
+      mustConfirmCount: mustConfirm,
+      cost: structured.cost,
+      model: structured.model,
+    },
+    correlationId: input.correlationId,
   });
 
   return {
@@ -199,22 +198,20 @@ export async function answerClarification(db: Database, input: AnswerInput) {
     .from(requirements)
     .where(eq(requirements.id, row.requirementId));
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'requirement.clarification_answered',
-      level: 'detail',
-      orgId: req!.orgId,
-      projectId: req!.projectId,
-      actor: humanActor(input.actorId),
-      subjectType: 'requirement',
-      subjectId: row.requirementId,
-      payload: {
-        questionId: row.id,
-        level: row.level,
-        usedSuggestion: input.usedSuggestion,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'requirement.clarification_answered',
+    level: 'detail',
+    orgId: req!.orgId,
+    projectId: req!.projectId,
+    actor: humanActor(input.actorId),
+    subjectType: 'requirement',
+    subjectId: row.requirementId,
+    payload: {
+      questionId: row.id,
+      level: row.level,
+      usedSuggestion: input.usedSuggestion,
+    },
+    correlationId: input.correlationId,
   });
 
   await refreshCompleteness(db, row.requirementId);
@@ -297,21 +294,19 @@ export async function approveRequirement(
 
   const completeness = req.completeness as unknown as Completeness;
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'requirement.approved',
-      orgId: req.orgId,
-      projectId: req.projectId,
-      actor: humanActor(input.approverId),
-      subjectType: 'requirement',
-      subjectId: req.id,
-      payload: {
-        approver: input.approverId,
-        completenessAtApproval: completeness?.total ?? null,
-        note: input.note ?? null,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'requirement.approved',
+    orgId: req.orgId,
+    projectId: req.projectId,
+    actor: humanActor(input.approverId),
+    subjectType: 'requirement',
+    subjectId: req.id,
+    payload: {
+      approver: input.approverId,
+      completenessAtApproval: completeness?.total ?? null,
+      note: input.note ?? null,
+    },
+    correlationId: input.correlationId,
   });
 
   return { ok: true, requirementId: req.id };

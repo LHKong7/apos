@@ -16,6 +16,7 @@ import {
 } from '@apos/contracts';
 import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
 import { emit } from '../event/emitter';
+import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './provider';
 
@@ -180,24 +181,22 @@ export async function generatePlan(
     }
   }
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'plan.generated',
-      orgId: req.orgId,
-      projectId: req.projectId,
-      actor: SYSTEM_ACTOR,
-      subjectType: 'plan',
-      subjectId: plan!.id,
-      payload: {
-        version,
-        taskCount: generated.tasks.length,
-        estimatedCost,
-        estimatedHours,
-        durationMs: Date.now() - started,
-        model: generated.model,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'plan.generated',
+    orgId: req.orgId,
+    projectId: req.projectId,
+    actor: SYSTEM_ACTOR,
+    subjectType: 'plan',
+    subjectId: plan!.id,
+    payload: {
+      version,
+      taskCount: generated.tasks.length,
+      estimatedCost,
+      estimatedHours,
+      durationMs: Date.now() - started,
+      model: generated.model,
+    },
+    correlationId: input.correlationId,
   });
 
   const humanTaskCount = generated.tasks.filter((t) => t.requiresHuman).length;
@@ -396,24 +395,22 @@ export async function approvePlan(
     if (moved.ok) activated++;
   }
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'plan.approved',
-      orgId: project!.orgId,
-      projectId: plan.projectId,
-      actor: humanActor(input.approverId),
-      subjectType: 'plan',
-      subjectId: plan.id,
-      payload: {
-        version: plan.version,
-        approvers: [input.approverId],
-        acknowledgedOverrun: input.acknowledgedOverrun ?? false,
-        activatedTasks: activated,
-        // 批准时的自动化清单快照 —— 追溯「他到底批准了什么」
-        autoActionsSnapshot: plan.autoActions,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'plan.approved',
+    orgId: project!.orgId,
+    projectId: plan.projectId,
+    actor: humanActor(input.approverId),
+    subjectType: 'plan',
+    subjectId: plan.id,
+    payload: {
+      version: plan.version,
+      approvers: [input.approverId],
+      acknowledgedOverrun: input.acknowledgedOverrun ?? false,
+      activatedTasks: activated,
+      // 批准时的自动化清单快照 —— 追溯「他到底批准了什么」
+      autoActionsSnapshot: plan.autoActions,
+    },
+    correlationId: input.correlationId,
   });
 
   return { ok: true, planId: plan.id, activatedTasks: activated };

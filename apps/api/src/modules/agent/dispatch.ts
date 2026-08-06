@@ -19,6 +19,7 @@ import {
 } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emit } from '../event/emitter';
+import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import { ingestRunEvent } from './ingest';
 
@@ -124,23 +125,21 @@ export async function dispatchRun(
     timeoutAt: new Date(Date.now() + agent.timeoutSeconds * 1000),
   });
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'agent_run.dispatched',
-      orgId: item.orgId,
-      projectId: item.projectId,
-      actor: SYSTEM_ACTOR,
-      subjectType: 'agent_run',
-      subjectId: runId,
-      payload: {
-        workItemId: item.id,
-        agentId: agent.id,
-        attempt,
-        idempotencyKey,
-        contextSize: context.length,
-      },
-      correlationId: input.correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'agent_run.dispatched',
+    orgId: item.orgId,
+    projectId: item.projectId,
+    actor: SYSTEM_ACTOR,
+    subjectType: 'agent_run',
+    subjectId: runId,
+    payload: {
+      workItemId: item.id,
+      agentId: agent.id,
+      attempt,
+      idempotencyKey,
+      contextSize: context.length,
+    },
+    correlationId: input.correlationId,
   });
 
   // 状态流转：ready → executing。被 Guard 或 Policy 拦下时不真正派发。

@@ -11,6 +11,7 @@ import { ACTIVE_RUN_STATUSES, SYSTEM_ACTOR, type WorkItemType } from '@apos/cont
 import { isDependencyMet, matchExecutors, type AgentCandidate, type MatchTarget } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emit } from '../event/emitter';
+import { emitAndPublish } from '../event/bus';
 import { loadDependencies } from './context';
 import { dispatchRun } from '../agent/dispatch';
 
@@ -105,17 +106,15 @@ async function scheduleOne(
   // ── 预算检查：派发前预防，而不是执行到一半才发现 ──
   const budget = await checkBudget(db, item);
   if (!budget.ok) {
-    await db.transaction(async (tx) => {
-      await emit(tx, {
-        type: 'project.budget_threshold_reached',
-        orgId: item.orgId,
-        projectId: item.projectId,
-        actor: SYSTEM_ACTOR,
-        subjectType: 'project',
-        subjectId: item.projectId,
-        payload: { reason: budget.reason, workItemId: item.id },
-        correlationId,
-      });
+    await emitAndPublish(db, {
+      type: 'project.budget_threshold_reached',
+      orgId: item.orgId,
+      projectId: item.projectId,
+      actor: SYSTEM_ACTOR,
+      subjectType: 'project',
+      subjectId: item.projectId,
+      payload: { reason: budget.reason, workItemId: item.id },
+      correlationId,
     });
     return { ...base, action: 'skipped', reason: budget.reason };
   }
@@ -142,17 +141,15 @@ async function scheduleOne(
     matchReasons = best.reasons;
 
     // 执行主体的落库由 dispatchRun 负责，这里只记录「为什么选它」
-    await db.transaction(async (tx) => {
-      await emit(tx, {
-        type: 'work_item.assigned',
-        orgId: item.orgId,
-        projectId: item.projectId,
-        actor: SYSTEM_ACTOR,
-        subjectType: 'work_item',
-        subjectId: item.id,
-        payload: { executorType: 'agent', executorId: agentId, matchReasons, score: best.score },
-        correlationId,
-      });
+    await emitAndPublish(db, {
+      type: 'work_item.assigned',
+      orgId: item.orgId,
+      projectId: item.projectId,
+      actor: SYSTEM_ACTOR,
+      subjectType: 'work_item',
+      subjectId: item.id,
+      payload: { executorType: 'agent', executorId: agentId, matchReasons, score: best.score },
+      correlationId,
     });
   }
 
@@ -271,17 +268,15 @@ async function markBlocked(db: Database, item: WorkItemRow, reason: string, corr
     .set({ blockedSince: new Date(), blockedReason: reason })
     .where(eq(workItems.id, item.id));
 
-  await db.transaction(async (tx) => {
-    await emit(tx, {
-      type: 'work_item.blocked',
-      orgId: item.orgId,
-      projectId: item.projectId,
-      actor: SYSTEM_ACTOR,
-      subjectType: 'work_item',
-      subjectId: item.id,
-      payload: { reason },
-      correlationId,
-    });
+  await emitAndPublish(db, {
+    type: 'work_item.blocked',
+    orgId: item.orgId,
+    projectId: item.projectId,
+    actor: SYSTEM_ACTOR,
+    subjectType: 'work_item',
+    subjectId: item.id,
+    payload: { reason },
+    correlationId,
   });
 }
 
