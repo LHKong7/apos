@@ -19,10 +19,10 @@ export interface CompiledRule {
   name: string;
   priority: number;
   action: Action;
-  match: (ctx: PolicyContext) => MatchResult;
+  match: (ctx: PolicyContext) => ConditionMatchResult;
 }
 
-export type MatchResult =
+export type ConditionMatchResult =
   | { matched: true }
   | { matched: false; failedAt: TraceEntry['failedAt'] };
 
@@ -59,7 +59,7 @@ export function applyOperator(op: Operator, actual: unknown, expected: unknown):
   }
 }
 
-export function matchCondition(cond: Condition, ctx: PolicyContext): MatchResult {
+export function matchCondition(cond: Condition, ctx: PolicyContext): ConditionMatchResult {
   if ('all' in cond) {
     for (const sub of cond.all) {
       const r = matchCondition(sub, ctx);

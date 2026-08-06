@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@apos/agent-runtimes": "workspace:*",
     "@apos/contracts": "workspace:*",
     "@apos/db": "workspace:*",
     "@apos/domain": "workspace:*",

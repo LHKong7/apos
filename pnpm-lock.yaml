@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@apos/agent-runtimes':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtimes
       '@apos/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -45,6 +48,12 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.9
+
+  packages/agent-runtimes:
+    dependencies:
+      '@apos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/contracts:
     dependencies:

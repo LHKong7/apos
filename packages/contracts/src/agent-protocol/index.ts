@@ -338,6 +338,12 @@ export const RunEvent = z.discriminatedUnion('type', [
 export type RunEvent = z.infer<typeof RunEvent>;
 export type RunEventType = RunEvent['type'];
 
+/** Omit 不会在联合类型上分配，需要这个包装才能保留判别联合的收窄能力 */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** 事件体，不含由发送方填充的 runId / seq / ts */
+export type RunEventBody = DistributiveOmit<RunEvent, 'runId' | 'seq' | 'ts'>;
+
 /** 哪些 run_events 提升为领域事件（docs/tech/06 §5.1） */
 export const PROMOTED_RUN_EVENTS: Record<RunEventType, string | null> = {
   run_started: 'agent_run.started',

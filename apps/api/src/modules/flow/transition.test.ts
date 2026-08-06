@@ -34,6 +34,9 @@ async function withArtifact(itemId: string) {
   });
 }
 
+/** transition 不经过 Scheduler，需要显式执行主体才能过 executorAssigned guard */
+const assigned = { executorType: 'agent' as const, executorId: randomUUID() };
+
 async function eventsFor(subjectId: string) {
   return db
     .select()
@@ -44,7 +47,7 @@ async function eventsFor(subjectId: string) {
 
 describe('★ 核心不变式：状态变更必须写事件', () => {
   it('成功流转同时写入 status_changed 与 policy.evaluated', async () => {
-    const item = await createWorkItem(db, fx);
+    const item = await createWorkItem(db, fx, assigned);
 
     const result = await transition(db, {
       workItemId: item.id,
@@ -67,7 +70,7 @@ describe('★ 核心不变式：状态变更必须写事件', () => {
   });
 
   it('★ 流转被拒绝时不写任何事件，也不改状态', async () => {
-    const item = await createWorkItem(db, fx, { status: 'ready' });
+    const item = await createWorkItem(db, fx, { ...assigned, status: 'ready' });
 
     const result = await transition(db, {
       workItemId: item.id,
@@ -91,7 +94,7 @@ describe('★ 核心不变式：状态变更必须写事件', () => {
 
   it('★ Guard 失败时事务整体回滚，事件与状态都不变', async () => {
     const blocker = await createWorkItem(db, fx, { status: 'executing', title: '前置任务' });
-    const item = await createWorkItem(db, fx);
+    const item = await createWorkItem(db, fx, assigned);
     await db.insert(workItemDependencies).values({
       projectId: fx.projectId,
       fromId: blocker.id,
@@ -117,7 +120,7 @@ describe('★ 核心不变式：状态变更必须写事件', () => {
   });
 
   it('事件带因果链：status_changed 的 causation 指向 policy.evaluated', async () => {
-    const item = await createWorkItem(db, fx);
+    const item = await createWorkItem(db, fx, assigned);
     const correlationId = corr();
 
     await transition(db, {
@@ -138,7 +141,7 @@ describe('★ 核心不变式：状态变更必须写事件', () => {
 
 describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
   it('policy.evaluated 事件携带完整快照', async () => {
-    const item = await createWorkItem(db, fx);
+    const item = await createWorkItem(db, fx, assigned);
 
     await transition(db, {
       workItemId: item.id,
@@ -164,7 +167,7 @@ describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
   });
 
   it('快照反映真实的项目预算与成本', async () => {
-    const item = await createWorkItem(db, fx, { actualCost: '8.2000' });
+    const item = await createWorkItem(db, fx, { ...assigned, actualCost: '8.2000' });
 
     await transition(db, {
       workItemId: item.id,
@@ -431,7 +434,7 @@ describe('强制放行', () => {
 
 describe('乐观锁与版本', () => {
   it('每次成功流转递增版本号', async () => {
-    const item = await createWorkItem(db, fx);
+    const item = await createWorkItem(db, fx, assigned);
     expect(item.version).toBe(1);
 
     await transition(db, {

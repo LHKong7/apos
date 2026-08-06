@@ -73,8 +73,7 @@ export async function createWorkItem(
       stage: STATUS_STAGE[status],
       title: '实现多条件查询 API',
       riskLevel: 'low',
-      executorType: 'agent',
-      executorId: randomUUID(),
+      // 默认未分配 —— 真实路径是计划生成未分配的任务，由 Scheduler 匹配执行主体
       ...overrides,
     })
     .returning();

@@ -6,3 +6,4 @@ export * from './policy/baseline';
 export * from './policy/explain';
 export * from './policy/simulate';
 export * from './recovery/strategy';
+export * from './flow/matching';
