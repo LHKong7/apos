@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
-import { statusLabel } from '../../lib/format';
+import { stageLabel, statusLabel } from '../../lib/format';
 import type { BoardCard } from '../../lib/api/types';
 
 /** 原因分类进 Analytics 的「人工覆盖率」，自由文本没法聚合 */
@@ -50,7 +50,7 @@ export function ManualMoveDialog({
   return (
     <Modal onClose={onCancel}>
       <h2 className="text-sm font-semibold text-slate-900">
-        将「{card.title}」从 {stageName(card.stage)} 移到 {stageName(toStage)}
+        将「{card.title}」从 {stageLabel(card.stage)} 移到 {stageLabel(toStage)}
       </h2>
       <p className="mt-1 text-xs text-slate-500">
         目标状态 {statusLabel(toStatus)} · 该操作会记入事件并标注「人类覆盖」
@@ -122,18 +122,6 @@ export function ManualMoveDialog({
   );
 }
 
-const STAGE_NAMES: Record<Stage, string> = {
-  intake: 'Intake',
-  planning: 'Planning',
-  execution: 'Execution',
-  review: 'Review',
-  release: 'Release',
-  done: 'Done',
-};
-
-function stageName(stage: Stage): string {
-  return STAGE_NAMES[stage] ?? stage;
-}
 
 export function Modal({
   children,

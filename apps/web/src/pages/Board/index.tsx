@@ -143,6 +143,7 @@ export function BoardPage() {
       <TopBar
         projectName={project.data?.project.name ?? '加载中'}
         onOpenGraph={() => navigate(`/projects/${projectId}/graph`)}
+        onOpenAnalytics={() => navigate(`/projects/${projectId}/analytics`)}
         summary={board.data?.summary}
         view={view}
         filters={filters}

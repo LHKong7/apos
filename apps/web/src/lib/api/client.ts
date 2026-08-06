@@ -1,6 +1,8 @@
-import type { LayoutKind } from '@apos/domain';
+import type { AnalyticsRange, LayoutKind } from '@apos/domain';
 import type {
   AgentSummary,
+  AnalyticsItemsResponse,
+  AnalyticsResponse,
   BoardResponse,
   CostStep,
   DecisionDetail,
@@ -106,6 +108,16 @@ export const api = {
 
   graph: (projectId: string, layout: LayoutKind) =>
     request<GraphResponse>(`/projects/${projectId}/graph?layout=${layout}`),
+
+  analytics: (projectId: string, range: AnalyticsRange, compare: boolean) =>
+    request<AnalyticsResponse>(
+      `/projects/${projectId}/analytics?range=${range}&compare=${compare}`,
+    ),
+
+  analyticsItems: (projectId: string, kind: string, range: AnalyticsRange) =>
+    request<AnalyticsItemsResponse>(
+      `/projects/${projectId}/analytics/items?kind=${kind}&range=${range}`,
+    ),
 
   workItem: (id: string) => request<WorkItemDetail>(`/work-items/${id}`),
 

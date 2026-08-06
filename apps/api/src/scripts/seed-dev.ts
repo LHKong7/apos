@@ -29,6 +29,7 @@ import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { transition } from '../modules/flow/transition';
+import { seedHistory } from './seed-history';
 
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
 
@@ -406,6 +407,19 @@ async function main() {
       .where(eq(decisions.workItemId, risky.id));
     console.log(`  待决策卡片  ${risky.title}（${moved.ok ? moved.to : '流转失败'}）`);
   }
+
+  // ── 60 天历史（只给 Analytics 用，不走真实链路，原因见 seed-history.ts）──
+  const history = await seedHistory({
+    db,
+    orgId,
+    projectId,
+    planId: plan.planId,
+    agentIds: agentRows.map((a) => a.id),
+    userIds: [lead!.id, pm!.id, dba!.id],
+    dbaId: dba!.id,
+    now: Date.now(),
+  });
+  console.log(`  历史数据    ${history} 项已完成任务（近 60 天，供 Analytics）`);
 
   const final = await db.select().from(workItems).where(eq(workItems.projectId, projectId));
   const byStage = final.reduce<Record<string, number>>((acc, i) => {

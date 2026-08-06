@@ -20,10 +20,12 @@ import {
 } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, humanActor, WorkItemStatus } from '@apos/contracts';
 import {
+  ANALYTICS_RANGES,
   LAYOUTS,
   WORK_ITEM_MACHINE,
   availableTriggers,
   manualTriggerFor,
+  type AnalyticsRange,
   type LayoutKind,
 } from '@apos/domain';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
@@ -44,6 +46,7 @@ import { ApiError, notFound, sendError } from './errors';
 import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
+import { getAnalytics, getAnalyticsItems } from './analytics';
 import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
 import { serializeEvent } from './serialize';
 
@@ -451,6 +454,30 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return getGraph(db, id, layout);
   });
 
+  // ── Analytics ───────────────────────────────────────────────────────
+  app.get('/api/v1/projects/:id/analytics', async (req) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { range?: string; compare?: string };
+    const range = (ANALYTICS_RANGES as readonly string[]).includes(q.range ?? '')
+      ? (q.range as AnalyticsRange)
+      : '30d';
+
+    // 默认开启对比 —— 绝对值不重要，趋势才重要（页面文档 12 §5.8）
+    return getAnalytics(db, id, range, q.compare !== 'false');
+  });
+
+  app.get('/api/v1/projects/:id/analytics/items', async (req) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { kind?: string; range?: string };
+    const kind = (['rework', 'wip', 'slow'] as const).find((k) => k === q.kind);
+    if (!kind) throw new ApiError('VALIDATION_FAILED', 'kind 必须是 rework / wip / slow 之一');
+    const range = (ANALYTICS_RANGES as readonly string[]).includes(q.range ?? '')
+      ? (q.range as AnalyticsRange)
+      : '30d';
+
+    return getAnalyticsItems(db, id, kind, range);
+  });
+
   // ── Work Item ───────────────────────────────────────────────────────
   app.get('/api/v1/work-items/:id', async (req) => {
     const { id } = req.params as { id: string };
@@ -505,6 +532,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       trigger,
       actor,
       reason: body.reason,
+      reasonCategory: body.reasonCategory,
+      manual: true,
       overrideGuards: body.overrideGuards,
       correlationId: corr(req),
     });

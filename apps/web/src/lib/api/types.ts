@@ -334,3 +334,25 @@ export interface GraphResponse {
   diagnostics: import('@apos/domain').Diagnostic[];
   layout: import('@apos/domain').LayoutResult & { kind: import('@apos/domain').LayoutKind };
 }
+
+/**
+ * Analytics 一次返回四个 Tab（后端 analytics.ts 里写了为什么不拆）。
+ * 指标类型全部复用领域层，前端不重新声明一遍 —— 两处定义迟早会漂。
+ */
+export type AnalyticsResponse = import('@apos/domain').Analytics & {
+  project: { id: string; name: string };
+  generatedAt: string;
+};
+
+export interface AnalyticsItemsResponse {
+  kind: 'rework' | 'wip' | 'slow';
+  items: {
+    id: string;
+    title: string;
+    status: WorkItemStatus;
+    stage: Stage;
+    riskLevel: RiskLevel;
+    ownerId: string | null;
+    elapsedHours: number | null;
+  }[];
+}

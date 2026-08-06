@@ -43,6 +43,20 @@ export interface TransitionInput {
   actor: ActorRef;
   /** 人类操作时必填 */
   reason?: string;
+  /**
+   * 原因分类。自由文本没法聚合，Analytics 的「人工覆盖原因分布」只认这个字段。
+   * 不落进事件 payload 的话，看板上强制填的那一栏就白填了。
+   */
+  reasonCategory?: string;
+  /**
+   * 这次流转是人手动改的状态，而不是系统按流程推的。
+   *
+   * ★ 光看 actor 是人不够：批准决策、回答澄清也都是人触发的，
+   *   但那些是「人在回路」按设计工作，不是覆盖系统判断。
+   *   「人工覆盖率」衡量的是系统自动判断有多准，应该随时间下降 ——
+   *   把正常的人类参与算进去，这个指标就再也降不下来，也就失去了意义。
+   */
+  manual?: boolean;
   /** 强制放行的 guard 名，需相应权限 */
   overrideGuards?: string[];
   correlationId: string;
@@ -271,6 +285,8 @@ export async function transition(
           to: finalStatus,
           trigger: input.trigger,
           ...(input.reason ? { reason: input.reason } : {}),
+          ...(input.reasonCategory ? { reasonCategory: input.reasonCategory } : {}),
+          ...(input.manual ? { manual: true } : {}),
         },
         causationId: policyEvent.id,
       }),

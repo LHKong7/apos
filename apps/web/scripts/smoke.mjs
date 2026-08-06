@@ -258,6 +258,84 @@ for (const [value, label] of [['stage', '阶段泳道'], ['executor', '执行者
   await shot(`graph-${value}`);
 }
 
+// ── Analytics（页面文档 12）────────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/analytics`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+
+const insights = page.locator('section:has-text("系统发现") li');
+const insightCount = await insights.count();
+check('Analytics 给出系统发现', insightCount > 0, `${insightCount} 条`);
+
+if (insightCount > 0) {
+  // ★ 只说「有问题」不说「怎么办」的提示，用户看两次就会忽略整个区域
+  let allActionable = true;
+  let hasGood = false;
+  for (let i = 0; i < insightCount; i++) {
+    const text = await insights.nth(i).innerText();
+    if (text.includes('🟢')) hasGood = true;
+    // 正面发现不需要动作，问题类必须有
+    else if ((await insights.nth(i).locator('button').count()) < 2) allActionable = false;
+  }
+  check('★ 每条问题类发现都带可执行动作', allActionable);
+  // ★ 只报坏消息的分析页会被用户回避，然后这一页就等于不存在
+  check('★ 系统发现里包含正面发现', hasGood);
+
+  // 判据可展开 —— 用户第一反应是「真的吗，怎么算的」
+  await page.getByRole('button', { name: '凭什么这么说' }).first().click();
+  await page.waitForTimeout(300);
+  check(
+    '发现可以展开判据',
+    (await page.getByText(/判据|中位数|等待时间的占比|次评估/).count()) > 0,
+  );
+}
+
+// 四个 Tab 都要有内容，且不能只剩标题
+for (const [tab, marker] of [
+  ['flow', '周期时间分解'],
+  ['agent', 'Agent 效能对比'],
+  ['hitl', '重复决策与可自动化潜力'],
+  ['cost', '成本趋势'],
+]) {
+  await page.goto(`${base}/projects/${projectId}/analytics?tab=${tab}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+  check(`${tab} Tab 渲染出主图`, (await page.getByText(marker).count()) > 0);
+  await shot(`analytics-${tab}`);
+}
+
+// ★ 等待决策必须是分解图里独立的一条，不能并进所处阶段
+await page.goto(`${base}/projects/${projectId}/analytics?tab=flow`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const flowText = await page.locator('main').innerText();
+check('★ 周期分解把「等待决策」单列，不并入所处阶段', flowText.includes('等待决策'));
+check('分解图给出「有效 / 等待」的一句话总结', /有效工作时间\s*\d+%/.test(flowText));
+
+// 每个指标都说得清自己怎么算的
+const hints = await page.locator('[title*="÷"], [title*="中位数"], [title*="窗口内"]').count();
+check('指标带计算口径说明（ⓘ）', hints >= 3, `${hints} 个`);
+
+// ★ 系统发现的采纳率是本页的成功标准（页面文档 §10）——
+//   动作按钮点下去必须真的到达它承诺的地方，否则这一页只是好看
+await page.getByRole('button', { name: /看返工的任务/ }).click();
+await page.waitForTimeout(900);
+check(
+  '★ 系统发现的动作真的能落到具体任务上',
+  (await page.locator('aside:has-text("返工过的任务")').count()) > 0,
+);
+await page.getByRole('button', { name: '关闭' }).first().click();
+await page.waitForTimeout(400);
+
+// 指标卡本身也能下钻
+await page.getByRole('button', { name: /在制品/ }).first().click();
+await page.waitForTimeout(900);
+check('指标卡可下钻到任务列表', (await page.locator('aside:has-text("在制任务")').count()) > 0);
+await page.getByRole('button', { name: '关闭' }).first().click();
+await page.waitForTimeout(400);
+
+// 换时间范围时保住上一份渲染，不闪骨架屏
+await page.selectOption('select[aria-label="时间范围"]', '7d');
+await page.waitForTimeout(1000);
+check('切换时间范围后仍有数据', (await page.getByText('周期时间分解').count()) > 0, page.url().includes('range=7d') ? '?range=7d' : '');
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

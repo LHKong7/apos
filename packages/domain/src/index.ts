@@ -9,3 +9,4 @@ export * from './policy/simulate';
 export * from './recovery/strategy';
 export * from './flow/matching';
 export * from './graph';
+export * from './analytics';

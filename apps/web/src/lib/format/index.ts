@@ -118,3 +118,17 @@ const RISK_LABELS: Record<string, string> = {
 export function riskLabel(risk: string): string {
   return RISK_LABELS[risk] ?? risk;
 }
+
+/** 看板列名。与后端的 Stage 一一对应，全站只此一份。 */
+const STAGE_NAMES: Record<string, string> = {
+  intake: 'Intake',
+  planning: 'Planning',
+  execution: 'Execution',
+  review: 'Review',
+  release: 'Release',
+  done: 'Done',
+};
+
+export function stageLabel(stage: string): string {
+  return STAGE_NAMES[stage] ?? stage;
+}

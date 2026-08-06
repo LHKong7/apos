@@ -12,7 +12,8 @@ export interface EmptyStateProps {
   icon: ReactNode;
   message: string;
   hint?: string;
-  action: { label: string; onClick: () => void };
+  /** 有些空状态就是「没有符合条件的东西」，硬凑一个动作反而多余 */
+  action?: { label: string; onClick: () => void };
 }
 
 export function EmptyState({ icon, message, hint, action }: EmptyStateProps) {
@@ -23,13 +24,15 @@ export function EmptyState({ icon, message, hint, action }: EmptyStateProps) {
       </div>
       <p className="text-sm text-slate-600">{message}</p>
       {hint && <p className="text-xs text-slate-400">{hint}</p>}
-      <button
-        type="button"
-        onClick={action.onClick}
-        className="mt-1 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
-      >
-        {action.label}
-      </button>
+      {action && (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className="mt-1 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

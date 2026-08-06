@@ -33,11 +33,18 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!project) throw notFound('项目');
 
-  const items = await db
+  const all = await db
     .select()
     .from(workItems)
     .where(and(eq(workItems.projectId, projectId), isNull(workItems.deletedAt)))
     .orderBy(workItems.position);
+
+  const deps = await db
+    .select()
+    .from(workItemDependencies)
+    .where(eq(workItemDependencies.projectId, projectId));
+
+  const items = inFlight(all, deps);
 
   if (items.length === 0) {
     return {
@@ -50,11 +57,6 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
   }
 
   const ids = items.map((i) => i.id);
-
-  const deps = await db
-    .select()
-    .from(workItemDependencies)
-    .where(eq(workItemDependencies.projectId, projectId));
 
   const nodes = await buildNodes(db, items);
   const edges: GraphEdge[] = deps
@@ -179,4 +181,31 @@ function nodeKindOf(item: ItemRow, hasPendingDecision: boolean): NodeKind {
   if (item.executorType === 'agent') return 'agent_task';
   // 还没分配执行主体 —— 画成等待，因为它现在确实动不了
   return 'waiting';
+}
+
+/**
+ * 执行图只画「还在流动的部分」。
+ *
+ * ★ 项目跑上几个月会攒下几百个已完成任务，全画出来的图没人看得懂，
+ *   而这一页要回答的是「为什么这条链走不动」—— 三个月前做完的孤立任务
+ *   对这个问题一点贡献都没有。
+ *
+ *   但也不能简单地把终态全砍掉：一个正在等前置的任务，它的前置**已完成**
+ *   这件事本身就是关键信息（「上游做完了，为什么我还没开始」）。
+ *   所以规则是：未终结的全留，终结的只留与未终结项直接相连的那些。
+ */
+function inFlight(
+  items: (typeof workItems.$inferSelect)[],
+  deps: (typeof workItemDependencies.$inferSelect)[],
+): (typeof workItems.$inferSelect)[] {
+  const terminal = (s: string) => s === 'done' || s === 'cancelled';
+  const live = new Set(items.filter((i) => !terminal(i.status)).map((i) => i.id));
+  if (live.size === 0) return items;
+
+  const keep = new Set(live);
+  for (const d of deps) {
+    if (live.has(d.toId)) keep.add(d.fromId);
+    if (live.has(d.fromId)) keep.add(d.toId);
+  }
+  return items.filter((i) => keep.has(i.id));
 }

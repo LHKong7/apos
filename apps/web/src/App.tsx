@@ -8,6 +8,7 @@ import { ProjectListPage } from './pages/ProjectList';
 import { BoardPage } from './pages/Board';
 import { RunDetailPage } from './pages/RunDetail';
 import { GraphPage } from './pages/Graph';
+import { AnalyticsPage } from './pages/Analytics';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -35,6 +36,7 @@ export function App() {
           <Route path="/" element={<ProjectListPage />} />
           <Route path="/projects/:projectId/board" element={<BoardPage />} />
           <Route path="/projects/:projectId/graph" element={<GraphPage />} />
+          <Route path="/projects/:projectId/analytics" element={<AnalyticsPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

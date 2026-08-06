@@ -19,6 +19,10 @@ export const qk = {
   graph: (projectId: string, layout: string) => ['graph', projectId, layout] as const,
   /** 匹配某项目下所有布局的图缓存 */
   graphAll: (projectId: string) => ['graph', projectId] as const,
+  analytics: (projectId: string, range: string, compare: boolean) =>
+    ['analytics', projectId, range, compare] as const,
+  analyticsItems: (projectId: string, kind: string, range: string) =>
+    ['analyticsItems', projectId, kind, range] as const,
   workItem: (id: string) => ['workItem', id] as const,
   decisions: (scope: string) => ['decisions', scope] as const,
   decisionsAll: () => ['decisions'] as const,
