@@ -72,6 +72,7 @@ import { getOverview } from './overview';
 import { getAgent, listAgents, listRuntimes } from './agents';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
+import { listDeliveries } from '../modules/notification/service';
 import {
   autonomyPreview,
   deletePolicy,
@@ -88,6 +89,7 @@ import {
   createIntegration,
   disconnectImpact,
   disconnectIntegration,
+  ingestCiResults,
   linkObject,
   listConflicts,
   listIntegrations,
@@ -718,6 +720,59 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     );
   });
 
+  /**
+   * 通知投递记录（产品文档十一）。
+   *
+   * ★ 「发过没有」必须查得到。通知最典型的故障是静默失败 ——
+   *   webhook 被撤销、群被解散、被免打扰吃掉，而用户只会觉得
+   *   「这系统从来不提醒我」，根本不会想到去查投递。
+   */
+  app.get('/api/v1/projects/:id/notifications', async (req) => {
+    const { id } = req.params as { id: string };
+    return listDeliveries(db, id);
+  });
+
+  /**
+   * 开发用的 webhook 接收端。
+   *
+   * ★ 只是为了让「配置 → 判定 → 投递 → 记录」这条链路在演示环境里
+   *   能真的跑通一遍。生产部署里 webhookUrl 指向真的 Slack / 飞书，
+   *   这个端点不该存在 —— 所以它由环境变量开关，默认在开发环境开。
+   */
+  if (process.env['DEV_WEBHOOK_SINK'] !== 'off') {
+    app.post('/api/v1/dev/webhook-sink', async (req, reply) => {
+      app.log.info({ body: req.body }, '[dev-webhook] 收到通知');
+      return reply.type('text/plain').send('ok');
+    });
+  }
+
+  /**
+   * 人力成本基准（成本效益换算用）。
+   *
+   * ★ 允许清空。系统不替用户猜一个时薪 —— 用户改主意了要能回到「不换算」，
+   *   否则一旦填过就再也去不掉，那个数字会一直挂在页面上被当成事实。
+   */
+  app.patch('/api/v1/projects/:id/labor-cost', async (req) => {
+    const { id } = req.params as { id: string };
+    actorFrom(req);
+    const body = z
+      .object({ laborHourlyCost: z.number().positive().nullable() })
+      .parse(req.body);
+
+    const [row] = await db.select().from(projects).where(eq(projects.id, id));
+    if (!row) throw notFound('项目');
+
+    await db
+      .update(projects)
+      .set({
+        laborHourlyCost: body.laborHourlyCost === null ? null : String(body.laborHourlyCost),
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, id));
+
+    return { ok: true };
+  });
+
   /** 一条规则的命中明细 —— 无法审计的规则没人敢改（页面文档 13）*/
   app.get('/api/v1/projects/:id/policies/:policyId/hits', async (req) => {
     const { id, policyId } = req.params as { id: string; policyId: string };
@@ -878,6 +933,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     }
 
     return { ok: true, changed: result.changed };
+  });
+
+  /** 从代码仓库回流 CI 结果 —— 质量 Tab 的数据源（页面文档 12）*/
+  app.post('/api/v1/integrations/:id/ingest-ci', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId } = actorFrom(req);
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'view');
+    return ingestCiResults(db, deps.integrations, id);
   });
 
   app.post('/api/v1/integrations/:id/sync', async (req) => {

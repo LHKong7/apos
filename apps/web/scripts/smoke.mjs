@@ -374,6 +374,70 @@ if (/检测到 \d+ 个问题/.test(listText)) {
 }
 
 // ── 场景测试：排查「为什么还找我」──
+// ── 质量与成本效益（页面文档 12）──────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/analytics?tab=quality`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const qualityText = await page.locator('main').innerText();
+/**
+ * ★ 没有数据源时必须说「未接入」并给出怎么接，绝不显示 0 ——
+ *   0 会被读成「一个都没通过」或「质量完美」。
+ */
+check(
+  '★ 质量指标没接数据源时说「未接入」并给出接入路径，而不是显示 0',
+  /未接入|数据源还没接上/.test(qualityText) && /集成设置/.test(qualityText),
+  qualityText.split('\n').find((l) => l.includes('未接入') || l.includes('还没接上'))?.trim() ?? '',
+);
+check('质量指标标明各自的数据来源', /CI|check-run|incident/.test(qualityText));
+await shot('analytics-quality');
+
+await page.goto(`${base}/projects/${projectId}/analytics?tab=benefit`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const benefitText = await page.locator('main').innerText();
+// ★ 系统不替用户填一个时薪 —— 编出来的「省了多少」经不起一次追问
+check(
+  '★ 成本效益的基准由用户自己填，且明说不替他编一个',
+  /人力成本基准/.test(benefitText) && /这个数只有你知道/.test(benefitText),
+);
+check(
+  '★ 代价那一侧也给出来（不只算 Agent 干了多少活）',
+  /代价侧/.test(benefitText) && /人工覆盖占用的时间/.test(benefitText) && /返工/.test(benefitText),
+);
+check(
+  '每一行都写清数字怎么来的，包括其中的假设',
+  /这是个假设，不是实测/.test(benefitText) && /不是计划估算/.test(benefitText),
+);
+
+// 填一个基准之后，结论必须始终带着「按你填的 X/小时」
+const rate = page.getByLabel('人力小时成本');
+if ((await rate.count()) > 0) {
+  await rate.fill('50');
+  await page.getByRole('button', { name: '保存' }).first().click();
+  await page.waitForTimeout(1200);
+  const after = await page.locator('main').innerText();
+  check(
+    '★ 填了基准后结论始终带上「按你填的 X/小时」，可被追问',
+    /按你填的 \$50\/小时/.test(after) && /换个数就是另一个结论/.test(after),
+    after.split('\n').find((l) => l.includes('按你填的'))?.slice(0, 60) ?? '',
+  );
+  check('算式逐行摊开', /算式/.test(after));
+  await shot('analytics-benefit');
+}
+
+// ── 通知投递记录（产品文档十一）──────────────────────────────────────
+const notif = await page.request.get(
+  `${base}/api/v1/projects/${projectId}/notifications`,
+  { headers: { 'x-user-id': (await page.evaluate(() => localStorage.getItem('apos.userId'))) ?? '' } },
+);
+if (notif.ok()) {
+  const body = await notif.json();
+  // ★ 「发过没有」必须查得到 —— 通知最典型的故障是静默失败
+  check(
+    '★ 通知投递有记录可查（成功、失败、被抑制都留痕）',
+    Array.isArray(body.deliveries) && typeof body.stats?.delivered === 'number',
+    `已投递 ${body.stats?.delivered ?? 0} · 被抑制 ${body.stats?.suppressed ?? 0} · 失败 ${body.stats?.failed ?? 0}`,
+  );
+}
+
 // ── 命中明细（页面文档 13）────────────────────────────────────────────
 // ★ 看不到是哪 47 次的规则等于无法审计，而无法审计的规则没人敢改
 const hitBtn = page.getByRole('button', { name: /近 30 天命中 [1-9]/ }).first();

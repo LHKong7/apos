@@ -976,3 +976,112 @@ function hash(s: string): string {
   }
   return (h >>> 0).toString(16);
 }
+
+/**
+ * 从代码仓库回流 CI 结果（页面文档 12 质量 Tab 的数据源）。
+ *
+ * ★ `work_items.typeData.qualityGate` 这个字段一直存在、Policy 引擎一直在读
+ *   （「测试没过不许进发布」那条规则就靠它），但**从来没有任何东西写过它**。
+ *   所以那条 Policy 永远命中不了，质量 Tab 也永远算不出来 ——
+ *   不是算法难，是没有数据源。这个函数就是那个数据源。
+ *
+ * ★ 抓不到就不写。写一个 `testsPassed: true` 的默认值，
+ *   会让「测试没过不许发布」这条规则变成一条永远放行的规则 ——
+ *   那比没有这条规则危险得多。
+ */
+export async function ingestCiResults(
+  db: Database,
+  registry: IntegrationRegistry,
+  integrationId: string,
+) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+  if (row.category !== 'code') {
+    throw new ApiError('VALIDATION_FAILED', '只有代码类集成能回流 CI 结果', {
+      category: row.category,
+    });
+  }
+
+  const provider = row.provider as IntegrationProvider;
+  if (!registry.has(provider)) {
+    throw new ApiError('UNSUPPORTED_FEATURE', `${PROVIDER_LABELS[provider]} 的传输层还没有实现`, {
+      provider,
+    });
+  }
+
+  const adapter = registry.get(provider);
+  if (!hasCiSupport(adapter)) {
+    /**
+     * ★ 「这个 provider 不提供 CI 结果」和「CI 没跑」是两回事。
+     *   混在一起的话，用户会一直以为是自己 CI 没配好。
+     */
+    return { updated: 0, skipped: 0, unsupported: true as const, notes: [
+      `${PROVIDER_LABELS[provider]} 的适配器不提供 CI 结果，质量 Tab 的测试类指标会显示未接入`,
+    ] };
+  }
+
+  const links = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(eq(integrationObjectLinks.integrationId, integrationId));
+
+  const conn = { config: row.config, credentialRef: row.credentialRef };
+  let updated = 0;
+  let skipped = 0;
+  const notes: string[] = [];
+
+  for (const link of links) {
+    if (link.externalDeletedAt) continue;
+
+    let ci;
+    try {
+      ci = await adapter.fetchCiResult(conn, link.externalKey);
+    } catch (e) {
+      skipped += 1;
+      notes.push(`${link.externalKey}: ${e instanceof Error ? e.message : '拉取失败'}`);
+      continue;
+    }
+
+    // 没有 CI、或还没跑完 —— 都不写，宁可让指标显示「未接入」
+    if (!ci || ci.passed === null) {
+      skipped += 1;
+      continue;
+    }
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, link.workItemId));
+    if (!item) continue;
+
+    const gate = {
+      ...(item.typeData['qualityGate'] as Record<string, unknown> | undefined),
+      testsPassed: ci.passed,
+      ...(ci.coverage === null ? {} : { coverage: ci.coverage }),
+      ciSha: ci.sha,
+      ciFailedChecks: ci.failedChecks,
+      ciCheckedAt: new Date().toISOString(),
+    };
+
+    await db
+      .update(workItems)
+      .set({ typeData: { ...item.typeData, qualityGate: gate }, updatedAt: new Date() })
+      .where(eq(workItems.id, link.workItemId));
+    updated += 1;
+  }
+
+  return { updated, skipped, unsupported: false as const, notes };
+}
+
+interface CiCapable {
+  fetchCiResult(
+    conn: { config: Record<string, unknown>; credentialRef: string | null },
+    externalKey: string,
+  ): Promise<{
+    sha: string;
+    passed: boolean | null;
+    coverage: number | null;
+    failedChecks: string[];
+  } | null>;
+}
+
+function hasCiSupport(adapter: unknown): adapter is CiCapable {
+  return typeof (adapter as CiCapable).fetchCiResult === 'function';
+}

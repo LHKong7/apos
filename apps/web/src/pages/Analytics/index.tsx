@@ -20,6 +20,8 @@ import { FlowTab } from './FlowTab';
 import { AgentTab } from './AgentTab';
 import { HitlTab } from './HitlTab';
 import { CostTab } from './CostTab';
+import { QualityTab } from './QualityTab';
+import { BenefitTab } from './BenefitTab';
 
 const RANGE_LABELS: Record<AnalyticsRange, string> = {
   '7d': '近 7 天',
@@ -32,6 +34,8 @@ const TAB_LABELS: Record<AnalyticsTab, string> = {
   agent: 'Agent',
   hitl: 'Human-in-the-Loop',
   cost: '成本',
+  quality: '质量',
+  benefit: '成本效益',
 };
 
 type Drill = 'rework' | 'wip' | 'slow';
@@ -235,6 +239,8 @@ export function AnalyticsPage() {
             {tab === 'cost' && (
               <CostTab data={data} onOpenRun={(runId) => navigate(`/runs/${runId}`)} />
             )}
+            {tab === 'quality' && <QualityTab data={data} projectId={projectId!} />}
+            {tab === 'benefit' && <BenefitTab data={data} projectId={projectId!} />}
           </div>
         </div>
       )}

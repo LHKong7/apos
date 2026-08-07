@@ -140,3 +140,5 @@ function rel(now: number | null, before: number | null): number | null {
   if (now === null || before === null || before === 0) return null;
   return round(now / before - 1, 3);
 }
+export * from './quality';
+export * from './benefit';

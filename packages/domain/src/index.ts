@@ -16,3 +16,4 @@ export * from './policy/templates';
 export * from './integration/sync';
 export * from './permissions/integration';
 export * from './planning/diff';
+export * from './notification/decide';

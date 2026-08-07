@@ -343,6 +343,8 @@ export interface GraphResponse {
 export type AnalyticsResponse = import('@apos/domain').Analytics & {
   project: { id: string; name: string };
   generatedAt: string;
+  quality: import('@apos/domain').QualityMetrics;
+  benefit: import('@apos/domain').BenefitMetrics;
 };
 
 export interface AnalyticsItemsResponse {
@@ -876,4 +878,26 @@ export interface PolicyHitsResponse {
     } | null;
   }[];
   truncated: boolean;
+}
+
+export interface QualityMetricRow {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: 'percent' | 'count' | 'days';
+  source: string;
+  /** 数据源接没接上。false 时 value 一定是 null，页面必须显示「未接入」而不是 0 */
+  wired: boolean;
+  hint: string;
+  sample: number;
+}
+
+export interface BenefitLineRow {
+  key: string;
+  label: string;
+  hours: number;
+  money: number | null;
+  side: 'benefit' | 'cost';
+  /** 这个数字怎么来的，包括其中的假设 */
+  basis: string;
 }

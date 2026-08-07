@@ -95,6 +95,14 @@ export const projects = pgTable(
     budgetCurrency: text().notNull().default('USD'),
     /** 冗余累加，避免看板每张卡片都聚合 agent_runs；每日对账纠偏 */
     costSpent: numeric({ precision: 12, scale: 2 }).notNull().default('0'),
+    /**
+     * 人力小时成本基准（成本效益换算用）。
+     *
+     * ★ 可为空，而且默认就是空。系统不替用户猜一个时薪 ——
+     *   编出来的「本月为你省了多少」经不起一次追问，
+     *   一旦被问倒，整个 Analytics 就都没人信了。
+     */
+    laborHourlyCost: numeric({ precision: 10, scale: 2 }),
 
     stageConfig: jsonb().$type<string[]>().notNull().default([
       'intake',
@@ -829,6 +837,42 @@ export const devExternalObjects = pgTable(
     updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
   (t) => [primaryKey({ columns: [t.provider, t.externalKey] })],
+);
+
+/**
+ * 通知投递记录。
+ *
+ * ★ 「发过没有」必须查得到。通知这类功能最典型的故障是**静默失败**：
+ *   webhook 被撤销、群被解散、限流被丢弃 —— 而用户只会觉得
+ *   「这系统从来不提醒我」，根本不会想到去查投递。
+ *   所以成功和失败都落一条，被抑制的（免打扰 / 用户关了这类）也落一条。
+ */
+export const notificationDeliveries = pgTable(
+  'notification_deliveries',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull(),
+    projectId: uuid().notNull().references(() => projects.id),
+    integrationId: uuid().references(() => integrations.id, { onDelete: 'set null' }),
+
+    eventKey: text().notNull(),
+    subjectType: text().notNull(),
+    subjectId: uuid(),
+
+    /** delivered / failed / suppressed */
+    status: text().notNull(),
+    /** 被抑制的原因：event_disabled / quiet_hours */
+    suppressedReason: text(),
+    /** 失败原因，直接展示给用户 */
+    error: text(),
+    /** 需要用户重新配置（webhook 撤销 / 群解散），重试没用 */
+    needsReconfigure: boolean().notNull().default(false),
+
+    title: text(),
+    latencyMs: integer(),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [index('notification_deliveries_project_idx').on(t.projectId, t.createdAt)],
 );
 
 // ── Event ────────────────────────────────────────────────────────────────

@@ -394,6 +394,25 @@ export const RunStatus = z.enum([
 ]);
 export type RunStatus = z.infer<typeof RunStatus>;
 
+/**
+ * Run 成功的那个状态值。
+ *
+ * ★ 单独导出，因为「什么算成功」被至少四处引用（成功率、成本效益、
+ *   Agent 效能、调度重试），而字面量写错的表现是**静默算成 0** ——
+ *   我自己就刚踩过一次：成本效益里写成 'succeeded'，
+ *   于是「Agent 承担的工时」永远是 0，页面显示「没有可换算的工时」，
+ *   看起来完全像是「这个周期确实没跑过」。
+ */
+export const RUN_SUCCESS: RunStatus = 'completed';
+
+/** 终态：不会再变了 */
+export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
+  'completed',
+  'failed',
+  'timeout',
+  'terminated',
+] as const;
+
 export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
   'queued',
   'dispatching',

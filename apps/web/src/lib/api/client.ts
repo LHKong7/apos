@@ -157,6 +157,18 @@ export const api = {
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
 
+  setLaborCost: (projectId: string, laborHourlyCost: number | null) =>
+    request<{ ok: true }>(`/projects/${projectId}/labor-cost`, {
+      method: 'PATCH',
+      json: { laborHourlyCost },
+    }),
+
+  ingestCi: (integrationId: string) =>
+    request<{ updated: number; skipped: number; unsupported: boolean; notes: string[] }>(
+      `/integrations/${integrationId}/ingest-ci`,
+      { method: 'POST', json: {} },
+    ),
+
   policyHits: (projectId: string, policyId: string) =>
     request<PolicyHitsResponse>(`/projects/${projectId}/policies/${policyId}/hits`),
 

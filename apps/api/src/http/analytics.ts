@@ -11,6 +11,8 @@ import {
 import { STATUS_STAGE, type Stage, type WorkItemStatus } from '@apos/contracts';
 import {
   computeAnalytics,
+  computeBenefit,
+  computeQuality,
   previousWindow,
   windowFor,
   type AnalyticsInput,
@@ -52,6 +54,13 @@ export async function getAnalytics(
   return {
     project: { id: project.id, name: project.name },
     ...computeAnalytics(range, current, previous, now),
+    quality: computeQuality(current),
+    benefit: computeBenefit(current, {
+      /** ★ 没填就是 null —— 系统不替用户猜一个时薪 */
+      laborHourlyCost:
+        project.laborHourlyCost === null ? null : Number(project.laborHourlyCost),
+      currency: '$',
+    }),
     generatedAt: new Date(now).toISOString(),
   };
 }
@@ -91,6 +100,10 @@ export async function loadAnalyticsInput(
     ownerId: i.ownerId,
     executorType: i.executorType,
     executorId: i.executorId,
+    /** ★ CI 回流的质量信号 —— 质量 Tab 的唯一数据源 */
+    qualityGate: (i.typeData['qualityGate'] ?? undefined) as
+      | { testsPassed?: boolean; securityScanPassed?: boolean; coverage?: number; criticalBugs?: number }
+      | undefined,
   }));
 
   const runRows = (

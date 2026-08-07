@@ -12,7 +12,7 @@ export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
 
 export const RANGE_DAYS: Record<AnalyticsRange, number> = { '7d': 7, '30d': 30, '90d': 90 };
 
-export const ANALYTICS_TABS = ['flow', 'agent', 'hitl', 'cost'] as const;
+export const ANALYTICS_TABS = ['flow', 'agent', 'hitl', 'cost', 'quality', 'benefit'] as const;
 export type AnalyticsTab = (typeof ANALYTICS_TABS)[number];
 
 /** 时间统一用毫秒时间戳，避免 Date 在纯函数里带时区歧义 */
@@ -51,6 +51,19 @@ export interface ItemRow {
   ownerId: string | null;
   executorType: string | null;
   executorId: string | null;
+  /**
+   * CI 回流的质量信号（typeData.qualityGate）。
+   *
+   * ★ 这个字段一直存在、Policy 引擎一直在读，但从来没有东西写过它 ——
+   *   这就是「质量 Tab 算不出来」的真实原因：不是算法难，是没有数据源。
+   *   接上代码仓库之后由 GitHub check-runs 回填。
+   */
+  qualityGate?: {
+    testsPassed?: boolean;
+    securityScanPassed?: boolean;
+    coverage?: number;
+    criticalBugs?: number;
+  };
 }
 
 export interface RunRow {

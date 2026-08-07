@@ -48,11 +48,35 @@ export class EventBus {
     };
   }
 
+  private allSubscribers = new Set<Subscriber>();
+
+  /**
+   * 订阅全部事件，不按频道过滤。
+   *
+   * ★ 给通知投递这类「横切」订阅者用。让它去订一堆频道的话，
+   *   新增一种频道时就得记得回来加一行 —— 而漏加的表现是
+   *   「某类决策从来不提醒」，没人会注意到。
+   */
+  subscribeAll(fn: Subscriber): () => void {
+    this.allSubscribers.add(fn);
+    return () => void this.allSubscribers.delete(fn);
+  }
+
   publish(events: EmittedEvent[]): void {
     for (const e of events) {
       const published = toPublished(e);
       // 同一订阅者可能同时订了多个命中的频道，去重后只推一次
       const seen = new Set<Subscriber>();
+
+      for (const fn of this.allSubscribers) {
+        seen.add(fn);
+        try {
+          fn(published);
+        } catch {
+          // 横切订阅者异常不影响主流程
+        }
+      }
+
       for (const ch of published.channels) {
         for (const fn of this.subscribers.get(ch) ?? []) {
           if (seen.has(fn)) continue;

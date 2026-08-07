@@ -1,3 +1,4 @@
+import { RUN_SUCCESS } from '@apos/contracts';
 import { percent, ratio, round } from './stats';
 import type { AgentMetrics, AgentPerf, AnalyticsInput, RunRow } from './types';
 
@@ -16,7 +17,8 @@ const FAILURE_LABELS: Record<string, string> = {
   unknown: '未分类',
 };
 
-const SUCCESS = 'completed';
+/** 全站唯一定义在 @apos/contracts，别再各写一份字面量 */
+const SUCCESS = RUN_SUCCESS;
 
 /**
  * Agent 效能对比（页面文档 12 §5.4）。

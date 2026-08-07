@@ -509,11 +509,18 @@ async function main() {
     userId: lead!.id,
   });
 
+  /**
+   * ★ webhookUrl 指向 API 自己的开发接收端，让「配置 → 判定 → 投递 → 记录」
+   *   这条链路在演示环境里真的跑一遍。生产部署里它指向真的 Slack。
+   */
   await createIntegration(db, integrationRegistry, {
     projectId,
     provider: 'slack',
     displayName: '#order-refactor',
-    config: { channel: 'order-refactor' },
+    config: {
+      channel: 'order-refactor',
+      webhookUrl: `${process.env['API_BASE_URL'] ?? 'http://localhost:3000'}/api/v1/dev/webhook-sink`,
+    },
     credential: 'xoxb-demo-9f22',
     userId: pm!.id,
   });
