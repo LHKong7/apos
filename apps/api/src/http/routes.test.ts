@@ -7,7 +7,7 @@ import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-r
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
-import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../test/db';
+import { createWorkItem, integrationRegistry, resetDb, seedFixture, testDb, type Fixture } from '../test/db';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { dispatchRun } from '../modules/agent/dispatch';
 
@@ -24,6 +24,7 @@ beforeEach(async () => {
     db,
     bus: new EventBus(),
     registry,
+    integrations: integrationRegistry(),
     provider: new StubPlanningProvider(),
   });
 });

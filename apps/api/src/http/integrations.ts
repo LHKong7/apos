@@ -1,0 +1,978 @@
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import {
+  integrationObjectLinks,
+  integrationSyncMappings,
+  integrations,
+  projects,
+  syncConflictRules,
+  syncConflicts,
+  users,
+  workItems,
+  type Database,
+} from '@apos/db';
+import {
+  CATEGORY_LABELS,
+  DEFAULT_NOTIFICATION_CONFIG,
+  FIELD_DEFAULTS,
+  NEVER_GRANTED_SCOPES,
+  NOTIFY_EVENTS,
+  PROVIDER_CATEGORY,
+  PROVIDER_LABELS,
+  SOT_PRESETS,
+  STRATEGY_LABELS,
+  SYNC_FIELD_LABELS,
+  type IntegrationProvider,
+  type NotificationConfig,
+  type SideSnapshot,
+  type SyncField,
+  type SyncMapping,
+} from '@apos/contracts';
+import {
+  conflictHotspots,
+  defaultMappings,
+  matchPreset,
+  similarityKey,
+} from '@apos/domain';
+import {
+  nextSyncedValues,
+  originTagFor,
+  planSync,
+  type IntegrationRegistry,
+  type SyncContext,
+} from '@apos/integrations';
+import { ApiError, notFound } from './errors';
+
+/**
+ * 集成设置（页面文档 14）。
+ *
+ * ★ 这一页的价值全在「说清楚」上：连了什么、同步什么、谁说了算、
+ *   不能做什么。所以接口返回的每一块都带解释性文字，
+ *   而不是只给一堆 enum 让前端自己编。
+ *
+ * ★ 凭证从不出现在任何响应里（页面文档 14 §9）。
+ *   `credentialRef` 指向密钥管理，接口只回 `credentialHint`（后四位）。
+ *   一个能从接口读出 token 的系统，早晚会有人把它贴进日志或截图。
+ */
+
+export async function listIntegrations(
+  db: Database,
+  registry: IntegrationRegistry,
+  projectId: string,
+) {
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!project) throw notFound('项目');
+
+  const rows = await db
+    .select()
+    .from(integrations)
+    .where(eq(integrations.projectId, projectId))
+    .orderBy(integrations.createdAt);
+
+  const ids = rows.map((r) => r.id);
+  const mappings =
+    ids.length > 0
+      ? await db
+          .select()
+          .from(integrationSyncMappings)
+          .where(inArray(integrationSyncMappings.integrationId, ids))
+      : [];
+
+  const pending =
+    ids.length > 0
+      ? await db
+          .select()
+          .from(syncConflicts)
+          .where(
+            and(inArray(syncConflicts.integrationId, ids), eq(syncConflicts.status, 'pending')),
+          )
+      : [];
+
+  const autoRules =
+    ids.length > 0
+      ? await db
+          .select()
+          .from(syncConflictRules)
+          .where(inArray(syncConflictRules.integrationId, ids))
+      : [];
+
+  const links =
+    ids.length > 0
+      ? await db
+          .select()
+          .from(integrationObjectLinks)
+          .where(inArray(integrationObjectLinks.integrationId, ids))
+      : [];
+
+  const list = rows.map((r) => {
+    const own = mappings.filter((m) => m.integrationId === r.id);
+    const conflicts = pending.filter((c) => c.integrationId === r.id);
+    const provider = r.provider as IntegrationProvider;
+
+    const syncMappings: SyncMapping[] =
+      own.length > 0
+        ? own.map((m) => ({
+            field: m.field as SyncField,
+            sourceOfTruth: m.sourceOfTruth as SyncMapping['sourceOfTruth'],
+            strategy: m.strategy as SyncMapping['strategy'],
+          }))
+        : [];
+
+    return {
+      id: r.id,
+      provider,
+      providerLabel: PROVIDER_LABELS[provider] ?? provider,
+      category: r.category,
+      categoryLabel: CATEGORY_LABELS[r.category as keyof typeof CATEGORY_LABELS] ?? r.category,
+      displayName: r.displayName,
+      config: r.config,
+      status: r.status,
+      statusReason: r.statusReason,
+      lastSyncAt: r.lastSyncAt?.toISOString() ?? null,
+
+      /**
+       * ★ 只回后四位。这个字段存在的意义是让用户认出「是哪一把钥匙」，
+       *   不是让他读出钥匙本身。
+       */
+      credentialHint: r.credentialHint,
+      credentialExpiresAt: r.credentialExpiresAt?.toISOString() ?? null,
+      /** token 过期前 7 天提示（§7）*/
+      credentialExpiringSoon: expiringSoon(r.credentialExpiresAt),
+
+      /** ★ 允许项与禁止项都给。用户要确认的常常是「它不能做什么」 */
+      scopes: r.scopes,
+      /** 这个 provider 的集成层永远不提供的权限，与本次授权无关 */
+      neverGranted: [...(NEVER_GRANTED_SCOPES[provider] ?? [])],
+
+      /** 适配器没注册 = 这个连接现在同步不了，和「配置错了」是两回事 */
+      transportReady: registry.has(provider),
+
+      syncMappings: syncMappings.map(describeMapping),
+      sotPreset: syncMappings.length > 0 ? matchPreset(syncMappings) : null,
+      autoRules: autoRules
+        .filter((a) => a.integrationId === r.id)
+        .map((a) => ({
+          field: a.field,
+          fieldLabel: SYNC_FIELD_LABELS[a.field as SyncField] ?? a.field,
+          winner: a.winner,
+        })),
+
+      conflictCount: conflicts.length,
+      linkedItems: links.filter((l) => l.integrationId === r.id).length,
+      notificationConfig: r.notificationConfig as NotificationConfig | null,
+      stats: r.stats,
+    };
+  });
+
+  const allConflicts = pending.map((c) => ({ field: c.field as SyncField }));
+
+  return {
+    integrations: list,
+    /** §7：冲突积压 > 10 时顶部警告 */
+    conflictBacklog: pending.length,
+    hotspots: conflictHotspots(allConflicts).map((h) => ({
+      ...h,
+      fieldLabel: SYNC_FIELD_LABELS[h.field] ?? h.field,
+    })),
+    /** 可添加但还没连的 provider */
+    available: (Object.keys(PROVIDER_LABELS) as IntegrationProvider[])
+      .filter((p) => !rows.some((r) => r.provider === p))
+      .map((p) => ({
+        provider: p,
+        label: PROVIDER_LABELS[p],
+        category: PROVIDER_CATEGORY[p],
+        categoryLabel: CATEGORY_LABELS[PROVIDER_CATEGORY[p]],
+        transportReady: registry.has(p),
+      })),
+    fieldCatalog: (Object.keys(FIELD_DEFAULTS) as SyncField[]).map((f) => ({
+      field: f,
+      label: SYNC_FIELD_LABELS[f],
+      ...FIELD_DEFAULTS[f],
+    })),
+    presets: Object.entries(SOT_PRESETS).map(([key, p]) => ({
+      key,
+      label: p.label,
+      description: p.description,
+    })),
+    strategyLabels: STRATEGY_LABELS,
+    notifyEvents: NOTIFY_EVENTS.map((e) => ({ ...e })),
+  };
+}
+
+function describeMapping(m: SyncMapping) {
+  return {
+    ...m,
+    fieldLabel: SYNC_FIELD_LABELS[m.field],
+    why: FIELD_DEFAULTS[m.field].why,
+    options: FIELD_DEFAULTS[m.field].options,
+    strategyLabel: STRATEGY_LABELS[m.strategy],
+    /** 偏离默认值要标出来 —— 用户改过的地方，下次读这一页时该一眼看见 */
+    customized: m.sourceOfTruth !== FIELD_DEFAULTS[m.field].sourceOfTruth,
+  };
+}
+
+/** 7 天内过期就提示（页面文档 14 §7） */
+function expiringSoon(at: Date | null): boolean {
+  if (!at) return false;
+  return at.getTime() - Date.now() < 7 * 24 * 3600_000;
+}
+
+export async function createIntegration(
+  db: Database,
+  registry: IntegrationRegistry,
+  input: {
+    projectId: string;
+    provider: IntegrationProvider;
+    displayName: string;
+    config: Record<string, unknown>;
+    /** 明文只在这一步出现，落库前换成引用 */
+    credential: string | null;
+    userId: string;
+  },
+) {
+  const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId));
+  if (!project) throw notFound('项目');
+
+  const [dup] = await db
+    .select()
+    .from(integrations)
+    .where(
+      and(
+        eq(integrations.projectId, input.projectId),
+        eq(integrations.provider, input.provider),
+      ),
+    );
+  if (dup) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `该项目已连接 ${PROVIDER_LABELS[input.provider]}。同一项目同一系统只能连一个对象，否则同步目标含混`,
+      { existingId: dup.id },
+    );
+  }
+
+  if (!registry.has(input.provider)) {
+    throw new ApiError(
+      'UNSUPPORTED_FEATURE',
+      `${PROVIDER_LABELS[input.provider]} 的传输层还没有实现，现在连上也同步不了`,
+      { provider: input.provider },
+    );
+  }
+
+  const adapter = registry.get(input.provider);
+  const conn = { config: input.config, credentialRef: refOf(input.credential) };
+
+  const test = await adapter.testConnection(conn);
+  if (!test.ok) {
+    throw new ApiError('EXTERNAL_ERROR', `连接测试失败：${test.message}`, {
+      provider: input.provider,
+    });
+  }
+
+  const scopes = await adapter.grantedScopes(conn);
+
+  /**
+   * ★ 授权结果要复核一遍，不能只信适配器返回的 allowed。
+   *   适配器实现有 bug，或者外部系统给多了权限，这里必须挡住 ——
+   *   「合并 PR 应当经过 Policy 判定」是产品级约束，
+   *   不该指望每个适配器作者都记得。
+   */
+  const forbidden = scopes.allowed.filter((s: string) =>
+    (NEVER_GRANTED_SCOPES[input.provider] ?? []).includes(s),
+  );
+  if (forbidden.length > 0) {
+    throw new ApiError(
+      'FORBIDDEN',
+      `授权包含不允许的权限：${forbidden.join('、')}。这类操作必须经过 Policy 判定，不能由集成层直接放开`,
+      { forbidden },
+    );
+  }
+
+  const category = PROVIDER_CATEGORY[input.provider];
+
+  const [row] = await db
+    .insert(integrations)
+    .values({
+      orgId: project.orgId,
+      projectId: input.projectId,
+      provider: input.provider,
+      category,
+      /**
+       * ★ 用户填的名字优先。适配器探测到的名字只在用户没填时兜底 ——
+       *   反过来的话，用户输入的「ORDER (Scrum Board)」会被适配器
+       *   返回的技术名覆盖掉，页面上就再也认不出这是哪个连接。
+       */
+      displayName: input.displayName.trim() || (test.displayName ?? input.provider),
+      config: input.config,
+      credentialRef: refOf(input.credential),
+      // 只留后四位，原值不入库
+      credentialHint: hintOf(input.credential),
+      scopes,
+      status: 'active',
+      notificationConfig:
+        category === 'communication'
+          ? (DEFAULT_NOTIFICATION_CONFIG as unknown as Record<string, unknown>)
+          : null,
+      createdBy: input.userId,
+    })
+    .returning();
+
+  if (!row) throw new Error('集成创建失败');
+
+  // 项目管理类才需要 SoT 配置；通知与代码类不参与字段同步
+  if (category === 'project_management') {
+    await db.insert(integrationSyncMappings).values(
+      defaultMappings().map((m) => ({
+        integrationId: row.id,
+        field: m.field,
+        sourceOfTruth: m.sourceOfTruth,
+        strategy: m.strategy,
+        updatedBy: input.userId,
+      })),
+    );
+  }
+
+  return { id: row.id, displayName: row.displayName, scopes: row.scopes };
+}
+
+/**
+ * 改 SoT 配置。
+ *
+ * ★ 这是「关键配置」（页面文档 14 §4 的角标），因为它决定
+ *   以后哪一边的修改会被丢掉。所以每次修改都写事件，
+ *   由调用方带上 actor —— 数据不一致时要查得出是谁在什么时候改的。
+ */
+export async function updateSyncMapping(
+  db: Database,
+  integrationId: string,
+  changes: SyncMapping[],
+  userId: string,
+) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+
+  const before = await db
+    .select()
+    .from(integrationSyncMappings)
+    .where(eq(integrationSyncMappings.integrationId, integrationId));
+  const beforeBy = new Map(before.map((b) => [b.field, b]));
+
+  const diffs: { field: SyncField; from: string; to: string }[] = [];
+
+  for (const c of changes) {
+    const options = FIELD_DEFAULTS[c.field].options;
+    if (!options.includes(c.sourceOfTruth)) {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        `「${SYNC_FIELD_LABELS[c.field]}」不支持以${c.sourceOfTruth === 'apos' ? ' APOS ' : '外部系统'}为准：${FIELD_DEFAULTS[c.field].why}`,
+        { field: c.field, options },
+      );
+    }
+
+    const prev = beforeBy.get(c.field);
+    if (prev && prev.sourceOfTruth !== c.sourceOfTruth) {
+      diffs.push({ field: c.field, from: prev.sourceOfTruth, to: c.sourceOfTruth });
+    }
+
+    await db
+      .insert(integrationSyncMappings)
+      .values({
+        integrationId,
+        field: c.field,
+        sourceOfTruth: c.sourceOfTruth,
+        strategy: c.strategy,
+        updatedBy: userId,
+      })
+      .onConflictDoUpdate({
+        target: [integrationSyncMappings.integrationId, integrationSyncMappings.field],
+        set: {
+          sourceOfTruth: c.sourceOfTruth,
+          strategy: c.strategy,
+          updatedBy: userId,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  return { changed: diffs, projectId: row.projectId, orgId: row.orgId };
+}
+
+/**
+ * 拉一轮同步。
+ *
+ * ★ 返回的是「发生了什么」而不是「成功/失败」：
+ *   接受了几个字段、回写了几个、生成了几个冲突、挡住了几次循环。
+ *   一个只回 200 的同步接口，出问题时什么都查不出来。
+ */
+export async function runSync(
+  db: Database,
+  registry: IntegrationRegistry,
+  integrationId: string,
+) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+
+  const provider = row.provider as IntegrationProvider;
+  if (!registry.has(provider)) {
+    throw new ApiError('UNSUPPORTED_FEATURE', `${PROVIDER_LABELS[provider]} 的传输层还没有实现`, {
+      provider,
+    });
+  }
+  const adapter = registry.get(provider);
+  const conn = { config: row.config, credentialRef: row.credentialRef };
+
+  const mappingRows = await db
+    .select()
+    .from(integrationSyncMappings)
+    .where(eq(integrationSyncMappings.integrationId, integrationId));
+  const mappings: SyncMapping[] = mappingRows.map((m) => ({
+    field: m.field as SyncField,
+    sourceOfTruth: m.sourceOfTruth as SyncMapping['sourceOfTruth'],
+    strategy: m.strategy as SyncMapping['strategy'],
+  }));
+
+  const links = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(eq(integrationObjectLinks.integrationId, integrationId));
+
+  const autoRules = await db
+    .select()
+    .from(syncConflictRules)
+    .where(eq(syncConflictRules.integrationId, integrationId));
+  const autoBy = new Map(autoRules.map((a) => [similarityKey(integrationId, a.field as SyncField), a]));
+
+  const itemIds = links.map((l) => l.workItemId);
+  const items =
+    itemIds.length > 0
+      ? await db.select().from(workItems).where(inArray(workItems.id, itemIds))
+      : [];
+  const itemById = new Map(items.map((i) => [i.id, i]));
+
+  const ownTag = originTagFor(row.projectId);
+  const summary = {
+    accepted: 0,
+    writtenBack: 0,
+    conflicts: 0,
+    autoResolved: 0,
+    echoesBlocked: 0,
+    warned: 0,
+    externalDeleted: 0,
+  };
+  const notes: string[] = [];
+
+  for (const link of links) {
+    const item = itemById.get(link.workItemId);
+    if (!item) continue;
+
+    let external;
+    try {
+      external = await adapter.fetchObject(conn, link.externalKey);
+    } catch (e) {
+      /**
+       * ★ 外部不可用时标记异常并暂停同步，恢复后补同步（§11）。
+       *   继续跑下去只会把一整轮的失败写成一堆假冲突。
+       */
+      await db
+        .update(integrations)
+        .set({
+          status: 'paused',
+          statusReason: e instanceof Error ? e.message : '外部服务不可用',
+          updatedAt: new Date(),
+        })
+        .where(eq(integrations.id, integrationId));
+      throw new ApiError('EXTERNAL_ERROR', `同步已暂停：${e instanceof Error ? e.message : '外部服务不可用'}`, {
+        integrationId,
+      });
+    }
+
+    if (!external) continue;
+
+    const plan = planSync(external, {
+      mappings,
+      aposSide: aposSnapshot(item),
+      lastSyncedValues: link.lastSyncedValues,
+      lastSyncedAt: link.lastSyncedAt?.getTime() ?? null,
+      ownOriginTag: ownTag,
+    } satisfies SyncContext);
+
+    summary.echoesBlocked += plan.echoes;
+
+    if (plan.externalDeleted) {
+      summary.externalDeleted += 1;
+      await db
+        .update(integrationObjectLinks)
+        .set({ externalDeletedAt: new Date() })
+        .where(eq(integrationObjectLinks.id, link.id));
+      notes.push(`${link.externalKey} 在外部系统已被删除，本地数据保留并已标注`);
+      continue;
+    }
+
+    for (const action of plan.actions) {
+      const r = action.resolution;
+
+      if (r.kind === 'writeback') {
+        await adapter.writeField(conn, link.externalKey, action.field, r.value, ownTag);
+        summary.writtenBack += 1;
+        continue;
+      }
+
+      if (r.kind === 'accept' || r.kind === 'merge') {
+        summary.accepted += 1;
+        continue;
+      }
+
+      if (r.kind === 'accept_and_warn') {
+        summary.warned += 1;
+        notes.push(r.note);
+        continue;
+      }
+
+      if (r.kind === 'conflict') {
+        /**
+         * ★ 用户勾过「以后同类冲突自动按此处理」就不再打扰他。
+         *   记的是「这个字段以后听谁的」，不是「这条对象以后听谁的」——
+         *   他勾的时候想表达的显然是前者。
+         */
+        const rule = autoBy.get(similarityKey(integrationId, action.field));
+        if (rule) {
+          summary.autoResolved += 1;
+          if (rule.winner === 'apos') {
+            await adapter.writeField(conn, link.externalKey, action.field, r.apos.value, ownTag);
+          }
+          await db.insert(syncConflicts).values({
+            orgId: row.orgId,
+            projectId: row.projectId,
+            integrationId,
+            linkId: link.id,
+            field: action.field,
+            aposSide: r.apos as unknown as Record<string, unknown>,
+            externalSide: r.external as unknown as Record<string, unknown>,
+            sourceOfTruth: r.sourceOfTruth,
+            status: 'auto_resolved',
+            resolvedWinner: rule.winner,
+            resolvedAt: new Date(),
+            autoResolved: true,
+          });
+          continue;
+        }
+
+        /**
+         * ★ 同一个字段的未处理冲突只留一条。
+         *
+         *   冲突未解决时基准不推进（这是对的），于是每一轮同步都会
+         *   重新判出同一个冲突。不去重的话，一个每 5 分钟拉一次的集成
+         *   会在一天里堆出近三百条一模一样的记录，
+         *   而用户处理完第一条之后还剩两百九十九条 ——
+         *   功能在测试里是好的，在生产上没法用。
+         *
+         *   已有的那条要更新快照：外部可能又改了一次，
+         *   给用户看的必须是现在的值，不是第一次冲突时的值。
+         */
+        const [existing] = await db
+          .select()
+          .from(syncConflicts)
+          .where(
+            and(
+              eq(syncConflicts.linkId, link.id),
+              eq(syncConflicts.field, action.field),
+              eq(syncConflicts.status, 'pending'),
+            ),
+          );
+
+        if (existing) {
+          await db
+            .update(syncConflicts)
+            .set({
+              aposSide: r.apos as unknown as Record<string, unknown>,
+              externalSide: r.external as unknown as Record<string, unknown>,
+              sourceOfTruth: r.sourceOfTruth,
+            })
+            .where(eq(syncConflicts.id, existing.id));
+          continue;
+        }
+
+        summary.conflicts += 1;
+        await db.insert(syncConflicts).values({
+          orgId: row.orgId,
+          projectId: row.projectId,
+          integrationId,
+          linkId: link.id,
+          field: action.field,
+          aposSide: r.apos as unknown as Record<string, unknown>,
+          externalSide: r.external as unknown as Record<string, unknown>,
+          sourceOfTruth: r.sourceOfTruth,
+          status: 'pending',
+        });
+      }
+    }
+
+    await db
+      .update(integrationObjectLinks)
+      .set({
+        lastSyncedValues: nextSyncedValues(plan, link.lastSyncedValues),
+        lastSyncedAt: new Date(),
+      })
+      .where(eq(integrationObjectLinks.id, link.id));
+  }
+
+  const prevStats = (row.stats ?? {}) as Record<string, number>;
+  await db
+    .update(integrations)
+    .set({
+      lastSyncAt: new Date(),
+      status: 'active',
+      statusReason: null,
+      stats: {
+        ...prevStats,
+        syncRuns: (prevStats['syncRuns'] ?? 0) + 1,
+        /** 「已阻止 N 次循环同步」要累计，单轮的数字说明不了问题 */
+        echoesBlocked: (prevStats['echoesBlocked'] ?? 0) + summary.echoesBlocked,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(integrations.id, integrationId));
+
+  return { ...summary, notes, objects: links.length };
+}
+
+/** APOS 侧的字段快照。状态由 Flow Engine 驱动，作者记为系统 */
+function aposSnapshot(item: typeof workItems.$inferSelect): Partial<Record<SyncField, SideSnapshot>> {
+  const at = item.updatedAt.toISOString();
+  return {
+    status: { value: item.status, changedAt: at, changedBy: '系统', actorType: 'system' },
+    requirement_content: {
+      value: item.description ?? '',
+      changedAt: at,
+      changedBy: '系统',
+      actorType: 'system',
+    },
+    assignee: {
+      value: item.ownerId ?? null,
+      changedAt: at,
+      changedBy: '系统',
+      actorType: 'system',
+    },
+    due_date: {
+      value: item.plannedEnd?.toISOString() ?? null,
+      changedAt: at,
+      changedBy: '系统',
+      actorType: 'system',
+    },
+  };
+}
+
+export async function listConflicts(db: Database, projectId: string) {
+  const rows = await db
+    .select()
+    .from(syncConflicts)
+    .where(and(eq(syncConflicts.projectId, projectId), eq(syncConflicts.status, 'pending')))
+    .orderBy(desc(syncConflicts.createdAt));
+
+  if (rows.length === 0) return { conflicts: [], hotspots: [] };
+
+  const linkIds = [...new Set(rows.map((r) => r.linkId))];
+  const links = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(inArray(integrationObjectLinks.id, linkIds));
+  const linkById = new Map(links.map((l) => [l.id, l]));
+
+  const itemIds = [...new Set(links.map((l) => l.workItemId))];
+  const items =
+    itemIds.length > 0
+      ? await db.select().from(workItems).where(inArray(workItems.id, itemIds))
+      : [];
+  const itemById = new Map(items.map((i) => [i.id, i]));
+
+  const conflicts = rows.map((r) => {
+    const link = linkById.get(r.linkId);
+    const item = link ? itemById.get(link.workItemId) : undefined;
+    const field = r.field as SyncField;
+
+    return {
+      id: r.id,
+      integrationId: r.integrationId,
+      field,
+      fieldLabel: SYNC_FIELD_LABELS[field] ?? field,
+      externalKey: link?.externalKey ?? '—',
+      externalUrl: link?.externalUrl ?? null,
+      workItemId: link?.workItemId ?? null,
+      workItemTitle: item?.title ?? null,
+      apos: r.aposSide as unknown as SideSnapshot,
+      external: r.externalSide as unknown as SideSnapshot,
+      sourceOfTruth: r.sourceOfTruth,
+      /** 界面上那句「状态字段的 Source of Truth 是 APOS」 */
+      sotNote: `「${SYNC_FIELD_LABELS[field] ?? field}」的 Source of Truth 是${r.sourceOfTruth === 'apos' ? ' APOS' : '外部系统'}`,
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
+
+  return {
+    conflicts,
+    hotspots: conflictHotspots(rows.map((r) => ({ field: r.field as SyncField }))).map((h) => ({
+      ...h,
+      fieldLabel: SYNC_FIELD_LABELS[h.field] ?? h.field,
+    })),
+  };
+}
+
+export async function resolveConflict(
+  db: Database,
+  registry: IntegrationRegistry,
+  input: {
+    conflictId: string;
+    winner: 'apos' | 'external';
+    applyToSimilar: boolean;
+    userId: string;
+  },
+) {
+  const [conflict] = await db
+    .select()
+    .from(syncConflicts)
+    .where(eq(syncConflicts.id, input.conflictId));
+  if (!conflict) throw notFound('冲突');
+  if (conflict.status !== 'pending') {
+    throw new ApiError('VERSION_CONFLICT', '该冲突已被处理', { status: conflict.status });
+  }
+
+  const [row] = await db
+    .select()
+    .from(integrations)
+    .where(eq(integrations.id, conflict.integrationId));
+  if (!row) throw notFound('集成');
+
+  const [link] = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(eq(integrationObjectLinks.id, conflict.linkId));
+  if (!link) throw notFound('外部对象映射');
+
+  const field = conflict.field as SyncField;
+  const apos = conflict.aposSide as unknown as SideSnapshot;
+  const external = conflict.externalSide as unknown as SideSnapshot;
+  const provider = row.provider as IntegrationProvider;
+
+  // 选 APOS 就把 APOS 的值写回外部；选外部则由调用方把值落到 Work Item
+  if (input.winner === 'apos' && registry.has(provider)) {
+    await registry
+      .get(provider)
+      .writeField(
+        { config: row.config, credentialRef: row.credentialRef },
+        link.externalKey,
+        field,
+        apos.value,
+        originTagFor(row.projectId),
+      );
+  }
+
+  await db
+    .update(syncConflicts)
+    .set({
+      status: 'resolved',
+      resolvedWinner: input.winner,
+      resolvedBy: input.userId,
+      resolvedAt: new Date(),
+    })
+    .where(eq(syncConflicts.id, input.conflictId));
+
+  // 解决之后基准要推进到胜方的值，否则下一轮同一个冲突会再来一次
+  await db
+    .update(integrationObjectLinks)
+    .set({
+      lastSyncedValues: {
+        ...link.lastSyncedValues,
+        [field]: input.winner === 'apos' ? apos.value : external.value,
+      },
+    })
+    .where(eq(integrationObjectLinks.id, link.id));
+
+  if (input.applyToSimilar) {
+    await db
+      .insert(syncConflictRules)
+      .values({
+        integrationId: conflict.integrationId,
+        field,
+        winner: input.winner,
+        createdBy: input.userId,
+      })
+      .onConflictDoUpdate({
+        target: [syncConflictRules.integrationId, syncConflictRules.field],
+        set: { winner: input.winner, createdBy: input.userId, createdAt: new Date() },
+      });
+  }
+
+  return {
+    ok: true as const,
+    projectId: row.projectId,
+    orgId: row.orgId,
+    field,
+    winner: input.winner,
+    appliedValue: input.winner === 'apos' ? apos.value : external.value,
+    workItemId: link.workItemId,
+  };
+}
+
+/**
+ * 断开连接。
+ *
+ * ★ 必须先说清影响再让人点（页面文档 14 §7）。
+ *   「断开后 3 个 Agent 无法执行代码任务、5 个任务的状态不再同步」——
+ *   一个只问「确定吗」的确认框，等于没问。
+ */
+export async function disconnectImpact(db: Database, integrationId: string) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+
+  const links = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(eq(integrationObjectLinks.integrationId, integrationId));
+
+  const pending = await db
+    .select()
+    .from(syncConflicts)
+    .where(
+      and(eq(syncConflicts.integrationId, integrationId), eq(syncConflicts.status, 'pending')),
+    );
+
+  const provider = row.provider as IntegrationProvider;
+  const effects: string[] = [];
+
+  if (links.length > 0) {
+    effects.push(`${links.length} 个任务与外部对象的关联会断开，状态不再同步`);
+  }
+  if (pending.length > 0) {
+    effects.push(`${pending.length} 个未处理的同步冲突会一并消失`);
+  }
+  if (row.category === 'communication') {
+    effects.push('决策提醒与升级通知不再发到这个群组');
+  }
+  if (row.category === 'code') {
+    effects.push('Agent 无法再创建分支与 PR，CI 结果不再回流到验收');
+  }
+  if (effects.length === 0) {
+    effects.push('当前没有关联对象，断开不影响正在进行的工作');
+  }
+
+  return {
+    provider,
+    providerLabel: PROVIDER_LABELS[provider] ?? provider,
+    displayName: row.displayName,
+    effects,
+    linkedItems: links.length,
+    pendingConflicts: pending.length,
+  };
+}
+
+export async function disconnectIntegration(db: Database, integrationId: string) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+
+  await db.delete(integrations).where(eq(integrations.id, integrationId));
+  return { ok: true as const, projectId: row.projectId, orgId: row.orgId, provider: row.provider };
+}
+
+export async function updateNotificationConfig(
+  db: Database,
+  integrationId: string,
+  config: NotificationConfig,
+) {
+  const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
+  if (!row) throw notFound('集成');
+  if (row.category !== 'communication') {
+    throw new ApiError('VALIDATION_FAILED', '只有协同类集成才有通知配置', {
+      category: row.category,
+    });
+  }
+
+  await db
+    .update(integrations)
+    .set({
+      notificationConfig: config as unknown as Record<string, unknown>,
+      updatedAt: new Date(),
+    })
+    .where(eq(integrations.id, integrationId));
+
+  /**
+   * 被关掉的通知类型要报出来（页面文档 14 §10 埋点 `notification_disabled`）——
+   * 关闭率高说明这类通知没价值，那是产品该知道的事，不是用户的错。
+   */
+  const disabled = NOTIFY_EVENTS.filter((e) => !config.events.includes(e.key)).map((e) => e.key);
+  return { ok: true as const, projectId: row.projectId, orgId: row.orgId, disabled };
+}
+
+/** 建立 Work Item ↔ 外部对象的映射 */
+export async function linkObject(
+  db: Database,
+  input: { integrationId: string; workItemId: string; externalKey: string; externalUrl?: string },
+) {
+  const [row] = await db
+    .select()
+    .from(integrations)
+    .where(eq(integrations.id, input.integrationId));
+  if (!row) throw notFound('集成');
+
+  const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
+  if (!item) throw notFound('任务');
+
+  const [dup] = await db
+    .select()
+    .from(integrationObjectLinks)
+    .where(
+      and(
+        eq(integrationObjectLinks.integrationId, input.integrationId),
+        eq(integrationObjectLinks.workItemId, input.workItemId),
+      ),
+    );
+  if (dup) {
+    /**
+     * ★ §11「同一 Work Item 映射到多个外部对象 —— 不允许，配置时校验」。
+     *   两个映射意味着回写有两个目标、拉取有两个来源，
+     *   SoT 判定当场失去意义。
+     */
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `该任务已映射到 ${dup.externalKey}。一个任务只能映射一个外部对象，否则同步没有确定的方向`,
+      { existing: dup.externalKey },
+    );
+  }
+
+  const [link] = await db
+    .insert(integrationObjectLinks)
+    .values({
+      integrationId: input.integrationId,
+      workItemId: input.workItemId,
+      externalKey: input.externalKey,
+      externalUrl: input.externalUrl ?? null,
+    })
+    .returning();
+
+  return { id: link!.id, projectId: row.projectId, orgId: row.orgId };
+}
+
+/**
+ * 凭证引用。
+ *
+ * ★ 当前实现把明文换成一个不可逆的引用键并丢弃明文 ——
+ *   真正的密钥管理（KMS / Vault）没有接，但接口形状是对的：
+ *   业务库里永远只有引用，换成真实实现时不需要改调用方。
+ *   直接把 token 存进 integrations.credential 再说「以后换」的，
+ *   最后都不会换。
+ */
+function refOf(credential: string | null): string | null {
+  if (!credential) return null;
+  return `secret://local/${hash(credential)}`;
+}
+
+function hintOf(credential: string | null): string | null {
+  if (!credential) return null;
+  return `****${credential.slice(-4)}`;
+}
+
+function hash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}

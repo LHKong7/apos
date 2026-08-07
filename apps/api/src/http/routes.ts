@@ -11,9 +11,12 @@ import {
   events,
   plans,
   projects,
+  integrations,
+  projectMembers,
   requirementClarifications,
   requirements,
   runEvents,
+  syncConflicts,
   users,
   workItems,
   type Database,
@@ -23,6 +26,9 @@ import {
   Action,
   Condition,
   humanActor,
+  IntegrationProvider,
+  NotificationConfig,
+  SyncMapping,
   WorkItemStatus,
   type PolicyContext,
 } from '@apos/contracts';
@@ -35,10 +41,15 @@ import {
   WORK_ITEM_MACHINE,
   availableTriggers,
   manualTriggerFor,
+  canIntegration,
+  denyReason,
+  integrationPermissions,
+  type Actor,
   type AnalyticsRange,
   type LayoutKind,
 } from '@apos/domain';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
+import type { IntegrationRegistry } from '@apos/integrations';
 import type { EventBus } from '../modules/event/bus';
 import type { PlanningProvider } from '../modules/planning/provider';
 import {
@@ -72,12 +83,25 @@ import {
   togglePolicy,
 } from './policies';
 import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
+import {
+  createIntegration,
+  disconnectImpact,
+  disconnectIntegration,
+  linkObject,
+  listConflicts,
+  listIntegrations,
+  resolveConflict,
+  runSync,
+  updateNotificationConfig,
+  updateSyncMapping,
+} from './integrations';
 import { serializeEvent } from './serialize';
 
 export interface AppDeps {
   db: Database;
   bus: EventBus;
   registry: RuntimeRegistry;
+  integrations: IntegrationRegistry;
   provider: PlanningProvider;
 }
 
@@ -691,6 +715,261 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return batchApprove(body.ids, (id) =>
       approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
     );
+  });
+
+  // ── 集成设置（页面文档 14）────────────────────────────────────────────
+
+  /**
+   * 项目角色 + 组织角色 → 权限判定。
+   *
+   * ★ 判定本身在 @apos/domain，前后端共用一份 —— 界面上灰掉的按钮
+   *   和服务端真正拦住的请求必须是同一条规则。这一页管的是
+   *   「谁能给外部系统开写权限」，两边说法不一致的代价太高。
+   */
+  async function integrationActor(projectId: string, userId: string): Promise<Actor> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+
+    const [membership] = await db
+      .select()
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.actorType, 'human'),
+          eq(projectMembers.actorId, userId),
+        ),
+      );
+
+    return {
+      projectRole: (membership?.role as Actor['projectRole']) ?? null,
+      orgRole: (user.orgRole as Actor['orgRole']) ?? 'member',
+    };
+  }
+
+  async function assertIntegration(
+    projectId: string,
+    userId: string,
+    action: Parameters<typeof canIntegration>[1],
+  ) {
+    const actor = await integrationActor(projectId, userId);
+    if (!canIntegration(actor, action)) {
+      throw new ApiError('FORBIDDEN', denyReason(actor, action) ?? '权限不足', {
+        action,
+        projectRole: actor.projectRole,
+      });
+    }
+    return actor;
+  }
+
+  /** 集成 id → projectId，权限判定要先知道是哪个项目 */
+  async function projectOfIntegration(id: string): Promise<string> {
+    const [row] = await db.select().from(integrations).where(eq(integrations.id, id));
+    if (!row) throw notFound('集成');
+    return row.projectId;
+  }
+
+  app.get('/api/v1/projects/:id/integrations', async (req) => {
+    const { id } = req.params as { id: string };
+    const userId = optionalUserId(req);
+    const data = await listIntegrations(db, deps.integrations, id);
+    const actor = userId
+      ? await integrationActor(id, userId)
+      : ({ projectRole: null, orgRole: 'member' } as Actor);
+
+    return { ...data, permissions: integrationPermissions(actor) };
+  });
+
+  app.post('/api/v1/projects/:id/integrations', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { userId, actor } = actorFrom(req);
+    const body = z
+      .object({
+        provider: IntegrationProvider,
+        displayName: z.string().min(1),
+        config: z.record(z.unknown()).default({}),
+        credential: z.string().nullable().default(null),
+        /** 是否需要写权限 —— 单独一档授权，见 §8 */
+        grantWrite: z.boolean().default(false),
+      })
+      .parse(req.body);
+
+    await assertIntegration(id, userId, 'connect');
+    /**
+     * ★ 写权限是比「连上」高一个量级的授权，单独判一次。
+     *   pm 能连 GitHub，但让它能改代码需要 tech_lead。
+     */
+    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write');
+
+    const created = await createIntegration(db, deps.integrations, {
+      projectId: id,
+      provider: body.provider,
+      displayName: body.displayName,
+      config: body.config,
+      credential: body.credential,
+      userId,
+    });
+
+    const [project] = await db.select().from(projects).where(eq(projects.id, id));
+    await emitAndPublish(db, {
+      orgId: project!.orgId,
+      projectId: id,
+      actor,
+      type: 'integration.connected',
+      subjectType: 'integration',
+      subjectId: created.id,
+      // ★ 授予了什么权限要进审计。事后追责时「谁开的写权限」必须查得到
+      payload: { provider: body.provider, scopes: created.scopes, grantWrite: body.grantWrite },
+      correlationId: corr(req),
+    });
+
+    reply.code(201);
+    return created;
+  });
+
+  app.patch('/api/v1/integrations/:id/sync-mapping', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId, actor } = actorFrom(req);
+    const body = z.object({ mappings: z.array(SyncMapping).min(1) }).parse(req.body);
+
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'change_sot');
+
+    const result = await updateSyncMapping(db, id, body.mappings, userId);
+
+    /**
+     * ★ SoT 变更必须留痕。它决定以后哪一边的修改会被丢掉，
+     *   而且改错之后不会立刻显现 —— 等到发现数据对不上时，
+     *   唯一能回答「什么时候变的、谁变的」的就是这条事件。
+     */
+    if (result.changed.length > 0) {
+      await emitAndPublish(db, {
+        orgId: result.orgId,
+        projectId: result.projectId,
+        actor,
+        type: 'integration.synced',
+        subjectType: 'integration',
+        subjectId: id,
+        payload: { kind: 'sot_changed', changes: result.changed },
+        correlationId: corr(req),
+      });
+    }
+
+    return { ok: true, changed: result.changed };
+  });
+
+  app.post('/api/v1/integrations/:id/sync', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId } = actorFrom(req);
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'view');
+
+    return runSync(db, deps.integrations, id);
+  });
+
+  app.get('/api/v1/projects/:id/sync-conflicts', async (req) => {
+    const { id } = req.params as { id: string };
+    return listConflicts(db, id);
+  });
+
+  app.post('/api/v1/sync-conflicts/:id/resolve', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId, actor } = actorFrom(req);
+    const body = z
+      .object({
+        winner: z.enum(['apos', 'external']),
+        applyToSimilar: z.boolean().default(false),
+      })
+      .parse(req.body);
+
+    const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
+    if (!conflict) throw notFound('冲突');
+    await assertIntegration(conflict.projectId, userId, 'resolve_conflict');
+
+    const result = await resolveConflict(db, deps.integrations, {
+      conflictId: id,
+      winner: body.winner,
+      applyToSimilar: body.applyToSimilar,
+      userId,
+    });
+
+    await emitAndPublish(db, {
+      orgId: result.orgId,
+      projectId: result.projectId,
+      actor,
+      type: 'integration.conflict_resolved',
+      subjectType: 'integration',
+      subjectId: conflict.integrationId,
+      payload: {
+        field: result.field,
+        winner: result.winner,
+        workItemId: result.workItemId,
+        applyToSimilar: body.applyToSimilar,
+      },
+      correlationId: corr(req),
+    });
+
+    return result;
+  });
+
+  app.post('/api/v1/integrations/:id/objects', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { userId } = actorFrom(req);
+    const body = z
+      .object({
+        workItemId: z.string().uuid(),
+        externalKey: z.string().min(1),
+        externalUrl: z.string().url().optional(),
+      })
+      .parse(req.body);
+
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'connect');
+
+    const link = await linkObject(db, { integrationId: id, ...body });
+    reply.code(201);
+    return link;
+  });
+
+  /** 断开前先看影响 —— 一个只问「确定吗」的确认框等于没问（§7） */
+  app.get('/api/v1/integrations/:id/disconnect-impact', async (req) => {
+    const { id } = req.params as { id: string };
+    return disconnectImpact(db, id);
+  });
+
+  app.delete('/api/v1/integrations/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId, actor } = actorFrom(req);
+    const body = z.object({ confirmImpact: z.literal(true) }).parse(req.body ?? {});
+    void body;
+
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'disconnect');
+
+    const result = await disconnectIntegration(db, id);
+    await emitAndPublish(db, {
+      orgId: result.orgId,
+      projectId: result.projectId,
+      actor,
+      type: 'integration.disconnected',
+      subjectType: 'integration',
+      subjectId: id,
+      payload: { provider: result.provider },
+      correlationId: corr(req),
+    });
+
+    return { ok: true };
+  });
+
+  app.patch('/api/v1/integrations/:id/notifications', async (req) => {
+    const { id } = req.params as { id: string };
+    const { userId } = actorFrom(req);
+    const config = NotificationConfig.parse(req.body);
+
+    const projectId = await projectOfIntegration(id);
+    await assertIntegration(projectId, userId, 'configure_notification');
+
+    return updateNotificationConfig(db, id, config);
   });
 
   // ── Analytics ───────────────────────────────────────────────────────

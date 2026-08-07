@@ -9,7 +9,7 @@
  * 用法：pnpm --filter @apos/api seed
  */
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   agentRuntimes,
   agents,
@@ -22,6 +22,13 @@ import {
   type Database,
 } from '@apos/db';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
+import { IntegrationRegistry, MemoryIntegrationAdapter } from '@apos/integrations';
+import { DevExternalStore } from '../modules/integration/dev-store';
+import {
+  createIntegration,
+  linkObject,
+  runSync,
+} from '../http/integrations';
 import { humanActor } from '@apos/contracts';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import { analyzeRequirement, approveRequirement } from '../modules/requirement/service';
@@ -476,6 +483,72 @@ async function main() {
     now: Date.now(),
   });
   console.log(`  历史数据    ${history} 项已完成任务（近 60 天，供 Analytics）`);
+
+  // ── 集成（页面文档 14）────────────────────────────────────────────
+  /**
+   * 连一个 Jira 并制造一个真实冲突。
+   *
+   * ★ 冲突不是编出来的假数据：外部改了状态 → 拉取 → SoT 判定 → 落库，
+   *   走的是和线上完全一样的那条路径。假造一条 sync_conflicts 记录
+   *   看起来一样，但它证明不了同步引擎能工作，也就没有价值。
+   */
+  const externalStore = new DevExternalStore(db);
+  const jira = new MemoryIntegrationAdapter('jira', externalStore);
+  const integrationRegistry = new IntegrationRegistry();
+  integrationRegistry.register(jira);
+  for (const p of ['github', 'slack'] as const) {
+    integrationRegistry.register(new MemoryIntegrationAdapter(p, externalStore));
+  }
+
+  const jiraConn = await createIntegration(db, integrationRegistry, {
+    projectId,
+    provider: 'jira',
+    displayName: 'ORDER (Scrum Board)',
+    config: { projectKey: 'ORDER' },
+    credential: 'jira-pat-demo-7c41',
+    userId: lead!.id,
+  });
+
+  await createIntegration(db, integrationRegistry, {
+    projectId,
+    provider: 'slack',
+    displayName: '#order-refactor',
+    config: { channel: 'order-refactor' },
+    credential: 'xoxb-demo-9f22',
+    userId: pm!.id,
+  });
+
+  const syncable = await db
+    .select()
+    .from(workItems)
+    .where(and(eq(workItems.projectId, projectId), isNull(workItems.deletedAt)))
+    .limit(3);
+
+  for (const [i, item] of syncable.entries()) {
+    const key = `ORDER-${140 + i}`;
+    await jira.seed({
+      externalKey: key,
+      url: `https://jira.example/browse/${key}`,
+      fields: { status: item.status, assignee: '张伟' },
+      lastChange: { originTag: null, by: '李娜', at: new Date().toISOString() },
+    });
+    await linkObject(db, {
+      integrationId: jiraConn.id,
+      workItemId: item.id,
+      externalKey: key,
+      externalUrl: `https://jira.example/browse/${key}`,
+    });
+  }
+
+  // 先同步一轮建立基准，再让外部改一次 —— 这样才会被判为真冲突
+  await runSync(db, integrationRegistry, jiraConn.id);
+  await jira.externalEdit('ORDER-140', 'status', 'done', '李娜', new Date().toISOString());
+  await jira.externalEdit('ORDER-141', 'assignee', '王强', '李娜', new Date().toISOString());
+  const syncSummary = await runSync(db, integrationRegistry, jiraConn.id);
+  console.log(
+    `  集成        Jira + Slack；同步 ${syncSummary.objects} 个对象，` +
+      `冲突 ${syncSummary.conflicts}、接受 ${syncSummary.accepted}、回写 ${syncSummary.writtenBack}`,
+  );
 
   const final = await db.select().from(workItems).where(eq(workItems.projectId, projectId));
   const byStage = final.reduce<Record<string, number>>((acc, i) => {

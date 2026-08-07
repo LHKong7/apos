@@ -707,3 +707,129 @@ export interface RuntimeRow {
   agentNames: string[];
   capability: CapabilityReport | null;
 }
+
+// ── 集成设置（页面文档 14）──────────────────────────────────────────
+
+export interface SyncMappingRow {
+  field: string;
+  fieldLabel: string;
+  sourceOfTruth: 'apos' | 'external' | 'merge';
+  strategy: 'writeback' | 'record_conflict' | 'accept_and_warn';
+  strategyLabel: string;
+  why: string;
+  options: ('apos' | 'external' | 'merge')[];
+  /** 偏离默认值 —— 用户改过的地方下次读这一页时要一眼看见 */
+  customized: boolean;
+}
+
+export interface IntegrationRow {
+  id: string;
+  provider: string;
+  providerLabel: string;
+  category: string;
+  categoryLabel: string;
+  displayName: string;
+  config: Record<string, unknown>;
+  status: string;
+  statusReason: string | null;
+  lastSyncAt: string | null;
+  /** 只有后四位。接口里没有明文这个字段 */
+  credentialHint: string | null;
+  credentialExpiresAt: string | null;
+  credentialExpiringSoon: boolean;
+  scopes: { allowed: string[]; denied: string[] };
+  /** 这个 provider 的集成层永远不提供的权限 */
+  neverGranted: string[];
+  /** 适配器没注册 = 现在同步不了，和「配置错了」是两回事 */
+  transportReady: boolean;
+  syncMappings: SyncMappingRow[];
+  sotPreset: string | null;
+  autoRules: { field: string; fieldLabel: string; winner: string }[];
+  conflictCount: number;
+  linkedItems: number;
+  notificationConfig: NotificationConfigRow | null;
+  stats: Record<string, unknown>;
+}
+
+export interface NotificationConfigRow {
+  events: string[];
+  dailyDigestAt: string | null;
+  quietHours: { from: string; to: string } | null;
+  quietHoursExceptHighRisk: boolean;
+  escalation: {
+    afterHours: number;
+    notify: 'assignee' | 'project_owner' | 'manager';
+    pauseCriticalPath: boolean;
+  }[];
+}
+
+export type IntegrationAction =
+  | 'view'
+  | 'connect'
+  | 'grant_write'
+  | 'change_sot'
+  | 'disconnect'
+  | 'resolve_conflict'
+  | 'configure_notification'
+  | 'configure_data_connector';
+
+export interface IntegrationsResponse {
+  integrations: IntegrationRow[];
+  conflictBacklog: number;
+  hotspots: { field: string; fieldLabel: string; count: number; hint: string }[];
+  available: {
+    provider: string;
+    label: string;
+    category: string;
+    categoryLabel: string;
+    transportReady: boolean;
+  }[];
+  fieldCatalog: {
+    field: string;
+    label: string;
+    sourceOfTruth: string;
+    options: string[];
+    why: string;
+  }[];
+  presets: { key: string; label: string; description: string }[];
+  strategyLabels: Record<string, string>;
+  notifyEvents: { key: string; label: string; noisy: boolean }[];
+  permissions: Record<IntegrationAction, boolean>;
+}
+
+export interface SyncConflictRow {
+  id: string;
+  integrationId: string;
+  field: string;
+  fieldLabel: string;
+  externalKey: string;
+  externalUrl: string | null;
+  workItemId: string | null;
+  workItemTitle: string | null;
+  apos: { value: unknown; changedAt: string; changedBy: string; actorType: string };
+  external: { value: unknown; changedAt: string; changedBy: string; actorType: string };
+  sourceOfTruth: string;
+  sotNote: string;
+  createdAt: string;
+}
+
+export interface SyncSummary {
+  accepted: number;
+  writtenBack: number;
+  conflicts: number;
+  autoResolved: number;
+  echoesBlocked: number;
+  warned: number;
+  externalDeleted: number;
+  notes: string[];
+  objects: number;
+}
+
+export interface DisconnectImpact {
+  provider: string;
+  providerLabel: string;
+  displayName: string;
+  effects: string[];
+  linkedItems: number;
+  pendingConflicts: number;
+}

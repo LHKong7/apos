@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from './lib/api/client';
@@ -18,7 +18,7 @@ import { PlanPage } from './pages/Plan';
 import { AgentListPage } from './pages/Agents';
 import { AgentDetailPage } from './pages/Agents/Detail';
 import { DecisionsPage } from './pages/Decisions';
-import { RuntimeSettingsPage } from './pages/Settings/Runtimes';
+import { IntegrationsPage } from './pages/Settings/Integrations';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -52,7 +52,12 @@ export function App() {
           <Route path="/projects/:projectId/agents/:agentId" element={<AgentDetailPage />} />
           <Route path="/projects/:projectId/decisions" element={<DecisionsPage />} />
           <Route path="/projects/:projectId/settings/policies" element={<PoliciesPage />} />
-          <Route path="/projects/:projectId/settings/runtimes" element={<RuntimeSettingsPage />} />
+          <Route path="/projects/:projectId/settings/integrations" element={<IntegrationsPage />} />
+          {/* 运行时曾经是单独一页；页面文档 14 把它归为集成的一类，旧链接直接转过去 */}
+          <Route
+            path="/projects/:projectId/settings/runtimes"
+            element={<RuntimesRedirect />}
+          />
           <Route path="/projects/:projectId/requirements" element={<RequirementListPage />} />
           <Route path="/projects/:projectId/requirements/:reqId" element={<RequirementPage />} />
           <Route path="/projects/:projectId/plans/:planId" element={<PlanPage />} />
@@ -64,6 +69,12 @@ export function App() {
       </main>
     </div>
   );
+}
+
+/** 旧的运行时设置页并入集成设置，保留跳转 */
+function RuntimesRedirect() {
+  const { projectId } = useParams<{ projectId: string }>();
+  return <Navigate to={`/projects/${projectId}/settings/integrations`} replace />;
 }
 
 function TopNav() {

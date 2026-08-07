@@ -35,6 +35,9 @@ importers:
       '@apos/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@apos/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@types/react@18.3.31)(postgres@3.4.9)(react@18.3.1)
@@ -153,6 +156,15 @@ importers:
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+
+  packages/integrations:
+    dependencies:
+      '@apos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@apos/domain':
+        specifier: workspace:*
+        version: link:../domain
 
 packages:
 

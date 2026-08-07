@@ -1,5 +1,7 @@
 import { createDatabase } from '@apos/db';
 import { ClaudeCodeRuntime, MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
+import { IntegrationRegistry, MemoryIntegrationAdapter } from '@apos/integrations';
+import { DevExternalStore } from './modules/integration/dev-store';
 import { agentRuntimes } from '@apos/db';
 import { buildApp } from './app';
 import { defaultBus } from './modules/event/bus';
@@ -36,10 +38,27 @@ async function main() {
     console.warn(`[runtime] 未知运行时类型 ${rt.kind}（${rt.name}），已跳过注册`);
   }
 
+  /**
+   * 集成适配器注册表。
+   *
+   * ★ 只有进程内适配器有真实实现 —— 真实 provider 的 HTTP 传输层
+   *   需要 OAuth 凭证与外网，两样都没有。与其写一个从未跑通、
+   *   第一次真实调用才发现签名错的 GitHub 客户端，不如把
+   *   接口定清楚、把它下游的一切（SoT 判定、冲突、循环抑制）验证到位。
+   *   页面上如实标注哪些 provider 还没有传输层。
+   */
+  const integrationRegistry = new IntegrationRegistry();
+  if (process.env['INTEGRATION_MEMORY_ADAPTERS'] !== 'off') {
+    for (const p of ['jira', 'github', 'slack', 'feishu', 'plane'] as const) {
+      integrationRegistry.register(new MemoryIntegrationAdapter(p, new DevExternalStore(db)));
+    }
+  }
+
   const deps = {
     db,
     bus: defaultBus,
     registry,
+    integrations: integrationRegistry,
     provider: new StubPlanningProvider(),
   };
 

@@ -80,7 +80,7 @@ export function OverviewPage() {
           <Tab to={`/projects/${projectId}/agents`}>Agent 团队</Tab>
           <Tab to={`/projects/${projectId}/analytics`}>Analytics</Tab>
           <Tab to={`/projects/${projectId}/settings/policies`}>Policy</Tab>
-          <Tab to={`/projects/${projectId}/settings/runtimes`}>集成</Tab>
+          <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
         </nav>
       </div>
 

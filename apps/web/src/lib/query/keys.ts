@@ -25,6 +25,8 @@ export const qk = {
   agentList: (projectId?: string) => ['agentList', projectId ?? 'all'] as const,
   agentDetail: (agentId: string) => ['agentDetail', agentId] as const,
   runtimes: () => ['runtimes'] as const,
+  integrations: (projectId: string) => ['integrations', projectId] as const,
+  syncConflicts: (projectId: string) => ['syncConflicts', projectId] as const,
   decisionInbox: (scope: string, projectId?: string) =>
     ['decisionInbox', scope, projectId ?? 'all'] as const,
   /** 匹配所有范围组合 —— 一条决策事件会同时影响「我的」和「全部」两份缓存 */

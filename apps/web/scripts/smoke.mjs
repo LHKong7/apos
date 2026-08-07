@@ -654,17 +654,111 @@ check(
 );
 await shot('agent-detail');
 
-// ── 集成设置 · 运行时（页面文档 14 §5.4）──────────────────────────────
-await page.goto(`${base}/projects/${projectId}/settings/runtimes`, { waitUntil: 'networkidle' });
-await page.waitForTimeout(900);
+// ── 集成设置（页面文档 14）────────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/settings/integrations`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
 const rtText = await page.locator('main').innerText();
+
 check('运行时给出「能不能派任务」而不是数据库里的状态', /可派发|未注册|不可达/.test(rtText));
-check(
-  '★ 明说外部系统对接没有实现，而不是放一个点不动的连接按钮',
-  /还没有实现/.test(rtText) && (await page.getByRole('button', { name: /连接|授权/ }).count()) === 0,
-);
 check('工具按副作用等级标注', /写入或外部副作用/.test(rtText) || /破坏性|外部系统/.test(rtText));
-await shot('runtimes');
+
+// ★ 用户要确认的往往是「这个连接不能合并我的代码」，只列允许项回答不了
+check(
+  '★ 权限同时列出允许项与禁止项',
+  /✓ read_issue/.test(rtText) && /✗ (admin_project|delete_issue)/.test(rtText),
+  rtText.split('\n').find((l) => l.includes('✗')) ?? '',
+);
+check(
+  '★ 禁止项说明是集成层写死的，不是「这次没勾」',
+  /由集成层写死/.test(rtText),
+);
+// ★ 凭证永不回显（§9）
+check(
+  '★ 凭证只显示后四位，页面上没有明文',
+  /\*\*\*\*\w{4}/.test(rtText) && !/jira-pat|xoxb-/.test(await page.content()),
+);
+
+// ★ SoT 是这一页唯一带「关键配置」角标的一块
+check(
+  '★ Source of Truth 逐字段可配，且每格写明为什么默认是这个',
+  /关键配置/.test(rtText) && /状态由 Flow Engine 事件驱动/.test(rtText) && /APOS 是产物的产生方/.test(rtText),
+);
+check(
+  '提供三种预设，同时保留逐字段配置',
+  /APOS 主导/.test(rtText) && /APOS 管执行/.test(rtText) &&
+    (await page.locator('select[aria-label$="的 Source of Truth"]').count()) >= 5,
+);
+
+// ★ 改 SoT 前摆出差异与后果，而不是一句「确定吗」
+const statusSelect = page.locator('select[aria-label="状态的 Source of Truth"]').first();
+if ((await statusSelect.count()) > 0) {
+  await statusSelect.selectOption('external');
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: /保存 \d+ 项修改/ }).click();
+  await page.waitForTimeout(400);
+  const dlg = await page.locator('div[role="dialog"]').innerText();
+  check(
+    '★ 改 Source of Truth 的确认框摆出「谁的修改会被丢掉」',
+    /状态/.test(dlg) && /改了会被采纳/.test(dlg) && /改了按「/.test(dlg),
+    dlg.split('\n').find((l) => l.includes('改了会被采纳'))?.trim() ?? '',
+  );
+  await page.getByRole('button', { name: '取消' }).last().click();
+  await page.waitForTimeout(200);
+}
+
+// ★ 同步冲突：两侧的值 / 时间 / 谁改的，三样缺一不可
+if (/同步冲突/.test(rtText)) {
+  check(
+    '★ 冲突摆出两侧的值与修改人，并指明该字段的 SoT 是谁',
+    /APOS/.test(rtText) && /外部系统/.test(rtText) && /Source of Truth 是/.test(rtText),
+    rtText.split('\n').find((l) => l.includes('Source of Truth 是'))?.trim() ?? '',
+  );
+  check(
+    '★ 冲突时间是人话，不是原始 ISO 串',
+    !/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rtText),
+  );
+  check('提供「以后同类冲突自动按此处理」', /同类冲突自动按此处理/.test(rtText));
+}
+
+// ★ 循环同步抑制要能被看见（§11）
+check(
+  '★ 页面显示已阻止的循环同步次数',
+  /已阻止 \d+ 次循环同步/.test(rtText),
+  rtText.split('\n').find((l) => l.includes('已阻止')) ?? '',
+);
+
+// ★ 通知默认只发「需要行动」的事
+check(
+  '★ 高频通知默认关闭并标出来',
+  /每个任务状态变化/.test(rtText) && /默认关/.test(rtText),
+);
+check(
+  '通知里不做「直接批准」，说明了为什么',
+  /不放「直接批准」按钮/.test(rtText),
+);
+
+// ★ 断开前给出具体影响
+const cutBtn = page.getByRole('button', { name: '断开' }).first();
+if ((await cutBtn.count()) > 0) {
+  await cutBtn.click();
+  await page.waitForTimeout(700);
+  const dlg = await page.locator('div[role="dialog"]').innerText();
+  check(
+    '★ 断开前列出具体影响，不是一句「确定吗」',
+    /断开后会发生/.test(dlg) && /个任务/.test(dlg),
+    dlg.split('\n').find((l) => l.startsWith('·'))?.trim() ?? '',
+  );
+  await page.getByRole('button', { name: '取消' }).last().click();
+  await page.waitForTimeout(200);
+}
+
+// ★ 企业数据系统明说没做
+check(
+  '★ 明说企业数据系统没有实现，而不是放一个点不动的连接按钮',
+  /组织级配置页还没有做/.test(rtText) &&
+    (await page.getByRole('button', { name: /^连接$|授权/ }).count()) === 0,
+);
+await shot('integrations');
 
 
 await browser.close();

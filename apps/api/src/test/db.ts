@@ -1,3 +1,5 @@
+import { IntegrationRegistry, MemoryIntegrationAdapter } from '@apos/integrations';
+import type { IntegrationProvider } from '@apos/contracts';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { createDatabase, organizations, projects, users, workItems, type Database } from '@apos/db';
@@ -85,4 +87,26 @@ export async function createWorkItem(
     })
     .returning();
   return item!;
+}
+
+/**
+ * 集成适配器注册表（测试用）。
+ *
+ * 进程内适配器就是真实实现的执行体 —— 拉取、回写、来源标记都真的发生，
+ * 只是对面是一个 Map 而不是 github.com。测试拿到的是同一套代码路径。
+ */
+export function integrationRegistry(
+  providers: readonly IntegrationProvider[] = ['jira', 'github', 'slack'],
+): IntegrationRegistry {
+  const registry = new IntegrationRegistry();
+  for (const p of providers) registry.register(new MemoryIntegrationAdapter(p));
+  return registry;
+}
+
+/** 拿到某个 provider 的进程内适配器，用来模拟「外部有人手改了字段」 */
+export function memoryAdapter(
+  registry: IntegrationRegistry,
+  provider: IntegrationProvider,
+): MemoryIntegrationAdapter {
+  return registry.get(provider) as MemoryIntegrationAdapter;
 }

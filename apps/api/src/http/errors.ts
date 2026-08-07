@@ -16,6 +16,8 @@ export type ErrorCode =
   /** 运行时能力不足（降级矩阵）—— 不是故障，是这个运行时做不到 */
   | 'UNSUPPORTED_FEATURE'
   | 'RATE_LIMITED'
+  /** 外部系统故障 —— 不是我们的 bug，也不是用户输错了 */
+  | 'EXTERNAL_ERROR'
   | 'INTERNAL';
 
 const STATUS: Record<ErrorCode, number> = {
@@ -33,6 +35,8 @@ const STATUS: Record<ErrorCode, number> = {
   // 501 而不是 4xx：请求本身没问题，是服务端这个运行时不具备该能力
   UNSUPPORTED_FEATURE: 501,
   RATE_LIMITED: 429,
+  // 502 而不是 500：请求走到了外部系统，是那一侧出的问题
+  EXTERNAL_ERROR: 502,
   INTERNAL: 500,
 };
 

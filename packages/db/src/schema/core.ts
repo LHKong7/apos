@@ -661,6 +661,176 @@ export const policyVersions = pgTable(
   (t) => [primaryKey({ columns: [t.policyId, t.version] })],
 );
 
+// ── Integration（页面文档 14 / 产品文档 九）────────────────────────────────
+
+/**
+ * 项目与外部系统的连接。
+ *
+ * ★ 凭证不落这张表。`credentialRef` 指向密钥管理，
+ *   接口永不回显明文（页面文档 14 §9「凭证安全」），页面只显示后四位。
+ *   一张能查出 token 的表，迟早会有人把它 SELECT 出来贴进日志。
+ */
+export const integrations = pgTable(
+  'integrations',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    projectId: uuid().notNull().references(() => projects.id),
+
+    provider: text().notNull(),
+    category: text().notNull(),
+    /** 连接对象的人类可读名：仓库 / 项目 key / 群组 */
+    displayName: text().notNull(),
+    /** 外部侧的定位信息（repo owner/name、Jira projectKey、群 id 等），不含凭证 */
+    config: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+
+    /** ★ 只存引用。明文凭证不进业务库 */
+    credentialRef: text(),
+    /** 页面上显示的 ****1234，由建立连接时截取，之后再也拿不到原值 */
+    credentialHint: text(),
+    credentialExpiresAt: timestamp({ withTimezone: true }),
+
+    /** 允许项与禁止项都要存 —— 页面必须能回答「它不能合并我的代码」 */
+    scopes: jsonb().$type<{ allowed: string[]; denied: string[] }>().notNull().default({
+      allowed: [],
+      denied: [],
+    }),
+
+    status: text().notNull().default('active'),
+    statusReason: text(),
+    lastSyncAt: timestamp({ withTimezone: true }),
+
+    /** 通知类集成用；其余为空 */
+    notificationConfig: jsonb().$type<Record<string, unknown> | null>(),
+
+    /** 使用统计：API 调用量、创建对象数、已阻止的循环同步次数 */
+    stats: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    index('integrations_project_idx').on(t.projectId, t.status),
+    /** 同一项目同一 provider 只连一个对象，避免同步目标含混 */
+    unique('integrations_project_provider_uq').on(t.projectId, t.provider),
+  ],
+);
+
+/** 字段级 Source of Truth 与冲突策略（页面文档 14 §5.3） */
+export const integrationSyncMappings = pgTable(
+  'integration_sync_mappings',
+  {
+    integrationId: uuid().notNull().references(() => integrations.id, { onDelete: 'cascade' }),
+    field: text().notNull(),
+    sourceOfTruth: text().notNull(),
+    strategy: text().notNull(),
+    updatedBy: uuid().references(() => users.id),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.integrationId, t.field] })],
+);
+
+/**
+ * Work Item ↔ 外部对象的映射。
+ *
+ * ★ 唯一约束不是形式主义：一个 Work Item 映射到两个外部对象，
+ *   回写时就有两个目标、拉取时就有两个来源，SoT 判定直接失去意义
+ *   （页面文档 14 §11「同一 Work Item 映射到多个外部对象 —— 不允许」）。
+ */
+export const integrationObjectLinks = pgTable(
+  'integration_object_links',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    integrationId: uuid().notNull().references(() => integrations.id, { onDelete: 'cascade' }),
+    workItemId: uuid().notNull().references(() => workItems.id),
+    /** 外部对象标识，如 ORDER-142 / PR #37 */
+    externalKey: text().notNull(),
+    externalUrl: text(),
+
+    /** 上次同步成功时两侧的公共值，逐字段存。判「这一侧改过没有」全靠它 */
+    lastSyncedValues: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    lastSyncedAt: timestamp({ withTimezone: true }),
+    /** 外部对象被删除时打标，不自动删本地数据（§11）*/
+    externalDeletedAt: timestamp({ withTimezone: true }),
+
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    unique('integration_links_item_uq').on(t.integrationId, t.workItemId),
+    unique('integration_links_external_uq').on(t.integrationId, t.externalKey),
+    index('integration_links_item_idx').on(t.workItemId),
+  ],
+);
+
+/** 同步冲突（页面文档 14 §5.3 的冲突处理界面） */
+export const syncConflicts = pgTable(
+  'sync_conflicts',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull(),
+    projectId: uuid().notNull().references(() => projects.id),
+    integrationId: uuid().notNull().references(() => integrations.id, { onDelete: 'cascade' }),
+    linkId: uuid().notNull().references(() => integrationObjectLinks.id, { onDelete: 'cascade' }),
+
+    field: text().notNull(),
+    /** 两侧的值 / 时间 / 修改人 —— 少一样用户就只能靠猜决定听谁的 */
+    aposSide: jsonb().$type<Record<string, unknown>>().notNull(),
+    externalSide: jsonb().$type<Record<string, unknown>>().notNull(),
+    sourceOfTruth: text().notNull(),
+
+    status: text().notNull().default('pending'),
+    resolvedWinner: text(),
+    resolvedBy: uuid().references(() => users.id),
+    resolvedAt: timestamp({ withTimezone: true }),
+    /** 「以后同类冲突自动按此处理」命中时置真 */
+    autoResolved: boolean().notNull().default(false),
+
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [index('sync_conflicts_project_idx').on(t.projectId, t.status, t.createdAt)],
+);
+
+/**
+ * 「以后同类冲突自动按此处理」的记忆。
+ *
+ * ★ 单独一张表而不是塞进 mapping：它是用户在冲突现场做的临时决定，
+ *   和 SoT 配置不是一回事，随时可以撤销，撤销时也不该动 SoT。
+ */
+export const syncConflictRules = pgTable(
+  'sync_conflict_rules',
+  {
+    integrationId: uuid().notNull().references(() => integrations.id, { onDelete: 'cascade' }),
+    field: text().notNull(),
+    winner: text().notNull(),
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.integrationId, t.field] })],
+);
+
+/**
+ * 开发用的「假外部系统」存放处。
+ *
+ * ★ 这不是集成模型的一部分，是进程内适配器的持久化后端。
+ *   种子脚本和 API 是两个进程，假外部系统只活在种子进程里的话，
+ *   页面上点「立即同步」什么也不会发生 —— 而那正是最该被看见能工作的一步。
+ *   真实 provider 接上之后这张表就没有用了，可以直接删。
+ */
+export const devExternalObjects = pgTable(
+  'dev_external_objects',
+  {
+    provider: text().notNull(),
+    externalKey: text().notNull(),
+    url: text(),
+    fields: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    lastChange: jsonb().$type<Record<string, unknown> | null>(),
+    deleted: boolean().notNull().default(false),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.externalKey] })],
+);
+
 // ── Event ────────────────────────────────────────────────────────────────
 
 /**

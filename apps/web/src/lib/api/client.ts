@@ -16,6 +16,11 @@ import type {
   PolicyRow,
   PolicyTemplateRow,
   DecisionInbox,
+  DisconnectImpact,
+  IntegrationsResponse,
+  NotificationConfigRow,
+  SyncConflictRow,
+  SyncSummary,
   OverviewResponse,
   PlanDetail,
   Project,
@@ -149,6 +154,73 @@ export const api = {
     }),
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
+
+  // ── 集成设置（页面文档 14）──────────────────────────────────────────
+  integrations: (projectId: string) =>
+    request<IntegrationsResponse>(`/projects/${projectId}/integrations`),
+
+  connectIntegration: (
+    projectId: string,
+    body: {
+      provider: string;
+      displayName: string;
+      config?: Record<string, unknown>;
+      credential?: string | null;
+      grantWrite?: boolean;
+    },
+  ) =>
+    request<{ id: string; displayName: string }>(`/projects/${projectId}/integrations`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  updateSyncMapping: (
+    integrationId: string,
+    mappings: { field: string; sourceOfTruth: string; strategy: string }[],
+  ) =>
+    request<{ ok: true; changed: { field: string; from: string; to: string }[] }>(
+      `/integrations/${integrationId}/sync-mapping`,
+      { method: 'PATCH', json: { mappings } },
+    ),
+
+  runIntegrationSync: (integrationId: string) =>
+    request<SyncSummary>(`/integrations/${integrationId}/sync`, { method: 'POST', json: {} }),
+
+  syncConflicts: (projectId: string) =>
+    request<{
+      conflicts: SyncConflictRow[];
+      hotspots: { field: string; fieldLabel: string; count: number; hint: string }[];
+    }>(`/projects/${projectId}/sync-conflicts`),
+
+  resolveConflict: (conflictId: string, winner: 'apos' | 'external', applyToSimilar: boolean) =>
+    request<{ ok: true; field: string; winner: string }>(
+      `/sync-conflicts/${conflictId}/resolve`,
+      { method: 'POST', json: { winner, applyToSimilar } },
+    ),
+
+  disconnectImpact: (integrationId: string) =>
+    request<DisconnectImpact>(`/integrations/${integrationId}/disconnect-impact`),
+
+  disconnectIntegration: (integrationId: string) =>
+    request<{ ok: true }>(`/integrations/${integrationId}`, {
+      method: 'DELETE',
+      json: { confirmImpact: true },
+    }),
+
+  updateNotifications: (integrationId: string, config: NotificationConfigRow) =>
+    request<{ ok: true; disabled: string[] }>(`/integrations/${integrationId}/notifications`, {
+      method: 'PATCH',
+      json: config,
+    }),
+
+  linkExternalObject: (
+    integrationId: string,
+    body: { workItemId: string; externalKey: string; externalUrl?: string },
+  ) =>
+    request<{ id: string }>(`/integrations/${integrationId}/objects`, {
+      method: 'POST',
+      json: body,
+    }),
 
   decisionInbox: (scope: 'mine' | 'all', projectId?: string) =>
     request<DecisionInbox>(

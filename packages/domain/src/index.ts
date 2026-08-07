@@ -13,3 +13,5 @@ export * from './analytics';
 export * from './policy/audit';
 export * from './policy/scenarios';
 export * from './policy/templates';
+export * from './integration/sync';
+export * from './permissions/integration';
