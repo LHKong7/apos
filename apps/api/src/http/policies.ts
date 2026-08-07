@@ -48,7 +48,7 @@ const WIRED_FACTS: FactKey[] = ['agentReview'];
 
 export async function getPolicies(db: Database, projectId: string) {
   const project = await loadProject(db, projectId);
-  const rows = await loadPolicyRows(db, project.orgId, projectId);
+  const rows = await loadProjectPolicies(db, project.orgId, projectId);
   const hits = await loadHits(db, projectId, rows);
 
   const audit = auditPolicies(rows, project.autonomyLevel as AutonomyLevel, hits, WIRED_FACTS);
@@ -106,7 +106,7 @@ export async function savePolicy(
   opts: { policyId?: string; acknowledgeMismatches?: boolean } = {},
 ) {
   const project = await loadProject(db, projectId);
-  const existing = await loadPolicyRows(db, project.orgId, projectId);
+  const existing = await loadProjectPolicies(db, project.orgId, projectId);
 
   if (opts.policyId) {
     const target = existing.find((p) => p.id === opts.policyId);
@@ -221,7 +221,7 @@ export async function togglePolicy(
   actorId: string,
 ) {
   const project = await loadProject(db, projectId);
-  const existing = await loadPolicyRows(db, project.orgId, projectId);
+  const existing = await loadProjectPolicies(db, project.orgId, projectId);
   const target = existing.find((p) => p.id === policyId);
   if (!target) throw notFound('规则');
   assertEditable(target);
@@ -365,7 +365,7 @@ export async function evaluateScenario(
   overrides: Partial<PolicyContext>,
 ) {
   const project = await loadProject(db, projectId);
-  const rows = await loadPolicyRows(db, project.orgId, projectId);
+  const rows = await loadProjectPolicies(db, project.orgId, projectId);
   const base = buildScenarios(project.autonomyLevel as AutonomyLevel)[0]!.context;
   const ctx: PolicyContext = { ...base, ...overrides, autonomyLevel: project.autonomyLevel as AutonomyLevel };
 
@@ -409,7 +409,7 @@ export async function evaluateScenario(
 
 export async function autonomyPreview(db: Database, projectId: string, to: AutonomyLevel) {
   const project = await loadProject(db, projectId);
-  const rows = await loadPolicyRows(db, project.orgId, projectId);
+  const rows = await loadProjectPolicies(db, project.orgId, projectId);
   return previewAutonomy(rows, project.autonomyLevel as AutonomyLevel, to);
 }
 
@@ -421,7 +421,11 @@ async function loadProject(db: Database, projectId: string) {
   return project;
 }
 
-async function loadPolicyRows(db: Database, orgId: string, projectId: string): Promise<Policy[]> {
+export async function loadProjectPolicies(
+  db: Database,
+  orgId: string,
+  projectId: string,
+): Promise<Policy[]> {
   const rows = await db
     .select()
     .from(policies)
@@ -563,7 +567,7 @@ function describe(ctx: PolicyContext): string {
 
 export async function deletePolicy(db: Database, projectId: string, policyId: string) {
   const project = await loadProject(db, projectId);
-  const rows = await loadPolicyRows(db, project.orgId, projectId);
+  const rows = await loadProjectPolicies(db, project.orgId, projectId);
   const target = rows.find((p) => p.id === policyId);
   if (!target) throw notFound('规则');
   assertEditable(target);

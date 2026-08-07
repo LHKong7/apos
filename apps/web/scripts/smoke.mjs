@@ -465,6 +465,85 @@ check(
   `${evalRes.trace?.length ?? 0} 条规则被评估`,
 );
 
+// ── ★ 完整入口链路：录入 → 分析 → 澄清 → 确认 → 计划 → 批准 → 看板 ──
+//    这是整个产品的主干。它一断，用户就只能靠种子脚本往系统里塞活。
+await page.goto(`${base}/projects/${projectId}/requirements`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+
+await page
+  .locator('textarea')
+  .fill('客服说导出订单报表要等两分钟，经常超时。希望改成异步导出并在完成后通知，支持按日期范围和店铺筛选。');
+await page.getByRole('button', { name: /下一步/ }).click();
+await page.waitForTimeout(1500);
+check('录入需求后进入需求详情页', /\/requirements\/[0-9a-f-]{36}/.test(page.url()));
+
+await page.getByRole('button', { name: '开始 AI 分析' }).click();
+await page.waitForTimeout(2500);
+const analyzed = await page.locator('main').innerText();
+check(
+  'AI 分析产出结构化结果与完整度',
+  /需求完整度/.test(analyzed) && /业务目标/.test(analyzed),
+  analyzed.match(/\d+ 分/)?.[0] ?? '',
+);
+// ★ 原文永不被结构化结果覆盖 —— 用户要能自己核对 AI 有没有理解错
+check('原始输入与结构化结果左右对照', /原始输入/.test(analyzed) && /原文永不被结构化结果覆盖/.test(analyzed));
+check('澄清问题给出影响与 Agent 倾向', /影响：/.test(analyzed) && /Agent 倾向：/.test(analyzed));
+
+const scoreBefore = Number(analyzed.match(/(\d+) 分/)?.[1] ?? 0);
+
+// ★ 必答问题没答完，确认要被拦住
+await page.getByRole('button', { name: '确认需求 →' }).click();
+await page.waitForTimeout(400);
+const confirmText = await page.locator('h2:has-text("确认这条需求") >> xpath=..').innerText();
+check(
+  '★ 必答问题未答完时，确认弹窗明说会被拒绝',
+  /必答问题没回答/.test(confirmText),
+  confirmText.split('\n').find((l) => l.includes('必答')) ?? '（本次没有必答问题）',
+);
+await page.getByRole('button', { name: '返回修改' }).click();
+await page.waitForTimeout(300);
+
+for (let i = 0; i < 8; i++) {
+  const btn = page.getByRole('button', { name: /采纳倾向|接受默认/ }).first();
+  if ((await btn.count()) === 0) break;
+  await btn.click();
+  await page.waitForTimeout(900);
+}
+const scoreAfter = Number((await page.locator('main').innerText()).match(/(\d+) 分/)?.[1] ?? 0);
+// ★ 分数实时回升是给用户的正反馈，也是他答完剩下问题的动力
+check('★ 回答澄清后完整度实时回升', scoreAfter >= scoreBefore, `${scoreBefore} → ${scoreAfter}`);
+
+await page.getByRole('button', { name: '确认需求 →' }).click();
+await page.waitForTimeout(400);
+await page.getByRole('button', { name: '确认' }).last().click();
+await page.waitForTimeout(4500);
+check('确认需求后直接进入计划页', /\/plans\/[0-9a-f-]{36}/.test(page.url()), new URL(page.url()).pathname);
+
+const planText = await page.locator('main').innerText();
+// ★ 批准计划 = 批准一批自动化行为。这一段是本页的灵魂
+check(
+  '★ 计划页写清「批准后将自动发生」',
+  /批准后将自动发生/.test(planText) && /仍需人确认的/.test(planText),
+  planText.split('\n').find((l) => l.startsWith('· ') && l.includes('自动执行')) ?? '',
+);
+check('给出人机拆分、成本与高风险任务数', /🤖 \d+/.test(planText) && /高风险任务/.test(planText));
+// 批准前那个数字如果是错的，用户就是闭着眼睛签字
+const agentCount = Number(planText.match(/🤖 (\d+)/)?.[1] ?? 0);
+check('★ 人机拆分不是 0（批准前执行主体还没绑定，要从快照推）', agentCount > 0, `🤖 ${agentCount}`);
+check('提供跳到 Policy 配置调整边界的入口', /调整这些规则/.test(planText));
+await shot('plan');
+
+await page.getByRole('button', { name: '批准并开始执行 →' }).click();
+await page.waitForTimeout(500);
+const approveText = await page.locator('h2:has-text("批准这份计划") >> xpath=..').innerText();
+check(
+  '★ 批准弹窗复述边界，不是一个「确定吗」',
+  /个任务将由 Agent 自动执行/.test(approveText) && /个节点仍会来找人确认/.test(approveText),
+);
+await page.getByRole('button', { name: '批准并开始执行' }).last().click();
+await page.waitForTimeout(3000);
+check('★ 批准后任务进入看板', page.url().endsWith('/board'), new URL(page.url()).pathname);
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

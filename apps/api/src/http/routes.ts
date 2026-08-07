@@ -57,6 +57,7 @@ import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
 import { getAnalytics, getAnalyticsItems } from './analytics';
+import { getPlanDetail, listRequirements } from './intake';
 import {
   autonomyPreview,
   deletePolicy,
@@ -270,6 +271,100 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return reply.status(201).send({ requirement });
   });
 
+  app.get('/api/v1/projects/:id/requirements', async (req) => {
+    const { id } = req.params as { id: string };
+    return listRequirements(db, id);
+  });
+
+  /**
+   * 人工编辑结构化字段（页面文档 03 §5.4）。
+   *
+   * ★ 原文永不覆盖：`rawInput` 不在可改字段里。
+   *   用户必须能对照原文验证 AI 没有曲解自己的意思 ——
+   *   一旦原文可被结构化结果反向覆盖，这个对照就失去意义了。
+   */
+  const EditRequirement = z.object({
+    title: z.string().optional(),
+    businessContext: z.string().optional(),
+    userProblem: z.string().optional(),
+    businessGoal: z.string().optional(),
+    acceptanceCriteria: z.array(z.unknown()).optional(),
+  });
+
+  app.patch('/api/v1/requirements/:id', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = EditRequirement.parse(req.body);
+
+    const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
+    if (!before) throw notFound('需求');
+    if (before.status === 'approved') {
+      throw new ApiError('INVALID_TRANSITION', '需求已确认，不能再编辑。如需修改请先重新打开。');
+    }
+
+    const patch = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
+    if (Object.keys(patch).length === 0) return { requirement: before };
+
+    const [updated] = await db
+      .update(requirements)
+      .set({ ...patch, updatedAt: new Date() } as never)
+      .where(eq(requirements.id, id))
+      .returning();
+
+    // 人类改过的字段要能与 AI 原值区分（§5.4「已由人类修改」）
+    const provenance = { ...(before.fieldProvenance as Record<string, unknown>) };
+    for (const field of Object.keys(patch)) {
+      provenance[field] = { source: 'human', editedBy: userId, editedAt: new Date().toISOString() };
+    }
+    await db.update(requirements).set({ fieldProvenance: provenance }).where(eq(requirements.id, id));
+
+    await emitAndPublish(db, {
+      orgId: before.orgId,
+      projectId: before.projectId,
+      type: 'requirement.field_edited',
+      actor: humanActor(userId),
+      subjectType: 'requirement',
+      subjectId: id,
+      payload: { fields: Object.keys(patch) },
+      correlationId: corr(req),
+    });
+
+    return { requirement: updated };
+  });
+
+  app.post('/api/v1/requirements/:id/reject', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        // ★ 驳回必须填原因：提出人要知道为什么，否则只会原样再提一遍
+        reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
+      })
+      .parse(req.body);
+
+    const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
+    if (!before) throw notFound('需求');
+
+    const [updated] = await db
+      .update(requirements)
+      .set({ status: 'rejected', rejectReason: body.reason, updatedAt: new Date() })
+      .where(eq(requirements.id, id))
+      .returning();
+
+    await emitAndPublish(db, {
+      orgId: before.orgId,
+      projectId: before.projectId,
+      type: 'requirement.rejected',
+      actor: humanActor(userId),
+      subjectType: 'requirement',
+      subjectId: id,
+      payload: { reason: body.reason },
+      correlationId: corr(req),
+    });
+
+    return { requirement: updated };
+  });
+
   app.get('/api/v1/requirements/:id', async (req) => {
     const { id } = req.params as { id: string };
     const [requirement] = await db.select().from(requirements).where(eq(requirements.id, id));
@@ -344,11 +439,43 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   app.get('/api/v1/plans/:id', async (req) => {
     const { id } = req.params as { id: string };
+    return getPlanDetail(db, id);
+  });
+
+  /**
+   * 要求修改（页面文档 04 §5）。
+   *
+   * ★ 生成新版本而不是原地改：用户批准的是「某一版计划」，
+   *   把 v1 悄悄改成 v2 的内容，事后就说不清他到底批准了什么。
+   *   旧版标记 superseded，两版都留着，前端可以对比。
+   */
+  app.post('/api/v1/plans/:id/revise', async (req, reply) => {
+    actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ feedback: z.string().min(1, '要求修改必须说明改什么') })
+      .parse(req.body);
+
     const [plan] = await db.select().from(plans).where(eq(plans.id, id));
     if (!plan) throw notFound('计划');
+    if (!plan.requirementId) {
+      throw new ApiError('INVALID_TRANSITION', '这份计划没有关联需求，无法重新规划');
+    }
+    if (plan.status === 'approved') {
+      throw new ApiError('INVALID_TRANSITION', '已批准的计划不能重新规划，请新建需求');
+    }
 
-    const tasks = await db.select().from(workItems).where(eq(workItems.planId, id));
-    return { plan, tasks };
+    await db
+      .update(plans)
+      .set({ status: 'superseded', revisionFeedback: body.feedback })
+      .where(eq(plans.id, id));
+
+    const summary = await generatePlan(db, deps.provider, {
+      requirementId: plan.requirementId,
+      correlationId: corr(req),
+      feedback: body.feedback,
+    });
+    return reply.status(201).send(summary);
   });
 
   app.post('/api/v1/plans/:id/approve', async (req) => {

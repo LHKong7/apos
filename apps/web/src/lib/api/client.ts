@@ -4,6 +4,7 @@ import type {
   AnalyticsItemsResponse,
   AnalyticsResponse,
   BoardResponse,
+  Clarification,
   CostStep,
   DecisionDetail,
   DecisionRow,
@@ -12,7 +13,10 @@ import type {
   PoliciesResponse,
   PolicyRow,
   PolicyTemplateRow,
+  PlanDetail,
   Project,
+  RequirementDetail,
+  RequirementSummary,
   RunControlAction,
   ScenarioTestResponse,
   SimulationResponse,
@@ -205,6 +209,64 @@ export const api = {
         snapshot: unknown;
       }[];
     }>(`/policies/${policyId}/history`),
+
+  // ── 需求录入与计划确认 ────────────────────────────────────────────
+  requirements: (projectId: string) =>
+    request<{ requirements: RequirementSummary[] }>(`/projects/${projectId}/requirements`),
+
+  createRequirement: (projectId: string, body: { rawInput: string; priority?: string }) =>
+    request<{ requirement: { id: string } }>(`/projects/${projectId}/requirements`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  requirement: (id: string) => request<RequirementDetail>(`/requirements/${id}`),
+
+  analyzeRequirement: (id: string) =>
+    request<{ requirementId: string; completeness: Record<string, number>; clarificationCount: number; mustConfirmCount: number; cost: number }>(
+      `/requirements/${id}/analyze`,
+      { method: 'POST', json: {} },
+    ),
+
+  answerClarification: (id: string, body: { answer: string; usedSuggestion?: boolean }) =>
+    request<{ clarification: Clarification }>(`/clarifications/${id}/answer`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  editRequirement: (
+    id: string,
+    body: Partial<{ title: string; businessContext: string; userProblem: string; businessGoal: string }>,
+  ) => request<{ requirement: unknown }>(`/requirements/${id}`, { method: 'PATCH', json: body }),
+
+  approveRequirement: (id: string, note?: string) =>
+    request<{ ok: true }>(`/requirements/${id}/approve`, { method: 'POST', json: { note } }),
+
+  rejectRequirement: (id: string, reason: string) =>
+    request<{ requirement: unknown }>(`/requirements/${id}/reject`, {
+      method: 'POST',
+      json: { reason },
+    }),
+
+  generatePlan: (requirementId: string) =>
+    request<{ planId: string; version: number }>(`/requirements/${requirementId}/plans`, {
+      method: 'POST',
+      json: {},
+    }),
+
+  plan: (id: string) => request<PlanDetail>(`/plans/${id}`),
+
+  approvePlan: (id: string, acknowledgedOverrun?: boolean) =>
+    request<{ ok: true; planId: string; activatedTasks: number }>(`/plans/${id}/approve`, {
+      method: 'POST',
+      json: { acknowledgedOverrun },
+    }),
+
+  revisePlan: (id: string, feedback: string) =>
+    request<{ planId: string; version: number }>(`/plans/${id}/revise`, {
+      method: 'POST',
+      json: { feedback },
+    }),
 
   workItem: (id: string) => request<WorkItemDetail>(`/work-items/${id}`),
 

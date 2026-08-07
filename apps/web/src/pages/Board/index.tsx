@@ -145,6 +145,7 @@ export function BoardPage() {
         onOpenGraph={() => navigate(`/projects/${projectId}/graph`)}
         onOpenAnalytics={() => navigate(`/projects/${projectId}/analytics`)}
         onOpenPolicies={() => navigate(`/projects/${projectId}/settings/policies`)}
+        onOpenRequirements={() => navigate(`/projects/${projectId}/requirements`)}
         summary={board.data?.summary}
         view={view}
         filters={filters}

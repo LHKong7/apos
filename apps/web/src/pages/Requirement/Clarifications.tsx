@@ -1,0 +1,209 @@
+import { useState } from 'react';
+import clsx from 'clsx';
+import type { Clarification } from '../../lib/api/types';
+
+/**
+ * 澄清问题（页面文档 03 §5.5）—— 本页最重要的设计。
+ *
+ * ★ 如果澄清问题让用户觉得「AI 在考我」，产品就失败了。
+ *   每个必答问题都要让他觉得「它已经想好了，只是需要我拍个板」。
+ *   所以每条必须给齐三样：不回答会怎样、Agent 倾向是什么、依据是什么。
+ *   缺了「倾向」的提问就是在考人；缺了「依据」的倾向不值得采纳。
+ */
+
+const LEVEL_META = {
+  must_confirm: {
+    icon: '🔴',
+    label: '必须确认',
+    className: 'border-red-200 bg-red-50',
+    order: 0,
+  },
+  default_applicable: {
+    icon: '🟡',
+    label: '可用默认',
+    className: 'border-amber-200 bg-amber-50',
+    order: 1,
+  },
+  assumption_ok: {
+    icon: '🔵',
+    label: '可记录假设',
+    className: 'border-sky-200 bg-sky-50',
+    order: 2,
+  },
+  auto_resolved: {
+    icon: '🟢',
+    label: '已自动解决',
+    className: 'border-slate-200 bg-slate-50',
+    order: 3,
+  },
+} as const;
+
+export function Clarifications({
+  clarifications,
+  onAnswer,
+  pending,
+  readOnly,
+}: {
+  clarifications: Clarification[];
+  onAnswer: (id: string, answer: string, usedSuggestion: boolean) => void;
+  pending: string | null;
+  readOnly: boolean;
+}) {
+  const [expandResolved, setExpandResolved] = useState(false);
+
+  if (clarifications.length === 0) {
+    return (
+      <p className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400">
+        AI 没有提出澄清问题
+      </p>
+    );
+  }
+
+  const sorted = [...clarifications].sort(
+    (a, b) => LEVEL_META[a.level].order - LEVEL_META[b.level].order,
+  );
+  const resolved = sorted.filter((c) => c.level === 'auto_resolved');
+  const active = sorted.filter((c) => c.level !== 'auto_resolved');
+  const unanswered = active.filter((c) => c.level === 'must_confirm' && !c.answer).length;
+
+  return (
+    <section className="rounded border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5">
+        <h2 className="text-xs font-medium text-slate-700">
+          ❓ 需要澄清（{clarifications.length}）
+        </h2>
+        {unanswered > 0 && (
+          <span className="text-[11px] text-red-700">还有 {unanswered} 个必答问题没回答</span>
+        )}
+        {resolved.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpandResolved((v) => !v)}
+            className="ml-auto text-[11px] text-slate-500 underline"
+          >
+            {expandResolved ? '收起' : `已自动解决 ${resolved.length} 个`}
+          </button>
+        )}
+      </div>
+
+      <ul className="divide-y divide-slate-100">
+        {active.map((c) => (
+          <Question
+            key={c.id}
+            clarification={c}
+            onAnswer={onAnswer}
+            pending={pending === c.id}
+            readOnly={readOnly}
+          />
+        ))}
+        {expandResolved &&
+          resolved.map((c) => (
+            <li key={c.id} className="px-3 py-1.5 text-xs">
+              <span aria-hidden>🟢</span> {c.question}
+              <span className="ml-2 text-slate-500">→ {c.answer}</span>
+              {c.resolvedSource && (
+                <span className="ml-1 text-[11px] text-slate-400">（来自{c.resolvedSource}）</span>
+              )}
+            </li>
+          ))}
+      </ul>
+    </section>
+  );
+}
+
+function Question({
+  clarification: c,
+  onAnswer,
+  pending,
+  readOnly,
+}: {
+  clarification: Clarification;
+  onAnswer: (id: string, answer: string, usedSuggestion: boolean) => void;
+  pending: boolean;
+  readOnly: boolean;
+}) {
+  const [custom, setCustom] = useState('');
+  const meta = LEVEL_META[c.level];
+  const options = (c.options as { label?: string; value?: string }[]).filter(
+    (o) => typeof o === 'object' && o !== null,
+  );
+
+  if (c.answer) {
+    return (
+      <li className="px-3 py-1.5 text-xs">
+        <span aria-hidden>✓</span>
+        <span className="ml-1 text-slate-500">{c.question}</span>
+        <span className="ml-2 font-medium text-slate-800">{c.answer}</span>
+      </li>
+    );
+  }
+
+  return (
+    <li className={clsx('border-l-2 px-3 py-2', meta.className)}>
+      <p className="text-xs">
+        <span aria-hidden>{meta.icon}</span>
+        <span className="ml-1 font-medium text-slate-500">{meta.label}</span>
+        <span className="ml-2 text-slate-900">{c.question}</span>
+      </p>
+
+      {/* ★ 不回答会怎样 —— 把紧迫性从「有个问题」变成具体的工期影响 */}
+      {c.impact && <p className="mt-0.5 text-[11px] text-slate-600">影响：{c.impact}</p>}
+
+      {/* ★ Agent 倾向 + 依据。只提问不给建议，就是在考用户 */}
+      {c.agentSuggestion && (
+        <p className="mt-0.5 text-[11px] text-slate-600">
+          Agent 倾向：<span className="text-slate-800">{c.agentSuggestion}</span>
+          {c.suggestionBasis && <span className="text-slate-400">（依据：{c.suggestionBasis}）</span>}
+        </p>
+      )}
+
+      {!readOnly && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {c.agentSuggestion && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onAnswer(c.id, c.agentSuggestion!, true)}
+              className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:opacity-50"
+            >
+              {c.level === 'default_applicable' ? '接受默认' : '采纳倾向'}
+            </button>
+          )}
+          {options.map((o, i) => {
+            const text = o.label ?? o.value ?? String(o);
+            return (
+              <button
+                key={`${text}-${i}`}
+                type="button"
+                disabled={pending}
+                onClick={() => onAnswer(c.id, text, false)}
+                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {text}
+              </button>
+            );
+          })}
+          <input
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && custom.trim()) onAnswer(c.id, custom.trim(), false);
+            }}
+            placeholder="或者自己写…"
+            className="w-40 rounded border border-slate-300 px-1.5 py-0.5 text-[11px]"
+          />
+          {custom.trim() && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onAnswer(c.id, custom.trim(), false)}
+              className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+            >
+              提交
+            </button>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}

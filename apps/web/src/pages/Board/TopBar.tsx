@@ -16,6 +16,7 @@ interface Props {
   onOpenGraph: () => void;
   onOpenAnalytics: () => void;
   onOpenPolicies: () => void;
+  onOpenRequirements: () => void;
   summary: BoardSummary | undefined;
   view: BoardView;
   filters: BoardFilters;
@@ -36,6 +37,7 @@ export function TopBar({
   onOpenGraph,
   onOpenAnalytics,
   onOpenPolicies,
+  onOpenRequirements,
   summary,
   view,
   filters,
@@ -85,6 +87,13 @@ export function TopBar({
             className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
           >
             Analytics ↗
+          </button>
+          <button
+            type="button"
+            onClick={onOpenRequirements}
+            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            需求 ↗
           </button>
           <button
             type="button"

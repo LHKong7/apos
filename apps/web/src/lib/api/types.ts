@@ -412,3 +412,105 @@ export interface AutonomyPreview {
   autoBefore: number;
   autoAfter: number;
 }
+
+
+// ── 需求录入与计划确认（页面文档 03 / 04）──────────────────────────────
+export interface RequirementSummary {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  createdAt: string;
+  approvedAt: string | null;
+  latestPlanId: string | null;
+  latestPlanStatus: string | null;
+}
+
+export interface Clarification {
+  id: string;
+  level: 'must_confirm' | 'default_applicable' | 'assumption_ok' | 'auto_resolved';
+  question: string;
+  impact: string | null;
+  agentSuggestion: string | null;
+  suggestionBasis: string | null;
+  options: unknown[];
+  answer: string | null;
+  answeredAt: string | null;
+  resolvedSource: string | null;
+}
+
+export interface RequirementDetail {
+  requirement: {
+    id: string;
+    projectId: string;
+    status: string;
+    rawInput: string;
+    title: string | null;
+    businessContext: string | null;
+    userProblem: string | null;
+    businessGoal: string | null;
+    userStories: unknown[];
+    scope: { inScope?: string[]; outOfScope?: string[] };
+    nonFunctional: unknown[];
+    risks: unknown[];
+    acceptanceCriteria: { id?: string; text?: string; description?: string }[];
+    completeness: Record<string, number>;
+    fieldProvenance: Record<string, unknown>;
+    priority: string;
+    rejectReason: string | null;
+    approvedAt: string | null;
+  };
+  clarifications: Clarification[];
+}
+
+export interface PlanDetail {
+  plan: {
+    id: string;
+    version: number;
+    status: string;
+    projectId: string;
+    requirementId: string | null;
+    model: string | null;
+    generationCost: number;
+    generationMs: number | null;
+    estimatedHours: number;
+    estimatedCost: number;
+    createdAt: string;
+    approvedAt: string | null;
+    approvedBy: string[];
+    revisionFeedback: string | null;
+    risks: unknown[];
+    phases: unknown[];
+  };
+  metrics: {
+    taskCount: number;
+    agentTasks: number;
+    humanTasks: number;
+    estimatedHours: number;
+    estimatedCost: number;
+    budget: number | null;
+    spent: number;
+    overBudget: boolean;
+    humanGateCount: number;
+    highRiskTasks: number;
+  };
+  autoActions: { description: string; policyName: string | null; reversible: boolean; externalVisible: boolean }[];
+  humanGates: { taskTitle: string; reason: string; assigneeHint: string }[];
+  currentBoundary: { auto: string[]; human: string[]; depends: { label: string; when: string | null }[] };
+  tasks: {
+    id: string;
+    title: string;
+    type: string;
+    status: WorkItemStatus;
+    stage: Stage;
+    riskLevel: RiskLevel;
+    estimatedHours: number | null;
+    estimatedCost: number | null;
+    executorType: string | null;
+    executorName: string | null;
+    ownerName: string | null;
+    requiresHuman: boolean;
+    position: number;
+  }[];
+  assumptions: { id: string; question: string; answer: string | null; level: string; confirmed: boolean }[];
+}

@@ -57,7 +57,17 @@ export interface PlanSummary {
 export async function generatePlan(
   db: Database,
   provider: PlanningProvider,
-  input: { requirementId: string; correlationId: string },
+  input: {
+    requirementId: string;
+    correlationId: string;
+    /**
+     * 「要求修改」时用户写的意见。
+     *
+     * ★ 必须落库到新版本上：三周后回头看「为什么 v2 和 v1 不一样」，
+     *   答案只能在这里。不存的话，重新规划就成了一次没人说得清缘由的变更。
+     */
+    feedback?: string;
+  },
 ): Promise<PlanSummary> {
   const started = Date.now();
 
@@ -121,6 +131,7 @@ export async function generatePlan(
       requirementId: req.id,
       version,
       status: 'awaiting_approval',
+      revisionFeedback: input.feedback ?? null,
       phases: [...new Set(generated.tasks.map((t) => t.phase))],
       milestones: generated.milestones,
       risks: generated.risks,

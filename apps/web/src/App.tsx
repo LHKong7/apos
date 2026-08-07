@@ -10,6 +10,9 @@ import { RunDetailPage } from './pages/RunDetail';
 import { GraphPage } from './pages/Graph';
 import { AnalyticsPage } from './pages/Analytics';
 import { PoliciesPage } from './pages/Policies';
+import { RequirementListPage } from './pages/Requirement/List';
+import { RequirementPage } from './pages/Requirement';
+import { PlanPage } from './pages/Plan';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -39,6 +42,9 @@ export function App() {
           <Route path="/projects/:projectId/graph" element={<GraphPage />} />
           <Route path="/projects/:projectId/analytics" element={<AnalyticsPage />} />
           <Route path="/projects/:projectId/settings/policies" element={<PoliciesPage />} />
+          <Route path="/projects/:projectId/requirements" element={<RequirementListPage />} />
+          <Route path="/projects/:projectId/requirements/:reqId" element={<RequirementPage />} />
+          <Route path="/projects/:projectId/plans/:planId" element={<PlanPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
