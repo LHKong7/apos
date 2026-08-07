@@ -374,6 +374,31 @@ if (/检测到 \d+ 个问题/.test(listText)) {
 }
 
 // ── 场景测试：排查「为什么还找我」──
+// ── 命中明细（页面文档 13）────────────────────────────────────────────
+// ★ 看不到是哪 47 次的规则等于无法审计，而无法审计的规则没人敢改
+const hitBtn = page.getByRole('button', { name: /近 30 天命中 [1-9]/ }).first();
+if ((await hitBtn.count()) > 0) {
+  await hitBtn.click();
+  await page.waitForTimeout(1000);
+  const hitsText = await page.locator('div[role="dialog"]').innerText();
+  check(
+    '★ 命中次数可点开成逐次明细（时间/任务/上下文/判定/结局）',
+    /触发上下文/.test(hitsText) && /结局/.test(hitsText),
+  );
+  check(
+    '★ 明细直接给结论，而不是让用户从百分比自己推',
+    /这条规则|样本还不够|没有命中/.test(hitsText),
+    hitsText.split('\n').find((l) => l.includes('——'))?.trim() ?? '',
+  );
+  check(
+    '判定动作显示中文名，不是裸 key',
+    !/require_human_review|allow_and_notify/.test(hitsText),
+  );
+  await shot('policy-hits');
+  await page.getByRole('button', { name: '关闭' }).last().click();
+  await page.waitForTimeout(300);
+}
+
 await page.goto(`${base}/projects/${projectId}/settings/policies?tab=test`, {
   waitUntil: 'networkidle',
 });
@@ -532,6 +557,40 @@ const agentCount = Number(planText.match(/🤖 (\d+)/)?.[1] ?? 0);
 check('★ 人机拆分不是 0（批准前执行主体还没绑定，要从快照推）', agentCount > 0, `🤖 ${agentCount}`);
 check('提供跳到 Policy 配置调整边界的入口', /调整这些规则/.test(planText));
 await shot('plan');
+
+// ── 要求修改 → 版本对比（页面文档 04）──────────────────────────────────
+await page.getByRole('button', { name: '要求修改' }).first().click();
+await page.waitForTimeout(300);
+await page.locator('div[role="dialog"] textarea').fill('测试拆得太粗，请再拆细；工时也估少了');
+await page.getByRole('button', { name: '重新规划' }).last().click();
+await page.waitForTimeout(4000);
+
+const diffText = await page.locator('main').innerText();
+/**
+ * ★ 用户要批准的是 v2，脑子里记得的是 v1。不给 diff 的话他只能整个重读一遍 ——
+ *   而重读一遍的真实结果通常是不读，直接批。
+ */
+check(
+  '★ 新版本页面直接给出与上一版的差异',
+  /与 v1 的差异/.test(diffText) && /任务变化/.test(diffText),
+  diffText.split('\n').find((l) => l.startsWith('任务变化')) ?? '',
+);
+check(
+  '★ 差异里最先回答的是「自动化边界变了没有」',
+  /自动化边界/.test(diffText),
+  diffText.split('\n').find((l) => l.includes('自动化边界'))?.trim() ?? '',
+);
+// ★ 意见只存不传给规划器的话，v2 会和 v1 一模一样，而没人会发现
+check(
+  '★ 修改意见真的改变了计划（不是只存进数据库）',
+  !/内容相同的计划/.test(diffText) && /总量变化/.test(diffText),
+  diffText.split('\n').find((l) => l.startsWith('任务数') || l.startsWith('总工时')) ?? '',
+);
+check(
+  '差异标明这一版是基于哪条意见重新规划的',
+  /这一版是基于这条意见重新规划的/.test(diffText),
+);
+await shot('plan-diff');
 
 await page.getByRole('button', { name: '批准并开始执行 →' }).click();
 await page.waitForTimeout(500);

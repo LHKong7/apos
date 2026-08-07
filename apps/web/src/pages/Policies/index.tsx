@@ -11,6 +11,7 @@ import type { PolicyRow, PolicyTemplateRow } from '../../lib/api/types';
 import { RuleList } from './RuleList';
 import { RuleEditor } from './RuleEditor';
 import { ScenarioTester } from './ScenarioTester';
+import { HitsPanel } from './HitsPanel';
 
 const AUTONOMY: { value: AutonomyLevel; label: string; desc: string }[] = [
   { value: 'human_led', label: 'Human-led', desc: '大部分操作默认需要人审批' },
@@ -53,6 +54,7 @@ export function PoliciesPage() {
   const [toggling, setToggling] = useState<PolicyRow | null>(null);
   const [autonomyTarget, setAutonomyTarget] = useState<AutonomyLevel | null>(null);
   const [history, setHistory] = useState<PolicyRow | null>(null);
+  const [hits, setHits] = useState<{ id: string; name: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
 
@@ -267,13 +269,7 @@ export function PoliciesPage() {
                   onToggle={setToggling}
                   onDelete={(p) => remove.mutate(p)}
                   onHistory={setHistory}
-                  onViewHits={(p) =>
-                    setToast(
-                      p.hits30d === 0
-                        ? '这条规则近 30 天没有命中记录'
-                        : `近 30 天命中 ${p.hits30d} 次。命中明细页尚未实现`,
-                    )
-                  }
+                  onViewHits={(p) => setHits({ id: p.id, name: p.name })}
                 />
 
                 <RuleList
@@ -285,7 +281,7 @@ export function PoliciesPage() {
                   onToggle={() => setToast('组织级规则不能在项目内停用')}
                   onDelete={() => setToast('组织级规则不能在项目内删除')}
                   onHistory={setHistory}
-                  onViewHits={(p) => setToast(`近 30 天命中 ${p.hits30d} 次`)}
+                  onViewHits={(p) => setHits({ id: p.id, name: p.name })}
                 />
 
                 {/* ★ 如实说明哪些数据源没接 —— 依赖它们的规则永远不会命中 */}
@@ -345,6 +341,14 @@ export function PoliciesPage() {
       )}
 
       {history && <HistoryDialog policy={history} onClose={() => setHistory(null)} />}
+      {hits && projectId && (
+        <HitsPanel
+          projectId={projectId}
+          policyId={hits.id}
+          policyName={hits.name}
+          onClose={() => setHits(null)}
+        />
+      )}
 
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">

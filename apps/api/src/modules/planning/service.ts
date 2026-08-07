@@ -63,8 +63,12 @@ export async function generatePlan(
     /**
      * 「要求修改」时用户写的意见。
      *
-     * ★ 必须落库到新版本上：三周后回头看「为什么 v2 和 v1 不一样」，
-     *   答案只能在这里。不存的话，重新规划就成了一次没人说得清缘由的变更。
+     * ★ 它只传给规划器，不写进新版本的 revisionFeedback。
+     *   那个列的语义是「**这一版**为什么被要求改」，由 supersede 时写入 ——
+     *   新版本也往里写一份「我是基于什么意见生成的」，两种含义就共用了一列，
+     *   于是 v3 被 v4 取代时，「取代 v3 的理由」直接覆盖了「v3 是怎么来的」，
+     *   页面上 v3 会顶着一句它根本不是基于其生成的意见。
+     *   「这一版是基于什么生成的」= 上一版的 revisionFeedback，不需要再存一份。
      */
     feedback?: string;
   },
@@ -101,7 +105,12 @@ export async function generatePlan(
     model: '',
   };
 
-  const generated = await provider.generatePlan(structured, project?.type ?? 'development');
+  // ★ 意见必须传给规划器，不能只存进数据库 —— 只存不用等于「要求修改」是个假按钮
+  const generated = await provider.generatePlan(
+    structured,
+    project?.type ?? 'development',
+    input.feedback,
+  );
 
   const [prev] = await db
     .select({ version: plans.version })
@@ -131,7 +140,6 @@ export async function generatePlan(
       requirementId: req.id,
       version,
       status: 'awaiting_approval',
-      revisionFeedback: input.feedback ?? null,
       phases: [...new Set(generated.tasks.map((t) => t.phase))],
       milestones: generated.milestones,
       risks: generated.risks,

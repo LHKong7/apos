@@ -123,7 +123,11 @@ export class StubPlanningProvider implements PlanningProvider {
     };
   }
 
-  async generatePlan(req: StructuredRequirement, projectType: string): Promise<GeneratedPlan> {
+  async generatePlan(
+    req: StructuredRequirement,
+    projectType: string,
+    feedback?: string,
+  ): Promise<GeneratedPlan> {
     const start = 0;
     const involvesDb = req.risks.some((r) => r.includes('数据库'));
 
@@ -226,8 +230,21 @@ export class StubPlanningProvider implements PlanningProvider {
         acceptanceCriteria: [],
         dependsOn: [{ ref: 'design', type: 'finish_to_start' }],
       });
-      tasks.find((t) => t.ref === 'test')!.dependsOn.push({ ref: 'db', type: 'finish_to_start' });
+      const test = tasks.find((t) => t.ref === 'test');
+      test?.dependsOn.push({ ref: 'db', type: 'finish_to_start' });
     }
+
+    /**
+     * ★ 按「要求修改」的意见调整。放在基础清单拼完之后 ——
+     *   它会拆任务、改 ref，先跑的话后面按 ref 找任务的地方就都落空了
+     *   （第一版就是这么炸的：拆完 test 之后 involvesDb 分支再去 find('test')）。
+     *
+     *   这是关键词匹配，不是理解 —— 它替的是一个会读懂意见的模型。
+     *   之所以非做不可：不响应意见的规划器会让「要求修改」变成假按钮，
+     *   用户提了意见拿回一模一样的 v2，而整条重新规划的链路
+     *   （含版本对比）也就永远测不到「计划真的变了」这条路径。
+     */
+    applyRevision(tasks, feedback);
 
     return {
       tasks,
@@ -245,4 +262,85 @@ export class StubPlanningProvider implements PlanningProvider {
       model: `stub:${projectType}`,
     };
   }
+}
+
+/**
+ * 把用户意见落到任务清单上。
+ *
+ * ★ 真实实现是把 feedback 拼进 prompt 让模型重新规划。这里是关键词匹配，
+ *   覆盖三类最常见的意见：拆得太粗、某步不要自动做、工时估少了。
+ *   刻意不做更多 —— 一个假装能理解任意自然语言的 stub，
+ *   会让人误以为这条链路已经智能了。
+ */
+function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
+  if (!feedback) return;
+
+  // 「不要自动做 / 要人确认」→ 把提到的那一步改成需要人（收紧）
+  if (/不要自动|别自动|人工|人来|需要确认|要确认/.test(feedback)) {
+    for (const t of tasks) {
+      if (mentions(feedback, t)) t.requiresHuman = true;
+    }
+  }
+
+  /**
+   * ★ 「不用每次都问我 / 自动做就行」→ 去掉人工确认（放宽）。
+   *
+   *   这是真实用户会提的意见，也正是版本对比里那条醒目警告存在的理由。
+   *   stub 只会收紧不会放宽的话，「这一版放宽了自动化边界」那条路径
+   *   就永远只活在单元测试里 —— 而它恰恰是最不能出错的一条。
+   */
+  if (/不用问|不用确认|不用每次|自动做|自动执行|别拦/.test(feedback)) {
+    for (const t of tasks) {
+      if (mentions(feedback, t)) t.requiresHuman = false;
+    }
+  }
+
+  // 「拆得太粗 / 再拆细」→ 把测试任务拆成两条
+  if (/太粗|拆细|拆分|再拆/.test(feedback)) {
+    const idx = tasks.findIndex((t) => t.ref === 'test');
+    if (idx > -1) {
+      const test = tasks[idx]!;
+      const half = Math.max(1, Math.round((test.estimatedHours / 2) * 10) / 10);
+      tasks.splice(idx, 1, {
+        ...test,
+        ref: 'test-unit',
+        title: '单元测试',
+        description: '按验收标准补充单元测试',
+        estimatedHours: half,
+        estimatedCost: test.estimatedCost === null ? null : round2(test.estimatedCost / 2),
+        acceptanceCriteria: [],
+      }, {
+        ...test,
+        ref: 'test-integration',
+        title: '集成测试',
+        description: '端到端验证与覆盖率达标',
+        estimatedHours: test.estimatedHours - half,
+        estimatedCost: test.estimatedCost === null ? null : round2(test.estimatedCost / 2),
+        dependsOn: [{ ref: 'test-unit', type: 'finish_to_start' }],
+      });
+      // 原本依赖 test 的任务改依赖拆出来的最后一条
+      for (const t of tasks) {
+        for (const d of t.dependsOn) if (d.ref === 'test') d.ref = 'test-integration';
+      }
+    }
+  }
+
+  // 「工时估少了 / 太乐观」→ 整体上浮 30%
+  if (/估少|太乐观|时间不够|工时不够/.test(feedback)) {
+    for (const t of tasks) {
+      t.estimatedHours = Math.round(t.estimatedHours * 1.3 * 10) / 10;
+    }
+  }
+}
+
+/** 意见里提到了这一步吗 —— 标题命中，或按类型指代（「发布」→ release 任务） */
+function mentions(feedback: string, task: PlanTaskDraft): boolean {
+  if (feedback.includes(task.title)) return true;
+  if (/发布|上线|部署/.test(feedback) && task.type === 'release') return true;
+  if (/数据库|索引|建表/.test(feedback) && task.operationType === 'db_ddl') return true;
+  return false;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

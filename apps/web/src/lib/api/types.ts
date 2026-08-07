@@ -1,3 +1,4 @@
+import type { PlanDiff } from '@apos/domain';
 import type {
   HumanGate,
   RiskLevel,
@@ -832,4 +833,47 @@ export interface DisconnectImpact {
   effects: string[];
   linkedItems: number;
   pendingConflicts: number;
+}
+
+export interface PlanDiffResponse {
+  versions: { id: string; version: number; status: string; createdAt: string; isCurrent: boolean }[];
+  against: { id: string; version: number } | null;
+  /** 上一版为什么被要求改 —— diff 只说改了什么，这句说为什么改 */
+  feedback: string | null;
+  diff: PlanDiff | null;
+}
+
+export interface PolicyHitsResponse {
+  policy: { id: string; name: string; enabled: boolean; editable: boolean };
+  stats: {
+    hits: number;
+    byAction: { label: string; count: number }[];
+    decisionsCreated: number;
+    resolved: number;
+    approved: number;
+    /** ★ 这一页的结论靠它：全批 = 规则在浪费时间；常驳 = 拦对了 */
+    approvalRate: number | null;
+    avgWaitMinutes: number | null;
+  };
+  /** 自动放行的任务里事后被人工改过的数量 —— 放行类规则唯一的证伪证据 */
+  overriddenAfterPass: number;
+  /** 给结论，不只给数字 */
+  verdict: string;
+  hits: {
+    eventId: string;
+    at: string;
+    action: string;
+    actionLabel: string;
+    workItemId: string;
+    workItemTitle: string;
+    context: { operationType: string; riskLevel: string; environment: string | null } | null;
+    decision: {
+      id: string;
+      status: string;
+      statusLabel: string;
+      resolvedBy: string | null;
+      waitMinutes: number | null;
+    } | null;
+  }[];
+  truncated: boolean;
 }

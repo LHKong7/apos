@@ -7,6 +7,7 @@ import { qk } from '../../lib/query/keys';
 import { money, riskLabel, typeIcon } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
+import { VersionDiff } from './VersionDiff';
 import type { PlanDetail } from '../../lib/api/types';
 
 /**
@@ -107,11 +108,17 @@ export function PlanPage() {
             </p>
           )}
 
+          {/* ★ revisionFeedback 是「这一版为什么被要求改」，不是「这一版是怎么来的」。
+              「这一版是怎么来的」在下面的版本对比里，取自上一版的同一个字段。 */}
           {d.plan.revisionFeedback && (
             <p className="rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-              💬 本版基于修改意见重新生成：{d.plan.revisionFeedback}
+              💬 这一版被要求修改：{d.plan.revisionFeedback}
             </p>
           )}
+
+          {/* ★ 放在指标之前：用户点进 v2 的第一个问题是「和上次比改了什么」，
+              不是「这版一共多少任务」 */}
+          {planId && <VersionDiff planId={planId} />}
 
           {/* ── 五个概览指标（§5.2）── */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">

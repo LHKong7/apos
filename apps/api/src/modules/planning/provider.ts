@@ -84,5 +84,17 @@ export interface GeneratedPlan {
 export interface PlanningProvider {
   readonly name: string;
   structureRequirement(input: StructureInput): Promise<StructuredRequirement>;
-  generatePlan(req: StructuredRequirement, projectType: string): Promise<GeneratedPlan>;
+  /**
+   * @param feedback 「要求修改」时用户写的意见。
+   *
+   * ★ 这个参数以前不存在 —— 意见被存进 plans.revisionFeedback，
+   *   却从来没有传给规划器。于是用户提了意见，拿回一份一模一样的 v2，
+   *   而且没有任何地方会告诉他这件事。版本对比做出来之后，
+   *   第一次跑就是在 diff 上看到「重新规划后产出的是一份内容相同的计划」。
+   */
+  generatePlan(
+    req: StructuredRequirement,
+    projectType: string,
+    feedback?: string,
+  ): Promise<GeneratedPlan>;
 }

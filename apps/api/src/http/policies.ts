@@ -6,9 +6,11 @@ import {
   policies,
   policyVersions,
   projects,
+  users,
   workItems,
   type Database,
 } from '@apos/db';
+import { actionLabel } from '@apos/contracts';
 import type { Action, AutonomyLevel, Condition, FactKey, Policy, PolicyContext } from '@apos/contracts';
 import {
   BASELINE_POLICIES,
@@ -597,3 +599,258 @@ export async function deletePolicy(db: Database, projectId: string, policyId: st
 }
 
 export { isNull };
+
+/**
+ * 一条规则的命中明细（页面文档 13）。
+ *
+ * ★ 「近 30 天命中 47 次」是个死数字。看不到是哪 47 次的规则，
+ *   等于一条无法审计的规则 —— 而无法审计的规则没人敢改，
+ *   最后要么一直留着（哪怕它已经错了），要么被整条删掉。
+ *
+ * ★ 这一页真正要回答的不是「命中了几次」，是**「拦对了没有」**：
+ *   规则要求人确认、而人每次都批准 → 这条规则在浪费所有人的时间，可以放开；
+ *   人经常驳回 → 它拦对了，别动。这个判断只有把每次命中的**后续结果**
+ *   摆出来才做得了，所以决策结局是这一页的主列，不是附注。
+ */
+export async function getPolicyHits(db: Database, projectId: string, policyId: string) {
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!project) throw notFound('项目');
+
+  const all = await loadProjectPolicies(db, project.orgId, projectId);
+  const policy = all.find((p) => p.id === policyId);
+  if (!policy) throw notFound('规则');
+
+  const since = new Date(Date.now() - 30 * 86_400_000);
+  const rows = await db
+    .select()
+    .from(events)
+    .where(
+      and(
+        eq(events.projectId, projectId),
+        eq(events.type, 'policy.evaluated'),
+        gte(events.occurredAt, since),
+      ),
+    )
+    .orderBy(desc(events.occurredAt));
+
+  const mine = rows.filter(
+    (r) => (r.payload as { matchedPolicyId?: string | null }).matchedPolicyId === policyId,
+  );
+
+  const itemIds = [...new Set(mine.map((r) => r.subjectId))];
+  const items =
+    itemIds.length > 0
+      ? await db.select().from(workItems).where(inArray(workItems.id, itemIds))
+      : [];
+  const itemById = new Map(items.map((i) => [i.id, i]));
+
+  /**
+   * 这条规则触发的决策及其结局。
+   *
+   * ★ 基线规则用的是可读 ID（baseline-xxx）而不是 UUID，写不进外键列，
+   *   所以它们的决策只能靠 work item 回连 —— 不这么做的话，
+   *   九条基线规则的命中明细里永远是空的决策列，
+   *   而基线规则恰恰是最需要复核的那批。
+   */
+  const decisionRows = itemIds.length > 0
+    ? await db.select().from(decisions).where(inArray(decisions.workItemId, itemIds))
+    : [];
+  const isUuid = UUID_LIKE.test(policyId);
+  const relevant = decisionRows.filter((d) =>
+    isUuid ? d.triggeredByPolicy === policyId : d.workItemId !== null,
+  );
+  const decisionByItem = new Map<string, typeof relevant>();
+  for (const d of relevant) {
+    if (!d.workItemId) continue;
+    const list = decisionByItem.get(d.workItemId) ?? [];
+    list.push(d);
+    decisionByItem.set(d.workItemId, list);
+  }
+
+  const userRows = await db.select({ id: users.id, name: users.name }).from(users);
+  const userName = new Map(userRows.map((u) => [u.id, u.name]));
+
+  const hits = mine.map((r) => {
+    const payload = r.payload as { action?: { type?: string } };
+    const snapshot = r.contextSnapshot as PolicyContext | null;
+    const item = itemById.get(r.subjectId);
+    // 同一任务多次命中时取时间上最接近的那个决策
+    const candidates = decisionByItem.get(r.subjectId) ?? [];
+    const decision = nearestDecision(candidates, r.occurredAt.getTime());
+
+    return {
+      eventId: String(r.id),
+      at: r.occurredAt.toISOString(),
+      action: payload.action?.type ?? 'unknown',
+      actionLabel: actionLabel(payload.action?.type ?? '未知'),
+      workItemId: r.subjectId,
+      workItemTitle: item?.title ?? '（已删除）',
+      /** 触发时的关键上下文 —— 不给这几项，用户看不出为什么这次会命中 */
+      context: snapshot
+        ? {
+            operationType: snapshot.operationType,
+            riskLevel: snapshot.riskLevel,
+            environment: snapshot.environment,
+          }
+        : null,
+      decision: decision
+        ? {
+            id: decision.id,
+            status: decision.status,
+            statusLabel: DECISION_STATUS_LABELS[decision.status] ?? decision.status,
+            resolvedBy: decision.resolvedBy ? (userName.get(decision.resolvedBy) ?? '未知') : null,
+            waitMinutes:
+              decision.resolvedAt === null
+                ? null
+                : Math.round((decision.resolvedAt.getTime() - decision.createdAt.getTime()) / 60_000),
+          }
+        : null,
+    };
+  });
+
+  /**
+   * ★ 自动放行的那些任务，事后被人手动改过没有。
+   *
+   *   放行类规则不产生决策，用「批准率」判断它对不对是无从谈起的。
+   *   它唯一能被证伪的地方是：它放过去的事，后来有没有被人纠正。
+   *   有，就说明放得太松 —— 这是唯一一条能说明放行规则错了的证据。
+   */
+  const overrideRows = itemIds.length > 0
+    ? await db
+        .select({ subjectId: events.subjectId, payload: events.payload })
+        .from(events)
+        .where(
+          and(
+            eq(events.projectId, projectId),
+            eq(events.type, 'work_item.status_changed'),
+            inArray(events.subjectId, itemIds),
+            gte(events.occurredAt, since),
+          ),
+        )
+    : [];
+  const overridden = new Set(
+    overrideRows
+      .filter((r) => (r.payload as { manual?: boolean }).manual === true)
+      .map((r) => r.subjectId),
+  );
+
+  const resolved = hits.filter((h) => h.decision && h.decision.status !== 'pending');
+  const approved = resolved.filter((h) => h.decision!.status === 'approved').length;
+  const waits = resolved
+    .map((h) => h.decision!.waitMinutes)
+    .filter((w): w is number => w !== null);
+
+  return {
+    policy: {
+      id: policy.id,
+      name: policy.name,
+      enabled: policy.enabled,
+      editable: !policy.id.startsWith('baseline-') && policy.projectId !== null,
+    },
+    stats: {
+      hits: hits.length,
+      byAction: countBy(hits.map((h) => h.actionLabel)),
+      decisionsCreated: hits.filter((h) => h.decision).length,
+      resolved: resolved.length,
+      approved,
+      /** ★ 这一页的结论就靠它：全批 = 规则在浪费时间；常驳 = 拦对了 */
+      approvalRate: resolved.length === 0 ? null : Math.round((approved / resolved.length) * 100) / 100,
+      avgWaitMinutes:
+        waits.length === 0 ? null : Math.round(waits.reduce((a, b) => a + b, 0) / waits.length),
+    },
+    /**
+     * ★ 给结论，不只给数字。「23 次全批准了」和「23 次里驳了 9 次」
+     *   指向完全相反的动作，让用户自己从百分比推一遍是多余的一步。
+     */
+    /** 放行的任务里事后被人工改过的数量 —— 放行类规则唯一的证伪证据 */
+    overriddenAfterPass: hits.filter((h) => !h.decision && overridden.has(h.workItemId)).length,
+    verdict: verdictOf({
+      hits: hits.length,
+      resolved: resolved.length,
+      approved,
+      gating: hits.filter((h) => h.decision).length,
+      overriddenAfterPass: hits.filter((h) => !h.decision && overridden.has(h.workItemId)).length,
+    }),
+    hits: hits.slice(0, 100),
+    truncated: hits.length > 100,
+  };
+}
+
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const DECISION_STATUS_LABELS: Record<string, string> = {
+  pending: '待处理',
+  approved: '已批准',
+  rejected: '已驳回',
+  expired: '已超时',
+};
+
+function nearestDecision<T extends { createdAt: Date }>(list: T[], at: number): T | undefined {
+  let best: T | undefined;
+  let bestGap = Infinity;
+  for (const d of list) {
+    const gap = Math.abs(d.createdAt.getTime() - at);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = d;
+    }
+  }
+  // 相隔超过一小时的多半不是同一次判定引发的，宁可不认
+  return bestGap <= 3600_000 ? best : undefined;
+}
+
+function countBy(values: string[]): { label: string; count: number }[] {
+  const m = new Map<string, number>();
+  for (const v of values) m.set(v, (m.get(v) ?? 0) + 1);
+  return [...m.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/** 命中样本太少时不下结论 —— 三次里三次都批，说明不了任何事 */
+const MIN_SAMPLE = 5;
+
+/**
+ * ★ 拦人的规则和放行的规则要用完全不同的标准评价。
+ *
+ *   拦人的看批准率：全批 = 在问答案已知的问题；常驳 = 拦对了。
+ *   放行的根本不产生决策，套「批准率」是无从谈起的 ——
+ *   它唯一能被证伪的地方是：放过去的事后来有没有被人纠正。
+ *   用同一套话术评价两类规则，说出来的必然有一半是废话。
+ */
+function verdictOf(input: {
+  hits: number;
+  resolved: number;
+  approved: number;
+  gating: number;
+  overriddenAfterPass: number;
+}): string {
+  const { hits, resolved, approved, gating, overriddenAfterPass } = input;
+
+  if (hits === 0) {
+    return '近 30 天没有命中。规则可能写错了条件，或者它防的那类操作确实没发生过';
+  }
+
+  // 放行类：没有产生过任何决策
+  if (gating === 0) {
+    if (overriddenAfterPass === 0) {
+      return `自动放行 ${hits} 次，放行的任务事后没有一次被人工纠正 —— 这条规则在按预期省掉人工确认`;
+    }
+    return `自动放行 ${hits} 次，其中 ${overriddenAfterPass} 个任务事后被人手动改过 —— 这条规则可能放得太松，值得看看那几次`;
+  }
+
+  if (resolved === 0) {
+    return `命中 ${hits} 次并要求了人工确认，但还没有一次被处理完 —— 现在看不出它拦得对不对`;
+  }
+  if (resolved < MIN_SAMPLE) {
+    return `只有 ${resolved} 条决策已处理，样本还不够判断这条规则拦得对不对`;
+  }
+  const rate = approved / resolved;
+  if (rate === 1) {
+    return `${resolved} 次人工确认全部批准 —— 这条规则每次都在问一个答案已知的问题，可以考虑放开或收窄条件`;
+  }
+  if (rate >= 0.9) {
+    return `${resolved} 次里批准了 ${approved} 次（${Math.round(rate * 100)}%）—— 绝大多数是走流程，值得看看能不能收窄条件`;
+  }
+  return `${resolved} 次里驳回了 ${resolved - approved} 次 —— 这条规则确实拦下了不该做的事，别动它`;
+}

@@ -71,13 +71,14 @@ import { getAnalytics, getAnalyticsItems } from './analytics';
 import { getOverview } from './overview';
 import { getAgent, listAgents, listRuntimes } from './agents';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
-import { getPlanDetail, listRequirements } from './intake';
+import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import {
   autonomyPreview,
   deletePolicy,
   evaluateScenario,
   getPolicies,
   getPolicyHistory,
+  getPolicyHits,
   runSimulation,
   savePolicy,
   togglePolicy,
@@ -715,6 +716,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return batchApprove(body.ids, (id) =>
       approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
     );
+  });
+
+  /** 一条规则的命中明细 —— 无法审计的规则没人敢改（页面文档 13）*/
+  app.get('/api/v1/projects/:id/policies/:policyId/hits', async (req) => {
+    const { id, policyId } = req.params as { id: string; policyId: string };
+    return getPolicyHits(db, id, policyId);
+  });
+
+  /**
+   * 计划版本对比（页面文档 04）。
+   *
+   * 不带 against 时和上一版比 —— 用户点进来 99% 想看的是「这一版改了什么」。
+   */
+  app.get('/api/v1/plans/:id/diff', async (req) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { against?: string };
+    const against = q.against === undefined ? undefined : Number(q.against);
+    if (against !== undefined && !Number.isInteger(against)) {
+      throw new ApiError('VALIDATION_FAILED', 'against 必须是版本号');
+    }
+    return comparePlans(db, id, against);
   });
 
   // ── 集成设置（页面文档 14）────────────────────────────────────────────

@@ -142,6 +142,31 @@ export type Action = z.infer<typeof Action>;
 export type ActionType = Action['type'];
 
 /**
+ * 动作的中文名，紧挨着定义放。
+ *
+ * ★ `Record<ActionType, string>` 会在新增动作时直接编译不过 —— 这是故意的。
+ *   之前有过一次教训：决策类型的标签表按文档词汇另写了一份，
+ *   而运行时发出的是另一套，界面上于是一直印着裸 key。
+ *   凡是「新增枚举值时必须同步的映射」都该长在枚举旁边。
+ */
+export const ACTION_LABELS: Record<ActionType, string> = {
+  allow: '放行',
+  allow_and_notify: '放行并通知',
+  require_agent_review: '需 Agent 复核',
+  require_human_review: '需人确认',
+  require_multiple_approvals: '需多人会签',
+  ask: '询问',
+  pause: '暂停',
+  deny: '拒绝',
+  escalate: '升级',
+  transfer_to_human: '转人工执行',
+};
+
+export function actionLabel(type: string): string {
+  return ACTION_LABELS[type as ActionType] ?? type;
+}
+
+/**
  * 动作的严格程度序，用于「项目规则只能收紧不能放宽」的静态检查
  * （docs/tech/05-policy-engine.md §4.2）
  */

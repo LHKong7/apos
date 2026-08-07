@@ -9,7 +9,7 @@ import {
   type Database,
 } from '@apos/db';
 import type { AutonomyLevel } from '@apos/contracts';
-import { auditPolicies } from '@apos/domain';
+import { auditPolicies, diffPlans, type PlanSide } from '@apos/domain';
 import { notFound } from './errors';
 import { loadProjectPolicies } from './policies';
 
@@ -187,4 +187,92 @@ export async function getPlanDetail(db: Database, planId: string) {
 function firstLine(text: string): string {
   const line = text.trim().split('\n')[0] ?? '';
   return line.length > 40 ? `${line.slice(0, 40)}…` : line || '（无标题）';
+}
+
+/**
+ * 计划版本对比（页面文档 04）。
+ *
+ * ★ 用户要批准的是 v2，脑子里记得的是 v1。不给 diff 的话他只能把
+ *   三十行任务清单整个重读一遍 —— 而重读一遍的真实结果通常是不读，直接批。
+ *   diff 不是便利功能，是让「批准」这个动作重新有意义的东西。
+ *
+ * ★ 两版的人机拆分都要从各自的 humanGates 快照推。
+ *   批准前 work_items.executorType 全是 null，按它数出来两版都是「👤 0」，
+ *   于是「这一版把三个人工确认点改成了自动」这条最该被看见的变化，
+ *   在 diff 里会完全消失。
+ */
+export async function comparePlans(db: Database, planId: string, againstVersion?: number) {
+  const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
+  if (!plan) throw notFound('计划');
+
+  const siblings = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.projectId, plan.projectId))
+    .orderBy(desc(plans.version));
+  const sameRequirement = siblings.filter((p) => p.requirementId === plan.requirementId);
+
+  const previous =
+    againstVersion !== undefined
+      ? sameRequirement.find((p) => p.version === againstVersion)
+      : sameRequirement.find((p) => p.version < plan.version);
+
+  const versions = sameRequirement.map((p) => ({
+    id: p.id,
+    version: p.version,
+    status: p.status,
+    createdAt: p.createdAt.toISOString(),
+    isCurrent: p.id === plan.id,
+  }));
+
+  if (!previous) {
+    // 第一版没有可比对象，如实说，而不是拿一份空计划去 diff 出「全部新增」
+    return { versions, diff: null, against: null, feedback: plan.revisionFeedback };
+  }
+
+  const [beforeSide, afterSide] = await Promise.all([
+    planSide(db, previous),
+    planSide(db, plan),
+  ]);
+
+  return {
+    versions,
+    against: { id: previous.id, version: previous.version },
+    /**
+     * ★ 只取上一版的。当前版本的 revisionFeedback 是「它自己后来被要求改」，
+     *   拿来当「它是怎么来的」会张冠李戴。
+     */
+    feedback: previous.revisionFeedback,
+    diff: diffPlans(beforeSide, afterSide),
+  };
+}
+
+async function planSide(db: Database, row: typeof plans.$inferSelect): Promise<PlanSide> {
+  const tasks = await db
+    .select()
+    .from(workItems)
+    .where(eq(workItems.planId, row.id))
+    .orderBy(workItems.position);
+
+  const gates = (row.humanGates as { taskTitle: string }[]) ?? [];
+  const gated = new Set(gates.map((g) => g.taskTitle));
+
+  return {
+    version: row.version,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    estimatedHours: Number(row.estimatedHours ?? 0),
+    estimatedCost: Number(row.estimatedCost ?? 0),
+    autoActions: (row.autoActions as { title: string; detail?: string }[]) ?? [],
+    humanGates: gates,
+    risks: (row.risks as { title?: string; description?: string }[]) ?? [],
+    tasks: tasks.map((t) => ({
+      title: t.title,
+      type: t.type,
+      riskLevel: t.riskLevel,
+      estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
+      estimatedCost: t.estimatedCost === null ? null : Number(t.estimatedCost),
+      requiresHuman: gated.has(t.title),
+    })),
+  };
 }

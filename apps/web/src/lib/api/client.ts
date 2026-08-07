@@ -15,6 +15,7 @@ import type {
   PoliciesResponse,
   PolicyRow,
   PolicyTemplateRow,
+  PolicyHitsResponse,
   DecisionInbox,
   DisconnectImpact,
   IntegrationsResponse,
@@ -23,6 +24,7 @@ import type {
   SyncSummary,
   OverviewResponse,
   PlanDetail,
+  PlanDiffResponse,
   Project,
   RuntimeRow,
   RequirementDetail,
@@ -154,6 +156,14 @@ export const api = {
     }),
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
+
+  policyHits: (projectId: string, policyId: string) =>
+    request<PolicyHitsResponse>(`/projects/${projectId}/policies/${policyId}/hits`),
+
+  planDiff: (planId: string, against?: number) =>
+    request<PlanDiffResponse>(
+      `/plans/${planId}/diff${against === undefined ? '' : `?against=${against}`}`,
+    ),
 
   // ── 集成设置（页面文档 14）──────────────────────────────────────────
   integrations: (projectId: string) =>

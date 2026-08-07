@@ -34,9 +34,12 @@ export const qk = {
   requirements: (projectId: string) => ['requirements', projectId] as const,
   requirement: (id: string) => ['requirement', id] as const,
   plan: (id: string) => ['plan', id] as const,
+  planDiff: (id: string, against?: number) => ['planDiff', id, against ?? 'prev'] as const,
   policies: (projectId: string) => ['policies', projectId] as const,
   policyTemplates: () => ['policyTemplates'] as const,
   policyHistory: (policyId: string) => ['policyHistory', policyId] as const,
+  policyHits: (projectId: string, policyId: string) =>
+    ['policyHits', projectId, policyId] as const,
   analyticsItems: (projectId: string, kind: string, range: string) =>
     ['analyticsItems', projectId, kind, range] as const,
   workItem: (id: string) => ['workItem', id] as const,
