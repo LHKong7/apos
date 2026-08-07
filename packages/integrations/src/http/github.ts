@@ -98,10 +98,15 @@ export class GitHubAdapter implements IntegrationAdapter {
       if (p.push) allowed.push('create_branch', 'create_pr', 'comment_pr');
       else denied.push('create_branch', 'create_pr', 'comment_pr');
 
-      return { allowed, denied };
+      return { allowed, denied, probed: true };
     } catch {
-      // 探测不到就只声明只读 —— 宁可少说，不能多说
-      return { allowed: ['read_code', 'read_ci'], denied };
+      /**
+       * ★ 探测不到就只声明只读 —— 宁可少说，不能多说。
+       *   但要标出这是兜底而不是探测结果：真实跑过一次限流之后
+       *   拿到的就是这份清单，而页面把它当事实显示成「✗ 创建 PR」，
+       *   用户会跑去找管理员要权限，而真相是刚才那次探测被限流了。
+       */
+      return { allowed: ['read_code', 'read_ci'], denied, probed: false };
     }
   }
 

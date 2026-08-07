@@ -300,6 +300,13 @@ function IntegrationCard({
             </span>
           ))}
         </div>
+        {/* ★ 「不知道」和「确实没有」不能长得一模一样 */}
+        {row.scopes.probed === false && (
+          <p className="mt-0.5 text-[11px] text-amber-700">
+            上次没能探测到实际权限（可能被限流或服务不可达），这里暂按只读显示 ——
+            不代表写权限真的没给
+          </p>
+        )}
         {/* 措辞跟着类别走 —— 在 Slack 卡片下写「合并代码」只会让人以为文案是抄的 */}
         <p className="mt-0.5 text-[11px] text-slate-400">
           禁止项由集成层写死，不是「这次没勾」——

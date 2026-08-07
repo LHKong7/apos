@@ -171,6 +171,7 @@ describe('权限最小化（§5.2）', () => {
     github.grantedScopes = async () => ({
       allowed: ['read_code', 'merge_pr'],
       denied: [],
+      probed: true,
     });
 
     const res = await app.inject({
@@ -201,6 +202,8 @@ describe('权限最小化（§5.2）', () => {
     const gh = res.json().integrations.find((i: { provider: string }) => i.provider === 'github');
     expect(gh.scopes.denied).toContain('merge_pr');
     expect(gh.neverGranted).toContain('merge_pr');
+    // ★ 这份清单是探测到的，不是探测失败后的兜底
+    expect(gh.scopes.probed).toBe(true);
   });
 });
 

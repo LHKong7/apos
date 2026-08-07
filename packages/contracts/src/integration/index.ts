@@ -234,6 +234,16 @@ export type SyncDirection = z.infer<typeof SyncDirection>;
 export const IntegrationScopes = z.object({
   allowed: z.array(z.string()),
   denied: z.array(z.string()),
+  /**
+   * 这份清单是**探测到的**，还是探测失败后的保守兜底。
+   *
+   * ★ 探测不到时按只读处理是对的（宁可少说，不能多说），
+   *   但把猜的结果当事实摆出来就不对了：页面会显示
+   *   「✗ 创建 PR」，用户据此以为是权限没给，跑去找管理员 ——
+   *   而真相是刚才那次探测被限流了。
+   *   不加这个标记，「不知道」和「确实没有」在界面上长得一模一样。
+   */
+  probed: z.boolean().default(true),
 });
 export type IntegrationScopes = z.infer<typeof IntegrationScopes>;
 

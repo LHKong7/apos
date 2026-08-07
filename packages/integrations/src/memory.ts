@@ -126,6 +126,7 @@ export class MemoryIntegrationAdapter implements IntegrationAdapter {
     return {
       allowed: ALLOWED_BY_PROVIDER[this.provider],
       denied: [...NEVER_GRANTED_SCOPES[this.provider]],
+      probed: true,
     };
   }
 

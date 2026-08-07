@@ -699,10 +699,10 @@ export const integrations = pgTable(
     credentialExpiresAt: timestamp({ withTimezone: true }),
 
     /** 允许项与禁止项都要存 —— 页面必须能回答「它不能合并我的代码」 */
-    scopes: jsonb().$type<{ allowed: string[]; denied: string[] }>().notNull().default({
-      allowed: [],
-      denied: [],
-    }),
+    scopes: jsonb()
+      .$type<{ allowed: string[]; denied: string[]; probed?: boolean }>()
+      .notNull()
+      .default({ allowed: [], denied: [], probed: true }),
 
     status: text().notNull().default('active'),
     statusReason: text(),

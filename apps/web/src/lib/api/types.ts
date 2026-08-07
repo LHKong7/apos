@@ -740,7 +740,8 @@ export interface IntegrationRow {
   credentialHint: string | null;
   credentialExpiresAt: string | null;
   credentialExpiringSoon: boolean;
-  scopes: { allowed: string[]; denied: string[] };
+  /** probed=false 表示这份清单是探测失败后的保守兜底，不是查到的事实 */
+  scopes: { allowed: string[]; denied: string[]; probed?: boolean };
   /** 这个 provider 的集成层永远不提供的权限 */
   neverGranted: string[];
   /** 适配器没注册 = 现在同步不了，和「配置错了」是两回事 */

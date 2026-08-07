@@ -148,6 +148,32 @@ describe('授权范围', () => {
     expect(s.allowed).toContain('create_pr');
   });
 
+  /**
+   * ★ 探测失败时标出「这是兜底不是事实」。
+   *
+   *   真实跑过一次限流之后拿到的就是这份只读清单，而页面把它当事实
+   *   显示成「✗ 创建 PR」，用户会跑去找管理员要权限 ——
+   *   而真相是刚才那次探测被限流了。
+   *   不加这个标记，「不知道」和「确实没有」在界面上长得一模一样。
+   */
+  it('★ 探测失败时按只读兜底，但标明 probed=false', async () => {
+    handler = () => ({ status: 429, body: {} });
+    const s = await adapter().grantedScopes(CONN);
+
+    expect(s.probed).toBe(false);
+    expect(s.allowed).toEqual(['read_code', 'read_ci']);
+    // 兜底也绝不放开禁止项
+    expect(s.denied).toContain('merge_pr');
+  });
+
+  it('探测成功时 probed=true', async () => {
+    handler = () => ({
+      status: 200,
+      body: { full_name: 'a/b', private: false, permissions: { pull: true, push: true } },
+    });
+    expect((await adapter().grantedScopes(CONN)).probed).toBe(true);
+  });
+
   /** ★ 合并 PR 永远在禁止项里，与 token 权限无关 */
   it('★ 即便 token 是 admin，合并 PR 仍在禁止项', async () => {
     handler = () => ({
