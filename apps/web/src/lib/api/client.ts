@@ -1,5 +1,7 @@
 import type { AnalyticsRange, LayoutKind } from '@apos/domain';
 import type {
+  AgentDetail,
+  AgentListResponse,
   AgentSummary,
   AnalyticsItemsResponse,
   AnalyticsResponse,
@@ -13,8 +15,11 @@ import type {
   PoliciesResponse,
   PolicyRow,
   PolicyTemplateRow,
+  DecisionInbox,
+  OverviewResponse,
   PlanDetail,
   Project,
+  RuntimeRow,
   RequirementDetail,
   RequirementSummary,
   RunControlAction,
@@ -127,6 +132,33 @@ export const api = {
   analyticsItems: (projectId: string, kind: string, range: AnalyticsRange) =>
     request<AnalyticsItemsResponse>(
       `/projects/${projectId}/analytics/items?kind=${kind}&range=${range}`,
+    ),
+
+  // ── 项目总览 / Agent / 决策中心 / 运行时 ────────────────────────────
+  overview: (projectId: string) => request<OverviewResponse>(`/projects/${projectId}/overview`),
+
+  agentList: (projectId?: string) =>
+    request<AgentListResponse>(`/agents${projectId ? `?projectId=${projectId}` : ''}`),
+
+  agentDetail: (agentId: string) => request<AgentDetail>(`/agents/${agentId}`),
+
+  pauseAgent: (agentId: string, paused: boolean, reason?: string) =>
+    request<{ ok: true; paused: boolean }>(`/agents/${agentId}/pause`, {
+      method: 'POST',
+      json: { paused, reason },
+    }),
+
+  runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
+
+  decisionInbox: (scope: 'mine' | 'all', projectId?: string) =>
+    request<DecisionInbox>(
+      `/decision-inbox?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
+    ),
+
+  batchApproveDecisions: (ids: string[], note?: string) =>
+    request<{ approved: number; failed: { id: string; error?: string }[] }>(
+      '/decisions/batch-approve',
+      { method: 'POST', json: { ids, note } },
     ),
 
   // ── Policy 配置 ────────────────────────────────────────────────────

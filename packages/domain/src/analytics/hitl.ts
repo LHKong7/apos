@@ -21,11 +21,24 @@ const RESPONSE_BUCKETS = [
   { label: '> 8h', max: Infinity },
 ] as const;
 
-/** 决策类型的中文名。未知类型直接显示原值，不猜。 */
+/**
+ * 决策类型的中文名。未知类型直接显示原值，不猜。
+ *
+ * ★ 这份表必须覆盖 decisionTypeFor()（apps/api flow/transition.ts）实际产出的每一个值。
+ *   之前它只按页面文档的词汇写，而运行时发出的是另一套 —— 结果
+ *   决策中心和 Analytics 的「重复决策」面板上印的一直是 high_risk_operation
+ *   这样的裸 key。加类型时两边一起改。
+ */
 const DECISION_LABELS: Record<string, string> = {
+  // 运行时实际产出（policy 命中后由 decisionTypeFor 决定）
+  high_risk_operation: '高风险操作审批',
+  release_approval: '发布审批',
+  budget_overrun: '预算超限',
+  agent_failure: 'Agent 连续失败',
+  approval: '人工审批',
+  // 入口链路与历史数据
   plan_approval: '计划批准',
   requirement_approval: '需求确认',
-  release_approval: '发布审批',
   test_env_release: '测试环境发布审批',
   db_change: '数据库变更审批',
   risk_review: '风险评审',

@@ -53,6 +53,26 @@ export const NEVER_AUTO_APPROVE: readonly OperationType[] = [
   'payment',
 ] as const;
 
+/**
+ * 批准后撤不回来的操作。
+ *
+ * ★ 判据是「效果是否离开了我们的控制范围」，不是「有没有难度」：
+ *   钱付出去了、信息发出去了、数据被人看过了、资源被删了 —— 这四类
+ *   事后再怎么补救也回不到原状。
+ *
+ * ★ db_ddl / db_dml 不在其中：有备份就能还原，而「有没有备份」
+ *   不是操作类型能回答的问题。宁可少标一个，也不要让「不可逆」
+ *   贴到处都是 —— 一个到处都是的警示等于没有警示。
+ *
+ * 用途：决策卡片上的「不可逆」标记、批量批准的准入门槛。
+ */
+export const IRREVERSIBLE_OPERATIONS: readonly OperationType[] = [
+  'payment',
+  'delete_resource',
+  'send_external',
+  'access_sensitive_data',
+] as const;
+
 /** 产品文档 10.4 的九类高风险操作，默认需要额外治理 */
 export const HIGH_RISK_OPERATIONS: readonly OperationType[] = [
   'db_ddl',

@@ -10,7 +10,9 @@ import {
   type Database,
 } from '@apos/db';
 import {
+  IRREVERSIBLE_OPERATIONS,
   stageFor,
+  STATUS_LABELS,
   STATUS_STAGE,
   SYSTEM_ACTOR,
   type ActorRef,
@@ -363,6 +365,8 @@ async function createDecisionFor(
   const dueInHours =
     'dueInHours' in action && typeof action.dueInHours === 'number' ? action.dueInHours : 8;
 
+  const snapshot = verdict.contextSnapshot;
+
   const [row] = await tx
     .insert(decisions)
     .values({
@@ -372,7 +376,18 @@ async function createDecisionFor(
       type: decisionTypeFor(verdict),
       status: 'pending',
       riskLevel: item.riskLevel,
-      reversible: true,
+      /**
+       * ★ 以前这里硬编码 true —— 于是「执行付款」的决策卡片上也写着「可逆」。
+       *   一个永远为真的字段不是默认值，是假话：它会让「不可逆」这个
+       *   标记彻底失去意义，也让批量批准的门槛形同虚设。
+       */
+      reversible: !IRREVERSIBLE_OPERATIONS.includes(snapshot.operationType),
+      /**
+       * ★ 「不处理会怎样」必须是具体后果，不是「高优先级」。
+       *   这里能如实说出来的就是停滞代价：任务停在哪、几个下游跟着等。
+       *   编不出来就留空，页面会跳过这一段 —— 比编一句空话好。
+       */
+      consequence: stallConsequence(intendedStatus, snapshot.impactTaskCount),
       title: `${item.title} —— 需要你确认`,
       whyHuman: verdict.matchedPolicyName
         ? `Policy「${verdict.matchedPolicyName}」要求人工介入`
@@ -389,7 +404,25 @@ async function createDecisionFor(
   return row.id;
 }
 
-function decisionTypeFor(verdict: PolicyVerdict): string {
+/**
+ * 停滞代价。
+ *
+ * ★ 说的是「进不去哪」而不是「停在哪」：任务此刻的状态是 awaiting_decision，
+ *   照实说「停在待决策」等于把决策的定义重复一遍。用户想知道的是
+ *   这次批准放行的是什么。
+ * ★ 下游为 0 时也照说 —— 「只卡住它自己」同样是决定优先级的依据。
+ */
+function stallConsequence(intendedStatus: WorkItemStatus, downstream: number): string {
+  const where = `任务无法进入「${STATUS_LABELS[intendedStatus]}」`;
+  return downstream > 0 ? `${where}，${downstream} 个下游任务跟着等` : `${where}（无下游任务受影响）`;
+}
+
+/**
+ * 决策类型。导出是为了能被测试锁住：产出的每一个值都必须在
+ * decisionLabel()（packages/domain analytics/hitl.ts）里有中文名，
+ * 否则决策中心和 Analytics 上会直接印出裸 key。
+ */
+export function decisionTypeFor(verdict: PolicyVerdict): string {
   const id = verdict.matchedPolicyId ?? '';
   if (id.startsWith('baseline-prod-db')) return 'high_risk_operation';
   if (id.startsWith('baseline-prod-deploy')) return 'release_approval';

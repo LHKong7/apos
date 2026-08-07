@@ -23,6 +23,16 @@ export { computeAgents, FAILURE_LABELS } from './agents';
 export { computeHitl, decisionLabel, OVERRIDE_LABELS } from './hitl';
 export { computeCost, TYPE_LABELS } from './cost';
 export { findInsights, type InsightInput } from './insights';
+export {
+  computeHealth,
+  predictDelay,
+  computeProgress,
+  type Health,
+  type DelayRisk,
+  type Contribution,
+  type HealthInput,
+  type DelayInput,
+} from './health';
 
 const DAY = 86_400_000;
 

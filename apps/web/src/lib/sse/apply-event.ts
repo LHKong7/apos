@@ -75,8 +75,15 @@ export function applyEventToCache(qc: QueryClient, event: StreamEvent) {
     case 'decision.expired':
       qc.invalidateQueries({ queryKey: qk.decisionsAll() });
       qc.invalidateQueries({ queryKey: qk.decision(event.subjectId) });
+      /**
+       * 决策中心的队列（含顶栏那个待办数）必须跟着动。
+       * 「需要你的时候我会来找你」这句承诺，实现上就是这一行 ——
+       * 少了它，新决策要等用户手动刷新才看得见。
+       */
+      qc.invalidateQueries({ queryKey: qk.decisionInboxAll() });
       // 决策会改变卡片上的 Human Gate，看板必须重新拉
       if (event.projectId) qc.invalidateQueries({ queryKey: qk.boardAll(event.projectId) });
+      if (event.projectId) qc.invalidateQueries({ queryKey: qk.overview(event.projectId) });
       return;
 
     case 'project.budget_threshold_reached':

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import clsx from 'clsx';
 import { api } from './lib/api/client';
 import { qk } from './lib/query/keys';
 import { useAuthStore } from './stores/auth';
 import { ProjectListPage } from './pages/ProjectList';
+import { OverviewPage } from './pages/Overview';
 import { BoardPage } from './pages/Board';
 import { RunDetailPage } from './pages/RunDetail';
 import { GraphPage } from './pages/Graph';
@@ -13,6 +15,10 @@ import { PoliciesPage } from './pages/Policies';
 import { RequirementListPage } from './pages/Requirement/List';
 import { RequirementPage } from './pages/Requirement';
 import { PlanPage } from './pages/Plan';
+import { AgentListPage } from './pages/Agents';
+import { AgentDetailPage } from './pages/Agents/Detail';
+import { DecisionsPage } from './pages/Decisions';
+import { RuntimeSettingsPage } from './pages/Settings/Runtimes';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -38,13 +44,20 @@ export function App() {
       <main className="flex min-h-0 flex-1 flex-col">
         <Routes>
           <Route path="/" element={<ProjectListPage />} />
+          <Route path="/projects/:projectId" element={<OverviewPage />} />
           <Route path="/projects/:projectId/board" element={<BoardPage />} />
           <Route path="/projects/:projectId/graph" element={<GraphPage />} />
           <Route path="/projects/:projectId/analytics" element={<AnalyticsPage />} />
+          <Route path="/projects/:projectId/agents" element={<AgentListPage />} />
+          <Route path="/projects/:projectId/agents/:agentId" element={<AgentDetailPage />} />
+          <Route path="/projects/:projectId/decisions" element={<DecisionsPage />} />
           <Route path="/projects/:projectId/settings/policies" element={<PoliciesPage />} />
+          <Route path="/projects/:projectId/settings/runtimes" element={<RuntimeSettingsPage />} />
           <Route path="/projects/:projectId/requirements" element={<RequirementListPage />} />
           <Route path="/projects/:projectId/requirements/:reqId" element={<RequirementPage />} />
           <Route path="/projects/:projectId/plans/:planId" element={<PlanPage />} />
+          <Route path="/agents/:agentId" element={<AgentDetailPage />} />
+          <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -67,6 +80,8 @@ function TopNav() {
         Autonomous Project OS
       </button>
 
+      <DecisionBadge />
+
       <div className="ml-auto flex items-center gap-2">
         <label className="text-[11px] text-slate-500" htmlFor="user-switch">
           当前身份
@@ -86,5 +101,44 @@ function TopNav() {
         </select>
       </div>
     </header>
+  );
+}
+
+/**
+ * 顶栏的待办决策数。
+ *
+ * ★ 产品那句「你不需要盯着 Agent，需要你的时候我会来找你」，
+ *   在界面上就是这一个数字：它必须在每一页都看得见，而且要自己变。
+ *   把它藏在决策中心页里，等于要求用户定期去查有没有人找他 ——
+ *   那就正好是这个产品声称要消灭的行为。
+ *
+ * ★ 数字来自 scope=mine，包含未分派的决策（后端口径）。
+ *   只算「指名给我的」会让无人认领的决策永远静默，
+ *   而无人认领恰恰是最该被看见的一类。
+ */
+function DecisionBadge() {
+  const userId = useAuthStore((s) => s.userId);
+  const inbox = useQuery({
+    queryKey: qk.decisionInbox('mine'),
+    queryFn: () => api.decisionInbox('mine'),
+    enabled: Boolean(userId),
+  });
+
+  const stats = inbox.data?.stats;
+  if (!stats || stats.mine === 0) return null;
+
+  return (
+    <Link
+      to="/decisions"
+      className={clsx(
+        'rounded px-2 py-0.5 text-xs',
+        stats.overdue > 0
+          ? 'bg-red-50 text-red-700 hover:bg-red-100'
+          : 'bg-amber-50 text-amber-800 hover:bg-amber-100',
+      )}
+    >
+      ⏰ {stats.mine} 条待你决策
+      {stats.overdue > 0 && <span className="ml-1 font-medium">（{stats.overdue} 条已超时）</span>}
+    </Link>
   );
 }

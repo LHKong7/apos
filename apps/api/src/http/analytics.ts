@@ -46,8 +46,30 @@ export async function getAnalytics(
 
   const window = windowFor(range, now);
   const prevWindow = previousWindow(window);
-  // 上一周期也要算，所以原始数据要拉到更早
-  const since = compare ? prevWindow.from : window.from;
+  const current = await loadAnalyticsInput(db, project, window, now);
+  const previous = compare ? { ...current, window: prevWindow } : null;
+
+  return {
+    project: { id: project.id, name: project.name },
+    ...computeAnalytics(range, current, previous, now),
+    generatedAt: new Date(now).toISOString(),
+  };
+}
+
+/**
+ * 把一个项目的原始行读成 Analytics 的输入。
+ *
+ * ★ 项目总览页也用它。两页各自查一遍库、各自算一遍「流动效率」，
+ *   迟早会给出两个不一样的数字 —— 而用户不知道该信哪个，
+ *   于是两个都不信。口径必须只有一份。
+ */
+export async function loadAnalyticsInput(
+  db: Database,
+  project: typeof projects.$inferSelect,
+  window: Window,
+  now: number,
+): Promise<AnalyticsInput> {
+  const projectId = project.id;
 
   const items = await db
     .select()
@@ -114,10 +136,13 @@ export async function getAnalytics(
         }))
       : [];
 
+  // 两个窗口共用一次事件查询，所以按更早的那个边界拉
+  const since = Math.min(window.from, window.from - (window.to - window.from));
   const { changes, overrides, policyEvals } = await loadEventDerived(db, projectId, since);
 
-  const build = (w: Window): AnalyticsInput => ({
-    window: w,
+  void now;
+  return {
+    window,
     items: itemRows,
     changes,
     runs: runRows,
@@ -127,12 +152,6 @@ export async function getAnalytics(
     policyEvals,
     budget: project.budgetAmount === null ? null : Number(project.budgetAmount),
     costSpentTotal: Number(project.costSpent),
-  });
-
-  return {
-    project: { id: project.id, name: project.name },
-    ...computeAnalytics(range, build(window), compare ? build(prevWindow) : null, now),
-    generatedAt: new Date(now).toISOString(),
   };
 }
 

@@ -541,6 +541,64 @@ describe('★ 决策责任不可代行', () => {
     // 任务回到进入决策前的状态
     expect(after!.status).toBe('executing');
   });
+
+  /**
+   * ★ 批量批准省的是点击，不是规则。
+   *
+   *   为批量另写一条快路径，是这类功能出事故最常见的原因 ——
+   *   所以它逐条走单条批准的同一个函数，「不可代行」必须原样生效。
+   *   这个测试就是那条路径的锁：一条能批、一条是别人的，只能过一条。
+   */
+  it('★ 批量批准不绕过「不可代行」：别人的决策照样批不动', async () => {
+    const { users } = await import('@apos/db');
+    const [other] = await db
+      .insert(users)
+      .values({ orgId: fx.orgId, email: `dba-${randomUUID()}@acme.dev`, name: '王强' })
+      .returning();
+
+    const rows = await db
+      .insert(decisions)
+      .values([
+        {
+          orgId: fx.orgId,
+          projectId: fx.projectId,
+          type: 'approval',
+          riskLevel: 'low',
+          title: '我的决策',
+          whyHuman: '测试',
+          assigneeId: fx.userId,
+        },
+        {
+          orgId: fx.orgId,
+          projectId: fx.projectId,
+          type: 'approval',
+          riskLevel: 'low',
+          title: '别人的决策',
+          whyHuman: '测试',
+          assigneeId: other!.id,
+        },
+      ])
+      .returning();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/decisions/batch-approve',
+      headers: auth(),
+      payload: { ids: rows.map((r) => r.id) },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.approved).toBe(1);
+    expect(body.failed).toHaveLength(1);
+    expect(body.failed[0].error).toContain('不可代行');
+
+    // 别人那条必须原封不动
+    const [mine] = await db.select().from(decisions).where(eq(decisions.id, rows[0]!.id));
+    const [theirs] = await db.select().from(decisions).where(eq(decisions.id, rows[1]!.id));
+    expect(mine!.status).toBe('approved');
+    expect(theirs!.status).toBe('pending');
+  });
 });
 
 describe('Agent 回调鉴权', () => {

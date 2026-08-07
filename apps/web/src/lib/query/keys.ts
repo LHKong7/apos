@@ -21,6 +21,14 @@ export const qk = {
   graphAll: (projectId: string) => ['graph', projectId] as const,
   analytics: (projectId: string, range: string, compare: boolean) =>
     ['analytics', projectId, range, compare] as const,
+  overview: (projectId: string) => ['overview', projectId] as const,
+  agentList: (projectId?: string) => ['agentList', projectId ?? 'all'] as const,
+  agentDetail: (agentId: string) => ['agentDetail', agentId] as const,
+  runtimes: () => ['runtimes'] as const,
+  decisionInbox: (scope: string, projectId?: string) =>
+    ['decisionInbox', scope, projectId ?? 'all'] as const,
+  /** 匹配所有范围组合 —— 一条决策事件会同时影响「我的」和「全部」两份缓存 */
+  decisionInboxAll: () => ['decisionInbox'] as const,
   requirements: (projectId: string) => ['requirements', projectId] as const,
   requirement: (id: string) => ['requirement', id] as const,
   plan: (id: string) => ['plan', id] as const,

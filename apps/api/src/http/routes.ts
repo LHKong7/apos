@@ -57,6 +57,9 @@ import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
 import { getAnalytics, getAnalyticsItems } from './analytics';
+import { getOverview } from './overview';
+import { getAgent, listAgents, listRuntimes } from './agents';
+import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { getPlanDetail, listRequirements } from './intake';
 import {
   autonomyPreview,
@@ -599,6 +602,95 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       : 'layered';
 
     return getGraph(db, id, layout);
+  });
+
+  // ── 项目总览（页面文档 02）──────────────────────────────────────────
+  app.get('/api/v1/projects/:id/overview', async (req) => {
+    const { id } = req.params as { id: string };
+    return getOverview(db, id, optionalUserId(req));
+  });
+
+  // ── Agent Workspace（页面文档 08）───────────────────────────────────
+  app.get('/api/v1/agents', async (req) => {
+    const q = req.query as { projectId?: string };
+    const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
+    return listAgents(db, projectId);
+  });
+
+  app.get('/api/v1/agents/:agentId', async (req) => {
+    const { agentId } = req.params as { agentId: string };
+    return getAgent(db, deps.registry, agentId);
+  });
+
+  /**
+   * 暂停 / 恢复 Agent。
+   *
+   * ★ 暂停必须填原因，和停用 Policy 同理：三周后没人记得
+   *   「这个 Agent 为什么一直是停的」，而一个停着的 Agent
+   *   会安静地让整个项目慢下来。
+   */
+  app.post('/api/v1/agents/:agentId/pause', async (req) => {
+    const { userId } = actorFrom(req);
+    const { agentId } = req.params as { agentId: string };
+    const body = z
+      .object({
+        paused: z.boolean(),
+        reason: z.string().optional(),
+      })
+      .parse(req.body);
+
+    if (body.paused && !body.reason?.trim()) {
+      throw new ApiError('VALIDATION_FAILED', '暂停 Agent 必须填写原因');
+    }
+
+    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+    if (!agent) throw notFound('Agent');
+
+    await db
+      .update(agents)
+      .set({
+        status: body.paused ? 'paused' : 'active',
+        pausedReason: body.paused ? (body.reason ?? null) : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(agents.id, agentId));
+
+    await emitAndPublish(db, {
+      orgId: agent.orgId,
+      projectId: null,
+      type: body.paused ? 'agent.paused' : 'agent.registered',
+      actor: humanActor(userId),
+      subjectType: 'agent',
+      subjectId: agentId,
+      payload: { paused: body.paused, reason: body.reason ?? null },
+      correlationId: corr(req),
+    });
+
+    return { ok: true as const, paused: body.paused };
+  });
+
+  // ── 运行时能力（页面文档 14 §5.4 —— 集成里唯一有真实后端的一块）──
+  app.get('/api/v1/runtimes', async () => listRuntimes(db, deps.registry));
+
+  // ── 决策中心（页面文档 10）──────────────────────────────────────────
+  app.get('/api/v1/decision-inbox', async (req) => {
+    const q = req.query as { scope?: string; projectId?: string };
+    const scope = (['mine', 'all', 'watching'] as const).find((s) => s === q.scope) ?? 'mine';
+    const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
+    return getDecisionInbox(db, optionalUserId(req), scope as DecisionScope, projectId);
+  });
+
+  app.post('/api/v1/decisions/batch-approve', async (req) => {
+    const { userId, actor } = actorFrom(req);
+    const body = z
+      .object({ ids: z.array(z.string().uuid()).min(1, '至少选一条'), note: z.string().optional() })
+      .parse(req.body);
+    const correlationId = corr(req);
+
+    // 逐条走单条批准的同一个函数 —— 批量省的是点击，不是规则
+    return batchApprove(body.ids, (id) =>
+      approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
+    );
   });
 
   // ── Analytics ───────────────────────────────────────────────────────
@@ -1150,25 +1242,31 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { ok: true, decisionId: id };
   });
 
-  app.post('/api/v1/decisions/:id/approve', async (req) => {
-    const { userId, actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        note: z.string().optional(),
-        constraints: z
-          .array(
-            z.object({
-              type: z.string(),
-              value: z.unknown(),
-              description: z.string(),
-              enforcement: z.enum(['system', 'agent', 'manual']).default('agent'),
-            }),
-          )
-          .default([]),
-      })
-      .parse(req.body ?? {});
+  const ApproveBody = z.object({
+    note: z.string().optional(),
+    constraints: z
+      .array(
+        z.object({
+          type: z.string(),
+          value: z.unknown(),
+          description: z.string(),
+          enforcement: z.enum(['system', 'agent', 'manual']).default('agent'),
+        }),
+      )
+      .default([]),
+  });
 
+  /**
+   * 单条批准。批量批准逐条调它 —— 不可代行、状态机、Policy 一个都不绕。
+   * 为批量另写一条快路径，是这类功能出事故最常见的原因。
+   */
+  async function approveDecisionById(
+    id: string,
+    userId: string,
+    actor: ReturnType<typeof actorFrom>['actor'],
+    body: z.infer<typeof ApproveBody>,
+    correlationId: string,
+  ) {
     const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
     if (!decision) throw notFound('决策');
     if (decision.status !== 'pending') {
@@ -1216,13 +1314,20 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         workItemId: decision.workItemId,
         trigger: 'decision_approved',
         actor,
-        correlationId: corr(req),
+        correlationId,
       });
-      if (!result.ok) return mapTransitionError(result);
-      return { ok: true, decisionId: id, workItem: toTransitionResponse(result) };
+      if (!result.ok) throw mapTransitionError(result);
+      return { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) };
     }
 
-    return { ok: true, decisionId: id };
+    return { ok: true as const, decisionId: id };
+  }
+
+  app.post('/api/v1/decisions/:id/approve', async (req) => {
+    const { userId, actor } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = ApproveBody.parse(req.body ?? {});
+    return approveDecisionById(id, userId, actor, body, corr(req));
   });
 
   app.post('/api/v1/decisions/:id/reject', async (req) => {

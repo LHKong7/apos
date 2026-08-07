@@ -514,3 +514,196 @@ export interface PlanDetail {
   }[];
   assumptions: { id: string; question: string; answer: string | null; level: string; confirmed: boolean }[];
 }
+
+// ── 项目总览 / Agent / 决策中心 / 运行时（页面文档 02 / 08 / 10 / 14）──
+type Contribution = import('@apos/domain').Contribution;
+
+export interface OverviewResponse {
+  project: {
+    id: string;
+    name: string;
+    goal: string | null;
+    status: string;
+    autonomyLevel: string;
+    pausedReason: string | null;
+  };
+  health: { score: number; level: 'good' | 'fair' | 'poor'; contributions: Contribution[] };
+  progress: { pct: number; done: number; total: number };
+  delay: {
+    level: 'low' | 'medium' | 'high';
+    probability: number;
+    estimatedSlipDays: number | null;
+    contributions: Contribution[];
+  };
+  cost: { spent: number; budget: number | null };
+  decisions: { pending: number; overdue: number; unassigned: number };
+  actionItems: {
+    kind: 'plan' | 'decision';
+    id: string;
+    title: string;
+    riskLevel: string;
+    overdueMinutes: number | null;
+    dueInMinutes: number | null;
+  }[];
+  blocked: {
+    id: string;
+    title: string;
+    reason: string | null;
+    minutes: number | null;
+    ownerName: string | null;
+    humanGateRef: string | null;
+  }[];
+  agents: {
+    id: string;
+    name: string;
+    type: string;
+    status: string;
+    currentTask: string | null;
+    currentRunId: string | null;
+    successRate: number | null;
+    runs: number;
+    cost: number;
+  }[];
+  members: {
+    id: string;
+    name: string;
+    role: string;
+    pendingDecisions: number;
+    overdueDecisions: number;
+  }[];
+  trend: { wip: { day: string; value: number }[]; blocked: { day: string; value: number }[] };
+  recentActivity: { id: string; type: string; actorType: string; occurredAt: string; payload: Record<string, unknown> }[];
+}
+
+export interface AgentListResponse {
+  agents: {
+    id: string;
+    name: string;
+    type: string;
+    model: string | null;
+    status: string;
+    pausedReason: string | null;
+    load: { running: number; max: number };
+    runs: number;
+    successRate: number | null;
+    firstTrySuccessRate: number | null;
+    overrideRate: number | null;
+    cost: number;
+    ownerName: string;
+  }[];
+  totals: { cost: number; runs: number; successRate: number | null };
+}
+
+export interface CapabilityReport {
+  runtime: { name: string; version: string };
+  protocolVersion: string;
+  transport: { eventDelivery: string; heartbeatIntervalSeconds: number | null };
+  models: string[];
+  limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
+  tools: { name: string; description: string; sideEffects: string }[];
+  supported: { feature: string; label: string }[];
+  missing: { feature: string; label: string; behavior: string; userImpact: string; severity: string }[];
+  restricted: boolean;
+}
+
+export interface AgentDetail {
+  agent: {
+    id: string;
+    name: string;
+    type: string;
+    description: string | null;
+    model: string | null;
+    status: string;
+    pausedReason: string | null;
+    skills: string[];
+    applicableTypes: string[];
+    maxConcurrency: number;
+    timeoutSeconds: number;
+    costLimitPerRun: number | null;
+    costLimitDaily: number | null;
+    ownerName: string;
+    runtime: { name: string; kind: string; status: string } | null;
+  };
+  permissions: {
+    allowedTools: string[];
+    deniedTools: string[];
+    resourceScopes: { kind: string; ref: string; access: string }[];
+  };
+  performance: {
+    runs: number;
+    successRate: number;
+    firstTrySuccessRate: number;
+    overrideRate: number;
+    avgCost: number;
+    totalCost: number;
+    avgMinutes: number | null;
+  } | null;
+  /** 只含未完成的任务 —— 已完成的数量在 queueDoneCount */
+  queue: { id: string; title: string; status: string; riskLevel: string }[];
+  queueDoneCount: number;
+  recentRuns: {
+    id: string;
+    workItemId: string;
+    workItemTitle: string;
+    status: string;
+    attempt: number;
+    cost: number;
+    errorClass: string | null;
+    startedAt: string | null;
+    endedAt: string | null;
+  }[];
+  capability: CapabilityReport | null;
+  permissionChanges: { direction: string; changedBy: string; reason: string | null; createdAt: string }[];
+}
+
+export interface DecisionCard {
+  id: string;
+  projectId: string;
+  projectName: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  consequence: string | null;
+  whyHuman: string;
+  riskLevel: string;
+  reversible: boolean;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  canAct: boolean;
+  createdAt: string;
+  dueAt: string | null;
+  overdueMinutes: number | null;
+  dueInMinutes: number | null;
+  waitingMinutes: number;
+  workItemId: string | null;
+  workItemTitle: string | null;
+  runId: string | null;
+  agentSelfReport: string | null;
+  options: {
+    id: string;
+    name: string;
+    description: string | null;
+    isRecommended: boolean;
+    rationale: string | null;
+    uncertainties: string[];
+  }[];
+}
+
+export interface DecisionInbox {
+  stats: { total: number; mine: number; overdue: number; dueSoon: number; actionable: number };
+  repeated: { type: string; label: string; count: number }[];
+  decisions: DecisionCard[];
+}
+
+export interface RuntimeRow {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  protocolVersion: string | null;
+  registered: boolean;
+  reachable: boolean;
+  agentCount: number;
+  agentNames: string[];
+  capability: CapabilityReport | null;
+}

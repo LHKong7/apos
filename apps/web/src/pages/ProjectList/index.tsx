@@ -32,8 +32,9 @@ export function ProjectListPage() {
           <ul className="space-y-2">
             {data.projects.map((p) => (
               <li key={p.id}>
+                {/* 进项目先到总览 —— 「现在什么情况、要不要我管」比一屏卡片先回答 */}
                 <Link
-                  to={`/projects/${p.id}/board`}
+                  to={`/projects/${p.id}`}
                   className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 hover:border-slate-300 hover:shadow-sm"
                 >
                   <div className="min-w-0 flex-1">

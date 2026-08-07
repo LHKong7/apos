@@ -3,8 +3,9 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { artifacts, decisions, events, policies, workItemDependencies, workItems } from '@apos/db';
 import { humanActor, SYSTEM_ACTOR, agentActor } from '@apos/contracts';
+import { BASELINE_POLICIES, decisionLabel } from '@apos/domain';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
-import { transition } from './transition';
+import { decisionTypeFor, transition } from './transition';
 
 const db = testDb();
 let fx: Fixture;
@@ -484,5 +485,25 @@ describe('NOT_FOUND', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('决策类型的中文名', () => {
+  /**
+   * ★ 每条基线规则命中后都会生成一个决策，决策类型必须有中文名。
+   *   这两处分别在 apps/api 和 packages/domain，谁也不 import 谁 ——
+   *   之前它们就是这么各写各的：运行时发 high_risk_operation，
+   *   标签表里只有 db_change，页面上于是印出一串下划线。
+   */
+  it('每条基线规则产出的决策类型都有中文名', () => {
+    for (const p of BASELINE_POLICIES) {
+      const type = decisionTypeFor({ matchedPolicyId: p.id } as never);
+      expect(decisionLabel(type), `${p.id} → ${type} 没有中文名`).not.toBe(type);
+    }
+  });
+
+  it('没有命中规则时的兜底类型也有中文名', () => {
+    const type = decisionTypeFor({ matchedPolicyId: null } as never);
+    expect(decisionLabel(type)).not.toBe(type);
   });
 });

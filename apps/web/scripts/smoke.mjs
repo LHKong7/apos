@@ -544,6 +544,129 @@ await page.getByRole('button', { name: '批准并开始执行' }).last().click()
 await page.waitForTimeout(3000);
 check('★ 批准后任务进入看板', page.url().endsWith('/board'), new URL(page.url()).pathname);
 
+// ── 项目总览（页面文档 02）────────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const ovText = await page.locator('main').innerText();
+check('总览渲染五个指标卡', (await page.getByRole('button').filter({ hasText: /健康度|延期风险|待决策/ }).count()) >= 3);
+// ★ 说不清来源的分数会被当成事实引用，也会被当成玄学忽略 —— 两种下场都不好
+await page.getByRole('button').filter({ hasText: '健康度' }).first().click();
+await page.waitForTimeout(300);
+const healthText = await page.locator('main').innerText();
+check(
+  '★ 健康度能展开成逐项扣分，而不是一个凭空的分数',
+  /分是这么来的/.test(healthText),
+  healthText.split('\n').find((l) => l.includes('分是这么来的')) ?? '',
+);
+await page.getByRole('button').filter({ hasText: '延期风险' }).first().click();
+await page.waitForTimeout(300);
+const delayText = await page.locator('main').innerText();
+check(
+  '★ 延期预测如实说明它是经验规则而不是统计模型',
+  /不是统计模型/.test(delayText),
+);
+// 活动流是给项目负责人看的，不是给运维看日志
+check(
+  '★ 最近活动是人话，不是事件类型的裸 key',
+  /任务状态变更|Agent 执行完成|决策待处理/.test(ovText) && !/work_item\.|agent_run\./.test(ovText),
+);
+check('无人认领的决策被单独点名', !/项决策没有指定责任人/.test(ovText) || /最容易烂在队列里/.test(ovText));
+/**
+ * ★ 冷启动竞态：/users 还没回来时发出的请求是匿名的，后端会如实答
+ *   「没有需要你处理的事」，然后这个答案被缓存下来 ——
+ *   整页最不能说错的一区，恰好是最容易被这条竞态说错的。
+ *   这里是硬刷新后的首屏，走的就是那条路径。
+ */
+const pendingN = Number(ovText.match(/待决策\n+(\d+)/)?.[1] ?? 0);
+const actionN = Number(ovText.match(/需要你处理（(\d+)）/)?.[1] ?? 0);
+check(
+  '★ 冷启动首屏就带上身份：有待决策时「需要你处理」不是 0',
+  pendingN === 0 || actionN > 0,
+  `待决策 ${pendingN} · 需要你处理 ${actionN}`,
+);
+await shot('overview');
+
+// ── 决策中心（页面文档 10）────────────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/decisions`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const decText = await page.locator('main').innerText();
+// ★ 5 分钟清空队列的前提：不用点进详情页就能拍板
+check(
+  '★ 决策卡片在列表里就给出「为什么需要你」与「不处理会怎样」',
+  /要求人工介入|需人工确认/.test(decText) && /不处理：/.test(decText),
+  decText.split('\n').find((l) => l.startsWith('不处理：')) ?? '',
+);
+check(
+  '决策类型显示中文名而不是 high_risk_operation',
+  !/high_risk_operation|release_approval|_approval/.test(decText),
+);
+check('每条都能就地批准或驳回', (await page.getByRole('button', { name: '批准' }).count()) > 0);
+// ★ 批量的价值是省点击，不是省阅读
+const batchNote = /不可逆或高风险，需逐条确认/.test(decText);
+const batchBoxes = await page.locator('input[type="checkbox"]').count();
+check(
+  '★ 高风险/不可逆决策不给批量勾选框，并说明原因',
+  batchNote || batchBoxes > 0,
+  batchNote ? `${batchBoxes} 个可批量` : '当前队列全部可批量',
+);
+await shot('decisions');
+
+// 驳回必须写原因 —— 「每次覆盖都要留下为什么」是这个系统的底线
+const rejectBtn = page.getByRole('button', { name: '驳回' }).first();
+if ((await rejectBtn.count()) > 0) {
+  await rejectBtn.click();
+  await page.waitForTimeout(300);
+  const confirmReject = page.getByRole('button', { name: /确认驳回/ }).first();
+  check('★ 驳回原因没填时确认按钮不可用', await confirmReject.isDisabled());
+}
+
+// ── Agent Workspace（页面文档 08）─────────────────────────────────────
+await page.goto(`${base}/projects/${projectId}/agents`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const rosterText = await page.locator('main').innerText();
+// ★ 基调是员工花名册，不是服务健康检查
+check(
+  '★ Agent 列表按人事口径给出负载/成功率/人工覆盖/成本/负责人',
+  /人工覆盖/.test(rosterText) && /负责人/.test(rosterText) && /首次成功/.test(rosterText),
+);
+await shot('agents');
+
+await page.locator('table a').first().click();
+await page.waitForTimeout(1200);
+const detText = await page.locator('main').innerText();
+// ★ Agent 权限独立配置，绝不继承人类用户（产品文档 十）
+check(
+  '★ 权限边界写明独立配置且 Agent 自己改不了',
+  /不继承任何人类用户/.test(detText) && /黑名单优先/.test(detText),
+);
+// ★ executorId 是永久归属，不是队列
+const queueN = Number(detText.match(/任务队列（(\d+)）/)?.[1] ?? -1);
+check(
+  '★ 任务队列只算没做完的（归属 ≠ 队列）',
+  queueN >= 0 && !/任务队列（\d+）[\s\S]{0,400}?已完成\n/.test(detText),
+  `队列 ${queueN}`,
+);
+// ★ 不静默降级：这个运行时做不到什么、会怎样、对用户什么影响
+check(
+  '★ 运行时能力先说做不到什么，并给出降级行为与用户影响',
+  /运行时能力/.test(detText) && (/→ /.test(detText) || /全部支持，没有降级/.test(detText)),
+  detText.split('\n').find((l) => l.startsWith('→ ')) ?? '无降级项',
+);
+await shot('agent-detail');
+
+// ── 集成设置 · 运行时（页面文档 14 §5.4）──────────────────────────────
+await page.goto(`${base}/projects/${projectId}/settings/runtimes`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(900);
+const rtText = await page.locator('main').innerText();
+check('运行时给出「能不能派任务」而不是数据库里的状态', /可派发|未注册|不可达/.test(rtText));
+check(
+  '★ 明说外部系统对接没有实现，而不是放一个点不动的连接按钮',
+  /还没有实现/.test(rtText) && (await page.getByRole('button', { name: /连接|授权/ }).count()) === 0,
+);
+check('工具按副作用等级标注', /写入或外部副作用/.test(rtText) || /破坏性|外部系统/.test(rtText));
+await shot('runtimes');
+
+
 await browser.close();
 
 const failed = results.filter((r) => !r.ok);

@@ -52,6 +52,35 @@ export const WorkItemStatus = z.enum([
 ]);
 export type WorkItemStatus = z.infer<typeof WorkItemStatus>;
 
+/**
+ * 状态的中文名，全站唯一一份。
+ *
+ * ★ 放在 contracts 而不是前端，是因为后端也要拼给人看的句子
+ *   （比如决策卡片上的「不处理会怎样」）。各写一份的下场已经见过：
+ *   决策类型的标签表就是这么和运行时的取值走散的。
+ * ★ Record<WorkItemStatus, string> 会在新增状态时直接编译不过 —— 这是故意的。
+ */
+export const STATUS_LABELS: Record<WorkItemStatus, string> = {
+  draft: '草稿',
+  clarifying: '澄清中',
+  awaiting_requirement_approval: '待需求确认',
+  planning: '规划中',
+  awaiting_plan_approval: '待计划批准',
+  ready: '待执行',
+  executing: '执行中',
+  blocked: '阻塞',
+  failed: '失败',
+  reviewing: '审核中',
+  changes_requested: '需返工',
+  awaiting_decision: '待决策',
+  waiting_for_release: '等待发布',
+  releasing: '发布中',
+  released: '已发布',
+  acceptance: '验收中',
+  done: '已完成',
+  cancelled: '已取消',
+};
+
 /** status → stage 的映射。看板列由此决定。 */
 export const STATUS_STAGE: Record<WorkItemStatus, Stage> = {
   draft: 'intake',
