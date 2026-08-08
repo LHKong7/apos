@@ -130,7 +130,7 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
       error: { class: 'tool_failure', message: 'transient' },
       steps: ['尝试'],
     });
-    const agent = await seedAgent(db, fx, { registry, runtime });
+    await seedAgent(db, fx, { registry, runtime });
     const item = await createWorkItem(db, fx, { consecutiveFailures: 2 });
 
     await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });

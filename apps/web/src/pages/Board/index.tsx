@@ -29,7 +29,28 @@ export function BoardPage() {
   const filters = useMemo(() => parseFilters(params), [params]);
   const view = (params.get('view') as BoardView) ?? 'kanban';
 
-  const [openCard, setOpenCard] = useState<string | null>(null);
+  /**
+   * ★ 卡片抽屉的开关写进 URL，和筛选同一个理由：
+   *   执行图的「在看板中定位」必须能指到具体某张卡，而不是把人扔到看板首页
+   *   让他自己找（页面文档 07 §5.6）。顺带让「你看这张卡」的链接可分享。
+   *   `card` 不在 parseFilters 的取值范围内，因此不会触发看板重新请求。
+   */
+  const openCard = params.get('card');
+  const setOpenCard = useCallback(
+    (id: string | null) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set('card', id);
+          else next.delete('card');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
   const [openDecision, setOpenDecision] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{
     card: BoardCard;
@@ -126,7 +147,7 @@ export function BoardPage() {
         else setOpenCard(card.id);
       },
     }),
-    [retry, remind, takeover, navigate],
+    [retry, remind, takeover, navigate, setOpenCard],
   );
 
   if (!projectId) return null;

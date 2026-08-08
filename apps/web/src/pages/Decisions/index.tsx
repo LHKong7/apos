@@ -40,7 +40,9 @@ export function DecisionsPage() {
     enabled: Boolean(userId),
   });
 
-  const cards = inbox.data?.decisions ?? [];
+  // ★ memo 的理由同执行图：`?? []` 每次渲染都是新数组，
+  //   下面 batchable / batchableIds 两层 useMemo 会因此每次都重算
+  const cards = useMemo(() => inbox.data?.decisions ?? [], [inbox.data]);
 
   /**
    * ★ 批量批准只对「可逆且非高风险」的决策开放。

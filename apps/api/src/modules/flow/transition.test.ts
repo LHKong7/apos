@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { artifacts, decisions, events, policies, workItemDependencies, workItems } from '@apos/db';
 import { humanActor, SYSTEM_ACTOR, agentActor } from '@apos/contracts';

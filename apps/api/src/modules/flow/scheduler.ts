@@ -10,7 +10,6 @@ import {
 import { ACTIVE_RUN_STATUSES, SYSTEM_ACTOR, type WorkItemType } from '@apos/contracts';
 import { isDependencyMet, matchExecutors, type AgentCandidate, type MatchTarget } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
-import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { loadDependencies } from './context';
 import { dispatchRun } from '../agent/dispatch';

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, agents, artifacts, events, projects, runEvents, workItemDependencies, workItems } from '@apos/db';
+import { agentRuns, artifacts, events, projects, runEvents, workItemDependencies, workItems } from '@apos/db';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent, waitFor, waitForRunEnd } from '../../test/agent-fixtures';

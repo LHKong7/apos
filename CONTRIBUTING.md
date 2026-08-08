@@ -20,7 +20,12 @@ pnpm db:migrate               # 应用迁移
 pnpm test                     # 全部测试（含集成测试）
 pnpm test:watch
 pnpm typecheck
+pnpm lint
 ```
+
+`pnpm lint` 只开会变成 bug 的规则，不管格式。重点是类型系统看不见的那些：
+React Hook 依赖漏项（在 SSE 驱动的界面上表现为「后端推了但这一块没变」）、
+未使用的导入、`any` 必须带理由。规则集见 `eslint.config.js`，那里写了每条为什么在。
 
 ## 仓库结构
 

@@ -15,7 +15,6 @@ import {
   projectMembers,
   requirementClarifications,
   requirements,
-  runEvents,
   syncConflicts,
   users,
   workItems,
@@ -63,7 +62,7 @@ import { transition } from '../modules/flow/transition';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
-import { ApiError, notFound, sendError } from './errors';
+import { ApiError, asClientInputError, notFound, sendError } from './errors';
 import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
@@ -184,6 +183,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     if (fastifyErr.statusCode && fastifyErr.statusCode >= 400 && fastifyErr.statusCode < 500) {
       const code = fastifyErr.statusCode === 429 ? 'RATE_LIMITED' : 'VALIDATION_FAILED';
       return sendError(reply, new ApiError(code, fastifyErr.message ?? '请求不合法'));
+    }
+    // 同一条纪律的下半段：客户端输错的值要到 SQL 才被发现，
+    // 抛出来的是 PostgresError 而不是 fastify 的 4xx，得单独认一下
+    const inputErr = asClientInputError(error);
+    if (inputErr) {
+      app.log.warn({ err: error }, 'client input rejected by database');
+      return sendError(reply, inputErr);
     }
     app.log.error({ err: error }, 'unhandled error');
     return sendError(reply, new ApiError('INTERNAL', '服务器内部错误'));

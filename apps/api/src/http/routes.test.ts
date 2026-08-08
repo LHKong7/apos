@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { agentRuns, decisions, requirementClarifications, workItems } from '@apos/db';
+import { agentRuns, decisions, workItems } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -105,6 +105,53 @@ describe('认证与错误映射', () => {
       headers: auth(),
     });
     expect(res.json().error.traceId).toMatch(/^req_/);
+  });
+
+  /**
+   * 身份头那条路径当初已经单独修过（见上面的「格式非法的身份头返回 401」），
+   * 但同一个坑在路径参数和查询参数上还开着：值一路走到 SQL，
+   * Postgres 报 22P02，错误处理器不认这个码，于是吞成 500。
+   *
+   * ★ 后果有两层：调用方以为服务端挂了；告警面板上多出一批假故障，
+   *   真正的 500 被淹掉。所以这里断言的是**状态码**，不是有没有报错。
+   */
+  it('★ 路径参数不是 UUID 时返回 400 而不是 500', async () => {
+    for (const url of [
+      '/api/v1/projects/not-a-uuid',
+      '/api/v1/work-items/not-a-uuid',
+      '/api/v1/runs/not-a-uuid',
+      '/api/v1/decisions/not-a-uuid',
+      '/api/v1/plans/not-a-uuid',
+      '/api/v1/requirements/not-a-uuid',
+      // 前端把 /decision-inbox 写成 /decisions/inbox 就会落到这里
+      '/api/v1/decisions/inbox',
+    ]) {
+      const res = await app.inject({ method: 'GET', url, headers: auth() });
+      expect(res.statusCode, url).toBe(400);
+      expect(res.json().error.code, url).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('★ 查询参数是非法枚举值时返回 400 而不是 500', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/projects/${fx.projectId}/board?risk=bogus`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('★ 400 的响应体不能把表名列名漏出去', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/work-items/not-a-uuid',
+      headers: auth(),
+    });
+    const body = res.body;
+    expect(body).not.toMatch(/work_items|select|relation|column/i);
+    // 但要留下能自查的线索
+    expect(res.json().error.details.pgCode).toBe('22P02');
   });
 });
 

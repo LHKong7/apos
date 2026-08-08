@@ -14,7 +14,6 @@ import {
   stageFor,
   STATUS_LABELS,
   STATUS_STAGE,
-  SYSTEM_ACTOR,
   type ActorRef,
   type PolicyContext,
   type PolicyVerdict,
@@ -30,7 +29,6 @@ import {
   availableTriggers,
   WORK_ITEM_MACHINE,
   BASELINE_POLICIES,
-  type GuardContext,
   type GuardFailure,
   type WorkItemTrigger,
 } from '@apos/domain';

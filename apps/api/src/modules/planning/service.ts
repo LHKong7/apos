@@ -15,7 +15,6 @@ import {
   type PolicyContext,
 } from '@apos/contracts';
 import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
-import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './provider';

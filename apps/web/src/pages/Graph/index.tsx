@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { LAYOUTS, formatHours, type GraphNode, type LayoutKind } from '@apos/domain';
@@ -18,6 +18,7 @@ import {
   computeHighlight,
   type HighlightMode,
 } from '../../features/graph/highlight';
+import { resolveDiagnosticAction } from '../../features/graph/diagnostic-actions';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 
 const LAYOUT_LABELS: Record<LayoutKind, string> = {
@@ -34,14 +35,23 @@ const TINY_GRAPH = 5;
 export function GraphPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const currentUserId = useAuthStore((s) => s.userId);
 
   const layout = (params.get('layout') as LayoutKind) ?? 'layered';
   const focusId = params.get('focus');
-  const modes = (params.get('highlight')?.split(',').filter(Boolean) ?? [
-    'critical',
-  ]) as HighlightMode[];
+  /**
+   * ★ 必须 memo：这里每次渲染都会新建一个数组，而它是下面 computeHighlight
+   *   那个 useMemo 的依赖 —— 不 memo 的话依赖每次都「变了」，
+   *   整张图的高亮计算就变成每次渲染都重算一遍，memo 等于白写。
+   *   节点多的项目上这条路径是可感知的卡顿。
+   */
+  const highlightParam = params.get('highlight');
+  const modes = useMemo(
+    () => (highlightParam?.split(',').filter(Boolean) ?? ['critical']) as HighlightMode[],
+    [highlightParam],
+  );
 
   const [hovered, setHovered] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<string | null>(null);
@@ -226,25 +236,23 @@ export function GraphPage() {
             diagnostics={graph.data.diagnostics}
             onFocus={(nodeId) => setParam('focus', nodeId)}
             onAction={(action) => {
-              const node = graph.data.nodes.find((n) => n.id === action.nodeId);
-              switch (action.kind) {
-                case 'remind':
+              const intent = resolveDiagnosticAction(action, projectId!);
+              switch (intent.kind) {
+                case 'navigate':
+                  navigate(intent.to);
+                  break;
+                case 'open-card':
+                  setOpenCard(intent.nodeId);
+                  break;
+                case 'remind': {
+                  // 催办的对象是决策，不是任务 —— 要从节点上取 humanGateRef
+                  const node = graph.data.nodes.find((n) => n.id === intent.nodeId);
                   if (node?.humanGateRef) remind.mutate(node.humanGateRef);
+                  else setToast('这个节点上没有待办决策，无法催办');
                   break;
-                case 'locate':
-                  window.location.href = `/projects/${projectId}/board`;
-                  break;
-                case 'reassign':
-                case 'split':
-                  if (node) setOpenCard(node.id);
-                  break;
-                case 'adjust_dependency':
-                  // MVP 只读（页面文档 07 §12.1）——
-                  // 依赖调整应通过「让 Agent 重新规划」走计划批准流程
-                  setToast('MVP 阶段执行图只读。调整依赖请回到计划页重新规划，改动需走计划批准');
-                  break;
-                case 'adjust_policy':
-                  setToast('Policy 配置页尚未实现');
+                }
+                case 'explain':
+                  setToast(intent.message);
                   break;
               }
             }}
@@ -295,7 +303,8 @@ export function GraphPage() {
             {menu.node.runId && (
               <MenuItem
                 onClick={() => {
-                  window.location.href = `/runs/${menu.node.runId}`;
+                  navigate(`/runs/${menu.node.runId}`);
+                  setMenu(null);
                 }}
               >
                 查看执行记录
@@ -303,7 +312,8 @@ export function GraphPage() {
             )}
             <MenuItem
               onClick={() => {
-                window.location.href = `/projects/${projectId}/board`;
+                navigate(`/projects/${projectId}/board?card=${menu.node.id}`);
+                setMenu(null);
               }}
             >
               在看板中定位

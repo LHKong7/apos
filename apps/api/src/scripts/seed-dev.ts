@@ -9,7 +9,7 @@
  * 用法：pnpm --filter @apos/api seed
  */
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, isNull, sql } from 'drizzle-orm';
 import {
   agentRuntimes,
   agents,

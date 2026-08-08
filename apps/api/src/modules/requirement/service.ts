@@ -6,7 +6,6 @@ import {
   type Database,
 } from '@apos/db';
 import { humanActor, SYSTEM_ACTOR, type ActorRef } from '@apos/contracts';
-import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import type { PlanningProvider } from '../planning/provider';
 

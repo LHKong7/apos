@@ -18,7 +18,6 @@ import {
   type TaskDispatch,
 } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
-import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import { ingestRunEvent } from './ingest';

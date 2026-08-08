@@ -6,7 +6,6 @@ import {
   projects,
   syncConflictRules,
   syncConflicts,
-  users,
   workItems,
   type Database,
 } from '@apos/db';

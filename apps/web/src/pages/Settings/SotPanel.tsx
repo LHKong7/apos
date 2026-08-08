@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
-import { qk } from '../../lib/query/keys';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
 

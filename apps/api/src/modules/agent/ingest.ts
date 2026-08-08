@@ -12,7 +12,6 @@ import {
 import {
   agentActor,
   MILESTONE_RUN_EVENTS,
-  SYSTEM_ACTOR,
   type InterventionRequest,
   type RunEvent,
 } from '@apos/contracts';

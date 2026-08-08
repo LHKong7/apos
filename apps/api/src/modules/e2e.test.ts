@@ -1,17 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   agentRuns,
   artifacts,
-  decisions,
   events,
-  plans,
   requirementClarifications,
   requirements,
   workItems,
 } from '@apos/db';
-import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { resetDb, seedFixture, testDb, type Fixture } from '../test/db';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { StubPlanningProvider } from './planning/stub-provider';

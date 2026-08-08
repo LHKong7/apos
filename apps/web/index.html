@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 没有这一行浏览器会去要 /favicon.ico，每次加载都在控制台留一条 404，
+         把真正该看的报错淹掉 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Autonomous Project OS</title>
   </head>
   <body>

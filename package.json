@@ -17,9 +17,14 @@
     "dev:api": "pnpm --filter @apos/api dev"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
     "playwright": "^1.62.1",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^2.1.8"
   }
 }
