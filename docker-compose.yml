@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: apos
+      POSTGRES_PASSWORD: apos
+      POSTGRES_DB: apos
+      # ★ 与代码里的默认连接串对齐：main.ts / seed-dev.ts / test/db.ts 用的都是
+      #   `postgres://apos@localhost:5433/...`（不带密码）。容器这边如果要密码，
+      #   照着 CONTRIBUTING 走一遍就会在第一条命令上失败。
+      #   trust 只对下面 127.0.0.1 的绑定开放，不对外。带密码的连接串同样能连。
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      # ★ 默认 5433 而不是 5432：5432 上通常已经蹲着一个系统/Homebrew 的 Postgres，
+      #   而 Docker 发布端口冲突时不会报错，只会让连接落到那个不相干的实例上 ——
+      #   表现为「role apos does not exist」，很难联想到是端口被占。
+      #   5433 也正是全仓库代码默认值。用 APOS_PGPORT 覆盖。
+      - '127.0.0.1:${APOS_PGPORT:-5433}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U apos']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '127.0.0.1:${APOS_REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

@@ -1,0 +1,119 @@
+# APOS 单机部署。一台机器上跑起完整产品：
+#
+#   postgres ─→ migrate（一次性）─→ api（HTTP + SSE + 前端静态资源）
+#                                └→ worker（调度循环 / 通知投递）
+#
+# 用法见 docs/DEPLOYMENT.md。开发环境用的是 docker-compose.yml，不是这个文件。
+#
+#   docker compose -f compose.deploy.yml up -d --build
+
+name: apos
+
+x-app-env: &app-env
+  # 容器之间用服务名互相寻址，5432 是容器内端口，与宿主机端口无关
+  DATABASE_URL: postgres://apos@postgres:5432/apos
+  REDIS_URL: redis://redis:6379
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  # ★ 通知里的链接要指向用户实际访问的地址，不是容器内部地址。
+  #   配错的表现是：飞书/Slack 收到的卡片点进去打不开
+  WEB_BASE_URL: ${APOS_PUBLIC_URL:-http://localhost:8080}
+  # 平台与 Agent 的凭证分开（产品文档 10.2）。留空时对应能力会明确
+  # 拒绝派发，而不是悄悄回退到另一个 key
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  APOS_AGENT_ANTHROPIC_API_KEY: ${APOS_AGENT_ANTHROPIC_API_KEY:-}
+  AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-}
+  INTEGRATION_MEMORY_ADAPTERS: ${INTEGRATION_MEMORY_ADAPTERS:-}
+  GITHUB_INTEGRATION_TOKEN: ${GITHUB_INTEGRATION_TOKEN:-}
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: apos:local
+  restart: unless-stopped
+  # ★ init：给容器一个真正的 1 号进程收割僵尸并转发信号。
+  #   Agent 运行时会 spawn 子进程，没有它会在容器里堆积
+  init: true
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: apos
+      POSTGRES_DB: apos
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # ★ 有意不发布端口：只有同一个 compose 网络里的 api/worker 需要连它。
+    #   发布出去等于把一个 trust 认证的库摆在宿主网卡上。
+    #   需要用 psql 连进去调试时走 `docker compose exec postgres psql -U apos`
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U apos']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ── 迁移：跑完就退出，api/worker 等它成功才启动 ──────────────────────
+  # ★ 单独一个服务，而不是塞进 api 的启动流程：塞进去的话，
+  #   api 与 worker 会并发跑同一批迁移。这里让编排保证「只跑一次、且先跑完」
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: apos:local
+    restart: 'no'
+    working_dir: /app/packages/db
+    environment:
+      DATABASE_URL: postgres://apos@postgres:5432/apos
+    command: ['node_modules/.bin/drizzle-kit', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      PROCESS_ROLE: api
+    ports:
+      # 只暴露这一个端口，它同时提供前端页面与 API
+      - '${APOS_PUBLIC_PORT:-8080}:3000'
+    healthcheck:
+      # alpine 里没有 curl；Node 22 自带全局 fetch，直接用它
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      PROCESS_ROLE: worker
+    # worker 不监听端口，没有 HTTP 健康检查可做；
+    # 进程退出即由 restart: unless-stopped 拉起
+
+volumes:
+  pgdata:
+  redisdata:

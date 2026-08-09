@@ -1,0 +1,26 @@
+# 构建上下文越小，docker build 越快，也避免把本机的东西带进镜像
+node_modules
+**/node_modules
+dist
+**/dist
+build
+coverage
+*.tsbuildinfo
+
+# ★ 绝不能进镜像：里面是本机的连接串与密钥
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.vite
+.turbo
+*.log
+logs
+.DS_Store
+
+# 文档与本地脚本对运行时没用
+docs
+*.md
+!README.md

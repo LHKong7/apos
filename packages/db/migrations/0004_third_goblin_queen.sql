@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "labor_hourly_cost" numeric(10, 2);

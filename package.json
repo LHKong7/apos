@@ -1,0 +1,34 @@
+{
+  "name": "apos",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "db:generate": "pnpm --filter @apos/db generate",
+    "db:migrate": "pnpm --filter @apos/db migrate",
+    "dev:api": "pnpm --filter @apos/api dev",
+    "deploy:up": "docker compose -f compose.deploy.yml up -d --build",
+    "deploy:down": "docker compose -f compose.deploy.yml down",
+    "deploy:logs": "docker compose -f compose.deploy.yml logs -f api worker",
+    "deploy:seed": "docker compose -f compose.deploy.yml exec -T -w /app/apps/api api node --import tsx src/scripts/seed-dev.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
+    "playwright": "^1.62.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^2.1.8"
+  }
+}

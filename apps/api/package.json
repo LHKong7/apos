@@ -1,0 +1,25 @@
+{
+  "name": "@apos/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "seed": "tsx src/scripts/seed-dev.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@apos/agent-runtimes": "workspace:*",
+    "@apos/contracts": "workspace:*",
+    "@apos/db": "workspace:*",
+    "@apos/domain": "workspace:*",
+    "@apos/integrations": "workspace:*",
+    "@fastify/static": "^10.1.3",
+    "drizzle-orm": "^0.38.3",
+    "fastify": "^5.2.0",
+    "postgres": "^3.4.5",
+    "tsx": "^4.23.11",
+    "zod": "^3.24.1"
+  }
+}
