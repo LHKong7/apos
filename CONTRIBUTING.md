@@ -14,7 +14,10 @@ pnpm db:migrate               # 应用迁移
 ```
 
 集成测试需要一个可用的 Postgres。默认连 `TEST_DATABASE_URL`，未设置时用
-`postgres://apos@localhost:5433/apos`。
+`postgres://apos@localhost:5433/apos_test`——**注意是 `apos_test` 不是 `apos`**，
+测试会在 `beforeEach` 里 TRUNCATE 全表，指到开发库上会把正在调试的数据清空。
+
+完整的运行步骤与排错见[运行指南](docs/RUNNING.md)。
 
 ```bash
 pnpm test                     # 全部测试（含集成测试）

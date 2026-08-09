@@ -24,10 +24,11 @@ import { loadAnalyticsInput } from './analytics';
  *   而不是一堆 runtime 配置字段。
  */
 
-export async function listAgents(db: Database, projectId: string | null) {
+export async function listAgents(db: Database, projectId: string | null, orgId: string) {
+  // ★ 没有 projectId 时也必须按组织收窄 —— 否则花名册会列出别的组织的 Agent
   const rows = projectId
     ? await agentsOfProject(db, projectId)
-    : await db.select().from(agents);
+    : await db.select().from(agents).where(eq(agents.orgId, orgId));
 
   if (rows.length === 0) return { agents: [], totals: EMPTY_TOTALS };
 

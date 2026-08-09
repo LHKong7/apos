@@ -30,10 +30,24 @@ export async function getDecisionInbox(
   userId: string | null,
   scope: DecisionScope,
   projectId: string | null,
+  /**
+   * ★ 调用者是成员的项目。收件箱按它收窄 ——
+   *   少了这一条，收件箱会把所有项目（含别的组织）的待决策都端出来。
+   *   传空数组表示「一个项目都看不到」，结果必须是空，
+   *   不能退化成「不过滤」。
+   */
+  visibleProjectIds: string[],
 ) {
   const now = Date.now();
 
-  const conditions = [eq(decisions.status, 'pending')];
+  if (visibleProjectIds.length === 0) {
+    return emptyInbox();
+  }
+
+  const conditions = [
+    eq(decisions.status, 'pending'),
+    inArray(decisions.projectId, visibleProjectIds),
+  ];
   if (projectId) conditions.push(eq(decisions.projectId, projectId));
 
   const rows = await db
@@ -161,6 +175,15 @@ export async function getDecisionInbox(
     },
     repeated,
     decisions: cards,
+  };
+}
+
+/** 一个项目都看不到时的空收件箱。形状必须与正常返回一致，前端不做特判 */
+function emptyInbox() {
+  return {
+    stats: { total: 0, mine: 0, overdue: 0, dueSoon: 0, actionable: 0 },
+    repeated: [],
+    decisions: [],
   };
 }
 

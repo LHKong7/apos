@@ -2,7 +2,15 @@ import { IntegrationRegistry, MemoryIntegrationAdapter } from '@apos/integration
 import type { IntegrationProvider } from '@apos/contracts';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { createDatabase, organizations, projects, users, workItems, type Database } from '@apos/db';
+import {
+  createDatabase,
+  organizations,
+  projectMembers,
+  projects,
+  users,
+  workItems,
+  type Database,
+} from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
 
 /**
@@ -63,7 +71,33 @@ export async function seedFixture(
     })
     .returning();
 
+  /**
+   * ★ 夹具必须建成员关系。
+   *
+   *   在此之前这里只写了 project.techLeadId，没有 project_members 行 ——
+   *   也就是说夹具里的用户从来不是这个项目的成员。测试能过，
+   *   只是因为服务端当时根本没查过成员关系（09-security §2.1 的第②层没实现）。
+   *   夹具一旦比真实数据宽松，它就不再能证明真实路径是通的，
+   *   反而会把漏洞焊死：补上检查时，先红的是测试而不是产品。
+   */
+  await db.insert(projectMembers).values({
+    projectId: project!.id,
+    actorType: 'human',
+    actorId: user!.id,
+    role: 'tech_lead',
+  });
+
   return { orgId: org!.id, userId: user!.id, projectId: project!.id };
+}
+
+/** 造一个「不是本项目成员」的用户，用于验证越权被挡下 */
+export async function createOutsider(db: Database, fx: Fixture) {
+  const [org] = await db.insert(organizations).values({ name: 'Other Corp' }).returning();
+  const [user] = await db
+    .insert(users)
+    .values({ orgId: org!.id, email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
+    .returning();
+  return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
 }
 
 export async function createWorkItem(

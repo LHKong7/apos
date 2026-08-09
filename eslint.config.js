@@ -18,9 +18,8 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/node_modules/**',
-      '**/.crawl-tmp.mjs',
-      '**/.probe-tmp.mjs',
-      '**/.verify-tmp.mjs',
+      // 临时探针脚本（.xxx-tmp.mjs），跑完就删，不进 lint
+      '**/.*-tmp.mjs',
       'packages/db/migrations/**',
     ],
   },

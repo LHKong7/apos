@@ -138,11 +138,21 @@ async function main() {
     provider: new StubPlanningProvider(),
   };
 
+  /** 退出时要关掉的 HTTP 服务；worker 角色不监听端口，保持 null */
+  let httpServer: Awaited<ReturnType<typeof buildApp>> | null = null;
+
   if (PROCESS_ROLE === 'all' || PROCESS_ROLE === 'api') {
-    const app = await buildApp({ ...deps, logger: true });
+    const app = await buildApp({
+      ...deps,
+      logger: true,
+      // 单机部署时由本进程一并托管前端（见 http/web-app.ts）
+      webDist: process.env['APOS_WEB_DIST'],
+      trustProxy: process.env['TRUST_PROXY'] === 'true',
+    });
     const port = Number(process.env['PORT'] ?? 3000);
     await app.listen({ port, host: '0.0.0.0' });
     app.log.info(`APOS API listening on :${port}`);
+    httpServer = app;
   }
 
   if (PROCESS_ROLE === 'all' || PROCESS_ROLE === 'worker') {
@@ -160,6 +170,45 @@ async function main() {
       onError: (err) => console.error('[scheduler]', err),
     });
     console.log('[worker] scheduler loop started');
+  }
+
+  /**
+   * 优雅退出。容器编排停容器时先发 SIGTERM，宽限期（默认 10s）过了才 SIGKILL。
+   *
+   * ★ 不处理 SIGTERM 的后果不是「退出慢一点」：连接会被硬断，
+   *   浏览器那边的 SSE 表现为莫名其妙的断流，数据库连接池里
+   *   正在写的事务被掐掉。而这个产品的每一次状态变更都要连带写事件
+   *   （CONTRIBUTING 的第一条约束），写到一半被掐 = 审计链有洞。
+   *
+   * ★ 这里只负责让本进程干净退出，不试图「等所有 Agent Run 跑完」——
+   *   Run 活在外部运行时里，本来就不随本进程生死（架构文档 §3.3），
+   *   重启后由 run-supervisor 的孤儿接管负责认领。
+   */
+  let closing = false;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      if (closing) return; // 连按两次 Ctrl-C 不该走两遍关闭流程
+      closing = true;
+      console.log(`[shutdown] 收到 ${signal}，正在收尾…`);
+
+      const timer = setTimeout(() => {
+        console.error('[shutdown] 收尾超时，强制退出');
+        process.exit(1);
+      }, Number(process.env['SHUTDOWN_TIMEOUT_MS'] ?? 10_000));
+
+      void (async () => {
+        try {
+          if (httpServer) await httpServer.close();
+          await db.$client.end({ timeout: 5 });
+          clearTimeout(timer);
+          console.log('[shutdown] 已退出');
+          process.exit(0);
+        } catch (err) {
+          console.error('[shutdown] 收尾出错', err);
+          process.exit(1);
+        }
+      })();
+    });
   }
 }
 

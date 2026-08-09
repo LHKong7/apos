@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
+import { isBatchable } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { useAuthStore } from '../../stores/auth';
-import type { DecisionCard } from '../../lib/api/types';
 import { DecisionCardView } from './Card';
 
 /**
@@ -51,6 +51,10 @@ export function DecisionsPage() {
    *   「删生产库数据」时，一个全选框就是事故本身 ——
    *   批量的价值在于省掉重复点击，不在于省掉阅读。
    *   所以：低风险可逆的批量过，其余逐条确认，且界面明说为什么。
+   *
+   * ★ 判定来自 @apos/domain，与服务端 batch-approve 用的是同一个函数。
+   *   这条规则以前只写在这里，服务端拿到 id 就照批 ——
+   *   于是「不给勾选框」只是视觉上的克制，不是约束。
    */
   const batchable = useMemo(() => cards.filter(isBatchable), [cards]);
   const batchableIds = useMemo(() => new Set(batchable.map((c) => c.id)), [batchable]);
@@ -238,10 +242,6 @@ export function DecisionsPage() {
 }
 
 /** 可批量 = 我有权处理 + 可逆 + 非高风险。三个条件缺一不可。 */
-function isBatchable(c: DecisionCard): boolean {
-  return c.canAct && c.reversible && c.riskLevel !== 'high' && c.riskLevel !== 'critical';
-}
-
 function Tab({
   active,
   onClick,

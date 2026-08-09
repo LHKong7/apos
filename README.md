@@ -4,10 +4,30 @@
 
 > 让项目能够自主向前流动，同时确保人类始终掌握目标、风险与最终决策权。
 
+## 快速开始
+
+```bash
+pnpm install
+bash scripts/dev-up.sh
+```
+
+跑完会打印一条可以直接打开的看板链接。完整步骤、环境变量与排错见
+**[运行指南](docs/RUNNING.md)**。
+
+部署到一台机器上（一条命令、一个对外端口）：
+
+```bash
+docker compose -f compose.deploy.yml up -d --build   # 然后打开 http://localhost:8080
+```
+
+见 **[单机部署](docs/DEPLOYMENT.md)**。
+
 ## 文档
 
 | 文档 | 说明 |
 | --- | --- |
+| [运行指南](docs/RUNNING.md) | 本机怎么跑起来：环境、端口、种子数据、验证与排错 |
+| [单机部署](docs/DEPLOYMENT.md) | 部署到一台机器：容器编排、配置、升级备份与安全边界 |
 | [产品功能文档](docs/product/autonomous-project-os.md) | 产品定位、领域模型、信息架构、核心功能设计与 MVP 范围（V0.2） |
 | [页面文档](docs/product/pages/README.md) | 14 个 MVP 页面的详细设计：结构、交互、状态、权限、数据依赖 |
 | [技术实现文档](docs/tech/README.md) | 技术选型、系统架构、领域模型、引擎设计、协议与实施计划 |

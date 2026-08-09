@@ -2,12 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { agentRuns, decisions, workItems } from '@apos/db';
+import { agentRuns, decisions, events, projectMembers, workItems } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
-import { createWorkItem, integrationRegistry, resetDb, seedFixture, testDb, type Fixture } from '../test/db';
+import {
+  createOutsider,
+  createWorkItem,
+  integrationRegistry,
+  resetDb,
+  seedFixture,
+  testDb,
+  type Fixture,
+} from '../test/db';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { dispatchRun } from '../modules/agent/dispatch';
 
@@ -140,6 +148,169 @@ describe('认证与错误映射', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('VALIDATION_FAILED');
+  });
+
+  /**
+   * docs/tech/09-security.md §2.1 的第②层「项目角色」。
+   *
+   * ★ 这一层此前只在集成端点上实现了，别的项目数据一律没查成员关系 ——
+   *   实测中另一个组织的用户可以读、也可以写本项目的看板 / 执行图 /
+   *   Analytics / Policy / 需求。这里逐个端点钉住。
+   */
+  describe('★ 跨项目越权', () => {
+    it('非成员读项目数据一律被拒', async () => {
+      const outsider = await createOutsider(db, fx);
+      for (const url of [
+        `/api/v1/projects/${fx.projectId}`,
+        `/api/v1/projects/${fx.projectId}/board`,
+        `/api/v1/projects/${fx.projectId}/graph`,
+        `/api/v1/projects/${fx.projectId}/analytics`,
+        `/api/v1/projects/${fx.projectId}/overview`,
+        `/api/v1/projects/${fx.projectId}/policies`,
+        `/api/v1/projects/${fx.projectId}/integrations`,
+        `/api/v1/projects/${fx.projectId}/requirements`,
+        `/api/v1/projects/${fx.projectId}/agents`,
+      ]) {
+        const res = await app.inject({
+          method: 'GET',
+          url,
+          headers: { 'x-user-id': outsider.userId },
+        });
+        expect(res.statusCode, url).toBe(404);
+      }
+    });
+
+    it('★ 非成员写项目数据被拒', async () => {
+      const outsider = await createOutsider(db, fx);
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${fx.projectId}/requirements`,
+        headers: { 'x-user-id': outsider.userId },
+        payload: { rawInput: '越权写入' },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    /**
+     * ★ /work-items/:id 这类路径上看不出项目，最容易被漏掉，
+     *   而它返回的同样是项目数据
+     */
+    it('★ 资源路径（看不出项目的那些）同样挡住非成员', async () => {
+      const outsider = await createOutsider(db, fx);
+      const item = await createWorkItem(db, fx);
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/work-items/${item.id}`,
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(res.statusCode).toBe(404);
+
+      const patch = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/work-items/${item.id}/status`,
+        headers: { 'x-user-id': outsider.userId },
+        payload: { toStatus: 'executing', reason: '越权', reasonCategory: 'other' },
+      });
+      expect(patch.statusCode).toBe(404);
+    });
+
+    it('★ 非成员回 404 而不是 403 —— 403 等于确认项目存在，可被枚举', async () => {
+      const outsider = await createOutsider(db, fx);
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${fx.projectId}`,
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('NOT_FOUND');
+    });
+
+    it('项目列表只返回自己是成员的项目', async () => {
+      const outsider = await createOutsider(db, fx);
+      const mine = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects',
+        headers: auth(),
+      });
+      expect(mine.json().projects.map((p: { id: string }) => p.id)).toContain(fx.projectId);
+
+      const theirs = await app.inject({
+        method: 'GET',
+        url: '/api/v1/projects',
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(theirs.json().projects).toEqual([]);
+    });
+
+    /**
+     * ★ 列表类端点的 URL 里没有项目 id，按路径形状的闸门够不着 ——
+     *   实测中一个只属于一个项目的用户，收件箱里能看到三个项目、
+     *   跨三个组织的待决策。这类端点必须自己带范围。
+     */
+    it('★ 决策收件箱不返回非成员项目的决策', async () => {
+      const item = await createWorkItem(db, fx, { status: 'awaiting_decision' });
+      await db.insert(decisions).values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        type: 'high_risk_operation',
+        title: '本项目的决策',
+        consequence: '任务卡住',
+        whyHuman: '高风险',
+        riskLevel: 'high',
+        reversible: false,
+        status: 'pending',
+      });
+
+      const mine = await app.inject({
+        method: 'GET',
+        url: '/api/v1/decision-inbox?scope=all',
+        headers: auth(),
+      });
+      expect(mine.json().decisions.length).toBeGreaterThan(0);
+
+      const outsider = await createOutsider(db, fx);
+      const theirs = await app.inject({
+        method: 'GET',
+        url: '/api/v1/decision-inbox?scope=all',
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(theirs.json().decisions).toEqual([]);
+      expect(theirs.json().stats.total).toBe(0);
+    });
+
+    it('收件箱指定非成员项目时被拒', async () => {
+      const outsider = await createOutsider(db, fx);
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/decision-inbox?scope=all&projectId=${fx.projectId}`,
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('★ Agent 花名册不列出别的组织的 Agent', async () => {
+      await seedAgent(db, fx, { registry });
+      const mine = await app.inject({ method: 'GET', url: '/api/v1/agents', headers: auth() });
+      expect(mine.json().agents.length).toBeGreaterThan(0);
+
+      const outsider = await createOutsider(db, fx);
+      const theirs = await app.inject({
+        method: 'GET',
+        url: '/api/v1/agents',
+        headers: { 'x-user-id': outsider.userId },
+      });
+      expect(theirs.json().agents).toEqual([]);
+    });
+
+    it('成员自己访问不受影响', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${fx.projectId}/board`,
+        headers: auth(),
+      });
+      expect(res.statusCode).toBe(200);
+    });
   });
 
   it('★ 400 的响应体不能把表名列名漏出去', async () => {
@@ -465,6 +636,248 @@ describe('★ 手动状态调整必须留痕', () => {
     // 可强制放行的 guard 要标出来，前端才能给「强制放行」按钮
     expect(res.json().error.details.failures[0].overridable).toBe(true);
     expect(res.json().error.details.failures[0].overrideRole).toBe('tech_lead');
+  });
+});
+
+/**
+ * ★ 批量批准的安全底线在服务端。
+ *
+ *   这条规则原先只写在前端（决策中心的 isBatchable：不给高风险/不可逆的
+ *   决策渲染勾选框）。服务端的 batch-approve 拿到 id 就逐条照批 ——
+ *   直接调 API、或者用一个旧版本的前端，就能把不可逆的生产操作一次批掉。
+ *   灰按钮不是权限。
+ */
+describe('★ 批量批准不能绕过逐条确认', () => {
+  const makeDecision = async (over: Record<string, unknown> = {}) => {
+    const [d] = await db
+      .insert(decisions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        type: 'approval',
+        riskLevel: 'low',
+        reversible: true,
+        title: '批量测试决策',
+        whyHuman: '测试',
+        assigneeId: fx.userId,
+        status: 'pending',
+        ...over,
+      })
+      .returning();
+    return d!;
+  };
+
+  it('低风险可逆的能批量批准', async () => {
+    const d = await makeDecision();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/decisions/batch-approve',
+      headers: auth(),
+      payload: { ids: [d.id] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().approved).toBe(1);
+  });
+
+  it('★ 不可逆的决策走批量接口时被服务端挡下', async () => {
+    const d = await makeDecision({ reversible: false });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/decisions/batch-approve',
+      headers: auth(),
+      payload: { ids: [d.id] },
+    });
+    expect(res.json().approved).toBe(0);
+    expect(res.json().failed[0].error).toContain('不可逆');
+
+    // 而且状态确实没被改
+    const [after] = await db.select().from(decisions).where(eq(decisions.id, d.id));
+    expect(after!.status).toBe('pending');
+  });
+
+  it('★ 高风险决策走批量接口时被服务端挡下', async () => {
+    for (const riskLevel of ['high', 'critical'] as const) {
+      const d = await makeDecision({ riskLevel });
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/decisions/batch-approve',
+        headers: auth(),
+        payload: { ids: [d.id] },
+      });
+      expect(res.json().approved, riskLevel).toBe(0);
+      const [after] = await db.select().from(decisions).where(eq(decisions.id, d.id));
+      expect(after!.status, riskLevel).toBe('pending');
+    }
+  });
+
+  it('★ 混着提交时只放行合规的那些，不是整批拒绝也不是整批放行', async () => {
+    const okOne = await makeDecision();
+    const risky = await makeDecision({ reversible: false });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/decisions/batch-approve',
+      headers: auth(),
+      payload: { ids: [okOne.id, risky.id] },
+    });
+    expect(res.json().approved).toBe(1);
+    expect(res.json().failed).toHaveLength(1);
+
+    const [a] = await db.select().from(decisions).where(eq(decisions.id, okOne.id));
+    const [b] = await db.select().from(decisions).where(eq(decisions.id, risky.id));
+    expect(a!.status).toBe('approved');
+    expect(b!.status).toBe('pending');
+  });
+
+  it('★ 别人名下的决策不能被批量代批', async () => {
+    const { users: userTable } = await import('@apos/db');
+    const [other] = await db
+      .insert(userTable)
+      .values({ orgId: fx.orgId, email: `o-${randomUUID()}@acme.dev`, name: '他人' })
+      .returning();
+    const d = await makeDecision({ assigneeId: other!.id });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/decisions/batch-approve',
+      headers: auth(),
+      payload: { ids: [d.id] },
+    });
+    expect(res.json().approved).toBe(0);
+    expect(res.json().failed[0].error).toContain('不可代行');
+  });
+});
+
+/**
+ * docs/tech/07-api-design.md §4。
+ *
+ * ★ 这里要防的不是「重复执行」——状态机已经挡住了（重复批准拿 409）。
+ *   要防的是**成功了却被告知失败**：客户端 POST 批准，响应回来的路上
+ *   网络断了，它重试，这次拿到 409，界面显示「批准失败」。
+ *   再点还是失败，而操作第一次就成了。
+ */
+describe('★ Idempotency-Key', () => {
+  const pendingDecision = async (over: Record<string, unknown> = {}) => {
+    const [d] = await db
+      .insert(decisions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        type: 'approval',
+        riskLevel: 'low',
+        reversible: true,
+        title: '幂等测试决策',
+        whyHuman: '测试',
+        assigneeId: fx.userId,
+        status: 'pending',
+        ...over,
+      })
+      .returning();
+    return d!;
+  };
+
+  const approve = (id: string, key?: string) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${id}/approve`,
+      headers: key ? { ...auth(), 'idempotency-key': key } : auth(),
+      payload: { note: 'x' },
+    });
+
+  it('★ 带同一个 key 重放，返回首次结果而不是 409', async () => {
+    const d = await pendingDecision();
+    const first = await approve(d.id, 'key-1');
+    const replay = await approve(d.id, 'key-1');
+
+    expect(first.statusCode).toBe(200);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(first.json());
+    expect(replay.headers['idempotent-replay']).toBe('true');
+  });
+
+  it('不带 key 时维持原行为：重复批准报冲突', async () => {
+    const d = await pendingDecision();
+    expect((await approve(d.id)).statusCode).toBe(200);
+    expect((await approve(d.id)).statusCode).toBe(409);
+  });
+
+  /**
+   * ★ 「重放不产生副作用」直接数事件：这个产品的每一次状态变更都必须
+   *   连带写事件（CONTRIBUTING 第一条约束），所以事件条数没变，
+   *   就等于确实什么都没再发生
+   */
+  it('★ 重放不产生第二次副作用', async () => {
+    const d = await pendingDecision();
+    await approve(d.id, 'key-2');
+
+    const before = await db.select().from(events);
+    const [decisionBefore] = await db.select().from(decisions).where(eq(decisions.id, d.id));
+
+    await approve(d.id, 'key-2');
+
+    const after = await db.select().from(events);
+    expect(after.length).toBe(before.length);
+
+    const [decisionAfter] = await db.select().from(decisions).where(eq(decisions.id, d.id));
+    expect(decisionAfter).toEqual(decisionBefore);
+  });
+
+  it('不同 key 指向不同决策，互不干扰', async () => {
+    const a = await pendingDecision();
+    const b = await pendingDecision();
+    expect((await approve(a.id, 'key-a')).statusCode).toBe(200);
+    expect((await approve(b.id, 'key-b')).statusCode).toBe(200);
+  });
+
+  /**
+   * ★ key 由客户端自己生成，撞车不是不可能，而响应里带着决策内容
+   */
+  it('★ 换个身份用同一个 key 拿不到别人的响应', async () => {
+    const d = await pendingDecision({ assigneeId: null });
+    await approve(d.id, 'key-shared');
+
+    const { users: userTable } = await import('@apos/db');
+    const [other] = await db
+      .insert(userTable)
+      .values({ orgId: fx.orgId, email: `x-${randomUUID()}@acme.dev`, name: '另一个人' })
+      .returning();
+    await db.insert(projectMembers).values({
+      projectId: fx.projectId,
+      actorType: 'human',
+      actorId: other!.id,
+      role: 'member',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${d.id}/approve`,
+      headers: { 'x-user-id': other!.id, 'idempotency-key': 'key-shared' },
+      payload: { note: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('另一个身份');
+  });
+
+  /**
+   * ★ 缓存失败的响应会把一次偶发故障钉死 24 小时 ——
+   *   之后每次带同一个 key 重试都拿到那个陈旧的错误，再也好不了
+   */
+  it('★ 失败的响应不进缓存，稍后重试仍能成功', async () => {
+    const d = await pendingDecision({ assigneeId: null });
+
+    // 先用一个非成员触发失败
+    const outsider = await createOutsider(db, fx);
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${d.id}/approve`,
+      headers: { 'x-user-id': outsider.userId, 'idempotency-key': 'key-retry' },
+      payload: { note: 'x' },
+    });
+    expect(failed.statusCode).toBeGreaterThanOrEqual(400);
+
+    // 同一个 key 换成有权限的人，应当真的执行而不是回放那个错误
+    const good = await approve(d.id, 'key-retry');
+    expect(good.statusCode).toBe(200);
   });
 });
 

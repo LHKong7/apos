@@ -31,6 +31,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
  */
 export function App() {
   const setUsers = useAuthStore((s) => s.setUsers);
+  const userId = useAuthStore((s) => s.userId);
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
 
   useEffect(() => {
@@ -42,6 +43,18 @@ export function App() {
       <TopNav />
       <ConnectionBanner />
       <main className="flex min-h-0 flex-1 flex-col">
+        {/*
+          ★ 身份没落定之前不渲染任何页面。
+
+            服务端按项目成员关系鉴权（09-security §2.1 第②层），
+            没有 X-User-Id 的请求一律拒。而首次访问时 localStorage 里没有身份，
+            /users 回来之前发出的请求都是匿名的 —— 不挡住的话，
+            用户第一眼看到的是一屏「加载失败」，刷新一下又好了，
+            这种偶发失败最难被报告清楚。
+        */}
+        {!userId ? (
+          <IdentityGate error={users.error} />
+        ) : (
         <Routes>
           <Route path="/" element={<ProjectListPage />} />
           <Route path="/projects/:projectId" element={<OverviewPage />} />
@@ -66,7 +79,29 @@ export function App() {
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        )}
       </main>
+    </div>
+  );
+}
+
+/** 身份就绪之前的占位。用户几乎不会看到它 —— 除非 /users 拿不到 */
+function IdentityGate({ error }: { error: unknown }) {
+  if (error) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8">
+        <div className="max-w-md text-center">
+          <p className="text-sm text-slate-800">拿不到可用身份，页面无法加载</p>
+          <p className="mt-1 text-xs text-slate-500">
+            后端可能没起来。确认 API 可达后刷新重试。
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-1 items-center justify-center p-8">
+      <p className="text-xs text-slate-400">正在确认身份…</p>
     </div>
   );
 }

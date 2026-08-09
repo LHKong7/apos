@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z, ZodError } from 'zod';
 import {
@@ -10,6 +10,7 @@ import {
   decisions,
   events,
   plans,
+  policies,
   projects,
   integrations,
   projectMembers,
@@ -35,6 +36,7 @@ import {
   ANALYTICS_RANGES,
   LAYOUTS,
   POLICY_TEMPLATES,
+  batchDenyReason,
   explainPolicy,
   templateById,
   WORK_ITEM_MACHINE,
@@ -215,25 +217,189 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   // ── 身份 ────────────────────────────────────────────────────────────
   // MVP 用 X-User-Id 头认证，前端需要一份可选身份列表来切换视角
   // （验证「只看需我处理」和「决策不可代行」都要换人看）
-  app.get('/api/v1/users', async () => {
-    const rows = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatarUrl: users.avatarUrl,
-        orgRole: users.orgRole,
-        approvalScopes: users.approvalScopes,
-      })
-      .from(users)
-      .orderBy(users.name);
+  /**
+   * 可切换的身份列表。
+   *
+   * ★ 带了身份就只返回**同组织**的人。此前无条件返回全库用户 ——
+   *   多组织实例上，右上角的切换器会把别的组织的人列出来，
+   *   而选中他之后每个项目都 404（他确实不是任何一个本组织项目的成员），
+   *   表现为「产品坏了」。
+   *
+   * ★ 不带身份时只能返回全部：首次访问（localStorage 里还没有身份）
+   *   得先有一份名单才选得出人。这是 MVP 身份模型的自举缺口，
+   *   接入真实认证后这个端点应当整个下线（09-security）。
+   */
+  app.get('/api/v1/users', async (req) => {
+    const callerId = optionalUserId(req);
+    const columns = {
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      avatarUrl: users.avatarUrl,
+      orgRole: users.orgRole,
+      approvalScopes: users.approvalScopes,
+    };
+
+    if (callerId) {
+      const [caller] = await db
+        .select({ orgId: users.orgId })
+        .from(users)
+        .where(eq(users.id, callerId));
+      if (caller) {
+        const rows = await db
+          .select(columns)
+          .from(users)
+          .where(eq(users.orgId, caller.orgId))
+          .orderBy(users.name);
+        return { users: rows };
+      }
+    }
+
+    const rows = await db.select(columns).from(users).orderBy(users.name);
     return { users: rows };
   });
 
+  /**
+   * ★★ 项目成员闸门 —— docs/tech/09-security.md §2.1 的第②层「项目角色」。
+   *
+   *   规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在集成端点上
+   *   实现了（assertIntegration），其余项目数据一律没查成员关系。
+   *   实测后果：A 组织的用户可以读、也可以写 B 组织项目的看板、执行图、
+   *   Analytics、Policy、需求 —— 跨租户数据在应用层是敞开的。
+   *
+   * ★ 做成 preHandler 而不是在四十个 handler 里各写一行，是因为这一类
+   *   漏洞的成因就是「漏了一处」。钩子按 URL 形状统一拦截，
+   *   以后新增的 /projects/:id/* 路由默认就是关着的，
+   *   不需要作者记得加检查。
+   */
+  // ★ 不能拿 UUID_RE.source 拼：那个是带 ^$ 锚点的，嵌进来会变成永不匹配的正则，
+  //   而「闸门永不触发」的表现恰恰是「一切正常」——最坏的一种失败方式
+  const PROJECT_SCOPED_URL =
+    /^\/api\/v1\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+
+  /**
+   * 调用者能看见的项目 id。
+   *
+   * ★ 列表类端点（决策收件箱、Agent 花名册）的 URL 里没有项目 id，
+   *   上面那个按 URL 形状的闸门够不着它们 —— 实测中一个只属于一个项目的用户，
+   *   收件箱里能看到三个项目、跨三个组织的决策。这类端点必须自己带上范围。
+   */
+  async function visibleProjectIds(userId: string): Promise<string[]> {
+    const rows = await db
+      .select({ projectId: projectMembers.projectId })
+      .from(projectMembers)
+      .where(and(eq(projectMembers.actorType, 'human'), eq(projectMembers.actorId, userId)));
+    return rows.map((r) => r.projectId);
+  }
+
+  async function assertProjectMember(projectId: string, userId: string) {
+    const [membership] = await db
+      .select({ role: projectMembers.role })
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.actorType, 'human'),
+          eq(projectMembers.actorId, userId),
+        ),
+      );
+    if (membership) return membership.role;
+
+    /**
+     * ★ 非成员回 404 而不是 403。
+     *   403 等于确认「这个项目存在」，把项目 id 变成一个可枚举的探针 ——
+     *   对方能借此摸出别的组织有哪些项目。这类端点的存在性本身就是信息。
+     *
+     * ★ 但文案要给出路。别人分享一个项目链接过来、而你恰好不是成员时，
+     *   光说「项目不存在」会让人以为链接失效了去问对方要新的 ——
+     *   真实原因是当前身份不对。措辞保持「或」，不确认项目是否存在。
+     */
+    throw new ApiError(
+      'NOT_FOUND',
+      '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
+      { projectId },
+    );
+  }
+
+  /**
+   * 资源 id → 它属于哪个项目。
+   *
+   * ★ /work-items/:id 这类路径上看不出项目，但它们返回的同样是项目数据，
+   *   一样要过②层。加新的资源路由时必须在这里登记 ——
+   *   没登记就等于这条路由不设防。
+   */
+  const RESOURCE_SCOPED_URL =
+    /^\/api\/v1\/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+
+  async function projectOfResource(kind: string, id: string): Promise<string | null> {
+    const one = async <T extends { projectId: string | null }>(rows: T[]) =>
+      rows[0]?.projectId ?? null;
+
+    switch (kind) {
+      case 'work-items':
+        return one(await db.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, id)));
+      case 'runs':
+        return one(await db.select({ projectId: agentRuns.projectId }).from(agentRuns).where(eq(agentRuns.id, id)));
+      case 'decisions':
+        return one(await db.select({ projectId: decisions.projectId }).from(decisions).where(eq(decisions.id, id)));
+      case 'plans':
+        return one(await db.select({ projectId: plans.projectId }).from(plans).where(eq(plans.id, id)));
+      case 'requirements':
+        return one(await db.select({ projectId: requirements.projectId }).from(requirements).where(eq(requirements.id, id)));
+      case 'policies':
+        return one(await db.select({ projectId: policies.projectId }).from(policies).where(eq(policies.id, id)));
+      case 'integrations':
+        return one(await db.select({ projectId: integrations.projectId }).from(integrations).where(eq(integrations.id, id)));
+      case 'sync-conflicts':
+        return one(await db.select({ projectId: syncConflicts.projectId }).from(syncConflicts).where(eq(syncConflicts.id, id)));
+      case 'clarifications': {
+        const rows = await db
+          .select({ projectId: requirements.projectId })
+          .from(requirementClarifications)
+          .innerJoin(requirements, eq(requirements.id, requirementClarifications.requirementId))
+          .where(eq(requirementClarifications.id, id));
+        return one(rows);
+      }
+      default:
+        return null;
+    }
+  }
+
+  app.addHook('preHandler', async (req) => {
+    const path = req.url.split('?')[0] ?? '';
+
+    const inProject = PROJECT_SCOPED_URL.exec(path);
+    if (inProject) {
+      const { userId } = actorFrom(req);
+      await assertProjectMember(inProject[1]!, userId);
+      return;
+    }
+
+    const onResource = RESOURCE_SCOPED_URL.exec(path);
+    if (onResource) {
+      const { userId } = actorFrom(req);
+      const projectId = await projectOfResource(onResource[1]!.toLowerCase(), onResource[2]!);
+      // 资源不存在时不在这里报 404：让各自的 handler 去说「决策不存在」
+      // 这类更准确的话，这里只管「存在但不属于你」
+      if (projectId) await assertProjectMember(projectId, userId);
+    }
+  });
+
   // ── 项目 ────────────────────────────────────────────────────────────
-  app.get('/api/v1/projects', async () => {
-    const rows = await db.select().from(projects).orderBy(desc(projects.updatedAt));
-    return { projects: rows };
+  /**
+   * ★ 只返回调用者是成员的项目。
+   *   此前是无条件 `select * from projects`，任何人（含不带身份的请求）
+   *   都能拿到全部组织的项目清单。
+   */
+  app.get('/api/v1/projects', async (req) => {
+    const { userId } = actorFrom(req);
+    const rows = await db
+      .select()
+      .from(projects)
+      .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
+      .where(and(eq(projectMembers.actorType, 'human'), eq(projectMembers.actorId, userId)))
+      .orderBy(desc(projects.updatedAt));
+    return { projects: rows.map((r) => r.projects) };
   });
 
   app.get('/api/v1/projects/:id', async (req) => {
@@ -647,7 +813,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/agents', async (req) => {
     const q = req.query as { projectId?: string };
     const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
-    return listAgents(db, projectId);
+
+    /**
+     * ★ Agent 是组织级资源（可跨项目），所以按**组织**收窄而不是按项目。
+     *   此前完全不收窄：花名册会把别的组织的 Agent 一起列出来，
+     *   连带它们的成本、成功率、负责人。
+     */
+    const { userId } = actorFrom(req);
+    if (projectId) await assertProjectMember(projectId, userId);
+    const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId));
+    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+
+    return listAgents(db, projectId, user.orgId);
   });
 
   app.get('/api/v1/agents/:agentId', async (req) => {
@@ -710,7 +887,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const q = req.query as { scope?: string; projectId?: string };
     const scope = (['mine', 'all', 'watching'] as const).find((s) => s === q.scope) ?? 'mine';
     const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
-    return getDecisionInbox(db, optionalUserId(req), scope as DecisionScope, projectId);
+
+    // ★ 收件箱必须带身份：它此前用 optionalUserId，匿名调用会返回**全部**
+    //   项目的待决策 —— 跨组织的也在里面
+    const { userId } = actorFrom(req);
+    const visible = await visibleProjectIds(userId);
+    if (projectId && !visible.includes(projectId)) throw notFound('项目');
+
+    return getDecisionInbox(db, userId, scope as DecisionScope, projectId, visible);
   });
 
   app.post('/api/v1/decisions/batch-approve', async (req) => {
@@ -720,10 +904,57 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .parse(req.body);
     const correlationId = corr(req);
 
+    /**
+     * ★★ 批量资格必须在服务端判。
+     *
+     *   此前这里只校验了 id 格式，然后逐条调单条批准 —— 而单条批准
+     *   只管「你是不是责任人」，不管「这条能不能被批量处理」。
+     *   于是「高风险/不可逆决策不给勾选框」这条设计，实际上只存在于
+     *   前端的 isBatchable 里：直接调 API，或者用一个旧版本的前端，
+     *   就能把不可逆的生产操作一次批掉。灰按钮不是权限。
+     *
+     *   判定用 @apos/domain 的同一个函数，和界面共用一份口径。
+     */
+    const targets = await db
+      .select({
+        id: decisions.id,
+        riskLevel: decisions.riskLevel,
+        reversible: decisions.reversible,
+        assigneeId: decisions.assigneeId,
+      })
+      .from(decisions)
+      .where(inArray(decisions.id, body.ids));
+    const byId = new Map(targets.map((d) => [d.id, d]));
+
+    const blocked: { id: string; ok: false; error: string }[] = [];
+    const allowed: string[] = [];
+    for (const id of body.ids) {
+      const d = byId.get(id);
+      if (!d) {
+        // 不存在的 id 交给单条批准去报「决策不存在」，口径一致
+        allowed.push(id);
+        continue;
+      }
+      const candidate = {
+        canAct: d.assigneeId === null || d.assigneeId === userId,
+        reversible: d.reversible,
+        riskLevel: d.riskLevel,
+      };
+      const reason = batchDenyReason(candidate);
+      if (reason) blocked.push({ id, ok: false, error: reason });
+      else allowed.push(id);
+    }
+
     // 逐条走单条批准的同一个函数 —— 批量省的是点击，不是规则
-    return batchApprove(body.ids, (id) =>
+    const result = await batchApprove(allowed, (id) =>
       approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
     );
+
+    return {
+      ...result,
+      failed: [...result.failed, ...blocked],
+      results: [...result.results, ...blocked],
+    };
   });
 
   /**

@@ -570,7 +570,10 @@ async function main() {
   console.log(`    张伟  tech_lead   ${lead!.id}`);
   console.log(`    王强  DBA（决策人） ${dba!.id}`);
   console.log(`    李娜  pm          ${pm!.id}`);
-  console.log(`\n  看板  http://localhost:5173/projects/${projectId}/board\n`);
+  // 单机部署里前端和 API 同源（默认 :8080），不是开发时的 Vite :5173——
+  // 打印一个打不开的链接比不打印更误导
+  const webBase = process.env['WEB_BASE_URL'] ?? 'http://localhost:5173';
+  console.log(`\n  看板  ${webBase}/projects/${projectId}/board\n`);
 
   await closeDb(db);
 }

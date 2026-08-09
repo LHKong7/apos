@@ -98,16 +98,44 @@ await page.waitForTimeout(800);
 const headersBefore = await page.locator('section > header').allInnerTexts();
 
 const apiBase = process.env.API_URL ?? 'http://localhost:3000';
-const boardJson = await (await fetch(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
+
+/**
+ * ★ 直连 API 的请求必须带身份。
+ *   服务端按项目成员关系鉴权（09-security §2.1 第②层），
+ *   不带 X-User-Id 的请求一律拒 —— 这个脚本在这里扮演的是
+ *   「服务端替某个人操作」，所以要挑一个本项目的成员。
+ */
+let actingAs = null;
+async function asMember() {
+  if (actingAs) return actingAs;
+  // ★ 这里必须用裸 fetch：走 authed 会回头再调 asMember，直接无限递归
+  const { users } = await (await fetch(`${apiBase}/api/v1/users`)).json();
+  for (const u of users) {
+    const r = await fetch(`${apiBase}/api/v1/projects/${projectId}/board`, {
+      headers: { 'X-User-Id': u.id },
+    });
+    if (r.ok) {
+      actingAs = u.id;
+      return actingAs;
+    }
+  }
+  throw new Error('找不到该项目的成员身份');
+}
+async function authed(url, init = {}) {
+  const headers = { ...(init.headers ?? {}) };
+  if (!headers['X-User-Id']) headers['X-User-Id'] = await asMember();
+  return fetch(url, { ...init, headers });
+}
+const boardJson = await (await authed(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
 const gated = boardJson.columns.flatMap((c) => c.items).find((c) => c.humanGateRef);
 
 if (gated) {
-  const detail = await (await fetch(`${apiBase}/api/v1/decisions/${gated.humanGateRef}`)).json();
+  const detail = await (await authed(`${apiBase}/api/v1/decisions/${gated.humanGateRef}`)).json();
   // 决策可能没有指定责任人（未分派），此时随便一个成员都能批
-  const { users } = await (await fetch(`${apiBase}/api/v1/users`)).json();
+  const { users } = await (await authed(`${apiBase}/api/v1/users`)).json();
   const actorId = detail.decision.assigneeId ?? users[0]?.id;
 
-  const approved = await fetch(`${apiBase}/api/v1/decisions/${gated.humanGateRef}/approve`, {
+  const approved = await authed(`${apiBase}/api/v1/decisions/${gated.humanGateRef}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
     body: JSON.stringify({ note: 'smoke' }),
@@ -138,7 +166,7 @@ for (const [view, marker] of [['list', 'table'], ['agent', '负载'], ['decision
 }
 
 // ── Run 详情（页面文档 09）──────────────────────────────────────────
-const boardForRun = await (await fetch(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
+const boardForRun = await (await authed(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
 const withRun = boardForRun.columns.flatMap((c) => c.items).find((c) => c.runId);
 
 if (withRun) {
@@ -176,7 +204,7 @@ const failedRun = await (async () => {
   const items = boardForRun.columns.flatMap((c) => c.items);
   for (const item of items) {
     if (!item.runId) continue;
-    const d = await (await fetch(`${apiBase}/api/v1/runs/${item.runId}`)).json();
+    const d = await (await authed(`${apiBase}/api/v1/runs/${item.runId}`)).json();
     if (d.error) return d.run.id;
   }
   return null;
@@ -482,10 +510,10 @@ await shot('policy-test');
 
 // ── 治理硬约束：项目规则不能放宽组织规则 ──
 const apiBase2 = process.env.API_URL ?? 'http://localhost:3000';
-const { users: allUsers } = await (await fetch(`${apiBase2}/api/v1/users`)).json();
+const { users: allUsers } = await (await authed(`${apiBase2}/api/v1/users`)).json();
 const actorId = allUsers[0]?.id;
 
-const loosenOrg = await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+const loosenOrg = await authed(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
   body: JSON.stringify({
@@ -508,7 +536,7 @@ check(
 );
 
 // ── 安全阀：自动放行类规则必须先过模拟 ──
-const autoPass = await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+const autoPass = await authed(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
   body: JSON.stringify({
@@ -540,7 +568,7 @@ if (autoPass.status === 422) {
 // ── riskLevel 的 in 比较必须真的生效 ──
 // 这条曾经是个静默失效的 bug：规则界面上看着对，却永远不命中
 const evalRes = await (
-  await fetch(`${apiBase2}/api/v1/projects/${projectId}/policies/evaluate`, {
+  await authed(`${apiBase2}/api/v1/projects/${projectId}/policies/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

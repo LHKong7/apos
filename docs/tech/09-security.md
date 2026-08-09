@@ -82,6 +82,25 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 
 **③ 与 ①② 的区别**：①② 回答"你有没有资格做"，③ 回答"这件事该不该自动做"。一个 `tech_lead` 有资格批准计划（②通过），但如果计划涉及生产 DDL，Policy 仍要求 DBA 签字（③）。
 
+### 2.1.1 ② 层的实现位置
+
+②（项目角色）在 `apps/api/src/http/routes.ts` 里以一个 `preHandler` 钩子统一落地，
+不在各个 handler 里分别写：
+
+| 形状 | 判定 |
+| --- | --- |
+| `/api/v1/projects/{id}/...` | 按 URL 里的项目 id 查成员关系 |
+| `/api/v1/{work-items,runs,decisions,plans,requirements,clarifications,policies,integrations,sync-conflicts}/{id}/...` | 先由资源 id 反查所属项目，再查成员关系 |
+| 列表类（`/projects`、`/decision-inbox`、`/agents`） | 查询本身按成员关系 / 组织收窄 |
+
+**为什么是钩子而不是每个 handler 各写一行**：这类漏洞的成因就是「漏了一处」。
+钩子按 URL 形状统一拦截，以后新增的项目路由默认是关着的。
+**新增资源路由时必须在 `projectOfResource` 里登记**——没登记就等于那条路由不设防。
+
+**非成员返回 404 而不是 403**：403 等于确认「这个项目存在」，
+会把项目 id 变成可枚举的探针。文案用「不存在**或**没有权限」，
+既不确认存在性，又能让被分享链接的人知道该去切换身份。
+
 ### 2.2 角色定义
 
 | 角色 | 层级 | 关键权限 |

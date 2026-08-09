@@ -913,3 +913,36 @@ export const events = pgTable(
     index('events_policy_sim_idx').on(t.type, t.occurredAt),
   ],
 );
+
+/**
+ * 幂等键（docs/tech/07-api-design.md §4）。
+ *
+ * ★ 为什么需要它：决策批准、Run 派发这类操作要么花钱（重复派发 Agent），
+ *   要么不可逆（重复批准生产发布）。网络超时后客户端重试是真实场景 ——
+ *   而重试时它并不知道上一次到底成没成。
+ *
+ * ★ 没有它时的表现不是「重复执行」（那一层由状态机的 VERSION_CONFLICT 挡住了），
+ *   而是：**操作其实成功了，客户端却收到 409**，于是界面告诉用户「批准失败」。
+ *   用户再点一次，还是失败。这比真的失败更难排查。
+ *
+ * ★ 主键是 (key, endpoint)：同一个 key 用在不同端点上互不干扰，
+ *   否则客户端复用一个请求 id 去调两个接口就会拿到对方的响应。
+ */
+export const idempotencyKeys = pgTable(
+  'idempotency_keys',
+  {
+    key: text().notNull(),
+    endpoint: text().notNull(),
+    /** 首次响应的状态码与响应体，重放时原样返回 */
+    statusCode: integer().notNull(),
+    response: jsonb().$type<unknown>().notNull(),
+    /** 谁发起的 —— 换个人拿同一个 key 重放不该拿到别人的结果 */
+    actorId: uuid(),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.key, t.endpoint] }),
+    /** 过期清理按时间扫 */
+    index('idempotency_created_idx').on(t.createdAt),
+  ],
+);
