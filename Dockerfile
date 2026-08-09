@@ -39,6 +39,12 @@ RUN pnpm --filter @apos/web build
 FROM base AS runtime
 ENV NODE_ENV=production
 
+# ★ git 是工作区供给的硬依赖，不是可选项。
+#   node:22-alpine 不带 git —— 少了它，需要代码仓库的任务全部派不出去，
+#   而错误信息只会说「工作区供给不可用」，不会告诉你该往镜像里装什么。
+#   要求 ≥ 2.31：凭证通过 GIT_CONFIG_* 环境变量注入，低版本没有这个能力。
+RUN apk add --no-cache git openssh-client && git --version
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules      ./apps/api/node_modules
 COPY --from=deps /app/apps/web/node_modules      ./apps/web/node_modules

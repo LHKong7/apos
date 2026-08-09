@@ -27,6 +27,9 @@ import type {
   PlanDiffResponse,
   Project,
   RuntimeRow,
+  RuntimeAdminResponse,
+  RepositoriesResponse,
+  ConventionsResponse,
   RequirementDetail,
   RequirementSummary,
   RunControlAction,
@@ -156,6 +159,67 @@ export const api = {
     }),
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
+
+  // ── 配置：运行时接入 / Agent 档案 / 项目工程约定 ──
+  adminRuntimes: () => request<RuntimeAdminResponse>('/admin/runtimes'),
+  createRuntime: (body: Record<string, unknown>) =>
+    request<{ runtime: unknown }>('/admin/runtimes', { method: 'POST', body: JSON.stringify(body) }),
+  updateRuntime: (id: string, body: Record<string, unknown>) =>
+    request<{ runtime: unknown }>(`/admin/runtimes/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteRuntime: (id: string) =>
+    request<{ ok: true }>(`/admin/runtimes/${id}`, { method: 'DELETE' }),
+  probeRuntime: (id: string) =>
+    request<unknown>(`/admin/runtimes/${id}/probe`, { method: 'POST' }),
+
+  createAgent: (body: Record<string, unknown>) =>
+    request<{ agent: { id: string } }>('/admin/agents', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateAgent: (id: string, body: Record<string, unknown>) =>
+    request<{ agent: unknown; permissionsChanged: boolean }>(`/admin/agents/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteAgent: (id: string) =>
+    request<{ ok: true; retired: boolean; reason: string | null }>(`/admin/agents/${id}`, {
+      method: 'DELETE',
+    }),
+
+  repositories: (projectId?: string) =>
+    request<RepositoriesResponse>(
+      `/admin/repositories${projectId ? `?projectId=${projectId}` : ''}`,
+    ),
+  createRepository: (body: Record<string, unknown>) =>
+    request<{ repository: { id: string } }>('/admin/repositories', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateRepository: (id: string, body: Record<string, unknown>) =>
+    request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteRepository: (id: string) =>
+    request<{ ok: true }>(`/admin/repositories/${id}`, { method: 'DELETE' }),
+
+  conventions: (projectId: string) =>
+    request<ConventionsResponse>(`/projects/${projectId}/conventions`),
+  createConvention: (projectId: string, body: Record<string, unknown>) =>
+    request<{ convention: { id: string } }>(`/projects/${projectId}/conventions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateConvention: (id: string, body: Record<string, unknown>) =>
+    request<unknown>(`/conventions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteConvention: (id: string) =>
+    request<{ ok: true }>(`/conventions/${id}`, { method: 'DELETE' }),
+
+  assignWorkItem: (id: string, body: { agentId?: string; userId?: string; note?: string }) =>
+    request<{ ok: true; runId?: string }>(`/work-items/${id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   setLaborCost: (projectId: string, laborHourlyCost: number | null) =>
     request<{ ok: true }>(`/projects/${projectId}/labor-cost`, {

@@ -81,6 +81,7 @@ export function OverviewPage() {
           <Tab to={`/projects/${projectId}/analytics`}>Analytics</Tab>
           <Tab to={`/projects/${projectId}/settings/policies`}>Policy</Tab>
           <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
+          <Tab to={`/projects/${projectId}/settings/agents`}>Agent 配置</Tab>
         </nav>
       </div>
 

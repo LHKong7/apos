@@ -118,6 +118,9 @@ export async function loadAnalyticsInput(
     startedAt: r.startedAt?.getTime() ?? null,
     endedAt: r.endedAt?.getTime() ?? null,
     createdAt: r.createdAt.getTime(),
+    tokensInput: r.tokensInput,
+    tokensOutput: r.tokensOutput,
+    tokensCacheRead: r.tokensCacheRead,
     errorClass: r.errorClass,
     model: r.model,
   }));

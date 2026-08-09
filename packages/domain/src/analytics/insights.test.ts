@@ -64,6 +64,9 @@ function run(id: string, o: Partial<RunRow> = {}): RunRow {
     createdAt: T0 + D,
     errorClass: null,
     model: 'claude-opus-5',
+    tokensInput: 0,
+    tokensOutput: 0,
+    tokensCacheRead: 0,
     ...o,
   };
 }

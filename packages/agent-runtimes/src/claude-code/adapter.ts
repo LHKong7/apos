@@ -182,7 +182,22 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       };
     }
 
-    const mapped = mapPermissions(task.permissions, (scope) => this.workspaceFor(scope));
+    const base = mapPermissions(task.permissions, (scope) => this.workspaceFor(scope));
+
+    /**
+     * ★ 平台已经备好工作区时以它为准。
+     *
+     *   在此之前 cwd 来自一个全局的 workspaceRoot，所有 Agent、所有并发 Run
+     *   共用同一个目录 —— 两个任务同时跑就在同一份工作树上互相覆盖。
+     *   现在由 WorkspaceProvisioner 按 runId 挂独立工作树，这里只负责认路径。
+     */
+    const mapped: MappedPermissions = task.workspace
+      ? {
+          ...base,
+          cwd: task.workspace.path,
+          additionalDirectories: task.workspace.additionalPaths,
+        }
+      : base;
 
     if (mapped.tools.length === 0) {
       return {
@@ -195,7 +210,8 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
-        rejectReason: '未解析出可用的工作目录：请为 Agent 配置 repo 资源范围',
+        rejectReason:
+          '未准备出可用的工作目录：请为该 Agent 配置 repo 资源范围，并在「代码仓库」中登记对应仓库',
       };
     }
 

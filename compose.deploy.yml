@@ -22,7 +22,13 @@ x-app-env: &app-env
   # 拒绝派发，而不是悄悄回退到另一个 key
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   APOS_AGENT_ANTHROPIC_API_KEY: ${APOS_AGENT_ANTHROPIC_API_KEY:-}
-  AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-}
+  APOS_AGENT_OPENAI_API_KEY: ${APOS_AGENT_OPENAI_API_KEY:-}
+  # ★ 界面上录入的凭证用它加密后入库，钥匙留在环境里。
+  #   不设的话界面会引导用户改用 `env:变量名` 形态，而不是明文入库
+  APOS_SECRET_KEY: ${APOS_SECRET_KEY:-}
+  AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-/var/lib/apos/workspaces}
+  APOS_WORKSPACE_PUSH_ON_FAILURE: ${APOS_WORKSPACE_PUSH_ON_FAILURE:-false}
+  RUN_HEARTBEAT_TIMEOUT_MS: ${RUN_HEARTBEAT_TIMEOUT_MS:-90000}
   INTEGRATION_MEMORY_ADAPTERS: ${INTEGRATION_MEMORY_ADAPTERS:-}
   GITHUB_INTEGRATION_TOKEN: ${GITHUB_INTEGRATION_TOKEN:-}
 
@@ -91,6 +97,11 @@ services:
     environment:
       <<: *app-env
       PROCESS_ROLE: api
+    volumes:
+      # ★ 与 worker 共用同一卷：worker 里的调度器和 api 里的「重试 / 指派」
+      #   都会派发任务，各自准备工作区。两边看到的不是同一份目录的话，
+      #   api 派出去的 Run 会在 worker 侧找不到自己的工作树
+      - workspaces:/var/lib/apos/workspaces
     ports:
       # 只暴露这一个端口，它同时提供前端页面与 API
       - '${APOS_PUBLIC_PORT:-8080}:3000'
@@ -111,9 +122,14 @@ services:
     environment:
       <<: *app-env
       PROCESS_ROLE: worker
+    volumes:
+      - workspaces:/var/lib/apos/workspaces
     # worker 不监听端口，没有 HTTP 健康检查可做；
     # 进程退出即由 restart: unless-stopped 拉起
 
 volumes:
   pgdata:
   redisdata:
+  # Agent 的代码工作区：<root>/mirrors 是仓库镜像缓存（重建代价高，
+  # 必须持久化），<root>/runs 是每个 Run 的独立工作树（可随时清空）
+  workspaces:

@@ -3,11 +3,14 @@ import { eq } from 'drizzle-orm';
 import { projects, type Database } from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { scheduleRound } from '../modules/flow/scheduler';
+import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
 
 export interface SchedulerLoopOptions {
   intervalMs?: number;
   onError?: (err: unknown) => void;
   onRound?: (report: { projectId: string; dispatched: number }) => void;
+  /** 工作区供给；不传则 Run 不会拿到代码目录 */
+  workspaces?: WorkspaceProvisioner;
 }
 
 export interface SchedulerLoopHandle {
@@ -43,6 +46,7 @@ export function startSchedulerLoop(
         const report = await scheduleRound(db, registry, {
           projectId: project.id,
           correlationId: randomUUID(),
+          workspaces: opts.workspaces,
         });
         const dispatched = report.outcomes.filter((o) => o.action === 'dispatched').length;
         if (dispatched > 0) opts.onRound?.({ projectId: project.id, dispatched });

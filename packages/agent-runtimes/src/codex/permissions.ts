@@ -1,0 +1,76 @@
+import type { AgentPermissions } from '@apos/contracts';
+import { baseToolName, WRITE_TOOLS } from '../claude-code/permissions';
+
+/**
+ * Codex 的沙箱等级。这是它权限模型的**全部粒度** ——
+ * 没有「允许 Read 但禁止 Bash」这种说法。
+ */
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+
+export interface MappedSandbox {
+  mode: SandboxMode;
+  /** 是否允许联网 */
+  network: boolean;
+  /**
+   * 平台授予了、但沙箱级别无法逐项表达的限制。
+   *
+   * ★ 这份清单是本适配器存在的最大价值：它把「我们以为限制住了」
+   *   和「运行时真的限制住了」之间的差额算出来，交给页面显示。
+   *   静默吞掉它，用户会以为 `deniedTools` 在 Codex 上也生效了。
+   */
+  unenforceable: { rule: string; why: string }[];
+}
+
+/**
+ * APOS 权限 → Codex 沙箱。
+ *
+ * 映射方向刻意是**收紧**的：拿不准就降一级。
+ * 沙箱模式选错的后果不对称 —— 选严了任务失败（看得见、可修），
+ * 选松了 Agent 拿到了不该有的能力（看不见、修不回来）。
+ */
+export function mapSandbox(permissions: AgentPermissions): MappedSandbox {
+  const allowed = new Set(permissions.allowedTools.map(baseToolName));
+  const deniedBare = new Set(
+    permissions.deniedTools.filter((r) => !r.includes('(')).map(baseToolName),
+  );
+  const scopedDenies = permissions.deniedTools.filter((r) => r.includes('('));
+
+  const repoWritable = permissions.resourceScopes.some(
+    (s) => s.kind === 'repo' && s.access === 'write',
+  );
+  const wantsWrite = WRITE_TOOLS.some((t) => allowed.has(t) && !deniedBare.has(t));
+
+  const mode: SandboxMode = repoWritable && wantsWrite ? 'workspace-write' : 'read-only';
+
+  // 只有显式授予了联网类工具才开网；默认关闭
+  const network = ['WebFetch', 'WebSearch'].some((t) => allowed.has(t) && !deniedBare.has(t));
+
+  const unenforceable: MappedSandbox['unenforceable'] = [];
+
+  /**
+   * ★ 关键差异点。
+   *
+   *   Claude Code 能做到「Bash 可用但 rm 不可用」，因为它按工具调用逐次问。
+   *   Codex 在 workspace-write 下，命令执行是沙箱内自由的 —— 带参数的黑名单
+   *   （`Bash(rm *)`）根本没有落点。
+   */
+  for (const rule of scopedDenies) {
+    unenforceable.push({
+      rule,
+      why: 'Codex 的权限粒度是沙箱级，无法按命令参数拦截；该规则在此运行时不生效',
+    });
+  }
+
+  for (const tool of deniedBare) {
+    // 写类工具的禁止能通过降到 read-only 表达，其余表达不了
+    if ((WRITE_TOOLS as readonly string[]).includes(tool)) continue;
+    if (tool === 'WebFetch' || tool === 'WebSearch') continue; // 由 network 开关表达
+    if (mode === 'read-only') continue; // 只读模式下本来就做不了什么
+    unenforceable.push({
+      rule: tool,
+      why: `沙箱模式无法单独禁用 ${tool}，该工具在 workspace-write 下仍可能被使用`,
+    });
+  }
+
+  return { mode, network, unenforceable };
+}

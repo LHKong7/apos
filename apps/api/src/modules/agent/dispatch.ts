@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   agentRuntimes,
   agents,
   artifacts,
+  projectConventions,
   projects,
   requirements,
   workItems,
@@ -20,6 +21,7 @@ import {
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
+import type { WorkspaceProvisioner } from '../workspace/provisioner';
 import { ingestRunEvent } from './ingest';
 
 export interface DispatchInput {
@@ -32,9 +34,18 @@ export interface DispatchInput {
   idempotencyKey?: string;
 }
 
+export interface DispatchDeps {
+  /** 不传则退化为「不供给工作区」，仅用于不涉及代码仓库的测试 */
+  workspaces?: WorkspaceProvisioner;
+}
+
 export type DispatchResult =
   | { ok: true; runId: string; attempt: number; reused: boolean }
-  | { ok: false; code: 'AGENT_UNAVAILABLE' | 'TRANSITION_REJECTED'; detail: unknown };
+  | {
+      ok: false;
+      code: 'AGENT_UNAVAILABLE' | 'TRANSITION_REJECTED' | 'WORKSPACE_UNAVAILABLE';
+      detail: unknown;
+    };
 
 /**
  * 派发一次 Agent 执行。
@@ -48,6 +59,7 @@ export async function dispatchRun(
   db: Database,
   registry: RuntimeRegistry,
   input: DispatchInput,
+  deps: DispatchDeps = {},
 ): Promise<DispatchResult> {
   const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
   if (!item) return { ok: false, code: 'AGENT_UNAVAILABLE', detail: 'work item not found' };
@@ -166,10 +178,59 @@ export async function dispatchRun(
     return { ok: true, runId, attempt, reused: false };
   }
 
+  /**
+   * ★ 工作区在派发**之前**准备好，由平台统一供给。
+   *
+   *   放在这里而不是适配器里，是因为「clone 到哪、开哪个分支、跑完推不推」
+   *   对所有运行时都一样；更重要的是失败要在这一步就被拦住 ——
+   *   让 Agent 在一个空目录里开工，它会信心十足地报告
+   *   「未找到相关代码，已创建新实现」，这种失败比报错难查十倍。
+   */
+  const acquired = deps.workspaces
+    ? await deps.workspaces.acquire({
+        runId,
+        orgId: item.orgId,
+        projectId: item.projectId,
+        workItemId: item.id,
+        workItemTitle: item.title,
+        permissions: permissionSnapshot,
+      })
+    : ({ ok: true, workspace: null, note: '未启用工作区供给' } as const);
+
+  if (!acquired.ok) {
+    await db
+      .update(agentRuns)
+      .set({ status: 'failed', errorClass: 'context_insufficient', errorMessage: acquired.reason })
+      .where(eq(agentRuns.id, runId));
+
+    await ingestRunEvent(db, {
+      runId,
+      event: {
+        runId,
+        seq: 0,
+        ts: new Date().toISOString(),
+        type: 'run_ended',
+        outcome: 'failed',
+        summary: acquired.reason,
+        selfReport: '平台没能为这次执行准备好代码工作区，任务未开始。',
+      },
+      correlationId: input.correlationId,
+    });
+
+    return { ok: false, code: 'WORKSPACE_UNAVAILABLE', detail: { reason: acquired.reason } };
+  }
+
   const adapter = registry.get(runtime.id);
   const task: TaskDispatch = {
     runId,
     idempotencyKey,
+    agent: {
+      name: agent.name,
+      type: agent.type,
+      description: agent.description,
+      skills: agent.skills,
+    },
+    workspace: acquired.workspace,
     goal: {
       title: item.title,
       description: item.description ?? '',
@@ -210,7 +271,7 @@ export async function dispatchRun(
     .where(eq(agentRuns.id, runId));
 
   await adapter.subscribe(runId, async (event) => {
-    await ingestRunEvent(db, { runId, event, correlationId: input.correlationId });
+    await ingestRunEvent(db, { runId, event, correlationId: input.correlationId }, deps);
   });
 
   return { ok: true, runId, attempt, reused: false };
@@ -223,6 +284,40 @@ async function buildRunContext(
   additional: DispatchInput['additionalContext'],
 ): Promise<TaskDispatch['context']> {
   const ctx: TaskDispatch['context'] = [];
+
+  /**
+   * 项目工程约定 —— prompt 三层里的第三层。
+   *
+   * ★ 走 context 而不是 Agent 的 system prompt：编码规范是**项目**属性，
+   *   对该项目里所有 Agent 一视同仁。挂在 Agent 上意味着换个 Agent
+   *   就得重填一遍，还会诱导用户往里写治理规则、把 Policy 架空。
+   */
+  const conventions = await db
+    .select()
+    .from(projectConventions)
+    .where(
+      and(
+        eq(projectConventions.projectId, item.projectId),
+        eq(projectConventions.enabled, true),
+        // 空 appliesTo = 全部任务类型适用
+        or(
+          sql`cardinality(${projectConventions.appliesTo}) = 0`,
+          sql`${item.type} = ANY(${projectConventions.appliesTo})`,
+        ),
+      ),
+    )
+    .orderBy(asc(projectConventions.position), asc(projectConventions.createdAt));
+
+  for (const c of conventions) {
+    ctx.push({
+      kind: 'knowledge',
+      ref: c.id,
+      title: `工程约定：${c.title}`,
+      content: c.content,
+      priority: c.priority === 'reference' ? 'reference' : 'must_read',
+      trusted: true,
+    });
+  }
 
   if (item.requirementId) {
     const [req] = await db

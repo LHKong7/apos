@@ -61,6 +61,11 @@ export function computeAgents(input: AnalyticsInput): AgentMetrics {
     const timed = list.filter((r) => r.startedAt !== null && r.endedAt !== null);
     const totalCost = list.reduce((sum, r) => sum + r.cost, 0);
 
+    const tokensInput = list.reduce((s, r) => s + r.tokensInput, 0);
+    const tokensOutput = list.reduce((s, r) => s + r.tokensOutput, 0);
+    const tokensCacheRead = list.reduce((s, r) => s + r.tokensCacheRead, 0);
+    const cacheBase = tokensInput + tokensCacheRead;
+
     perf.push({
       agentId: agent.id,
       name: agent.name,
@@ -71,6 +76,16 @@ export function computeAgents(input: AnalyticsInput): AgentMetrics {
       overrideRate: ratio(overridden, handled.size) ?? 0,
       avgCost: round(totalCost / list.length, 4),
       totalCost: round(totalCost, 4),
+      tokens: {
+        input: tokensInput,
+        output: tokensOutput,
+        cacheRead: tokensCacheRead,
+        total: tokensInput + tokensOutput + tokensCacheRead,
+      },
+      // 没有任何 token 记录时给 null 而不是 0 —— 「没接上报」和「命中率为 0」
+      // 是两件事，混在一起会让人去优化一个根本没有数据的指标
+      cacheHitRate: cacheBase > 0 ? round(tokensCacheRead / cacheBase, 4) : null,
+      costPerSuccess: succeeded.length > 0 ? round(totalCost / succeeded.length, 4) : null,
       avgMinutes:
         timed.length > 0
           ? round(

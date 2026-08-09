@@ -18,6 +18,9 @@ function run(over: Partial<RunRow> = {}): RunRow {
     createdAt: T0,
     errorClass: null,
     model: null,
+    tokensInput: 0,
+    tokensOutput: 0,
+    tokensCacheRead: 0,
     ...over,
   };
 }

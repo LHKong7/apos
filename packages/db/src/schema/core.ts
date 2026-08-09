@@ -354,6 +354,13 @@ export const workItemDependencies = pgTable(
 
 // ── Agent ────────────────────────────────────────────────────────────────
 
+/**
+ * Agent 运行时接入。
+ *
+ * ★ 凭证挂在这一层而不是 agents ——「一次接入、多个 Agent 复用」是常态，
+ *   每个 Agent 各配一把 key 只会让轮换变成灾难。需要按 Agent 隔离计费时
+ *   再建第二条接入，而不是把凭证下沉。
+ */
 export const agentRuntimes = pgTable('agent_runtimes', {
   id: uuid().primaryKey().defaultRandom(),
   orgId: uuid().notNull(),
@@ -362,13 +369,96 @@ export const agentRuntimes = pgTable('agent_runtimes', {
   endpoint: text(),
   /** 指向密钥管理，不存明文 */
   credentialRef: text(),
+  /** 页面上显示的 ****1234，登记时截取，之后再也拿不到原值 */
+  credentialHint: text(),
+  credentialExpiresAt: timestamp({ withTimezone: true }),
   protocolVersion: text(),
   /** 能力协商结果，决定降级行为 */
   capabilities: jsonb().$type<Record<string, unknown>>().notNull().default({}),
   status: text().notNull().default('active'),
+  statusReason: text(),
   lastCheckAt: timestamp({ withTimezone: true }),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+  updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
 });
+
+/**
+ * 代码仓库登记 —— `ResourceScope { kind: 'repo', ref }` 的 ref 指向这里的 `ref`。
+ *
+ * ★ 在此之前 ref 只是个没人解析的字符串，所有 Agent 共用一个
+ *   AGENT_WORKSPACE_ROOT，两个 Run 并发就在同一份工作树上互相覆盖。
+ *   有了这张表，工作区供给才知道该 clone 谁、用哪把钥匙、推到哪个分支。
+ */
+export const repositories = pgTable(
+  'repositories',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    /** 项目级仓库；为空表示组织级共享（如 shared-lib） */
+    projectId: uuid().references(() => projects.id),
+
+    /** ResourceScope.ref 用的稳定标识，如 `order-service` */
+    ref: text().notNull(),
+    name: text().notNull(),
+    /** git remote，https 或 ssh */
+    remoteUrl: text().notNull(),
+    defaultBranch: text().notNull().default('main'),
+
+    /** ★ 同样只存引用。克隆用的凭证不进业务库 */
+    credentialRef: text(),
+    credentialHint: text(),
+
+    /** Agent 分支命名模板，{runId} / {itemId} / {slug} 会被替换 */
+    branchPrefix: text().notNull().default('apos/'),
+
+    /**
+     * 质量核验命令，如 `pnpm test`。在 Agent 收工后、提交之前于工作区执行。
+     *
+     * ★ 这是 reviewing 阶段唯一的**真实**测试数据源。没有它，
+     *   `qualityGatePassed` 这道门禁只能靠「Agent 说它跑过测试了」——
+     *   而那是一句自述，不是证据。
+     */
+    checkCommand: text(),
+    checkTimeoutSeconds: integer().notNull().default(900),
+
+    status: text().notNull().default('active'),
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [uniqueIndex('repositories_org_ref_idx').on(t.orgId, t.ref)],
+);
+
+/**
+ * 项目工程约定 —— prompt 三层里的第三层（[08](docs/product/pages/08-agent-workspace.md) 之外的补充）。
+ *
+ * ★ 刻意不做成「Agent 的 system prompt 文本框」：编码规范是**项目**属性，
+ *   对该项目里所有 Agent 一视同仁。挂在 Agent 上意味着换个 Agent 就得重填一遍，
+ *   而且会诱导用户往里写治理规则，把 Policy 架空。
+ */
+export const projectConventions = pgTable(
+  'project_conventions',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    projectId: uuid().notNull().references(() => projects.id),
+
+    title: text().notNull(),
+    content: text().notNull(),
+    /** 限定适用的任务类型；空数组 = 全部适用 */
+    appliesTo: workItemTypeEnum().array().notNull().default(sql`'{}'`),
+    /** must_read 会进「必读上下文」，reference 进「参考上下文」 */
+    priority: text().notNull().default('must_read'),
+
+    enabled: boolean().notNull().default(true),
+    position: integer().notNull().default(0),
+
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [index('project_conventions_project_idx').on(t.projectId, t.enabled)],
+);
 
 export const agents = pgTable(
   'agents',
@@ -448,6 +538,25 @@ export const agentRuns = pgTable(
     /** ★ 派发时的权限快照：权限可能在 Run 之后被改，审计回溯需要当时的状态 */
     permissionSnapshot: jsonb().$type<AgentPermissions>(),
 
+    /**
+     * 本次 Run 的工作区：仓库、分支、基线 commit、本地路径。
+     *
+     * ★ 落库而不是只留在进程内存里 —— 进程重启后要能回答
+     *   「这个孤儿 Run 在哪个分支上留了什么」，否则改动只能靠人翻磁盘。
+     */
+    workspace: jsonb().$type<{
+      repoRef: string;
+      repoId: string;
+      branch: string;
+      baseBranch: string;
+      baseCommit: string | null;
+      path: string;
+      /** 结束时回填 */
+      headCommit?: string | null;
+      pushed?: boolean;
+      changedFiles?: number;
+    } | null>(),
+
     stepCurrent: integer(),
     stepTotal: integer(),
     stepDescription: text(),
@@ -464,6 +573,22 @@ export const agentRuns = pgTable(
     errorDetail: jsonb().$type<Record<string, unknown>>(),
     /** Agent 用自然语言解释为什么卡住 —— 比堆栈有用得多 */
     agentSelfReport: text(),
+
+    /**
+     * 恢复决策的落点。
+     *
+     * ★ 判定（decideRecovery）与执行（recovery-worker）分开，中间靠这三个字段。
+     *   放在库里而不是内存队列，是因为「已经决定重试但还没重试」这个状态
+     *   必须扛得住进程重启 —— 丢掉它的表现是任务永远停在 failed，
+     *   而事件流里明明写着「将自动重试」。
+     */
+    recoveryAction: text(),
+    recoveryReason: text(),
+    /** 退避到点之前不执行，来自 agents.retryPolicy.backoff_seconds */
+    recoveryNotBefore: timestamp({ withTimezone: true }),
+    recoveryAppliedAt: timestamp({ withTimezone: true }),
+    /** switch_agent 用；判定时就算好，执行时不必再算一遍 */
+    recoveryAgentId: uuid(),
 
     startedAt: timestamp({ withTimezone: true }),
     endedAt: timestamp({ withTimezone: true }),

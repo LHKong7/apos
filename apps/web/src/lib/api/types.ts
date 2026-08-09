@@ -902,3 +902,93 @@ export interface BenefitLineRow {
   /** 这个数字怎么来的，包括其中的假设 */
   basis: string;
 }
+
+
+// ── Agent 配置（页面文档 08 §5.5）────────────────────────────────────
+
+export interface RuntimeKindSpec {
+  kind: string;
+  label: string;
+  description: string;
+  needsCredential: boolean;
+  credentialLabel: string | null;
+  needsEndpoint: boolean;
+}
+
+export interface RuntimeAdminRow {
+  id: string;
+  name: string;
+  kind: string;
+  endpoint: string | null;
+  status: string;
+  statusReason: string | null;
+  protocolVersion: string | null;
+  /** ★ 只有后四位。接口永不回显凭证原值 */
+  credentialHint: string | null;
+  credentialUsable: boolean;
+  credentialKind: 'none' | 'env' | 'encrypted' | 'fingerprint';
+  credentialProblem: string | null;
+  registered: boolean;
+  reachable: boolean;
+  problem: string | null;
+  lastCheckAt: string | null;
+  agentCount: number;
+  agentNames: string[];
+  capability: {
+    runtime: { name: string; version: string };
+    protocolVersion: string;
+    models: string[];
+    limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
+    tools: { name: string; description: string; sideEffects: string }[];
+    supported: string[];
+    missing: { feature: string; behavior: string; userImpact: string; severity: string }[];
+    restricted: boolean;
+  } | null;
+}
+
+export interface RuntimeAdminResponse {
+  runtimes: RuntimeAdminRow[];
+  kinds: RuntimeKindSpec[];
+  canStoreInlineCredential: boolean;
+  credentialHelp: string;
+}
+
+export interface RepositoryRow {
+  id: string;
+  ref: string;
+  name: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  branchPrefix: string;
+  scope: 'project' | 'organization';
+  projectId: string | null;
+  status: string;
+  credentialHint: string | null;
+  credentialUsable: boolean;
+  credentialProblem: string | null;
+  warning: string | null;
+}
+
+export interface RepositoriesResponse {
+  repositories: RepositoryRow[];
+  gitAvailable: boolean;
+  gitVersion: string | null;
+  gitProblem: string | null;
+  canStoreInlineCredential: boolean;
+}
+
+export interface ConventionRow {
+  id: string;
+  title: string;
+  content: string;
+  appliesTo: string[];
+  priority: string;
+  enabled: boolean;
+  position: number;
+  updatedAt: string;
+}
+
+export interface ConventionsResponse {
+  conventions: ConventionRow[];
+  notice: string;
+}

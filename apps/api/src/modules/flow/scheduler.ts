@@ -1,18 +1,13 @@
 import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
-import {
-  agentRuns,
-  agents,
-  projects,
-  workItemDependencies,
-  workItems,
-  type Database,
-} from '@apos/db';
-import { ACTIVE_RUN_STATUSES, SYSTEM_ACTOR, type WorkItemType } from '@apos/contracts';
-import { isDependencyMet, matchExecutors, type AgentCandidate, type MatchTarget } from '@apos/domain';
+import { projects, workItemDependencies, workItems, type Database } from '@apos/db';
+import { SYSTEM_ACTOR } from '@apos/contracts';
+import { isDependencyMet } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { loadDependencies } from './context';
 import { dispatchRun } from '../agent/dispatch';
+import { resolveExecutor } from '../agent/matching';
+import type { WorkspaceProvisioner } from '../workspace/provisioner';
 
 export interface ScheduleOutcome {
   workItemId: string;
@@ -39,13 +34,18 @@ export interface ScheduleReport {
 export async function scheduleRound(
   db: Database,
   registry: RuntimeRegistry,
-  opts: { projectId?: string; limit?: number; correlationId: string },
+  opts: {
+    projectId?: string;
+    limit?: number;
+    correlationId: string;
+    workspaces?: WorkspaceProvisioner;
+  },
 ): Promise<ScheduleReport> {
   const candidates = await findSchedulable(db, opts.projectId, opts.limit ?? 50);
   const outcomes: ScheduleOutcome[] = [];
 
   for (const item of candidates) {
-    outcomes.push(await scheduleOne(db, registry, item, opts.correlationId));
+    outcomes.push(await scheduleOne(db, registry, item, opts.correlationId, opts.workspaces));
   }
 
   return { scanned: candidates.length, outcomes };
@@ -93,6 +93,7 @@ async function scheduleOne(
   registry: RuntimeRegistry,
   item: WorkItemRow,
   correlationId: string,
+  workspaces: WorkspaceProvisioner | undefined,
 ): Promise<ScheduleOutcome> {
   const base = { workItemId: item.id, title: item.title };
 
@@ -152,13 +153,24 @@ async function scheduleOne(
     });
   }
 
-  const result = await dispatchRun(db, registry, {
-    workItemId: item.id,
-    agentId: agentId!,
-    correlationId,
-  });
+  const result = await dispatchRun(
+    db,
+    registry,
+    { workItemId: item.id, agentId: agentId!, correlationId },
+    { workspaces },
+  );
 
   if (!result.ok) {
+    /**
+     * ★ 工作区准备不出来是**配置问题**，不是「这一轮先跳过」。
+     *   不标 blocked 的话调度器会每 5 秒重试一次，日志刷满而看板上
+     *   那张卡片始终显示 ready —— 用户根本不知道它卡在哪。
+     */
+    if (result.code === 'WORKSPACE_UNAVAILABLE') {
+      const why = (result.detail as { reason?: string })?.reason ?? '工作区不可用';
+      await markBlocked(db, item, why, correlationId);
+      return { ...base, action: 'skipped', reason: why, agentId: agentId! };
+    }
     return { ...base, action: 'skipped', reason: `派发失败：${result.code}`, agentId: agentId! };
   }
 
@@ -215,50 +227,6 @@ async function checkBudget(
     };
   }
   return { ok: true };
-}
-
-async function resolveExecutor(db: Database, item: WorkItemRow) {
-  const rows = await db.select().from(agents).where(eq(agents.orgId, item.orgId));
-
-  const loads = await db
-    .select({ agentId: agentRuns.agentId, n: count() })
-    .from(agentRuns)
-    .where(inArray(agentRuns.status, [...ACTIVE_RUN_STATUSES]))
-    .groupBy(agentRuns.agentId);
-  const loadMap = new Map(loads.map((l) => [l.agentId, l.n]));
-
-  const meta = item.typeData;
-  const candidates: AgentCandidate[] = rows.map((a) => {
-    const stats = (a.stats ?? {}) as Record<string, unknown>;
-    return {
-      id: a.id,
-      name: a.name,
-      type: a.type,
-      skills: a.skills,
-      applicableTypes: a.applicableTypes as WorkItemType[],
-      successRate: typeof stats['successRate'] === 'number' ? stats['successRate'] : null,
-      sampleSize: typeof stats['sampleSize'] === 'number' ? stats['sampleSize'] : 0,
-      avgCost: typeof stats['avgCost'] === 'number' ? stats['avgCost'] : null,
-      currentLoad: loadMap.get(a.id) ?? 0,
-      maxConcurrency: a.maxConcurrency,
-      costLimitPerRun: a.costLimitPerRun ? Number(a.costLimitPerRun) : null,
-      allowedTools: a.allowedTools,
-      deniedTools: a.deniedTools,
-      contextAffinity: 0.5,
-      status: a.status,
-    };
-  });
-
-  const target: MatchTarget = {
-    type: item.type,
-    requiredSkills: Array.isArray(meta['requiredSkills']) ? (meta['requiredSkills'] as string[]) : [],
-    requiredTools: Array.isArray(meta['requiredTools']) ? (meta['requiredTools'] as string[]) : [],
-    estimatedCost: item.estimatedCost ? Number(item.estimatedCost) : null,
-    riskLevel: item.riskLevel,
-    requiresHuman: meta['requiresHuman'] === true,
-  };
-
-  return matchExecutors(target, candidates);
 }
 
 async function markBlocked(db: Database, item: WorkItemRow, reason: string, correlationId: string) {

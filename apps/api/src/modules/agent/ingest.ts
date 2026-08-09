@@ -1,10 +1,12 @@
 import { eq, sql } from 'drizzle-orm';
 import {
   agentRuns,
+  agents,
   artifacts,
   decisionOptions,
   decisions,
   projects,
+  repositories,
   runEvents,
   workItems,
   type Database,
@@ -19,6 +21,12 @@ import { decideRecovery } from '@apos/domain';
 import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
+import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import { findAlternativeAgent } from './matching';
+
+export interface IngestDeps {
+  workspaces?: WorkspaceProvisioner;
+}
 
 export interface IngestInput {
   runId: string;
@@ -42,7 +50,11 @@ export interface IngestResult {
  * 只有少数关键事件提升为领域事件并驱动 Flow。这让 Analytics 与审计
  * 只需扫描量级小两个数量级的 events 表。
  */
-export async function ingestRunEvent(db: Database, input: IngestInput): Promise<IngestResult> {
+export async function ingestRunEvent(
+  db: Database,
+  input: IngestInput,
+  deps: IngestDeps = {},
+): Promise<IngestResult> {
   const { runId, event, correlationId } = input;
 
   const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
@@ -76,8 +88,145 @@ export async function ingestRunEvent(db: Database, input: IngestInput): Promise<
 
   await applyRunPatch(db, run.id, event);
 
+  /**
+   * ★ 工作区收尾必须在状态流转**之前**。
+   *
+   *   流转到 reviewing 意味着「这份产出可以给人看了」，而此刻代码还躺在
+   *   一棵临时工作树里 —— 评审者点开只会看到一条没有实体的记录。
+   *   先提交推送、把分支落成产物，再让任务前进。
+   */
+  if (event.type === 'run_ended') {
+    await settleWorkspace(db, run, event, deps);
+  }
+
   const promotion = await promote(db, run, event, correlationId);
   return { stored: true, ...promotion };
+}
+
+/**
+ * Run 结束时收工作区：提交 → 推送 → 落成产物。
+ *
+ * 收尾出错不会让 Run 从成功翻成失败 —— 代码已经跑完了，
+ * 推送失败是运维问题，改动还在本地分支上可以人工补推。
+ */
+async function settleWorkspace(
+  db: Database,
+  run: RunRow,
+  event: Extract<RunEvent, { type: 'run_ended' }>,
+  deps: IngestDeps,
+): Promise<void> {
+  if (!deps.workspaces || !run.workspace) return;
+
+  const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
+
+  const result = await deps.workspaces.release({
+    runId: run.id,
+    outcome: event.outcome === 'completed' ? 'completed' : event.outcome,
+    summary: event.summary,
+    agentName: agent?.name ?? 'agent',
+  });
+
+  await db.insert(runEvents).values({
+    runId: run.id,
+    // 收尾发生在 run_ended 之后，seq 取一个必然更大的值
+    seq: event.seq + 1,
+    ts: new Date(),
+    type: 'note',
+    level: 'detail',
+    summary: `工作区收尾：${result.note}`,
+    payload: { type: 'note', text: result.note, workspace: result },
+  }).onConflictDoNothing();
+
+  /**
+   * ★ 把核验结果写进 qualityGate —— 这是 `qualityGatePassed` 这道门禁
+   *   第一次拿到**证据**而不是自述。此前它读的是 typeData.qualityGate，
+   *   而那份数据除了 CI 集成之外没有任何来源，于是默认全部为「通过」。
+   */
+  if (result.check.ran) {
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
+    if (item) {
+      await db
+        .update(workItems)
+        .set({
+          typeData: {
+            ...item.typeData,
+            qualityGate: {
+              ...((item.typeData['qualityGate'] as Record<string, unknown>) ?? {}),
+              testsPassed: result.check.passed,
+              testCommand: result.check.command,
+              testDurationMs: result.check.durationMs,
+              testCheckedAt: new Date().toISOString(),
+              testSource: 'workspace_check',
+            },
+          },
+        })
+        .where(eq(workItems.id, run.workItemId));
+    }
+
+    await db
+      .insert(runEvents)
+      .values({
+        runId: run.id,
+        seq: event.seq + 2,
+        ts: new Date(),
+        type: 'tool_result',
+        level: 'milestone',
+        summary: `质量核验 ${result.check.passed ? '通过' : '未通过'}：${result.check.command}`,
+        payload: {
+          type: 'tool_result',
+          ok: result.check.passed,
+          summary: result.check.output.slice(-4000),
+        },
+      })
+      .onConflictDoNothing();
+  }
+
+  if (!result.committed || !result.headCommit) return;
+
+  const [repo] = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, run.workspace.repoId));
+
+  /**
+   * ★ 代码产物是「分支 + commit」，不是从回复文本里正则抓来的 PR 链接。
+   *   前者是执行的事实，后者是模型的自述 —— 模型说它开了 PR 而实际没开，
+   *   这种事会发生，而评审者看到的是一个 404。
+   */
+  await db.insert(artifacts).values({
+    orgId: run.orgId,
+    projectId: run.projectId,
+    workItemId: run.workItemId,
+    runId: run.id,
+    kind: 'code',
+    title: `${result.branch}（${result.changedFiles} 个文件）`,
+    storage: 'external',
+    externalUrl: repo ? branchUrl(repo.remoteUrl, result.branch!) : null,
+    content: null,
+    metadata: {
+      repoRef: run.workspace.repoRef,
+      branch: result.branch,
+      baseBranch: run.workspace.baseBranch,
+      baseCommit: run.workspace.baseCommit,
+      headCommit: result.headCommit,
+      changedFiles: result.changedFiles,
+      pushed: result.pushed,
+      // 没推送时明确说明改动在哪 —— 否则「有产物但打不开」会被当成 bug
+      note: result.pushed ? null : '改动已提交到本地分支但未推送，可由运维补推',
+    },
+    producedByType: 'agent',
+    producedById: run.agentId,
+  });
+}
+
+/** git remote → 可点开的分支页面。认不出来的 host 就不给链接，不编 */
+function branchUrl(remoteUrl: string, branch: string): string | null {
+  const m = remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
+  if (!m) return null;
+  const [, host, owner, repo] = m;
+  if (host?.includes('github')) return `https://${host}/${owner}/${repo}/tree/${branch}`;
+  if (host?.includes('gitlab')) return `https://${host}/${owner}/${repo}/-/tree/${branch}`;
+  return null;
 }
 
 /** 事件对 agent_runs 行的增量更新 */
@@ -412,14 +561,40 @@ async function handleFailure(
   const estimated = Number(item?.estimatedCost ?? 0);
   const spent = Number(item?.actualCost ?? 0);
 
+  /**
+   * ★ 这里以前硬编码 false，后果是 `switch_agent` 这条分支永远不可达 ——
+   *   capability_mismatch 一律退化成 transfer_to_human，
+   *   而「换个更合适的 Agent 再试」本来是最该先试的一步。
+   */
+  const alternative = item ? await findAlternativeAgent(db, item, run.agentId) : null;
+
   const recovery = decideRecovery({
     errorClass: (run.errorClass as never) ?? 'unknown',
     attempt: run.attempt,
     maxAttempts: 3,
-    hasAlternativeAgent: false,
+    hasAlternativeAgent: alternative !== null,
     costRatio: estimated > 0 ? spent / estimated : 0,
     consecutiveFailures: consecutive,
   });
+
+  /**
+   * ★ 把恢复决策落到 Run 行上，交给 recovery-worker 执行。
+   *
+   *   此前这里只把 recovery 塞进事件 payload 就结束了 —— 那份精心分类的
+   *   策略（permission_denied 不重试、context_insufficient 补上下文再试、
+   *   capability_mismatch 换 Agent）从来没有任何代码去执行它。
+   */
+  const backoff = backoffFor(db, run, recovery.action);
+  await db
+    .update(agentRuns)
+    .set({
+      recoveryAction: recovery.action,
+      recoveryReason: recovery.reason,
+      recoveryAgentId: recovery.action === 'switch_agent' ? alternative : null,
+      recoveryNotBefore: await backoff,
+      recoveryAppliedAt: null,
+    })
+    .where(eq(agentRuns.id, run.id));
 
   await emitAndPublish(db, {
     orgId: run.orgId,
@@ -437,6 +612,8 @@ async function handleFailure(
       consecutiveFailures: consecutive,
       summary,
       recovery,
+      // recovery worker 要换 Agent 时不必再算一遍
+      alternativeAgentId: alternative,
     },
   });
 
@@ -448,6 +625,31 @@ async function handleFailure(
   });
 
   return { promoted: true, transitioned: moved.ok, recovery };
+}
+
+/**
+ * 退避到点时间。
+ *
+ * ★ 只对「立刻重来」这类动作退避。转人工、请决策本来就要等人，
+ *   再压 60 秒退避只会让待办晚一分钟出现在收件箱里。
+ */
+async function backoffFor(
+  db: Database,
+  run: RunRow,
+  action: string,
+): Promise<Date | null> {
+  const IMMEDIATE_RETRY = ['retry', 'retry_with_context', 'switch_agent'];
+  if (!IMMEDIATE_RETRY.includes(action)) return null;
+
+  const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
+  const policy = (agent?.retryPolicy ?? {}) as { backoff_seconds?: unknown };
+  const list = Array.isArray(policy.backoff_seconds)
+    ? policy.backoff_seconds.filter((n): n is number => typeof n === 'number')
+    : [60, 300];
+
+  // attempt 从 1 开始；第 1 次失败用第 1 档退避
+  const seconds = list[Math.min(run.attempt - 1, list.length - 1)] ?? 60;
+  return new Date(Date.now() + seconds * 1000);
 }
 
 /** 决策页要能不看执行流就明白 Agent 在问什么 —— 把请求展开成可读文本 */

@@ -62,6 +62,7 @@ import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { transition } from '../modules/flow/transition';
 import { dispatchRun } from '../modules/agent/dispatch';
+import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
@@ -71,6 +72,30 @@ import { getGraph } from './graph';
 import { getAnalytics, getAnalyticsItems } from './analytics';
 import { getOverview } from './overview';
 import { getAgent, listAgents, listRuntimes } from './agents';
+import {
+  AgentInput,
+  createAgent,
+  createRuntime,
+  deleteAgent,
+  deleteRuntime,
+  listRuntimesAdmin,
+  probeRuntime,
+  RuntimeInput,
+  updateAgent,
+  updateRuntime,
+} from './agent-admin';
+import {
+  ConventionInput,
+  createConvention,
+  createRepository,
+  deleteConvention,
+  deleteRepository,
+  listConventions,
+  listRepositories,
+  RepositoryInput,
+  updateConvention,
+  updateRepository,
+} from './project-config';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
@@ -107,6 +132,8 @@ export interface AppDeps {
   registry: RuntimeRegistry;
   integrations: IntegrationRegistry;
   provider: PlanningProvider;
+  /** 工作区供给；不传则不为 Run 准备代码目录（仅测试用） */
+  workspaces?: WorkspaceProvisioner;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -882,6 +909,178 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   // ── 运行时能力（页面文档 14 §5.4 —— 集成里唯一有真实后端的一块）──
   app.get('/api/v1/runtimes', async () => listRuntimes(db, deps.registry));
 
+  /**
+   * ── 配置：运行时接入 / Agent 档案 / 项目工程约定（页面文档 08 §5.5）──
+   *
+   * ★ 在此之前整个系统只有一个写操作（暂停 Agent），Agent 与运行时
+   *   只能靠 seed 脚本灌进去 —— 「用户去配置 code agent」一步都做不了。
+   */
+  async function callerOrg(req: { headers: Record<string, unknown> }): Promise<{ orgId: string; userId: string }> {
+    const { userId } = actorFrom(req);
+    const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId));
+    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+    return { orgId: user.orgId, userId };
+  }
+
+  app.get('/api/v1/admin/runtimes', async (req) => {
+    const { orgId } = await callerOrg(req);
+    return listRuntimesAdmin(db, deps.registry, orgId);
+  });
+
+  app.post('/api/v1/admin/runtimes', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const body = RuntimeInput.parse(req.body);
+    const result = await createRuntime(db, deps.registry, orgId, body);
+
+    await emitAndPublish(db, {
+      orgId,
+      projectId: null,
+      type: 'agent.registered',
+      actor: humanActor(userId),
+      subjectType: 'agent',
+      subjectId: (result.runtime as { id: string }).id,
+      payload: { kind: body.kind, name: body.name, target: 'runtime' },
+      correlationId: corr(req),
+    });
+
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/api/v1/admin/runtimes/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = RuntimeInput.partial()
+      .extend({
+        status: z.enum(['active', 'disabled']).optional(),
+        statusReason: z.string().optional(),
+      })
+      .parse(req.body);
+    return updateRuntime(db, deps.registry, id, body);
+  });
+
+  app.delete('/api/v1/admin/runtimes/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return deleteRuntime(db, id);
+  });
+
+  /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
+  app.post('/api/v1/admin/runtimes/:id/probe', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeRuntime(db, deps.registry, id);
+  });
+
+  app.post('/api/v1/admin/agents', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const body = AgentInput.parse(req.body);
+    const result = await createAgent(db, orgId, body, userId);
+
+    await emitAndPublish(db, {
+      orgId,
+      projectId: null,
+      type: 'agent.registered',
+      actor: humanActor(userId),
+      subjectType: 'agent',
+      subjectId: (result.agent as { id: string }).id,
+      payload: { name: body.name, type: body.type, runtimeId: body.runtimeId },
+      correlationId: corr(req),
+    });
+
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/api/v1/admin/agents/:id', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
+    const result = await updateAgent(db, id, body, userId);
+
+    if (result.permissionsChanged) {
+      // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
+      await emitAndPublish(db, {
+        orgId,
+        projectId: null,
+        type: 'agent.permissions_changed',
+        actor: humanActor(userId),
+        subjectType: 'agent',
+        subjectId: id,
+        payload: {
+          allowedTools: body.allowedTools ?? null,
+          deniedTools: body.deniedTools ?? null,
+          resourceScopes: body.resourceScopes ?? null,
+          reason: body.reason ?? null,
+        },
+        correlationId: corr(req),
+      });
+    }
+
+    return result;
+  });
+
+  app.delete('/api/v1/admin/agents/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return deleteAgent(db, id);
+  });
+
+  // ── 代码仓库登记 ────────────────────────────────────────────────────
+  app.get('/api/v1/admin/repositories', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const q = req.query as { projectId?: string };
+    const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
+    return listRepositories(db, orgId, projectId);
+  });
+
+  app.post('/api/v1/admin/repositories', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const body = RepositoryInput.parse(req.body);
+    return reply.status(201).send(await createRepository(db, orgId, userId, body));
+  });
+
+  app.patch('/api/v1/admin/repositories/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = RepositoryInput.partial()
+      .extend({ status: z.enum(['active', 'disabled']).optional() })
+      .parse(req.body);
+    return updateRepository(db, id, body);
+  });
+
+  app.delete('/api/v1/admin/repositories/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return deleteRepository(db, id);
+  });
+
+  // ── 项目工程约定 ────────────────────────────────────────────────────
+  app.get('/api/v1/projects/:id/conventions', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    await assertProjectMember(id, userId);
+    return listConventions(db, id);
+  });
+
+  app.post('/api/v1/projects/:id/conventions', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    await assertProjectMember(id, userId);
+    const body = ConventionInput.parse(req.body);
+    return reply.status(201).send(await createConvention(db, id, userId, body));
+  });
+
+  app.patch('/api/v1/conventions/:id', async (req) => {
+    actorFrom(req);
+    const { id } = req.params as { id: string };
+    return updateConvention(db, id, ConventionInput.partial().parse(req.body));
+  });
+
+  app.delete('/api/v1/conventions/:id', async (req) => {
+    actorFrom(req);
+    const { id } = req.params as { id: string };
+    return deleteConvention(db, id);
+  });
+
   // ── 决策中心（页面文档 10）──────────────────────────────────────────
   app.get('/api/v1/decision-inbox', async (req) => {
     const q = req.query as { scope?: string; projectId?: string };
@@ -1554,6 +1753,108 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return toTransitionResponse(result);
   });
 
+  /**
+   * 指派 Agent 并开始执行（页面文档 05/06 的卡片操作）。
+   *
+   * ★ 与 `/retry` 分开。此前卡片上的「派发」借用的是重试接口 ——
+   *   能用，但语义别扭：它会给 Agent 带上「上次失败原因」的上下文
+   *   （首次派发时那是空的），错误信息也说的是「重试失败」。
+   *   更要紧的是，重试接口不校验「这张卡现在能不能开始」，
+   *   于是在 draft / reviewing 状态的卡片上点派发会得到一个
+   *   看不懂的流转错误。
+   */
+  app.post('/api/v1/work-items/:id/assign', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        agentId: z.string().uuid().optional(),
+        /** 指派给人时用 */
+        userId: z.string().uuid().optional(),
+        /** 派发时附加的说明，进 must_read 上下文 */
+        note: z.string().max(4000).optional(),
+      })
+      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
+        message: '必须且只能指定 agentId 或 userId 其中之一',
+      })
+      .parse(req.body ?? {});
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!item) throw notFound('任务');
+
+    // ★ 先说清楚「现在不能开始」，而不是让它掉进流转错误里
+    const STARTABLE = ['ready', 'blocked', 'changes_requested'];
+    if (!STARTABLE.includes(item.status)) {
+      throw new ApiError(
+        'INVALID_TRANSITION',
+        `任务当前状态是 ${item.status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
+        { status: item.status, startable: STARTABLE },
+      );
+    }
+
+    if (body.userId) {
+      const moved = await transition(db, {
+        workItemId: id,
+        trigger: 'assigned_to_human',
+        actor,
+        reason: body.note ?? '人工指派',
+        correlationId: corr(req),
+      });
+      if (!moved.ok) return mapTransitionError(moved);
+
+      await db
+        .update(workItems)
+        .set({ executorType: 'human', executorId: body.userId })
+        .where(eq(workItems.id, id));
+
+      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
+    }
+
+    const result = await dispatchRun(
+      db,
+      deps.registry,
+      {
+        workItemId: id,
+        agentId: body.agentId!,
+        correlationId: corr(req),
+        additionalContext: body.note
+          ? [{ title: '派发人的补充说明', content: body.note }]
+          : undefined,
+      },
+      { workspaces: deps.workspaces },
+    );
+
+    if (!result.ok) {
+      // 工作区问题要用它自己的错误码，别混进「Agent 不可用」
+      throw new ApiError(
+        result.code === 'WORKSPACE_UNAVAILABLE' ? 'VALIDATION_FAILED' : 'AGENT_UNAVAILABLE',
+        result.code === 'WORKSPACE_UNAVAILABLE'
+          ? ((result.detail as { reason?: string })?.reason ?? '工作区不可用')
+          : '派发失败',
+        result.detail,
+      );
+    }
+
+    await emitAndPublish(db, {
+      orgId: item.orgId,
+      projectId: item.projectId,
+      type: 'work_item.assigned',
+      actor,
+      subjectType: 'work_item',
+      subjectId: id,
+      payload: { executorType: 'agent', executorId: body.agentId, byUserId: userId, manual: true },
+      correlationId: corr(req),
+    });
+
+    return {
+      ok: true as const,
+      executorType: 'agent' as const,
+      runId: result.runId,
+      attempt: result.attempt,
+      reused: result.reused,
+    };
+  });
+
   app.post('/api/v1/work-items/:id/retry', async (req) => {
     actorFrom(req);
     const { id } = req.params as { id: string };
@@ -1582,12 +1883,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       });
     }
 
-    const result = await dispatchRun(db, deps.registry, {
-      workItemId: id,
-      agentId,
-      correlationId: corr(req),
-      additionalContext: body.additionalContext,
-    });
+    const result = await dispatchRun(
+      db,
+      deps.registry,
+      { workItemId: id, agentId, correlationId: corr(req), additionalContext: body.additionalContext },
+      { workspaces: deps.workspaces },
+    );
 
     if (!result.ok) throw new ApiError('AGENT_UNAVAILABLE', '派发失败', result.detail);
     return result;
@@ -1970,7 +2271,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.post('/api/v1/projects/:id/schedule', async (req) => {
     actorFrom(req);
     const { id } = req.params as { id: string };
-    return scheduleRound(db, deps.registry, { projectId: id, correlationId: corr(req) });
+    return scheduleRound(db, deps.registry, {
+      projectId: id,
+      correlationId: corr(req),
+      workspaces: deps.workspaces,
+    });
   });
 
   // ── Agent 回调 ──────────────────────────────────────────────────────
@@ -1988,7 +2293,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const results = [];
     for (const event of batch) {
       results.push(
-        await ingestRunEvent(db, { runId: id, event: event as never, correlationId: corr(req) }),
+        await ingestRunEvent(
+          db,
+          { runId: id, event: event as never, correlationId: corr(req) },
+          { workspaces: deps.workspaces },
+        ),
       );
     }
     return { accepted: results.length, results };

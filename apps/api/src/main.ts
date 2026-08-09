@@ -1,5 +1,5 @@
 import { createDatabase } from '@apos/db';
-import { ClaudeCodeRuntime, MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
+import { RuntimeRegistry } from '@apos/agent-runtimes';
 import {
   FeishuTransport,
   GitHubAdapter,
@@ -10,8 +10,11 @@ import {
   type NotifyTransport,
 } from '@apos/integrations';
 import { DevExternalStore } from './modules/integration/dev-store';
-import { agentRuntimes } from '@apos/db';
 import { buildApp } from './app';
+import { syncRuntimes } from './modules/agent/runtime-factory';
+import { WorkspaceProvisioner } from './modules/workspace/provisioner';
+import { probeGit } from './modules/workspace/git';
+import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
 import { StubPlanningProvider } from './modules/planning/stub-provider';
 import { startSchedulerLoop } from './workers/scheduler-loop';
@@ -26,64 +29,49 @@ async function main() {
 
   const registry = new RuntimeRegistry();
 
-  /**
-   * 把数据库里的运行时登记进注册表。只处理还没注册过的行，可反复调用。
-   *
-   * ★ 为什么要能反复调用：注册表原本只在启动时建一次，于是任何在
-   *   进程起来之后新增的运行时都是隐形的 —— 界面显示「适配器没有在当前
-   *   进程注册」，任务派不出去，而这句话不会告诉你该去重启谁。
-   *
-   *   最容易踩到的是本地开发：`pnpm --filter @apos/api seed` 每次都会
-   *   insert 一条新的 agent_runtimes（新 UUID），API 早已启动，
-   *   于是 seed 完的演示数据一个任务都派不出去，看起来像产品坏了。
-   *   生产上同样的形状：管理员加了一个运行时，要等下次重启才生效。
-   */
-  async function syncRuntimes() {
-    const runtimes = await db.select().from(agentRuntimes);
-    let added = 0;
-    for (const rt of runtimes) {
-      if (registry.has(rt.id)) continue;
+  const diagnose = (message: string, detail?: unknown) => console.warn('[runtime]', message, detail ?? '');
 
-      if (rt.kind === 'mock') {
-        registry.register(rt.id, new MockRuntime());
-        added++;
-        continue;
-      }
-
-      if (rt.kind === 'claude_code') {
-        registry.register(
-          rt.id,
-          new ClaudeCodeRuntime({
-            // 凭证与工作目录都从环境读，绝不从数据库里取人类用户的 token
-            workspaceRoot: process.env['AGENT_WORKSPACE_ROOT'],
-            onDiagnostic: (message, detail) => console.warn('[claude-code]', message, detail ?? ''),
-          }),
-        );
-        added++;
-        continue;
-      }
-
-      console.warn(`[runtime] 未知运行时类型 ${rt.kind}（${rt.name}），已跳过注册`);
-    }
-    return added;
+  const boot = await syncRuntimes(db, registry, { onDiagnostic: diagnose });
+  if (boot.skipped.length > 0) {
+    console.warn(`[runtime] 跳过 ${boot.skipped.length} 个运行时：${boot.skipped.join('、')}`);
   }
 
-  await syncRuntimes();
-
   /**
-   * ★ 只增不减：这里不注销已经消失的运行时行。
-   *   正在跑的 Run 还握着那个适配器，把它摘掉等于中断一次执行 ——
-   *   为了一条清理逻辑打断真实执行，代价不对等。
+   * 周期同步。★ 只增不减：正在跑的 Run 还握着那个适配器，
+   * 把它摘掉等于中断一次执行，代价不对等。
+   *
+   * 新建/改配置时 admin 接口会立刻注册（registerNow），
+   * 这个循环兜的是多进程部署下「别的进程建的运行时」。
    */
   const runtimeSyncMs = Number(process.env['RUNTIME_SYNC_INTERVAL_MS'] ?? 15_000);
   if (runtimeSyncMs > 0) {
     setInterval(() => {
-      syncRuntimes()
-        .then((added) => {
+      syncRuntimes(db, registry, { onDiagnostic: diagnose })
+        .then(({ added }) => {
           if (added > 0) console.log(`[runtime] 新注册 ${added} 个运行时`);
         })
         .catch((err) => console.error('[runtime] 同步失败', err));
     }, runtimeSyncMs).unref();
+  }
+
+  /**
+   * 工作区供给。
+   *
+   * ★ git 不可用要在**启动时**就喊出来，而不是等第一次派发才炸 ——
+   *   那时错误会表现为「某个任务失败了」，没人会想到是部署环境没装 git。
+   */
+  const workspaces = new WorkspaceProvisioner(db, {
+    root: process.env['AGENT_WORKSPACE_ROOT'],
+    onDiagnostic: (message, detail) => console.warn('[workspace]', message, detail ?? ''),
+  });
+  const gitStatus = await probeGit();
+  if (!gitStatus.ok) {
+    console.warn(
+      `[workspace] ${gitStatus.problem} —— 需要代码仓库的任务将无法派发。` +
+        '只跑调研/文档类任务可以忽略这条。',
+    );
+  } else {
+    console.log(`[workspace] ${gitStatus.version}，根目录 ${process.env['AGENT_WORKSPACE_ROOT'] ?? '/tmp/apos-workspaces'}`);
   }
 
   /**
@@ -136,6 +124,7 @@ async function main() {
     registry,
     integrations: integrationRegistry,
     provider: new StubPlanningProvider(),
+    workspaces,
   };
 
   /** 退出时要关掉的 HTTP 服务；worker 角色不监听端口，保持 null */
@@ -168,8 +157,23 @@ async function main() {
     startSchedulerLoop(db, registry, {
       intervalMs: Number(process.env['SCHEDULER_INTERVAL_MS'] ?? 5000),
       onError: (err) => console.error('[scheduler]', err),
+      workspaces,
     });
     console.log('[worker] scheduler loop started');
+
+    /**
+     * ★ 让一条任务链能自己跑完的四个循环（架构文档 §3.3）。
+     *   在此之前只有 scheduler 一个循环：任务派出去之后，
+     *   超时没人判、失败没人恢复、评审没人推进 —— 全靠人盯着。
+     */
+    startFlowLoops(db, {
+      registry,
+      workspaces,
+      heartbeatTimeoutMs: Number(process.env['RUN_HEARTBEAT_TIMEOUT_MS'] ?? 90_000),
+      onError: (err) => console.error('[flow]', err),
+      onReport: (name, detail) => console.log(`[${name}]`, JSON.stringify(detail)),
+    });
+    console.log('[worker] flow loops started (supervisor / recovery / review / stats)');
   }
 
   /**

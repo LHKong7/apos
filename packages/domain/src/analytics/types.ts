@@ -78,6 +78,9 @@ export interface RunRow {
   createdAt: number;
   errorClass: string | null;
   model: string | null;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensCacheRead: number;
 }
 
 export interface DecisionRow {
@@ -221,6 +224,24 @@ export interface AgentPerf {
   totalCost: number;
   /** 分钟；null = 没有一次跑完带时间戳的 Run */
   avgMinutes: number | null;
+
+  /**
+   * Token 用量。
+   *
+   * ★ 刻意不把总量放到一级指标位：项目负责人看到「本月 1.2 亿 token」
+   *   没有决策含义，看到「$486」才有。总量是诊断量，下面两个派生值才是决策量。
+   */
+  tokens: { input: number; output: number; cacheRead: number; total: number };
+  /**
+   * 缓存命中率 = cacheRead / (input + cacheRead)。
+   * 偏低说明每次派发都在重传大块上下文，是可以工程优化的。
+   */
+  cacheHitRate: number | null;
+  /**
+   * 每**成功**任务成本。单看 avgCost 会奖励「快速失败」的 Agent ——
+   * 它每次都便宜，只是从来没做成过。
+   */
+  costPerSuccess: number | null;
 }
 
 export interface AgentMetrics {

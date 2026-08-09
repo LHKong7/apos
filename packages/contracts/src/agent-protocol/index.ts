@@ -155,10 +155,52 @@ export const AgentPermissions = z.object({
 });
 export type AgentPermissions = z.infer<typeof AgentPermissions>;
 
+/**
+ * 派发前由平台供给的工作区。
+ *
+ * ★ 供给放在平台侧而不是适配器侧，是因为「clone 到哪、开哪个分支、
+ *   跑完推不推」对所有运行时都一样。让每个适配器自己实现，
+ *   等于把同一段 git 逻辑抄 N 遍，还会 N 份各自出错。
+ *   适配器只需要认一个已经准备好的 `path`。
+ */
+export const RunWorkspace = z.object({
+  repoRef: z.string(),
+  /** 已 clone/checkout 完毕的本地绝对路径，可直接作为 cwd */
+  path: z.string(),
+  /** Agent 的工作分支，已切换 */
+  branch: z.string(),
+  baseBranch: z.string(),
+  baseCommit: z.string().nullable(),
+  /** 只读授权时为 false —— 适配器据此再收一道写工具 */
+  writable: z.boolean(),
+  /** 额外只读挂载的仓库路径 */
+  additionalPaths: z.array(z.string()).default([]),
+});
+export type RunWorkspace = z.infer<typeof RunWorkspace>;
+
+/**
+ * Agent 人设 —— prompt 三层里的第二层。
+ *
+ * ★ 第一层是平台治理规则（适配器生成，用户改不了）；
+ *   第三层是项目工程约定（走 context 下发）。
+ *   把这三层分开，是为了让「可配置」只落在真正该配置的地方：
+ *   开一个自由文本框覆盖 system prompt，等于允许用户写一句
+ *   「遇到问题自己想办法解决」把整条人工干预通道架空。
+ */
+export const AgentPersona = z.object({
+  name: z.string(),
+  type: z.string(),
+  description: z.string().nullable(),
+  skills: z.array(z.string()).default([]),
+});
+export type AgentPersona = z.infer<typeof AgentPersona>;
+
 export const TaskDispatch = z.object({
   runId: z.string().uuid(),
   /** 重复派发保护 */
   idempotencyKey: z.string(),
+  /** 执行者是谁。进 prompt 的第二层，也让 Agent 知道自己的定位 */
+  agent: AgentPersona.nullable().default(null),
   goal: z.object({
     title: z.string(),
     description: z.string(),
@@ -181,6 +223,8 @@ export const TaskDispatch = z.object({
   ),
   /** 权限显式下发，不依赖运行时侧配置（docs/tech/06 §4） */
   permissions: AgentPermissions,
+  /** 平台已备好的工作区；null 表示这次派发不涉及代码仓库 */
+  workspace: RunWorkspace.nullable().default(null),
   limits: z.object({
     maxCostUsd: z.number().positive(),
     maxDurationSeconds: z.number().int().positive(),

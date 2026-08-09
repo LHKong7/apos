@@ -89,6 +89,10 @@ export const DOMAIN_EVENT_TYPES = [
   'work_item.dependency_removed',
   'work_item.split',
   'work_item.merged',
+  /** 恢复策略被 recovery-worker 执行（自动重试 / 改派 / 转人工 / 升级为决策） */
+  'work_item.recovery_applied',
+  /** 质量门禁自动核验的结果（reviewing 阶段） */
+  'work_item.quality_checked',
   // agent run
   'agent_run.dispatched',
   'agent_run.started',

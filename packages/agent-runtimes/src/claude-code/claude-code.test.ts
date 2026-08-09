@@ -15,6 +15,8 @@ function task(overrides: Partial<TaskDispatch> = {}): TaskDispatch {
   return {
     runId: '11111111-1111-4111-8111-111111111111',
     idempotencyKey: 'wi-1:1',
+    agent: null,
+    workspace: null,
     goal: {
       title: '修复登录超时',
       description: '会话在 5 分钟后失效，应为 30 分钟。',
