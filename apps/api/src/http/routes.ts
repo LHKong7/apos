@@ -75,14 +75,10 @@ import { getAgent, listAgents, listRuntimes } from './agents';
 import {
   AgentInput,
   createAgent,
-  createRuntime,
   deleteAgent,
-  deleteRuntime,
-  listRuntimesAdmin,
-  probeRuntime,
-  RuntimeInput,
+  listAgentsAdmin,
+  probeAgent,
   updateAgent,
-  updateRuntime,
 } from './agent-admin';
 import {
   ConventionInput,
@@ -922,59 +918,21 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { orgId: user.orgId, userId };
   }
 
-  app.get('/api/v1/admin/runtimes', async (req) => {
+  /**
+   * Agent 档案管理。
+   *
+   * ★ 没有单独的「运行时接入」资源：CLI 类型、凭证、该 CLI 的个性化参数
+   *   全都内联在 Agent 上。建 N 个 Agent 就是 N 套独立配置。
+   */
+  app.get('/api/v1/admin/agents', async (req) => {
     const { orgId } = await callerOrg(req);
-    return listRuntimesAdmin(db, deps.registry, orgId);
-  });
-
-  app.post('/api/v1/admin/runtimes', async (req, reply) => {
-    const { orgId, userId } = await callerOrg(req);
-    const body = RuntimeInput.parse(req.body);
-    const result = await createRuntime(db, deps.registry, orgId, body);
-
-    await emitAndPublish(db, {
-      orgId,
-      projectId: null,
-      type: 'agent.registered',
-      actor: humanActor(userId),
-      subjectType: 'agent',
-      subjectId: (result.runtime as { id: string }).id,
-      payload: { kind: body.kind, name: body.name, target: 'runtime' },
-      correlationId: corr(req),
-    });
-
-    return reply.status(201).send(result);
-  });
-
-  app.patch('/api/v1/admin/runtimes/:id', async (req) => {
-    await callerOrg(req);
-    const { id } = req.params as { id: string };
-    const body = RuntimeInput.partial()
-      .extend({
-        status: z.enum(['active', 'disabled']).optional(),
-        statusReason: z.string().optional(),
-      })
-      .parse(req.body);
-    return updateRuntime(db, deps.registry, id, body);
-  });
-
-  app.delete('/api/v1/admin/runtimes/:id', async (req) => {
-    await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return deleteRuntime(db, id);
-  });
-
-  /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
-  app.post('/api/v1/admin/runtimes/:id/probe', async (req) => {
-    await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return probeRuntime(db, deps.registry, id);
+    return listAgentsAdmin(db, deps.registry, orgId);
   });
 
   app.post('/api/v1/admin/agents', async (req, reply) => {
     const { orgId, userId } = await callerOrg(req);
     const body = AgentInput.parse(req.body);
-    const result = await createAgent(db, orgId, body, userId);
+    const result = await createAgent(db, deps.registry, orgId, body, userId);
 
     await emitAndPublish(db, {
       orgId,
@@ -982,8 +940,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       type: 'agent.registered',
       actor: humanActor(userId),
       subjectType: 'agent',
-      subjectId: (result.agent as { id: string }).id,
-      payload: { name: body.name, type: body.type, runtimeId: body.runtimeId },
+      subjectId: result.agent.id,
+      payload: { name: body.name, type: body.type, runtimeKind: body.runtimeKind },
       correlationId: corr(req),
     });
 
@@ -994,7 +952,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId, userId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
-    const result = await updateAgent(db, id, body, userId);
+    const result = await updateAgent(db, deps.registry, id, body, userId);
 
     if (result.permissionsChanged) {
       // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
@@ -1022,6 +980,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     await callerOrg(req);
     const { id } = req.params as { id: string };
     return deleteAgent(db, id);
+  });
+
+  /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
+  app.post('/api/v1/admin/agents/:id/probe', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeAgent(db, deps.registry, id);
   });
 
   // ── 代码仓库登记 ────────────────────────────────────────────────────
@@ -1987,13 +1952,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
     if (!agent) throw notFound('Agent');
-    if (!deps.registry.has(agent.runtimeId)) {
-      throw new ApiError('AGENT_UNAVAILABLE', '该 Run 的运行时未注册，无法控制', {
-        runtimeId: agent.runtimeId,
+    if (!deps.registry.has(agent.id)) {
+      throw new ApiError('AGENT_UNAVAILABLE', '该 Agent 的运行时未在本进程注册，无法控制', {
+        agentId: agent.id,
+        runtimeKind: agent.runtimeKind,
       });
     }
 
-    const adapter = deps.registry.get(agent.runtimeId);
+    const adapter = deps.registry.get(agent.id);
     const command =
       body.action === 'terminate'
         ? ({ action: 'terminate', reason: body.reason ?? '人工终止' } as const)

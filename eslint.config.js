@@ -18,6 +18,10 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/node_modules/**',
+      // ★ Vite 的依赖预构建缓存。它已被 git 忽略，但没被 eslint 忽略 ——
+      //   于是只要本机跑过一次 dev server，`pnpm lint` 就会在几百个
+      //   第三方文件上报错，而那些代码不是我们写的也改不了
+      '**/.vite/**',
       // 临时探针脚本（.xxx-tmp.mjs），跑完就删，不进 lint
       '**/.*-tmp.mjs',
       'packages/db/migrations/**',

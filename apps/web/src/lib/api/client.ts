@@ -27,7 +27,7 @@ import type {
   PlanDiffResponse,
   Project,
   RuntimeRow,
-  RuntimeAdminResponse,
+  AgentAdminResponse,
   RepositoriesResponse,
   ConventionsResponse,
   RequirementDetail,
@@ -160,20 +160,8 @@ export const api = {
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
 
-  // ── 配置：运行时接入 / Agent 档案 / 项目工程约定 ──
-  adminRuntimes: () => request<RuntimeAdminResponse>('/admin/runtimes'),
-  createRuntime: (body: Record<string, unknown>) =>
-    request<{ runtime: unknown }>('/admin/runtimes', { method: 'POST', body: JSON.stringify(body) }),
-  updateRuntime: (id: string, body: Record<string, unknown>) =>
-    request<{ runtime: unknown }>(`/admin/runtimes/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-  deleteRuntime: (id: string) =>
-    request<{ ok: true }>(`/admin/runtimes/${id}`, { method: 'DELETE' }),
-  probeRuntime: (id: string) =>
-    request<unknown>(`/admin/runtimes/${id}/probe`, { method: 'POST' }),
-
+  // ── 配置：Agent 档案（内含运行时）/ 代码仓库 / 项目工程约定 ──
+  adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
   createAgent: (body: Record<string, unknown>) =>
     request<{ agent: { id: string } }>('/admin/agents', {
       method: 'POST',
@@ -188,6 +176,7 @@ export const api = {
     request<{ ok: true; retired: boolean; reason: string | null }>(`/admin/agents/${id}`, {
       method: 'DELETE',
     }),
+  probeAgent: (id: string) => request<unknown>(`/admin/agents/${id}/probe`, { method: 'POST' }),
 
   repositories: (projectId?: string) =>
     request<RepositoriesResponse>(

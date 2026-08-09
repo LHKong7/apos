@@ -11,7 +11,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, isNull, sql } from 'drizzle-orm';
 import {
-  agentRuntimes,
   agents,
   createDatabase,
   organizations,
@@ -98,18 +97,6 @@ async function main() {
   const registry = new RuntimeRegistry();
   const runtime = new MockRuntime({}, { steps: ['分析现状', '实现逻辑', '补充测试'] });
 
-  const [rt] = await db
-    .insert(agentRuntimes)
-    .values({
-      orgId,
-      name: 'mock runtime',
-      kind: 'mock',
-      protocolVersion: '1.0',
-      capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
-    })
-    .returning();
-  registry.register(rt!.id, runtime);
-
   const agentRows = await db
     .insert(agents)
     .values([
@@ -117,8 +104,7 @@ async function main() {
         orgId,
         name: 'code-agent-1',
         type: 'code',
-        runtimeId: rt!.id,
-        runtimeRef: 'mock:code-1',
+        runtimeKind: 'mock',
         model: 'claude-opus-5',
         skills: ['TypeScript', 'SQL 优化', 'API 设计'],
         applicableTypes: ['task', 'bug', 'research'],
@@ -133,8 +119,7 @@ async function main() {
         orgId,
         name: 'test-agent-1',
         type: 'test',
-        runtimeId: rt!.id,
-        runtimeRef: 'mock:test-1',
+        runtimeKind: 'mock',
         model: 'claude-sonnet-5',
         skills: ['测试', 'Playwright'],
         applicableTypes: ['test', 'task'],
@@ -149,8 +134,7 @@ async function main() {
         orgId,
         name: 'review-agent-1',
         type: 'review',
-        runtimeId: rt!.id,
-        runtimeRef: 'mock:review-1',
+        runtimeKind: 'mock',
         model: 'claude-sonnet-5',
         skills: ['代码评审'],
         applicableTypes: ['review'],
@@ -165,8 +149,7 @@ async function main() {
         orgId,
         name: 'ops-agent-1',
         type: 'ops',
-        runtimeId: rt!.id,
-        runtimeRef: 'mock:ops-1',
+        runtimeKind: 'mock',
         model: 'claude-sonnet-5',
         skills: ['部署', '灰度发布'],
         applicableTypes: ['release'],
@@ -179,6 +162,10 @@ async function main() {
       },
     ])
     .returning();
+
+  // ★ 每个 Agent 一个适配器实例：注册表按 agentId 键控，
+  //   因为 Agent 各自带一套运行时参数
+  for (const a of agentRows) registry.register(a.id, runtime);
 
   // ── 走真实链路：需求 → 计划 → 执行 ────────────────────────────────
   const provider = new StubPlanningProvider();
@@ -377,7 +364,7 @@ async function main() {
       },
     );
     const failRegistry = new RuntimeRegistry();
-    failRegistry.register(rt!.id, failRuntime);
+    failRegistry.register(agentRows[1]!.id, failRuntime);
 
     const dispatched = await dispatchRun(db, failRegistry, {
       workItemId: failing!.id,

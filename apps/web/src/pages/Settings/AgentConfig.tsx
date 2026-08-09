@@ -8,36 +8,40 @@ import { relativeTime } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
-import type { ConventionRow, RepositoryRow, RuntimeAdminRow } from '../../lib/api/types';
+import type {
+  AgentAdminRow,
+  ConfigField,
+  ConventionRow,
+  CredentialUsageRow,
+  RepositoryRow,
+  RuntimeKindSpec,
+} from '../../lib/api/types';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
  *
- * ★ 信息架构刻意分成三块，不做成一个巨型配置页：
+ * ★ Agent 是一等对象，运行时是它的一个属性 —— 没有单独的「接入」层。
+ *   建 N 个 Agent 就是 N 套独立配置：CLI 类型、该 CLI 的参数、凭证、
+ *   权限、成本上限全在一张表里填完，不用先去别处建接入再回来挂。
  *
- *   | 块 | 管什么 | 谁配 |
- *   | --- | --- | --- |
- *   | 运行时接入 | 接哪些 code agent、用哪把钥匙 | 组织管理员，一次配置 |
- *   | 代码仓库 | Agent 的 repo 授权指向哪个真实仓库 | tech lead |
- *   | 工程约定 | 编码规范、测试要求 | tech lead，按项目 |
- *
- *   揉在一起的后果很具体：加一个新 code agent 要重填一遍工具白名单和工程约定。
+ * ★ 每种 CLI 能配什么由**平台**定义（contracts 的 RUNTIME_KIND_SPECS），
+ *   这里按它动态渲染表单。加一种 CLI 只改那一个文件，界面自动长出字段。
  *
  * ★ 凭证输入框只在**新建或轮换**时出现，且永远不回显原值 ——
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
  */
 
-type Tab = 'runtimes' | 'repositories' | 'conventions';
+type Tab = 'agents' | 'repositories' | 'conventions';
 
 const TABS: { key: Tab; label: string; hint: string }[] = [
-  { key: 'runtimes', label: '运行时接入', hint: '接哪些 Code Agent、用哪把钥匙' },
+  { key: 'agents', label: 'Agents', hint: '建 N 个 Agent，每个自带 CLI 类型与它的个性化配置' },
   { key: 'repositories', label: '代码仓库', hint: 'Agent 的仓库授权指向哪里' },
   { key: 'conventions', label: '工程约定', hint: '本项目所有 Agent 都要遵守的规范' },
 ];
 
 export function AgentConfigPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [tab, setTab] = useState<Tab>('runtimes');
+  const [tab, setTab] = useState<Tab>('agents');
   const userId = useAuthStore((s) => s.userId);
 
   if (!projectId || !userId) return null;
@@ -72,7 +76,7 @@ export function AgentConfigPage() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        {tab === 'runtimes' && <RuntimesSection />}
+        {tab === 'agents' && <AgentsSection />}
         {tab === 'repositories' && <RepositoriesSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
       </div>
@@ -80,22 +84,17 @@ export function AgentConfigPage() {
   );
 }
 
-// ── 运行时接入 ────────────────────────────────────────────────────────
+// ── Agents ────────────────────────────────────────────────────────────
 
-function RuntimesSection() {
+function AgentsSection() {
   const qc = useQueryClient();
-  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
 
-  const q = useQuery({ queryKey: qk.adminRuntimes(), queryFn: api.adminRuntimes });
+  const q = useQuery({ queryKey: qk.adminAgents(), queryFn: api.adminAgents });
+  const invalidate = () => qc.invalidateQueries({ queryKey: qk.adminAgents() });
 
-  const probe = useMutation({
-    mutationFn: (id: string) => api.probeRuntime(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.adminRuntimes() }),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteRuntime(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.adminRuntimes() }),
-  });
+  const probe = useMutation({ mutationFn: (id: string) => api.probeAgent(id), onSuccess: invalidate });
+  const remove = useMutation({ mutationFn: (id: string) => api.deleteAgent(id), onSuccess: invalidate });
 
   if (q.isLoading) return <CardSkeleton />;
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -105,14 +104,14 @@ function RuntimesSection() {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <p className="text-xs text-slate-500">
-          每个接入是一套「运行时 + 凭证」，可被多个 Agent 复用。
+          每个 Agent 自带一种 headless CLI 与它的个性化配置。同一种 CLI 可以建多个 Agent，各配各的。
         </p>
         <button
           type="button"
-          onClick={() => setCreating(true)}
+          onClick={() => setEditing('new')}
           className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
         >
-          + 新增接入
+          + 新建 Agent
         </button>
       </div>
 
@@ -123,37 +122,42 @@ function RuntimesSection() {
         </Notice>
       )}
 
-      {data.runtimes.length === 0 ? (
+      {data.credentialUsage.length > 0 && <CredentialUsage rows={data.credentialUsage} />}
+
+      {data.agents.length === 0 ? (
         <EmptyState
-          icon="🔌"
-          message="还没有接入任何 Code Agent"
-          hint="接入之后才能建 Agent 档案，任务也才派得出去"
-          action={{ label: '新增接入', onClick: () => setCreating(true) }}
+          icon="🤖"
+          message="还没有任何 Agent"
+          hint="建一个 Agent 才能派发任务。可以先用「内存运行时」跑通流程，不花钱"
+          action={{ label: '新建 Agent', onClick: () => setEditing('new') }}
         />
       ) : (
         <div className="space-y-2">
-          {data.runtimes.map((rt) => (
-            <RuntimeCard
-              key={rt.id}
-              rt={rt}
-              onProbe={() => probe.mutate(rt.id)}
-              onDelete={() => remove.mutate(rt.id)}
-              deleteError={remove.error}
+          {data.agents.map((a) => (
+            <AgentCard
+              key={a.id}
+              agent={a}
+              spec={data.kinds.find((k) => k.kind === a.runtimeKind) ?? null}
+              onProbe={() => probe.mutate(a.id)}
+              onEdit={() => setEditing(a)}
+              onDelete={() => remove.mutate(a.id)}
+              error={remove.error}
               probing={probe.isPending}
             />
           ))}
         </div>
       )}
 
-      {creating && (
-        <RuntimeForm
+      {editing && (
+        <AgentForm
           kinds={data.kinds}
-          credentialHelp={data.credentialHelp}
           canStoreInline={data.canStoreInlineCredential}
-          onClose={() => setCreating(false)}
+          credentialHelp={data.credentialHelp}
+          agent={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
           onDone={() => {
-            setCreating(false);
-            void qc.invalidateQueries({ queryKey: qk.adminRuntimes() });
+            setEditing(null);
+            void invalidate();
           }}
         />
       )}
@@ -161,17 +165,62 @@ function RuntimesSection() {
   );
 }
 
-function RuntimeCard({
-  rt,
+/**
+ * ★ 取消接入层之后，「这把凭证被谁在用」失去了天然的答案位置。
+ *   这块把它补回来 —— 轮换前能一眼看到要动几个 Agent，
+ *   以及为什么 env: 形态只用动一处。
+ */
+function CredentialUsage({ rows }: { rows: CredentialUsageRow[] }) {
+  const multi = rows.filter((r) => r.rotationCost !== 'one_place' && r.agents.length > 1);
+
+  return (
+    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-[11px] font-medium text-slate-700">凭证使用情况</p>
+      <div className="mt-1 space-y-0.5">
+        {rows.map((r) => (
+          <div key={r.hint ?? '—'} className="flex flex-wrap items-center gap-2 text-[11px]">
+            <code className="rounded bg-white px-1.5 py-0.5 text-slate-700">{r.hint}</code>
+            <span className="text-slate-500">{r.agents.join('、')}</span>
+            <span
+              className={clsx(
+                'rounded px-1.5 py-0.5',
+                r.rotationCost === 'one_place'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-amber-50 text-amber-800',
+              )}
+            >
+              {r.rotationCost === 'one_place'
+                ? '轮换只需改环境变量'
+                : `轮换要改 ${r.agents.length} 处`}
+            </span>
+          </div>
+        ))}
+      </div>
+      {multi.length > 0 && (
+        <p className="mt-1 text-[11px] text-amber-800">
+          ⚠ 有内联凭证被多个 Agent 各存一份，轮换时漏改一处会让那个 Agent 静默失效。
+          改用 <code>env:变量名</code> 可以让它们共用一处。
+        </p>
+      )}
+    </div>
+  );
+}
+
+function AgentCard({
+  agent,
+  spec,
   onProbe,
+  onEdit,
   onDelete,
-  deleteError,
+  error,
   probing,
 }: {
-  rt: RuntimeAdminRow;
+  agent: AgentAdminRow;
+  spec: RuntimeKindSpec | null;
   onProbe: () => void;
+  onEdit: () => void;
   onDelete: () => void;
-  deleteError: unknown;
+  error: unknown;
   probing: boolean;
 }) {
   const [showCaps, setShowCaps] = useState(false);
@@ -180,23 +229,40 @@ function RuntimeCard({
    * ★ 三种「不可用」分开显示。
    *   混成一句「不可用」，用户不知道该去装依赖、换 key，还是换个 Agent。
    */
-  const health = !rt.registered
-    ? { tone: 'error' as const, text: rt.problem ?? '本进程没有这个运行时的适配器' }
-    : !rt.credentialUsable && rt.credentialHint
-      ? { tone: 'error' as const, text: rt.credentialProblem ?? '凭证不可用' }
-      : !rt.reachable
-        ? { tone: 'warning' as const, text: rt.problem ?? '能力探测失败' }
+  const health = !agent.registered
+    ? { tone: 'error' as const, text: agent.problem ?? '适配器未在本进程注册' }
+    : !agent.credentialUsable && agent.credentialHint
+      ? { tone: 'error' as const, text: agent.credentialProblem ?? '凭证不可用' }
+      : !agent.reachable
+        ? { tone: 'warning' as const, text: agent.problem ?? '能力探测失败' }
         : { tone: 'ok' as const, text: '就绪' };
+
+  /** 只展示与默认值不同的配置 —— 全列一遍会淹没真正被改过的那几项 */
+  const overrides = spec
+    ? spec.fields.filter(
+        (f) =>
+          agent.runtimeConfig[f.key] !== undefined &&
+          JSON.stringify(agent.runtimeConfig[f.key]) !== JSON.stringify(f.default),
+      )
+    : [];
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-slate-900">{rt.name}</span>
+        <span className="text-sm font-medium text-slate-900">{agent.name}</span>
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-          {rt.kind}
+          {agent.runtimeKindLabel}
+        </span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          {agent.type}
         </span>
         <StatusDot tone={health.tone} label={health.text} />
-        {rt.capability?.restricted && (
+        {agent.status !== 'active' && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+            {agent.status === 'paused' ? '已暂停' : '已停用'}
+          </span>
+        )}
+        {agent.capability?.restricted && (
           <span
             className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-700"
             title="该运行时存在 critical 级能力缺失，不应用于高风险任务"
@@ -216,6 +282,13 @@ function RuntimeCard({
           </button>
           <button
             type="button"
+            onClick={onEdit}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+          >
+            编辑
+          </button>
+          <button
+            type="button"
             onClick={onDelete}
             className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
           >
@@ -226,33 +299,54 @@ function RuntimeCard({
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
         <Field label="凭证">
-          {rt.credentialHint ? (
-            <span className={rt.credentialUsable ? '' : 'text-rose-600'}>{rt.credentialHint}</span>
+          {agent.credentialHint ? (
+            <span className={agent.credentialUsable ? '' : 'text-rose-600'}>
+              {agent.credentialHint}
+            </span>
           ) : (
             <span className="text-slate-400">未配置</span>
           )}
         </Field>
-        <Field label="使用中的 Agent">
-          {rt.agentCount > 0 ? rt.agentNames.join('、') : <span className="text-slate-400">无</span>}
+        <Field label="并发 / 超时">
+          {agent.maxConcurrency} · {Math.round(agent.timeoutSeconds / 60)} 分钟
         </Field>
-        <Field label="协议版本">{rt.protocolVersion ?? '—'}</Field>
-        <Field label="最近探测">
-          {rt.lastCheckAt ? relativeTime(rt.lastCheckAt) : '—'}
+        <Field label="单次成本上限">
+          {agent.costLimitPerRun === null ? '—' : `$${agent.costLimitPerRun}`}
         </Field>
+        <Field label="最近探测">{agent.lastCheckAt ? relativeTime(agent.lastCheckAt) : '—'}</Field>
       </dl>
 
-      {deleteError instanceof ApiError && (
-        <p className="mt-2 text-[11px] text-rose-600">{deleteError.message}</p>
+      {overrides.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {overrides.map((f) => (
+            <span
+              key={f.key}
+              className={clsx(
+                'rounded px-1.5 py-0.5 text-[11px]',
+                f.impact === 'cost'
+                  ? 'bg-amber-50 text-amber-800'
+                  : f.impact === 'safety'
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-slate-100 text-slate-600',
+              )}
+              title={f.help}
+            >
+              {f.label}: {formatValue(agent.runtimeConfig[f.key])}
+            </span>
+          ))}
+        </div>
       )}
 
-      {rt.capability && (
+      {error instanceof ApiError && <p className="mt-2 text-[11px] text-rose-600">{error.message}</p>}
+
+      {agent.capability && (
         <div className="mt-2">
           <button
             type="button"
             onClick={() => setShowCaps((v) => !v)}
             className="text-[11px] text-slate-500 underline hover:text-slate-700"
           >
-            {showCaps ? '收起能力清单' : `能力清单（${rt.capability.missing.length} 项缺失）`}
+            {showCaps ? '收起能力清单' : `能力清单（${agent.capability.missing.length} 项缺失）`}
           </button>
           {showCaps && (
             <div className="mt-2 space-y-1">
@@ -260,10 +354,10 @@ function RuntimeCard({
                 ★ 不静默降级：缺什么能力、会有什么影响，全部摊开。
                   用户在派高风险任务之前有权知道「这个 Agent 的暂停其实是终止」。
               */}
-              {rt.capability.missing.length === 0 ? (
+              {agent.capability.missing.length === 0 ? (
                 <p className="text-[11px] text-emerald-700">能力完整，无降级项</p>
               ) : (
-                rt.capability.missing.map((m) => (
+                agent.capability.missing.map((m) => (
                   <div
                     key={m.feature}
                     className={clsx(
@@ -288,113 +382,401 @@ function RuntimeCard({
   );
 }
 
-function RuntimeForm({
+function AgentForm({
   kinds,
-  credentialHelp,
   canStoreInline,
+  credentialHelp,
+  agent,
   onClose,
   onDone,
 }: {
-  kinds: { kind: string; label: string; description: string; needsCredential: boolean; credentialLabel: string | null }[];
-  credentialHelp: string;
+  kinds: RuntimeKindSpec[];
   canStoreInline: boolean;
+  credentialHelp: string;
+  agent: AgentAdminRow | null;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [kind, setKind] = useState(kinds[0]?.kind ?? 'mock');
-  const [name, setName] = useState('');
+  const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
+  const currentUser = useAuthStore((s) => s.userId);
+
+  const [kind, setKind] = useState(agent?.runtimeKind ?? kinds[0]?.kind ?? 'mock');
+  const [name, setName] = useState(agent?.name ?? '');
+  const [type, setType] = useState(agent?.type ?? 'code');
+  const [description, setDescription] = useState(agent?.description ?? '');
   const [credential, setCredential] = useState('');
-  const [endpoint, setEndpoint] = useState('');
+  const [endpoint, setEndpoint] = useState(agent?.endpoint ?? '');
+  const [ownerId, setOwnerId] = useState(agent?.ownerId ?? currentUser ?? '');
+  const [skills, setSkills] = useState((agent?.skills ?? []).join(', '));
+  const [allowedTools, setAllowedTools] = useState(
+    (agent?.permissions.allowedTools ?? ['Read', 'Grep']).join(', '),
+  );
+  const [deniedTools, setDeniedTools] = useState((agent?.permissions.deniedTools ?? []).join(', '));
+  const [repoRef, setRepoRef] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.ref ?? '',
+  );
+  const [repoAccess, setRepoAccess] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
+  );
+  const [reason, setReason] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const spec = kinds.find((k) => k.kind === kind);
 
-  const create = useMutation({
-    mutationFn: () =>
-      api.createRuntime({
+  /**
+   * ★ 换 CLI 类型时把配置重置成新类型的默认值，而不是保留旧值。
+   *   旧 kind 的参数在新 kind 下多半不合法，留着只会让表单显示一堆
+   *   保存时才报错的字段。
+   */
+  const [config, setConfig] = useState<Record<string, unknown>>(agent?.runtimeConfig ?? {});
+  const switchKind = (next: string) => {
+    setKind(next);
+    setConfig(agent?.runtimeKind === next ? (agent.runtimeConfig ?? {}) : {});
+  };
+
+  const valueOf = (f: ConfigField) => (config[f.key] !== undefined ? config[f.key] : f.default);
+  const setField = (key: string, v: unknown) => setConfig((c) => ({ ...c, [key]: v }));
+
+  const save = useMutation<unknown, Error, void>({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
         name,
-        kind,
+        type,
+        description: description.trim() || null,
+        runtimeKind: kind,
+        runtimeConfig: config,
         endpoint: endpoint.trim() || null,
-        credential: credential.trim() || null,
-      }),
+        ownerId,
+        skills: splitList(skills),
+        allowedTools: splitList(allowedTools),
+        deniedTools: splitList(deniedTools),
+        resourceScopes: repoRef.trim()
+          ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }]
+          : [],
+        ...(credential.trim() ? { credential: credential.trim() } : {}),
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+      };
+      return agent ? api.updateAgent(agent.id, body) : api.createAgent(body);
+    },
     onSuccess: onDone,
   });
 
+  const basicFields = (spec?.fields ?? []).filter((f) => !f.advanced);
+  const advancedFields = (spec?.fields ?? []).filter((f) => f.advanced);
+
   return (
     <Modal onClose={onClose}>
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">新增运行时接入</h2>
-        <label className="block">
-          <span className="text-xs font-medium text-slate-700">运行时类型</span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            {kinds.map((k) => (
-              <option key={k.kind} value={k.kind}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-          {spec && <p className="mt-1 text-[11px] text-slate-500">{spec.description}</p>}
-        </label>
+      <div className="max-h-[75vh] space-y-3 overflow-auto pr-1">
+        <h2 className="text-sm font-semibold text-slate-900">
+          {agent ? `编辑 ${agent.name}` : '新建 Agent'}
+        </h2>
 
-        <label className="block">
-          <span className="text-xs font-medium text-slate-700">名称</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="如 claude-code-主账号"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
-        </label>
-
-        {spec?.needsCredential && (
-          <label className="block">
-            <span className="text-xs font-medium text-slate-700">{spec.credentialLabel}</span>
+        <div className="grid grid-cols-2 gap-2">
+          <Labeled label="名称">
             <input
-              value={credential}
-              onChange={(e) => setCredential(e.target.value)}
-              type="password"
-              placeholder={canStoreInline ? 'sk-… 或 env:变量名' : 'env:变量名'}
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如 refactor-agent"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
             />
-            {/* ★ 说清楚两种形态的差别，而不是等用户填完才报错 */}
-            <p className="mt-1 text-[11px] text-slate-500">{credentialHelp}</p>
-          </label>
-        )}
+          </Labeled>
+          <Labeled label="类型">
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              {['code', 'test', 'review', 'research', 'ops'].map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </Labeled>
+        </div>
 
-        <label className="block">
-          <span className="text-xs font-medium text-slate-700">接入地址（自建网关才填）</span>
-          <input
-            value={endpoint}
-            onChange={(e) => setEndpoint(e.target.value)}
-            placeholder="https://…"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+        <Labeled label="职责描述" help="会作为「人设」进入 prompt，帮 Agent 判断任务是否在自己擅长范围内">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            placeholder="负责后端代码实现、重构与单元测试编写"
+            className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
           />
-        </label>
+        </Labeled>
 
-        {create.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{create.error.message}</p>
+        {/* ── 运行时 ── */}
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <p className="mb-2 text-[11px] font-medium text-slate-700">运行时</p>
+
+          <Labeled label="Headless CLI">
+            <select
+              value={kind}
+              onChange={(e) => switchKind(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              {kinds.map((k) => (
+                <option key={k.kind} value={k.kind}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+            {spec && <p className="mt-1 text-[11px] text-slate-500">{spec.description}</p>}
+            {spec?.prerequisite && (
+              <p className="mt-1 text-[11px] text-amber-800">⚠ {spec.prerequisite}</p>
+            )}
+          </Labeled>
+
+          {spec?.credential && (
+            <Labeled label={spec.credential.label} help={credentialHelp}>
+              <input
+                value={credential}
+                onChange={(e) => setCredential(e.target.value)}
+                type="password"
+                placeholder={
+                  agent?.credentialHint
+                    ? `当前 ${agent.credentialHint} —— 留空不改，填入则轮换`
+                    : canStoreInline
+                      ? 'sk-… 或 env:变量名'
+                      : 'env:变量名'
+                }
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            </Labeled>
+          )}
+
+          {spec?.endpoint && (
+            <Labeled label={spec.endpoint.label} help={spec.endpoint.help}>
+              <input
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                placeholder="https://…"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            </Labeled>
+          )}
+
+          {/* ★ 按平台定义的 schema 动态渲染 —— 加一种 CLI 不用改这里 */}
+          {basicFields.map((f) => (
+            <ConfigInput key={f.key} field={f} value={valueOf(f)} onChange={(v) => setField(f.key, v)} />
+          ))}
+
+          {advancedFields.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-700"
+              >
+                {showAdvanced ? '收起高级选项' : `高级选项（${advancedFields.length}）`}
+              </button>
+              {showAdvanced &&
+                advancedFields.map((f) => (
+                  <ConfigInput
+                    key={f.key}
+                    field={f}
+                    value={valueOf(f)}
+                    onChange={(v) => setField(f.key, v)}
+                  />
+                ))}
+            </>
+          )}
+        </div>
+
+        {/* ── 权限 ── */}
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <p className="mb-2 text-[11px] font-medium text-slate-700">权限边界</p>
+          <Labeled label="可用工具" help="逗号分隔。可带作用域，如 Bash(npm test:*)">
+            <input
+              value={allowedTools}
+              onChange={(e) => setAllowedTools(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+            />
+          </Labeled>
+          <Labeled label="禁止工具" help="黑名单优先级高于白名单，不可被覆盖">
+            <input
+              value={deniedTools}
+              onChange={(e) => setDeniedTools(e.target.value)}
+              placeholder="如 Bash(rm *)"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+            />
+          </Labeled>
+          <div className="grid grid-cols-2 gap-2">
+            <Labeled label="代码仓库" help="填「代码仓库」里登记的标识">
+              <input
+                value={repoRef}
+                onChange={(e) => setRepoRef(e.target.value)}
+                placeholder="order-service"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            </Labeled>
+            <Labeled label="仓库权限">
+              <select
+                value={repoAccess}
+                onChange={(e) => setRepoAccess(e.target.value)}
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                <option value="read">只读</option>
+                <option value="write">可写</option>
+              </select>
+            </Labeled>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Labeled label="负责人" help="出问题时的责任人，不可为空">
+            <select
+              value={ownerId}
+              onChange={(e) => setOwnerId(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">请选择</option>
+              {(users.data?.users ?? []).map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </Labeled>
+          <Labeled label="技能标签" help="逗号分隔，用于任务匹配">
+            <input
+              value={skills}
+              onChange={(e) => setSkills(e.target.value)}
+              placeholder="TypeScript, SQL 优化"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </Labeled>
+        </div>
+
+        {agent && (
+          <Labeled label="变更原因" help="放宽权限时必填 —— 收紧不需要">
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </Labeled>
         )}
 
-        <div className="flex justify-end gap-2">
+        {save.error instanceof ApiError && (
+          <p className="text-xs text-rose-600">{save.error.message}</p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="rounded border border-slate-300 px-3 py-1.5 text-xs">
             取消
           </button>
           <button
             type="button"
-            disabled={!name.trim() || create.isPending}
-            onClick={() => create.mutate()}
+            disabled={!name.trim() || !ownerId || save.isPending}
+            onClick={() => save.mutate()}
             className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
           >
-            {create.isPending ? '创建中…' : '创建'}
+            {save.isPending ? '保存中…' : '保存'}
           </button>
         </div>
       </div>
     </Modal>
   );
 }
+
+/** 按 schema 渲染单个配置项。影响成本/安全的用颜色标出来 */
+function ConfigInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const badge =
+    field.impact === 'cost' ? (
+      <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">影响成本</span>
+    ) : field.impact === 'safety' ? (
+      <span className="rounded bg-rose-50 px-1 text-[10px] text-rose-700">影响安全边界</span>
+    ) : null;
+
+  const selected = field.options?.find((o) => o.value === value);
+
+  return (
+    <Labeled label={field.label} badge={badge} help={selected?.help ?? field.help}>
+      {field.type === 'select' ? (
+        <select
+          value={String(value ?? '')}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+        >
+          {(field.options ?? []).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      ) : field.type === 'number' ? (
+        <input
+          type="number"
+          value={Number(value ?? 0)}
+          min={field.min}
+          max={field.max}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+        />
+      ) : field.type === 'boolean' ? (
+        <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+      ) : field.type === 'string_list' ? (
+        <input
+          value={Array.isArray(value) ? value.join(', ') : ''}
+          onChange={(e) => onChange(splitList(e.target.value))}
+          placeholder="逗号分隔"
+          className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+        />
+      ) : (
+        <input
+          value={String(value ?? '')}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+        />
+      )}
+    </Labeled>
+  );
+}
+
+function Labeled({
+  label,
+  help,
+  badge,
+  children,
+}: {
+  label: string;
+  help?: string;
+  badge?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="mt-2 block first:mt-0">
+      <span className="flex items-center gap-1 text-xs font-medium text-slate-700">
+        {label}
+        {badge}
+      </span>
+      <div className="mt-1">{children}</div>
+      {help && <p className="mt-1 text-[11px] text-slate-500">{help}</p>}
+    </label>
+  );
+}
+
+function splitList(v: string): string[] {
+  return v
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function formatValue(v: unknown): string {
+  if (Array.isArray(v)) return v.join('、') || '（空）';
+  return String(v);
+}
+
 
 // ── 代码仓库 ──────────────────────────────────────────────────────────
 

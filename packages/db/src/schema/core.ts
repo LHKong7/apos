@@ -355,34 +355,6 @@ export const workItemDependencies = pgTable(
 // ── Agent ────────────────────────────────────────────────────────────────
 
 /**
- * Agent 运行时接入。
- *
- * ★ 凭证挂在这一层而不是 agents ——「一次接入、多个 Agent 复用」是常态，
- *   每个 Agent 各配一把 key 只会让轮换变成灾难。需要按 Agent 隔离计费时
- *   再建第二条接入，而不是把凭证下沉。
- */
-export const agentRuntimes = pgTable('agent_runtimes', {
-  id: uuid().primaryKey().defaultRandom(),
-  orgId: uuid().notNull(),
-  name: text().notNull(),
-  kind: text().notNull(),
-  endpoint: text(),
-  /** 指向密钥管理，不存明文 */
-  credentialRef: text(),
-  /** 页面上显示的 ****1234，登记时截取，之后再也拿不到原值 */
-  credentialHint: text(),
-  credentialExpiresAt: timestamp({ withTimezone: true }),
-  protocolVersion: text(),
-  /** 能力协商结果，决定降级行为 */
-  capabilities: jsonb().$type<Record<string, unknown>>().notNull().default({}),
-  status: text().notNull().default('active'),
-  statusReason: text(),
-  lastCheckAt: timestamp({ withTimezone: true }),
-  createdAt: timestamp({ withTimezone: true }).notNull().default(now),
-  updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
-});
-
-/**
  * 代码仓库登记 —— `ResourceScope { kind: 'repo', ref }` 的 ref 指向这里的 `ref`。
  *
  * ★ 在此之前 ref 只是个没人解析的字符串，所有 Agent 共用一个
@@ -469,8 +441,29 @@ export const agents = pgTable(
     type: text().notNull(),
     description: text(),
 
-    runtimeId: uuid().notNull().references(() => agentRuntimes.id),
-    runtimeRef: text().notNull(),
+    /**
+     * ★ 运行时配置内联在 Agent 上，没有单独的「接入」层。
+     *
+     *   一个 Agent 就是「一种 headless CLI + 一套它的个性化参数 + 一份凭证」，
+     *   建 N 个 Agent 就是 N 套独立配置 —— 这是刻意的产品选择：
+     *   Agent 是一等对象，运行时是它的一个属性，而不是反过来。
+     *
+     *   代价是同一把 key 会被多个 Agent 各存一份引用。缓解办法是用
+     *   `env:变量名` 形态：N 个 Agent 引用同一个变量名，轮换仍只改一处。
+     */
+    runtimeKind: text().notNull(),
+    /** 该 CLI 的个性化参数，形状由 RUNTIME_KIND_SPECS 定义并校验 */
+    runtimeConfig: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    /** 自建网关地址；官方端点留空 */
+    endpoint: text(),
+    /** ★ 只存引用。明文凭证不进业务库 */
+    credentialRef: text(),
+    /** 页面上显示的 ****1234，登记时截取，之后再也拿不到原值 */
+    credentialHint: text(),
+    /** 能力探测结果缓存 */
+    capabilities: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    lastCheckAt: timestamp({ withTimezone: true }),
+
     model: text(),
 
     skills: text().array().notNull().default(sql`'{}'`),

@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   agentPermissionChanges,
   agentRuns,
-  agentRuntimes,
   agents,
   users,
   workItems,
@@ -11,277 +10,71 @@ import {
 } from '@apos/db';
 import {
   ACTIVE_RUN_STATUSES,
+  isKnownRuntimeKind,
   ResourceScope,
+  RUNTIME_KIND_SPECS,
+  runtimeKindSpec,
+  validateRuntimeConfig,
   WorkItemType,
   type AgentPermissions,
 } from '@apos/contracts';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
+import { registerAgentNow, type AgentRow } from '../modules/agent/runtime-factory';
 import {
-  isKnownKind,
-  registerNow,
-  RUNTIME_KINDS,
-  type RuntimeRow,
-} from '../modules/agent/runtime-factory';
-import { describeRef, encodeSecret, hasMasterKey, hintOf, SecretConfigError } from '../modules/security/secrets';
+  describeRef,
+  encodeSecret,
+  hasMasterKey,
+  hintOf,
+  SecretConfigError,
+} from '../modules/security/secrets';
 import { ApiError, notFound } from './errors';
 
 /**
- * 运行时接入 与 Agent 档案的写入侧（页面文档 08 §5.5）。
+ * Agent 档案 —— 建 N 个 Agent，每个自带 headless CLI 类型与它的个性化配置。
  *
- * ★ 信息架构刻意分成三块，不做成一个巨型配置页：
+ * ★ 没有单独的「运行时接入」层。一个 Agent 就是
+ *   「一种 CLI + 一套它的参数 + 一份凭证 + 一组权限」，是完整可用的执行主体。
+ *   这样加一个新 Agent 只需要填一张表，而不是先去别处建接入再回来挂。
  *
- *   | 块 | 管什么 | 层级 |
- *   | --- | --- | --- |
- *   | 运行时接入 | kind / 凭证 / 能力 | 组织级，一次配置多处复用 |
- *   | Agent 档案 | 人设 / 工具 / 资源范围 / 成本上限 / 负责人 | 组织级，每个 Agent 一份 |
- *   | 项目工程约定 | 编码规范、仓库登记 | 项目级（见 project-config.ts） |
- *
- *   揉在一起的后果很具体：加一个新 code agent 要重填一遍工具白名单和工程约定。
+ * ★ 代价是同一把 key 会被多个 Agent 各引用一次。缓解办法写进了界面引导：
+ *   用 `env:变量名` 形态时 N 个 Agent 指向同一个变量名，轮换仍只改一处；
+ *   另外 `credentialUsage` 会把「这把凭证被谁在用」聚合出来。
  *
  * ★ 凭证从不出现在任何响应里，只回 hint。见 modules/security/secrets.ts。
  */
 
-// ── 运行时接入 ────────────────────────────────────────────────────────
+// ── 平台侧的配置目录 ──────────────────────────────────────────────────
 
-export const RuntimeInput = z.object({
-  name: z.string().min(1, '运行时名称不能为空').max(80),
-  kind: z.string().min(1),
-  /** 自建网关地址；官方端点留空 */
-  endpoint: z.string().url('接入地址必须是合法 URL').nullable().optional(),
-  /**
-   * 明文凭证或 `env:变量名`。只在创建/轮换时出现，服务端立刻编码成引用。
-   * 不传 = 不改动现有凭证；传 null = 清除。
-   */
-  credential: z.string().nullable().optional(),
-});
-export type RuntimeInput = z.infer<typeof RuntimeInput>;
-
-/** 页面上的「新增接入」下拉选项 —— 与工厂同源，不会出现选了却建不出来的类型 */
-export function listRuntimeKinds() {
+/**
+ * 每种 CLI 能配什么，由平台统一定义。前端按它动态渲染表单 ——
+ * 加一种 CLI 只改 contracts 里那一个文件，界面自动长出对应字段。
+ */
+export function listRuntimeCatalog() {
   return {
-    kinds: RUNTIME_KINDS.map((k) => ({ ...k })),
-    /** 没有主密钥时页面要引导用户改用 env: 形态，而不是让他填完才报错 */
+    kinds: RUNTIME_KIND_SPECS,
     canStoreInlineCredential: hasMasterKey(),
     credentialHelp:
-      '推荐填 `env:变量名`（凭证只留在进程环境，不进数据库）。' +
+      '推荐填 `env:变量名`：凭证只留在进程环境、不进数据库，多个 Agent 共用同一变量名时轮换只需改一处。' +
       '直接粘贴 key 需要部署时配置 APOS_SECRET_KEY，密文进库、钥匙在库外。',
   };
 }
 
-export async function createRuntime(
-  db: Database,
-  registry: RuntimeRegistry,
-  orgId: string,
-  input: RuntimeInput,
-): Promise<{ runtime: unknown }> {
-  if (!isKnownKind(input.kind)) {
-    throw new ApiError('VALIDATION_FAILED', `不支持的运行时类型：${input.kind}`, {
-      supported: RUNTIME_KINDS.map((k) => k.kind),
-    });
-  }
-
-  const spec = RUNTIME_KINDS.find((k) => k.kind === input.kind)!;
-  const credential = input.credential?.trim() || null;
-
-  if (spec.needsCredential && !credential) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      `${spec.label} 需要凭证（${spec.credentialLabel}）。可填 \`env:变量名\` 让凭证留在进程环境里。`,
-    );
-  }
-
-  const [row] = await db
-    .insert(agentRuntimes)
-    .values({
-      orgId,
-      name: input.name.trim(),
-      kind: input.kind,
-      endpoint: input.endpoint ?? null,
-      ...credentialColumns(credential),
-      status: 'active',
-    })
-    .returning();
-
-  // ★ 立刻注册，不等下一轮同步 —— 否则新建的运行时在 15 秒内是隐形的，
-  //   用户会以为「建了但没用」，而界面只会说「适配器没有在当前进程注册」
-  registerNow(registry, row!);
-
-  return { runtime: await describeRuntime(db, registry, row!) };
-}
-
-export async function updateRuntime(
-  db: Database,
-  registry: RuntimeRegistry,
-  runtimeId: string,
-  input: Partial<RuntimeInput> & { status?: 'active' | 'disabled'; statusReason?: string },
-) {
-  const [existing] = await db
-    .select()
-    .from(agentRuntimes)
-    .where(eq(agentRuntimes.id, runtimeId));
-  if (!existing) throw notFound('运行时');
-
-  const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
-
-  const [row] = await db
-    .update(agentRuntimes)
-    .set({
-      ...(input.name ? { name: input.name.trim() } : {}),
-      ...(input.endpoint !== undefined ? { endpoint: input.endpoint ?? null } : {}),
-      ...(credential !== undefined ? credentialColumns(credential) : {}),
-      ...(input.status ? { status: input.status } : {}),
-      ...(input.statusReason !== undefined ? { statusReason: input.statusReason } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(agentRuntimes.id, runtimeId))
-    .returning();
-
-  // 换了凭证/地址就得换掉进程里那个实例，否则改完仍在用旧 key
-  registerNow(registry, row!);
-
-  return { runtime: await describeRuntime(db, registry, row!) };
-}
-
-export async function deleteRuntime(db: Database, runtimeId: string) {
-  const [row] = await db.select().from(agentRuntimes).where(eq(agentRuntimes.id, runtimeId));
-  if (!row) throw notFound('运行时');
-
-  const using = await db.select({ id: agents.id, name: agents.name }).from(agents).where(eq(agents.runtimeId, runtimeId));
-  if (using.length > 0) {
-    throw new ApiError(
-      'VERSION_CONFLICT',
-      `还有 ${using.length} 个 Agent 挂在这个运行时上，删除会让它们立刻派不出任务`,
-      { agents: using.map((a) => a.name) },
-    );
-  }
-
-  await db.delete(agentRuntimes).where(eq(agentRuntimes.id, runtimeId));
-  return { ok: true as const };
-}
-
-/**
- * 能力探测。
- *
- * ★ 「适配器没注册」「注册了但连不上」「连上了但缺能力」是三件不同的事，
- *   页面必须分别显示 —— 混成一句「不可用」，用户不知道该去装依赖、
- *   换 key，还是换个 Agent 跑高风险任务。
- */
-export async function probeRuntime(db: Database, registry: RuntimeRegistry, runtimeId: string) {
-  const [row] = await db.select().from(agentRuntimes).where(eq(agentRuntimes.id, runtimeId));
-  if (!row) throw notFound('运行时');
-
-  const result = await describeRuntime(db, registry, row);
-
-  await db
-    .update(agentRuntimes)
-    .set({
-      lastCheckAt: new Date(),
-      ...(result.capability
-        ? { capabilities: result.capability as unknown as Record<string, unknown>, protocolVersion: result.capability.protocolVersion }
-        : {}),
-    })
-    .where(eq(agentRuntimes.id, runtimeId));
-
-  return result;
-}
-
-async function describeRuntime(db: Database, registry: RuntimeRegistry, row: RuntimeRow) {
-  const cred = describeRef(row.credentialRef);
-  const usedBy = await db
-    .select({ id: agents.id, name: agents.name })
-    .from(agents)
-    .where(eq(agents.runtimeId, row.id));
-
-  let capability: ReturnType<typeof buildCapability> | null = null;
-  let reachable = false;
-  let problem: string | null = null;
-
-  if (registry.has(row.id)) {
-    try {
-      capability = buildCapability(await registry.get(row.id).getCapabilities());
-      reachable = true;
-    } catch (err) {
-      problem = err instanceof Error ? err.message : '能力探测失败';
-    }
-  } else {
-    problem = `本进程没有 ${row.kind} 的适配器实现，任务派不出去`;
-  }
-
-  return {
-    id: row.id,
-    name: row.name,
-    kind: row.kind,
-    endpoint: row.endpoint,
-    status: row.status,
-    statusReason: row.statusReason,
-    protocolVersion: row.protocolVersion,
-
-    /** ★ 只回 hint 与可用性判断，永不回原值 */
-    credentialHint: row.credentialHint,
-    credentialUsable: cred.usable,
-    credentialKind: cred.kind,
-    credentialProblem: cred.problem,
-
-    registered: registry.has(row.id),
-    reachable,
-    problem,
-    lastCheckAt: row.lastCheckAt?.toISOString() ?? null,
-
-    agentCount: usedBy.length,
-    agentNames: usedBy.map((a) => a.name),
-    capability,
-  };
-}
-
-export async function listRuntimesAdmin(db: Database, registry: RuntimeRegistry, orgId: string) {
-  const rows = await db
-    .select()
-    .from(agentRuntimes)
-    .where(eq(agentRuntimes.orgId, orgId))
-    .orderBy(agentRuntimes.createdAt);
-
-  return {
-    runtimes: await Promise.all(rows.map((r) => describeRuntime(db, registry, r))),
-    ...listRuntimeKinds(),
-  };
-}
-
-function credentialColumns(credential: string | null) {
-  if (credential === null) return { credentialRef: null, credentialHint: null };
-  try {
-    return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential) };
-  } catch (err) {
-    if (err instanceof SecretConfigError) {
-      throw new ApiError('VALIDATION_FAILED', err.message);
-    }
-    throw err;
-  }
-}
-
-function buildCapability(manifest: Parameters<typeof checkCompatibility>[0]) {
-  const report = checkCompatibility(manifest);
-  return {
-    runtime: manifest.runtime,
-    protocolVersion: manifest.protocolVersion,
-    transport: manifest.transport,
-    models: manifest.models,
-    limits: manifest.limits,
-    tools: manifest.tools,
-    supported: report.supported,
-    missing: report.missing,
-    restricted: report.restricted,
-  };
-}
-
-// ── Agent 档案 ────────────────────────────────────────────────────────
+// ── Agent CRUD ────────────────────────────────────────────────────────
 
 export const AgentInput = z.object({
   name: z.string().min(1, 'Agent 名称不能为空').max(80),
   type: z.string().min(1),
   description: z.string().nullable().optional(),
-  runtimeId: z.string().uuid('必须选择一个运行时'),
-  model: z.string().nullable().optional(),
 
+  /** headless CLI 类型 */
+  runtimeKind: z.string().min(1, '必须选择运行时类型'),
+  /** 该 CLI 的个性化参数，按 RUNTIME_KIND_SPECS 校验 */
+  runtimeConfig: z.record(z.unknown()).optional(),
+  endpoint: z.string().url('接入地址必须是合法 URL').nullable().optional(),
+  /** 明文凭证或 `env:变量名`。不传 = 不改动；null = 清除 */
+  credential: z.string().nullable().optional(),
+
+  model: z.string().nullable().optional(),
   skills: z.array(z.string()).default([]),
   applicableTypes: z.array(WorkItemType).default([]),
 
@@ -301,13 +94,24 @@ export type AgentInput = z.infer<typeof AgentInput>;
 
 export async function createAgent(
   db: Database,
+  registry: RuntimeRegistry,
   orgId: string,
   input: AgentInput,
   actorUserId: string,
 ) {
-  await assertRuntime(db, orgId, input.runtimeId);
+  const spec = assertKind(input.runtimeKind);
   await assertOwner(db, input.ownerId);
   assertPermissionsSane(input);
+
+  const credential = input.credential?.trim() || null;
+  if (spec.credential && !credential) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `${spec.label} 需要凭证（${spec.credential.label}）。可填 \`env:变量名\` 让凭证留在进程环境里。`,
+    );
+  }
+
+  const config = validateConfig(input.runtimeKind, input.runtimeConfig);
 
   const [row] = await db
     .insert(agents)
@@ -316,8 +120,12 @@ export async function createAgent(
       name: input.name.trim(),
       type: input.type,
       description: input.description ?? null,
-      runtimeId: input.runtimeId,
-      runtimeRef: input.name.trim(),
+
+      runtimeKind: input.runtimeKind,
+      runtimeConfig: config,
+      endpoint: input.endpoint ?? null,
+      ...credentialColumns(credential),
+
       model: input.model ?? null,
       skills: input.skills,
       applicableTypes: input.applicableTypes,
@@ -333,6 +141,10 @@ export async function createAgent(
     })
     .returning();
 
+  // ★ 立刻注册，不等下一轮同步 —— 否则新建的 Agent 在 15 秒内是隐形的，
+  //   用户会以为「建了但没用」，而界面只会说「适配器没有在当前进程注册」
+  registerAgentNow(registry, row!);
+
   // 建档本身就是一次权限授予，同样要留痕
   await db.insert(agentPermissionChanges).values({
     agentId: row!.id,
@@ -343,11 +155,12 @@ export async function createAgent(
     reason: '创建 Agent',
   });
 
-  return { agent: row };
+  return { agent: await describeAgent(db, registry, row!) };
 }
 
 export async function updateAgent(
   db: Database,
+  registry: RuntimeRegistry,
   agentId: string,
   input: Partial<AgentInput> & { reason?: string },
   actorUserId: string,
@@ -355,7 +168,8 @@ export async function updateAgent(
   const [existing] = await db.select().from(agents).where(eq(agents.id, agentId));
   if (!existing) throw notFound('Agent');
 
-  if (input.runtimeId) await assertRuntime(db, existing.orgId, input.runtimeId);
+  const kind = input.runtimeKind ?? existing.runtimeKind;
+  if (input.runtimeKind) assertKind(input.runtimeKind);
   if (input.ownerId) await assertOwner(db, input.ownerId);
 
   const merged = {
@@ -378,13 +192,27 @@ export async function updateAgent(
     throw new ApiError('VALIDATION_FAILED', '放宽 Agent 权限必须填写原因');
   }
 
+  /**
+   * ★ 换了 CLI 类型就要重新校验配置：旧 kind 的参数在新 kind 下多半不合法，
+   *   原样带过去的话，界面显示配置完好，实际派发时 CLI 收到一堆它不认识的参数。
+   */
+  const config =
+    input.runtimeConfig !== undefined || input.runtimeKind
+      ? validateConfig(kind, input.runtimeConfig ?? (input.runtimeKind ? {} : existing.runtimeConfig))
+      : undefined;
+
+  const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
+
   const [row] = await db
     .update(agents)
     .set({
       ...(input.name ? { name: input.name.trim() } : {}),
       ...(input.type ? { type: input.type } : {}),
       ...(input.description !== undefined ? { description: input.description ?? null } : {}),
-      ...(input.runtimeId ? { runtimeId: input.runtimeId } : {}),
+      ...(input.runtimeKind ? { runtimeKind: input.runtimeKind } : {}),
+      ...(config !== undefined ? { runtimeConfig: config } : {}),
+      ...(input.endpoint !== undefined ? { endpoint: input.endpoint ?? null } : {}),
+      ...(credential !== undefined ? credentialColumns(credential) : {}),
       ...(input.model !== undefined ? { model: input.model ?? null } : {}),
       ...(input.skills ? { skills: input.skills } : {}),
       ...(input.applicableTypes ? { applicableTypes: input.applicableTypes } : {}),
@@ -405,6 +233,13 @@ export async function updateAgent(
     .where(eq(agents.id, agentId))
     .returning();
 
+  /**
+   * ★ 必须**替换**注册表里的实例，不能跳过。
+   *   老实例里还捏着旧的 effort、旧的凭证 —— 不换掉的话，
+   *   界面上改完显示为已生效，而下一次派发仍然是旧值。
+   */
+  registerAgentNow(registry, row!);
+
   if (permissionsChanged) {
     await db.insert(agentPermissionChanges).values({
       agentId,
@@ -416,7 +251,7 @@ export async function updateAgent(
     });
   }
 
-  return { agent: row, permissionsChanged };
+  return { agent: await describeAgent(db, registry, row!), permissionsChanged };
 }
 
 export async function deleteAgent(db: Database, agentId: string) {
@@ -457,11 +292,174 @@ export async function deleteAgent(db: Database, agentId: string) {
   return { ok: true as const, retired: false, reason: null };
 }
 
-async function assertRuntime(db: Database, orgId: string, runtimeId: string) {
-  const [rt] = await db.select().from(agentRuntimes).where(eq(agentRuntimes.id, runtimeId));
-  if (!rt || rt.orgId !== orgId) throw notFound('运行时');
-  if (rt.status !== 'active') {
-    throw new ApiError('VALIDATION_FAILED', `运行时「${rt.name}」已停用，不能挂新的 Agent`);
+/**
+ * 能力探测。
+ *
+ * ★ 「适配器没注册」「注册了但连不上」「连上了但缺能力」是三件不同的事，
+ *   页面必须分别显示 —— 混成一句「不可用」，用户不知道该去装依赖、
+ *   换 key，还是换个 Agent 跑高风险任务。
+ */
+export async function probeAgent(db: Database, registry: RuntimeRegistry, agentId: string) {
+  const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+  if (!row) throw notFound('Agent');
+
+  const described = await describeAgent(db, registry, row);
+
+  await db
+    .update(agents)
+    .set({
+      lastCheckAt: new Date(),
+      ...(described.capability
+        ? { capabilities: described.capability as unknown as Record<string, unknown> }
+        : {}),
+    })
+    .where(eq(agents.id, agentId));
+
+  return described;
+}
+
+export async function listAgentsAdmin(db: Database, registry: RuntimeRegistry, orgId: string) {
+  const rows = await db.select().from(agents).where(eq(agents.orgId, orgId)).orderBy(agents.createdAt);
+
+  return {
+    agents: await Promise.all(rows.map((r) => describeAgent(db, registry, r))),
+    /**
+     * ★ 「这把凭证被谁在用」。取消接入层之后，这个问题失去了天然的答案位置 ——
+     *   靠 credentialRef 聚合把它补回来，轮换前能一眼看到要动几个 Agent。
+     */
+    credentialUsage: usageByCredential(rows),
+    ...listRuntimeCatalog(),
+  };
+}
+
+/** 按凭证引用聚合。env: 形态的多个 Agent 会归到同一条，轮换只需改那个变量 */
+function usageByCredential(rows: AgentRow[]) {
+  const byRef = new Map<string, { hint: string | null; kind: string; agents: string[] }>();
+
+  for (const a of rows) {
+    if (!a.credentialRef) continue;
+    const entry = byRef.get(a.credentialRef);
+    if (entry) entry.agents.push(a.name);
+    else
+      byRef.set(a.credentialRef, {
+        hint: a.credentialHint,
+        kind: describeRef(a.credentialRef).kind,
+        agents: [a.name],
+      });
+  }
+
+  return [...byRef.values()].map((e) => ({
+    ...e,
+    /** env 形态轮换只需改环境变量；内联密文要逐个 Agent 重录 */
+    rotationCost: e.kind === 'env' ? 'one_place' : `${e.agents.length}_places`,
+  }));
+}
+
+async function describeAgent(db: Database, registry: RuntimeRegistry, row: AgentRow) {
+  const cred = describeRef(row.credentialRef);
+  const spec = runtimeKindSpec(row.runtimeKind);
+
+  let capability: ReturnType<typeof buildCapability> | null = null;
+  let reachable = false;
+  let problem: string | null = null;
+
+  if (registry.has(row.id)) {
+    try {
+      capability = buildCapability(await registry.get(row.id).getCapabilities());
+      reachable = true;
+    } catch (err) {
+      problem = err instanceof Error ? err.message : '能力探测失败';
+    }
+  } else {
+    problem = `本进程没有 ${row.runtimeKind} 的适配器实现，任务派不出去`;
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    description: row.description,
+    status: row.status,
+    pausedReason: row.pausedReason,
+    ownerId: row.ownerId,
+
+    runtimeKind: row.runtimeKind,
+    runtimeKindLabel: spec?.label ?? row.runtimeKind,
+    runtimeConfig: row.runtimeConfig,
+    endpoint: row.endpoint,
+
+    /** ★ 只回 hint 与可用性判断，永不回原值 */
+    credentialHint: row.credentialHint,
+    credentialUsable: cred.usable,
+    credentialKind: cred.kind,
+    credentialProblem: cred.problem,
+
+    registered: registry.has(row.id),
+    reachable,
+    problem,
+    lastCheckAt: row.lastCheckAt?.toISOString() ?? null,
+
+    model: row.model,
+    skills: row.skills,
+    applicableTypes: row.applicableTypes,
+    permissions: permissionsOf(row),
+    maxConcurrency: row.maxConcurrency,
+    timeoutSeconds: row.timeoutSeconds,
+    costLimitPerRun: row.costLimitPerRun === null ? null : Number(row.costLimitPerRun),
+    costLimitDaily: row.costLimitDaily === null ? null : Number(row.costLimitDaily),
+
+    capability,
+  };
+}
+
+function buildCapability(manifest: Parameters<typeof checkCompatibility>[0]) {
+  const report = checkCompatibility(manifest);
+  return {
+    runtime: manifest.runtime,
+    protocolVersion: manifest.protocolVersion,
+    transport: manifest.transport,
+    models: manifest.models,
+    limits: manifest.limits,
+    tools: manifest.tools,
+    supported: report.supported,
+    missing: report.missing,
+    restricted: report.restricted,
+  };
+}
+
+// ── 校验 ──────────────────────────────────────────────────────────────
+
+function assertKind(kind: string) {
+  if (!isKnownRuntimeKind(kind)) {
+    throw new ApiError('VALIDATION_FAILED', `不支持的运行时类型：${kind}`, {
+      supported: RUNTIME_KIND_SPECS.map((k) => k.kind),
+    });
+  }
+  return runtimeKindSpec(kind)!;
+}
+
+function validateConfig(kind: string, input: Record<string, unknown> | undefined) {
+  const result = validateRuntimeConfig(kind, input);
+  if (!result.ok) {
+    /**
+     * ★ 在保存这一刻拒掉，而不是放行。
+     *   放行的表现是派发成功、CLI 启动时报一句没人看的参数错误，
+     *   而界面上这个 Agent 显示为配置完好。
+     */
+    throw new ApiError('VALIDATION_FAILED', `运行时配置不合法：${result.issues[0]!.message}`, {
+      issues: result.issues,
+    });
+  }
+  return result.config;
+}
+
+function credentialColumns(credential: string | null) {
+  if (credential === null) return { credentialRef: null, credentialHint: null };
+  try {
+    return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential) };
+  } catch (err) {
+    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    throw err;
   }
 }
 
@@ -501,7 +499,6 @@ function assertPermissionsSane(p: {
 
   const conflict = p.allowedTools.filter((t) => deniedBare.has(base(t)));
   if (conflict.length > 0) {
-    // 黑名单优先，不是错误，但用户以为自己授权了
     throw new ApiError(
       'VALIDATION_FAILED',
       `以下工具同时出现在允许与禁止列表中：${conflict.join('、')}。黑名单优先级更高，它们实际不可用`,
@@ -514,7 +511,7 @@ function assertPermissionsSane(p: {
   }
 }
 
-function permissionsOf(row: typeof agents.$inferSelect): AgentPermissions {
+function permissionsOf(row: AgentRow): AgentPermissions {
   return {
     allowedTools: row.allowedTools,
     deniedTools: row.deniedTools,
@@ -534,7 +531,8 @@ function directionOf(before: AgentPermissions, after: AgentPermissions): 'grant'
   );
 
   const beforeDenied = new Set(before.deniedTools);
-  const denyRemoved = before.deniedTools.some((t) => !after.deniedTools.includes(t)) && beforeDenied.size > 0;
+  const denyRemoved =
+    before.deniedTools.some((t) => !after.deniedTools.includes(t)) && beforeDenied.size > 0;
 
   return widened || scopeWidened || denyRemoved ? 'grant' : 'revoke';
 }

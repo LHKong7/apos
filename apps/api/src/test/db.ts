@@ -36,7 +36,7 @@ export async function resetDb(db: Database) {
     TRUNCATE TABLE
       events, run_events, artifacts,
       decision_approvals, decision_evidence, decision_options, decisions,
-      agent_runs, agent_permission_changes, agents, agent_runtimes,
+      agent_runs, agent_permission_changes, agents,
       repositories, project_conventions,
       work_item_dependencies, work_items, plans,
       requirement_assumptions, requirement_clarifications, requirements,

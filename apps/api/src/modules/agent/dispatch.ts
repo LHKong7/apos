@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import {
-  agentRuntimes,
   agents,
   artifacts,
   projectConventions,
@@ -69,12 +68,16 @@ export async function dispatchRun(
     return { ok: false, code: 'AGENT_UNAVAILABLE', detail: { agentId: input.agentId } };
   }
 
-  const [runtime] = await db
-    .select()
-    .from(agentRuntimes)
-    .where(eq(agentRuntimes.id, agent.runtimeId));
-  if (!runtime || !registry.has(runtime.id)) {
-    return { ok: false, code: 'AGENT_UNAVAILABLE', detail: { runtimeId: agent.runtimeId } };
+  /**
+   * ★ 注册表按 agentId 键控：每个 Agent 有自己的运行时实例，
+   *   因为它们各带一套 CLI 参数（effort / maxTurns / 沙箱档位…）。
+   */
+  if (!registry.has(agent.id)) {
+    return {
+      ok: false,
+      code: 'AGENT_UNAVAILABLE',
+      detail: { agentId: agent.id, runtimeKind: agent.runtimeKind },
+    };
   }
 
   const priorRuns = await db
@@ -220,7 +223,7 @@ export async function dispatchRun(
     return { ok: false, code: 'WORKSPACE_UNAVAILABLE', detail: { reason: acquired.reason } };
   }
 
-  const adapter = registry.get(runtime.id);
+  const adapter = registry.get(agent.id);
   const task: TaskDispatch = {
     runId,
     idempotencyKey,

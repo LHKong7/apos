@@ -2,7 +2,6 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import {
   agentPermissionChanges,
   agentRuns,
-  agentRuntimes,
   agents,
   projects,
   users,
@@ -12,6 +11,7 @@ import {
 import { ACTIVE_RUN_STATUSES, DEGRADATION_MATRIX, type FeatureKey } from '@apos/contracts';
 import { computeAgents, isTerminal, windowFor, type AgentPerf } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
+import { runtimeKindSpec } from '@apos/contracts';
 import { notFound } from './errors';
 import { loadAnalyticsInput } from './analytics';
 
@@ -86,11 +86,6 @@ export async function getAgent(
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
   if (!agent) throw notFound('Agent');
 
-  const [runtime] = await db
-    .select()
-    .from(agentRuntimes)
-    .where(eq(agentRuntimes.id, agent.runtimeId));
-
   const runs = await db
     .select()
     .from(agentRuns)
@@ -141,9 +136,9 @@ export async function getAgent(
    *   「这个 Agent 的暂停其实是终止」。
    */
   let capability: CapabilityReport | null = null;
-  if (registry.has(agent.runtimeId)) {
+  if (registry.has(agent.id)) {
     try {
-      const manifest = await registry.get(agent.runtimeId).getCapabilities();
+      const manifest = await registry.get(agent.id).getCapabilities();
       capability = buildCapability(manifest);
     } catch {
       capability = null;
@@ -166,7 +161,13 @@ export async function getAgent(
       costLimitPerRun: agent.costLimitPerRun === null ? null : Number(agent.costLimitPerRun),
       costLimitDaily: agent.costLimitDaily === null ? null : Number(agent.costLimitDaily),
       ownerName: userName.get(agent.ownerId) ?? '未知',
-      runtime: runtime ? { name: runtime.name, kind: runtime.kind, status: runtime.status } : null,
+      /** 运行时是 Agent 自己的属性，不再指向一个共享的「接入」对象 */
+      runtime: {
+        kind: agent.runtimeKind,
+        config: agent.runtimeConfig,
+        endpoint: agent.endpoint,
+        credentialHint: agent.credentialHint,
+      },
     },
 
     /**
@@ -233,20 +234,33 @@ export async function getAgent(
  * 这是「集成设置」里唯一有真实后端支撑的一块：能力协商与降级矩阵
  * 已经在 Agent 协议里实现了，外部系统对接（Jira / GitHub / Slack）
  * 则完全没有后端，那部分不做。
+ *
+ * ★ 取消「运行时接入」层之后，这里按 **CLI 类型**聚合而不是按接入行 ——
+ *   要回答的问题是「本组织在用哪几种 Code Agent、各自能力如何」，
+ *   而不是「有几条接入记录」。同一类型下的多个 Agent 能力清单一致，
+ *   取其中任意一个已注册的探测即可。
  */
 export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
-  const rows = await db.select().from(agentRuntimes);
   const agentRows = await db.select().from(agents);
 
+  const byKind = new Map<string, typeof agentRows>();
+  for (const a of agentRows) {
+    const list = byKind.get(a.runtimeKind);
+    if (list) list.push(a);
+    else byKind.set(a.runtimeKind, [a]);
+  }
+
   const out = [];
-  for (const rt of rows) {
-    const used = agentRows.filter((a) => a.runtimeId === rt.id);
+  for (const [kind, used] of byKind) {
+    const spec = runtimeKindSpec(kind);
+    // 取第一个已注册的 Agent 探测能力 —— 同类型的清单一致
+    const probeTarget = used.find((a) => registry.has(a.id));
+
     let capability: CapabilityReport | null = null;
     let reachable = false;
-
-    if (registry.has(rt.id)) {
+    if (probeTarget) {
       try {
-        capability = buildCapability(await registry.get(rt.id).getCapabilities());
+        capability = buildCapability(await registry.get(probeTarget.id).getCapabilities());
         reachable = true;
       } catch {
         reachable = false;
@@ -254,13 +268,13 @@ export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
     }
 
     out.push({
-      id: rt.id,
-      name: rt.name,
-      kind: rt.kind,
-      status: rt.status,
-      protocolVersion: rt.protocolVersion,
-      /** 进程里没注册适配器 = 这个运行时现在根本派不出任务 */
-      registered: registry.has(rt.id),
+      id: kind,
+      name: spec?.label ?? kind,
+      kind,
+      status: used.some((a) => a.status === 'active') ? 'active' : 'inactive',
+      protocolVersion: capability?.protocolVersion ?? null,
+      /** 进程里一个适配器都没注册 = 这一类运行时现在根本派不出任务 */
+      registered: Boolean(probeTarget),
       reachable,
       agentCount: used.length,
       agentNames: used.map((a) => a.name),

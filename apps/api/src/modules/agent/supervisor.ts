@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
-import { agentRuns, agents, agentRuntimes, runEvents, type Database } from '@apos/db';
+import { agentRuns, agents, runEvents, type Database } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, type RunEvent } from '@apos/contracts';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { WorkspaceProvisioner } from '../workspace/provisioner';
@@ -129,7 +129,7 @@ type Verdict = 'alive' | 'gone' | 'unknown';
  */
 async function probeRun(db: Database, registry: RuntimeRegistry, run: RunRow): Promise<Verdict> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
-  if (!agent || !registry.has(agent.runtimeId)) {
+  if (!agent || !registry.has(agent.id)) {
     /**
      * 适配器不在本进程 —— 对 Claude Code / Codex 这类「会话是本进程子进程」
      * 的运行时，这等价于「已经不在跑了」，因为子进程随进程消亡。
@@ -138,7 +138,7 @@ async function probeRun(db: Database, registry: RuntimeRegistry, run: RunRow): P
   }
 
   try {
-    const status = await registry.get(agent.runtimeId).queryStatus(run.id);
+    const status = await registry.get(agent.id).queryStatus(run.id);
     if ((ACTIVE_RUN_STATUSES as readonly string[]).includes(status.status)) return 'alive';
     return 'gone';
   } catch (err) {
@@ -157,9 +157,9 @@ async function handleTimeout(
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
 
   // 先叫停外部执行，再落状态 —— 反过来的话成本会在我们判完之后继续涨
-  if (agent && registry.has(agent.runtimeId)) {
+  if (agent && registry.has(agent.id)) {
     try {
-      await registry.get(agent.runtimeId).control(run.id, {
+      await registry.get(agent.id).control(run.id, {
         action: 'terminate',
         reason: '超过任务时限，由 run-supervisor 终止',
       });
@@ -283,5 +283,3 @@ export async function reclaimOnBoot(
   }
   return reclaimed;
 }
-
-export { agentRuntimes };

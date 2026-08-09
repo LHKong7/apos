@@ -1,9 +1,8 @@
-import { agentRuntimes, agents, type Database } from '@apos/db';
+import { agents, type Database } from '@apos/db';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import type { Fixture } from './db';
 
 export interface AgentFixture {
-  runtimeId: string;
   agentId: string;
   runtime: MockRuntime;
   registry: RuntimeRegistry;
@@ -28,27 +27,15 @@ export async function seedAgent(
   const runtime = opts.runtime ?? new MockRuntime();
   const registry = opts.registry ?? new RuntimeRegistry();
 
-  const [rt] = await db
-    .insert(agentRuntimes)
-    .values({
-      orgId: fx.orgId,
-      name: 'mock runtime',
-      kind: 'mock',
-      protocolVersion: '1.0',
-      capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
-    })
-    .returning();
-
-  registry.register(rt!.id, runtime);
-
   const [agent] = await db
     .insert(agents)
     .values({
       orgId: fx.orgId,
       name: opts.name ?? 'code-agent-1',
       type: 'code',
-      runtimeId: rt!.id,
-      runtimeRef: 'mock:code-1',
+      // ★ 运行时内联在 Agent 上；注册表按 agentId 键控
+      runtimeKind: 'mock',
+      capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
       model: 'claude-opus-5',
       skills: opts.skills ?? ['TypeScript', 'SQL 优化'],
       applicableTypes: opts.applicableTypes ?? ['task', 'bug', 'test', 'research', 'review'],
@@ -61,7 +48,9 @@ export async function seedAgent(
     })
     .returning();
 
-  return { runtimeId: rt!.id, agentId: agent!.id, runtime, registry };
+  registry.register(agent!.id, runtime);
+
+  return { agentId: agent!.id, runtime, registry };
 }
 
 /**

@@ -906,48 +906,99 @@ export interface BenefitLineRow {
 
 // ── Agent 配置（页面文档 08 §5.5）────────────────────────────────────
 
+export interface ConfigFieldOption {
+  value: string;
+  label: string;
+  help?: string;
+}
+
+export interface ConfigField {
+  key: string;
+  label: string;
+  type: 'string' | 'number' | 'boolean' | 'select' | 'string_list';
+  default: unknown;
+  help?: string;
+  options?: ConfigFieldOption[];
+  min?: number;
+  max?: number;
+  /** 界面据此凸显：调这个字段会花更多钱 / 会放宽安全边界 */
+  impact?: 'cost' | 'safety';
+  advanced?: boolean;
+}
+
 export interface RuntimeKindSpec {
   kind: string;
   label: string;
   description: string;
-  needsCredential: boolean;
-  credentialLabel: string | null;
-  needsEndpoint: boolean;
+  credential: { label: string; help: string } | null;
+  endpoint: { label: string; help: string } | null;
+  prerequisite: string | null;
+  fields: ConfigField[];
 }
 
-export interface RuntimeAdminRow {
+export interface AgentCapability {
+  runtime: { name: string; version: string };
+  protocolVersion: string;
+  models: string[];
+  limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
+  tools: { name: string; description: string; sideEffects: string }[];
+  supported: string[];
+  missing: { feature: string; behavior: string; userImpact: string; severity: string }[];
+  restricted: boolean;
+}
+
+export interface AgentAdminRow {
   id: string;
   name: string;
-  kind: string;
-  endpoint: string | null;
+  type: string;
+  description: string | null;
   status: string;
-  statusReason: string | null;
-  protocolVersion: string | null;
+  pausedReason: string | null;
+  ownerId: string;
+
+  runtimeKind: string;
+  runtimeKindLabel: string;
+  runtimeConfig: Record<string, unknown>;
+  endpoint: string | null;
+
   /** ★ 只有后四位。接口永不回显凭证原值 */
   credentialHint: string | null;
   credentialUsable: boolean;
   credentialKind: 'none' | 'env' | 'encrypted' | 'fingerprint';
   credentialProblem: string | null;
+
   registered: boolean;
   reachable: boolean;
   problem: string | null;
   lastCheckAt: string | null;
-  agentCount: number;
-  agentNames: string[];
-  capability: {
-    runtime: { name: string; version: string };
-    protocolVersion: string;
-    models: string[];
-    limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
-    tools: { name: string; description: string; sideEffects: string }[];
-    supported: string[];
-    missing: { feature: string; behavior: string; userImpact: string; severity: string }[];
-    restricted: boolean;
-  } | null;
+
+  model: string | null;
+  skills: string[];
+  applicableTypes: string[];
+  permissions: {
+    allowedTools: string[];
+    deniedTools: string[];
+    resourceScopes: { kind: string; ref: string; access: string }[];
+  };
+  maxConcurrency: number;
+  timeoutSeconds: number;
+  costLimitPerRun: number | null;
+  costLimitDaily: number | null;
+
+  capability: AgentCapability | null;
 }
 
-export interface RuntimeAdminResponse {
-  runtimes: RuntimeAdminRow[];
+export interface CredentialUsageRow {
+  hint: string | null;
+  kind: string;
+  agents: string[];
+  /** env 形态轮换只需改环境变量；内联密文要逐个 Agent 重录 */
+  rotationCost: string;
+}
+
+export interface AgentAdminResponse {
+  agents: AgentAdminRow[];
+  credentialUsage: CredentialUsageRow[];
   kinds: RuntimeKindSpec[];
   canStoreInlineCredential: boolean;
   credentialHelp: string;

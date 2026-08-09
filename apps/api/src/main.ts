@@ -11,7 +11,7 @@ import {
 } from '@apos/integrations';
 import { DevExternalStore } from './modules/integration/dev-store';
 import { buildApp } from './app';
-import { syncRuntimes } from './modules/agent/runtime-factory';
+import { syncAgents } from './modules/agent/runtime-factory';
 import { WorkspaceProvisioner } from './modules/workspace/provisioner';
 import { probeGit } from './modules/workspace/git';
 import { startFlowLoops } from './workers/flow-loops';
@@ -31,26 +31,26 @@ async function main() {
 
   const diagnose = (message: string, detail?: unknown) => console.warn('[runtime]', message, detail ?? '');
 
-  const boot = await syncRuntimes(db, registry, { onDiagnostic: diagnose });
+  const boot = await syncAgents(db, registry, { onDiagnostic: diagnose });
   if (boot.skipped.length > 0) {
-    console.warn(`[runtime] 跳过 ${boot.skipped.length} 个运行时：${boot.skipped.join('、')}`);
+    console.warn(`[runtime] 跳过 ${boot.skipped.length} 个 Agent：${boot.skipped.join('、')}`);
   }
 
   /**
    * 周期同步。★ 只增不减：正在跑的 Run 还握着那个适配器，
    * 把它摘掉等于中断一次执行，代价不对等。
    *
-   * 新建/改配置时 admin 接口会立刻注册（registerNow），
-   * 这个循环兜的是多进程部署下「别的进程建的运行时」。
+   * 新建/改配置时 admin 接口会立刻注册（registerAgentNow），
+   * 这个循环兜的是多进程部署下「别的进程建的 Agent」。
    */
   const runtimeSyncMs = Number(process.env['RUNTIME_SYNC_INTERVAL_MS'] ?? 15_000);
   if (runtimeSyncMs > 0) {
     setInterval(() => {
-      syncRuntimes(db, registry, { onDiagnostic: diagnose })
-        .then(({ added }) => {
-          if (added > 0) console.log(`[runtime] 新注册 ${added} 个运行时`);
+      syncAgents(db, registry, { onDiagnostic: diagnose })
+        .then((r: { added: number }) => {
+          if (r.added > 0) console.log(`[runtime] 新注册 ${r.added} 个 Agent`);
         })
-        .catch((err) => console.error('[runtime] 同步失败', err));
+        .catch((err: unknown) => console.error('[runtime] 同步失败', err));
     }, runtimeSyncMs).unref();
   }
 

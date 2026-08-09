@@ -94,7 +94,7 @@ export async function getRunDetail(db: Database, runId: string) {
           name: agent.name,
           type: agent.type,
           model: run.model ?? agent.model,
-          runtimeRef: agent.runtimeRef,
+          runtimeKind: agent.runtimeKind,
           costLimitPerRun: agent.costLimitPerRun,
         }
       : null,

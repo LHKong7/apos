@@ -35,6 +35,14 @@ export interface CodexRuntimeOptions {
   model?: string;
   /** CLI 可执行文件名 */
   binary?: string;
+  /**
+   * 审批策略。
+   *
+   * ★ 非交互执行下只有 'never' 真正可用：其余档位会让 CLI 挂起等人在终端上
+   *   确认，而这里没有终端 —— 表现是 Run 一直卡着直到超时。开放这个配置项
+   *   是因为有人会接自己的 codex 封装，但默认必须是 never。
+   */
+  approvalPolicy?: string;
   /** 透传给子进程的环境变量名白名单 */
   passthroughEnv?: string[];
   /** 注入 spawn，测试用 */
@@ -366,7 +374,7 @@ export class CodexRuntime implements AgentRuntimeAdapter {
     args.push('--model', this.modelFor(state.task));
     if (state.task.workspace) args.push('--cd', state.task.workspace.path);
     // 非交互执行：任何需要人确认的操作直接失败，而不是挂着等
-    args.push('--ask-for-approval', 'never');
+    args.push('--ask-for-approval', this.options.approvalPolicy ?? 'never');
     args.push('-');
     return args;
   }

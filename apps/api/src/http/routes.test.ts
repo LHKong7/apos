@@ -1246,7 +1246,7 @@ describe('★ Run 控制：能力不足要如实报，不能悄悄降级', () =>
     if (!dispatched.ok) throw new Error('派发失败');
 
     // 控制指令要走 HTTP，app 用的是外层 registry
-    registry.register(agent.runtimeId, runtime);
+    registry.register(agent.agentId, runtime);
     return dispatched.runId;
   }
 
