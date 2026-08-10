@@ -13,6 +13,7 @@ import { and, isNull, sql } from 'drizzle-orm';
 import {
   agents,
   createDatabase,
+  organizationMembers,
   organizations,
   projectMembers,
   projects,
@@ -36,6 +37,7 @@ import { scheduleRound } from '../modules/flow/scheduler';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { transition } from '../modules/flow/transition';
 import { createRole, syncBuiltinRoles } from '../http/roles';
+import { allocateNumbers } from '../modules/work-item/numbering';
 import { seedHistory } from './seed-history';
 
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
@@ -54,12 +56,15 @@ async function main() {
         work_item_dependencies, work_items, plans,
         requirement_assumptions, requirement_clarifications, requirements,
         policy_versions, policies,
-        project_members, roles, projects, users, organizations
+        project_members, roles, projects, organization_members, users, organizations
       RESTART IDENTITY CASCADE
     `);
   }
 
-  const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Acme', slug: 'acme', description: '演示组织' })
+    .returning();
   const orgId = org!.id;
 
   // 建组织就要预置内置角色 —— 成员表对 roles 有外键（§2.2）
@@ -77,21 +82,30 @@ async function main() {
   const [lead, dba, pm, sponsor, viewer] = await db
     .insert(users)
     .values([
-      { orgId, email: 'zhangwei@acme.dev', name: '张伟', orgRole: 'org_admin' },
-      { orgId, email: 'wangqiang@acme.dev', name: '王强', orgRole: 'member',
-        approvalScopes: ['database', 'production'] },
-      { orgId, email: 'lina@acme.dev', name: '李娜', orgRole: 'member' },
-      { orgId, email: 'chenjing@acme.dev', name: '陈静', orgRole: 'member',
-        approvalScopes: ['budget'] },
-      { orgId, email: 'zhaomin@acme.dev', name: '赵敏', orgRole: 'member' },
+      { email: 'zhangwei@acme.dev', name: '张伟' },
+      { email: 'wangqiang@acme.dev', name: '王强', approvalScopes: ['database', 'production'] },
+      { email: 'lina@acme.dev', name: '李娜' },
+      { email: 'chenjing@acme.dev', name: '陈静', approvalScopes: ['budget'] },
+      { email: 'zhaomin@acme.dev', name: '赵敏' },
     ])
     .returning();
+
+  // 归属与组织角色在 organization_members —— 账号本身是全局的
+  await db.insert(organizationMembers).values([
+    { orgId, userId: lead!.id, orgRole: 'org_admin' },
+    { orgId, userId: dba!.id, orgRole: 'member' },
+    { orgId, userId: pm!.id, orgRole: 'member' },
+    { orgId, userId: sponsor!.id, orgRole: 'member' },
+    { orgId, userId: viewer!.id, orgRole: 'member' },
+  ]);
 
   const [project] = await db
     .insert(projects)
     .values({
       orgId,
       name: '订单系统重构',
+      // 工作项编号的前缀 —— 演示数据里要看得见 ORD-1 这种形态
+      identifier: 'ORD',
       goal: '把订单查询从 8s 降到 1s 以内，并支持多条件组合查询',
       techLeadId: lead!.id,
       autonomyLevel: 'agent_led_approval',
@@ -361,11 +375,13 @@ async function main() {
    * 这让「手动拖动」这条异常路径在演示数据上根本走不通。
    * 真实项目里也总有临时插进来的独立任务，补一张。
    */
+  const [standaloneNumber] = await allocateNumbers(db, projectId, 1);
   const [standalone] = await db
     .insert(workItems)
     .values({
       orgId,
       projectId,
+      number: standaloneNumber!,
       type: 'bug',
       status: 'executing',
       stage: 'execution',
@@ -407,11 +423,13 @@ async function main() {
    * 根本派发不出去，注入失败样本会静默落空（种子跑完看起来一切正常，
    * 但界面上的失败态、错误 Tab、恢复决策全都没有数据）。
    */
+  const [failingNumber] = await allocateNumbers(db, projectId, 1);
   const [failing] = await db
     .insert(workItems)
     .values({
       orgId,
       projectId,
+      number: failingNumber!,
       type: 'bug',
       status: 'ready',
       stage: 'execution',

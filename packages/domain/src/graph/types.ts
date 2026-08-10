@@ -19,6 +19,8 @@ export type NodeKind = (typeof NODE_KINDS)[number];
 
 export interface GraphNode {
   id: string;
+  /** 人类可读编号（`ORD-19`）—— 图上要能指着一个节点说出它的名字 */
+  ref: string;
   kind: NodeKind;
   title: string;
   type: string;

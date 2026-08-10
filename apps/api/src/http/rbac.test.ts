@@ -7,10 +7,10 @@ import {
   agents,
   decisions,
   events,
+  organizationMembers,
   plans,
   policies,
   projectMembers,
-  users,
 } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
@@ -666,7 +666,10 @@ describe('成员与角色管理', () => {
     });
     expect(res.statusCode).toBe(404);
 
-    const [after] = await db.select().from(users).where(eq(users.id, outsider.userId));
+    const [after] = await db
+      .select()
+      .from(organizationMembers)
+      .where(eq(organizationMembers.userId, outsider.userId));
     expect(after!.orgRole).toBe('member');
   });
 
@@ -733,7 +736,10 @@ describe('组织管理员的「全部权限」以组织为界', () => {
 
   it('★ 别的组织的管理员照样是 404 —— 管理员不是跨租户的', async () => {
     const outsider = await createOutsider(db, fx);
-    await db.update(users).set({ orgRole: 'org_admin' }).where(eq(users.id, outsider.userId));
+    await db
+      .update(organizationMembers)
+      .set({ orgRole: 'org_admin' })
+      .where(eq(organizationMembers.userId, outsider.userId));
 
     const res = await app.inject({
       method: 'GET',

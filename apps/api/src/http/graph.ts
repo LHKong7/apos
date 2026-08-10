@@ -20,6 +20,7 @@ import {
   type LayoutKind,
   type NodeKind,
 } from '@apos/domain';
+import { formatRef } from '../modules/work-item/numbering';
 import { notFound } from './errors';
 
 /**
@@ -58,7 +59,7 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
 
   const ids = items.map((i) => i.id);
 
-  const nodes = await buildNodes(db, items);
+  const nodes = await buildNodes(db, items, project.identifier);
   const edges: GraphEdge[] = deps
     // 跨项目或已删除任务的悬空边会让布局算出诡异的空列
     .filter((d) => ids.includes(d.fromId) && ids.includes(d.toId))
@@ -89,7 +90,11 @@ const DEFAULT_HOURS: Record<string, number> = {
   task: 6,
 };
 
-async function buildNodes(db: Database, items: ItemRow[]): Promise<GraphNode[]> {
+async function buildNodes(
+  db: Database,
+  items: ItemRow[],
+  identifier: string,
+): Promise<GraphNode[]> {
   const ids = items.map((i) => i.id);
 
   const agentRows = await db.select({ id: agents.id, name: agents.name }).from(agents);
@@ -121,6 +126,7 @@ async function buildNodes(db: Database, items: ItemRow[]): Promise<GraphNode[]> 
 
     return {
       id: item.id,
+      ref: formatRef(identifier, item.number),
       kind: nodeKindOf(item, Boolean(decision)),
       title: item.title,
       type: item.type,

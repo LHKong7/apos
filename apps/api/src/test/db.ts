@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
   createDatabase,
+  organizationMembers,
   organizations,
   projectMembers,
   projects,
@@ -13,6 +14,7 @@ import {
 } from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
 import { syncBuiltinRoles } from '../http/roles';
+import { allocateNumbers } from '../modules/work-item/numbering';
 
 /**
  * ★ 默认指向 apos_test，绝不是开发库。
@@ -42,7 +44,7 @@ export async function resetDb(db: Database) {
       work_item_dependencies, work_items, plans,
       requirement_assumptions, requirement_clarifications, requirements,
       policy_versions, policies,
-      project_members, roles, projects, users, organizations
+      project_members, roles, projects, organization_members, users, organizations
     RESTART IDENTITY CASCADE
   `);
 }
@@ -57,7 +59,10 @@ export async function seedFixture(
   db: Database,
   overrides: { autonomyLevel?: 'human_led' | 'agent_led_approval' | 'agent_autonomous' } = {},
 ): Promise<Fixture> {
-  const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Acme', slug: `acme-${randomUUID().slice(0, 8)}` })
+    .returning();
   /**
    * ★★ 建组织就要预置内置角色。
    *
@@ -80,13 +85,15 @@ export async function seedFixture(
    */
   const [user] = await db
     .insert(users)
-    .values({
-      orgId: org!.id,
-      email: `u-${randomUUID()}@acme.dev`,
-      name: '张伟',
-      orgRole: 'org_admin',
-    })
+    .values({ email: `u-${randomUUID()}@acme.dev`, name: '张伟' })
     .returning();
+  /**
+   * ★ 归属与组织角色在 organization_members —— 账号本身不属于任何组织。
+   *   漏了这一行的表现是每个请求都 401「还不属于任何组织」。
+   */
+  await db
+    .insert(organizationMembers)
+    .values({ orgId: org!.id, userId: user!.id, orgRole: 'org_admin' });
   const [project] = await db
     .insert(projects)
     .values({
@@ -120,11 +127,15 @@ export async function seedFixture(
 
 /** 造一个「不是本项目成员」的用户，用于验证越权被挡下 */
 export async function createOutsider(db: Database, fx: Fixture) {
-  const [org] = await db.insert(organizations).values({ name: 'Other Corp' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Other Corp', slug: `other-${randomUUID().slice(0, 8)}` })
+    .returning();
   const [user] = await db
     .insert(users)
-    .values({ orgId: org!.id, email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
+    .values({ email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
     .returning();
+  await db.insert(organizationMembers).values({ orgId: org!.id, userId: user!.id });
   await syncBuiltinRoles(db, org!.id);
   return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
 }
@@ -151,12 +162,13 @@ export async function createMember(
   const [user] = await db
     .insert(users)
     .values({
-      orgId: fx.orgId,
       email: `m-${randomUUID()}@acme.dev`,
       name: opts.name ?? opts.projectRole ?? 'member',
-      orgRole: opts.orgRole ?? 'member',
     })
     .returning();
+  await db
+    .insert(organizationMembers)
+    .values({ orgId: fx.orgId, userId: user!.id, orgRole: opts.orgRole ?? 'member' });
 
   const role = opts.projectRole === undefined ? 'member' : opts.projectRole;
   if (role !== null) {
@@ -173,11 +185,17 @@ export async function createWorkItem(
   overrides: Partial<typeof workItems.$inferInsert> = {},
 ) {
   const status = (overrides.status ?? 'ready') as WorkItemStatus;
+  /**
+   * ★ 夹具也要分配编号 —— 真实路径（计划分解 / 手工创建）都会分配，
+   *   夹具跳过它就等于测的不是真实形态，而 `ref` 会显示成 `ORD-?`。
+   */
+  const [number] = await allocateNumbers(db, fx.projectId, 1);
   const [item] = await db
     .insert(workItems)
     .values({
       orgId: fx.orgId,
       projectId: fx.projectId,
+      number: number!,
       type: 'task',
       status,
       stage: STATUS_STAGE[status],

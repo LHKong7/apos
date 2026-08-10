@@ -2,7 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { events, integrations, projectMembers, syncConflicts, users, workItems } from '@apos/db';
+import {
+  events,
+  integrations,
+  organizationMembers,
+  projectMembers,
+  syncConflicts,
+  users,
+  workItems,
+} from '@apos/db';
 import type { IntegrationRegistry } from '@apos/integrations';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -37,8 +45,9 @@ async function asRole(role: string, userId = fx.userId) {
 async function newUser(name: string): Promise<string> {
   const [u] = await db
     .insert(users)
-    .values({ orgId: fx.orgId, email: `${randomUUID()}@acme.dev`, name })
+    .values({ email: `${randomUUID()}@acme.dev`, name })
     .returning();
+  await db.insert(organizationMembers).values({ orgId: fx.orgId, userId: u!.id });
   return u!.id;
 }
 

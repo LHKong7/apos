@@ -113,6 +113,13 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
           {card.title}
         </h3>
       </header>
+      {/*
+        ★ 编号是这张卡唯一能**用嘴说出来**的名字：站会上指一张卡、
+          聊天里提一条任务、提交信息里引用它，用的都是它而不是 uuid。
+          放在标题下面而不是标题里 —— 它是标识不是内容，
+          抢在标题前面会让扫视时先读到一串没有信息量的字符。
+      */}
+      <p className="mt-0.5 pl-5 font-mono text-[10px] text-slate-400">{card.ref}</p>
 
       {/* 已了结的 Gate（已批准 / 人工接管…）没有待办，只留一个小徽标交代来龙去脉 */}
       {gate && !card.humanGateRef && (

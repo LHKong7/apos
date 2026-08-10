@@ -44,6 +44,9 @@ import type {
   RunEventPage,
   User,
   WorkItemDetail,
+  OrganizationRow,
+  OrganizationsResponse,
+  OrganizationMembersResponse,
 } from './types';
 
 /**
@@ -74,12 +77,33 @@ export function getCurrentUserId(): string | null {
   return currentUserId;
 }
 
+/**
+ * 当前组织。
+ *
+ * ★★ 账号可以属于多个组织之后，「在哪个组织」不再能从账号推出来，
+ *   必须每个请求都带上 —— 否则服务端只能回落到缺省组织，
+ *   表现是切换器显示 A、数据来自 B，而两边都不报错。
+ *
+ * ★ 为 null 时**不发这个头**，让服务端给缺省值。前端瞎猜一个 id
+ *   发过去，只会把「还没选」变成一个 404。
+ */
+let currentOrgId: string | null = null;
+
+export function setCurrentOrgId(id: string | null) {
+  currentOrgId = id;
+}
+
+export function getCurrentOrgId(): string | null {
+  return currentOrgId;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   if (currentUserId) headers.set('X-User-Id', currentUserId);
+  if (currentOrgId) headers.set('X-Org-Id', currentOrgId);
   if (init.json !== undefined) headers.set('Content-Type', 'application/json');
 
   const res = await fetch(`/api/v1${path}`, {
@@ -126,7 +150,67 @@ export function boardQueryString(filters: BoardFilters): string {
 export const api = {
   users: () => request<{ users: User[] }>('/users'),
 
+  // ── 组织（顶层容器；Plane 里叫 Workspace）────────────────────────────
+  organizations: () => request<OrganizationsResponse>('/organizations'),
+
+  createOrganization: (body: { name: string; slug?: string; description?: string | null }) =>
+    request<{ organization: OrganizationRow }>('/organizations', { method: 'POST', json: body }),
+
+  updateOrganization: (
+    id: string,
+    body: { name?: string; slug?: string; description?: string | null },
+  ) =>
+    request<{ organization: OrganizationRow }>(`/organizations/${id}`, {
+      method: 'PATCH',
+      json: body,
+    }),
+
+  deleteOrganization: (id: string) =>
+    request<{ ok: true }>(`/organizations/${id}`, { method: 'DELETE' }),
+
+  organizationMembers: (id: string) =>
+    request<OrganizationMembersResponse>(`/organizations/${id}/members`),
+
+  addOrganizationMember: (id: string, body: { email: string; orgRole?: string }) =>
+    request<{ ok: true; userId: string }>(`/organizations/${id}/members`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  removeOrganizationMember: (id: string, userId: string) =>
+    request<{ ok: true }>(`/organizations/${id}/members/${userId}`, { method: 'DELETE' }),
+
   projects: () => request<{ projects: Project[] }>('/projects'),
+
+  /**
+   * 手工建任务。
+   *
+   * ★ 建出来的是**草稿**，不可派发 —— 放行去执行要 `plan.approve`。
+   *   服务端返回的 `notice` 就是这句话，界面上要原样说出来。
+   */
+  createWorkItem: (
+    projectId: string,
+    body: {
+      title: string;
+      description?: string;
+      type?: string;
+      priority?: number;
+      riskLevel?: string;
+      ownerId?: string | null;
+      parentId?: string | null;
+    },
+  ) =>
+    request<{ item: { id: string; ref: string; status: string }; notice: string }>(
+      `/projects/${projectId}/work-items`,
+      { method: 'POST', json: body },
+    ),
+
+  createProject: (body: {
+    name: string;
+    goal?: string;
+    autonomyLevel?: string;
+    budgetAmount?: string;
+  }) => request<{ project: Project }>('/projects', { method: 'POST', json: body }),
 
   project: (id: string) =>
     request<{ project: Project; metrics: Record<string, unknown> }>(`/projects/${id}`),

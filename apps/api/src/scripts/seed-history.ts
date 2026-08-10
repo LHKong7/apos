@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { allocateNumbers } from '../modules/work-item/numbering';
 import {
   agentRuns,
   decisions,
@@ -255,6 +256,15 @@ export async function seedHistory(ctx: Ctx): Promise<number> {
       occurredAt: new Date(target.createdAt as Date),
     });
   }
+
+  /**
+   * ★ 编号统一在这里分配，不在构造每一行时逐个要 ——
+   *   一次要 n 个才能保证连号，而且只推一次游标。
+   */
+  const numbers = await allocateNumbers(db, projectId, itemRows.length);
+  itemRows.forEach((row, i) => {
+    row.number = numbers[i]!;
+  });
 
   await insertChunked(db, workItems, itemRows);
   await insertChunked(db, agentRuns, runRows);

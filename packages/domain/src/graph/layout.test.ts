@@ -5,6 +5,7 @@ import type { GraphEdge, GraphNode } from './types';
 function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
   return {
     id,
+    ref: `T-${id}`,
     kind: 'agent_task',
     title: id,
     type: 'task',

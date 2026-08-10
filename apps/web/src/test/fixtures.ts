@@ -3,6 +3,7 @@ import type { BoardCard, BoardResponse, StreamEvent } from '../lib/api/types';
 export function card(overrides: Partial<BoardCard> = {}): BoardCard {
   return {
     id: 'wi-1',
+    ref: 'ORD-1',
     title: '实现多条件查询 API',
     type: 'task',
     status: 'ready',

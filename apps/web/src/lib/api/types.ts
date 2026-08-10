@@ -19,6 +19,8 @@ export type { Permission, ProjectRole };
 
 export interface BoardCard {
   id: string;
+  /** 人类可读编号（`ORD-19`）—— 卡片上要能指着它说出名字 */
+  ref: string;
   title: string;
   type: string;
   status: WorkItemStatus;
@@ -72,7 +74,11 @@ export interface User {
   name: string;
   email: string;
   avatarUrl: string | null;
-  orgRole: string;
+  /**
+   * ★ 可能为 null：身份还没落定时没有"当前组织"，
+   *   组织角色是跟着归属走的，那一刻任何一个值都是编的。
+   */
+  orgRole: string | null;
   approvalScopes: string[];
 }
 
@@ -150,6 +156,8 @@ export interface RolesResponse {
 }
 
 export interface Project {
+  /** 工作项编号的前缀（`ORD` → `ORD-19`）*/
+  identifier: string;
   id: string;
   name: string;
   goal: string | null;
@@ -218,6 +226,8 @@ export interface DecisionDetail {
 export interface WorkItemDetail {
   item: {
     id: string;
+    /** 人类可读编号（`ORD-19`）*/
+    ref: string;
     title: string;
     description: string | null;
     type: string;
@@ -1159,4 +1169,43 @@ export interface ConventionRow {
 export interface ConventionsResponse {
   conventions: ConventionRow[];
   notice: string;
+}
+
+// ── 组织（顶层容器；Plane 里叫 Workspace）──────────────────────────────
+/**
+ * ★ 这里不叫 Workspace：`workspace` 在这个代码库里已经指 Agent 的 git 工作区。
+ *   两个都叫这个名字，排障时没人分得清在说哪一个。
+ */
+export interface OrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  /** 当前身份在**这个**组织里的角色 —— 同一个人在别的组织可以不一样 */
+  orgRole: string;
+  orgRoleLabel: string;
+  projectCount: number;
+  joinedAt: string;
+}
+
+export interface OrganizationsResponse {
+  organizations: OrganizationRow[];
+  /** ★ 服务端算出来的当前组织。前端不该自己猜缺省值 */
+  currentOrgId: string;
+}
+
+export interface OrganizationMemberRow {
+  userId: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  status: string;
+  orgRole: string;
+  orgRoleLabel: string;
+  addedAt: string;
+}
+
+export interface OrganizationMembersResponse {
+  members: OrganizationMemberRow[];
+  assignableOrgRoles: { role: string; label: string }[];
 }

@@ -10,6 +10,7 @@ import { ErrorState, CardSkeleton } from '../../components/states';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { ManualMoveDialog } from '../../features/work-item/ManualMoveDialog';
+import { CreateWorkItemDialog } from '../../features/work-item/CreateWorkItemDialog';
 import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard } from '../../lib/api/types';
 import { TopBar } from './TopBar';
@@ -58,6 +59,7 @@ export function BoardPage() {
     toStage: Stage;
   } | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   useProjectStream(projectId);
@@ -167,6 +169,7 @@ export function BoardPage() {
         onOpenAnalytics={() => navigate(`/projects/${projectId}/analytics`)}
         onOpenPolicies={() => navigate(`/projects/${projectId}/settings/policies`)}
         onOpenRequirements={() => navigate(`/projects/${projectId}/requirements`)}
+        onNewWorkItem={() => setCreating(true)}
         summary={board.data?.summary}
         view={view}
         filters={filters}
@@ -248,6 +251,10 @@ export function BoardPage() {
             知道了
           </button>
         </div>
+      )}
+
+      {creating && projectId && (
+        <CreateWorkItemDialog projectId={projectId} onClose={() => setCreating(false)} />
       )}
 
       {pendingMove && (

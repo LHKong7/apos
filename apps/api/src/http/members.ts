@@ -1,9 +1,18 @@
-import { and, eq, inArray, ne } from 'drizzle-orm';
-import { agents, projectMembers, projects, roles, users, type Database } from '@apos/db';
+import { and, eq, inArray } from 'drizzle-orm';
+import {
+  agents,
+  organizationMembers,
+  projectMembers,
+  projects,
+  roles,
+  users,
+  type Database,
+} from '@apos/db';
 import { humanActor, isOrgAdmin, ORG_ROLE_LABEL, OrgRole } from '@apos/contracts';
 import { roleAcceptsActor, type Permission } from '@apos/domain';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, notFound } from './errors';
+import { assertNotLastAdmin } from './organizations';
 
 /**
  * 成员与角色指派 —— 让 RBAC 真的可用。
@@ -41,6 +50,11 @@ export async function listMembers(db: Database, projectId: string, orgId: string
   const humanIds = rows.filter((r) => r.actorType === 'human').map((r) => r.actorId);
   const agentIds = rows.filter((r) => r.actorType === 'agent').map((r) => r.actorId);
 
+  /**
+   * ★ 组织角色现在跟着**归属**走而不是账号，所以这里必须 join
+   *   organization_members 并按本组织过滤 —— 同一个人在别的组织
+   *   可能是管理员，那与这个项目无关，显示出来是误导。
+   */
   const humanRows = humanIds.length
     ? await db
         .select({
@@ -48,9 +62,13 @@ export async function listMembers(db: Database, projectId: string, orgId: string
           name: users.name,
           email: users.email,
           avatarUrl: users.avatarUrl,
-          orgRole: users.orgRole,
+          orgRole: organizationMembers.orgRole,
         })
         .from(users)
+        .leftJoin(
+          organizationMembers,
+          and(eq(organizationMembers.userId, users.id), eq(organizationMembers.orgId, orgId)),
+        )
         .where(inArray(users.id, humanIds))
     : [];
   const agentRows = agentIds.length
@@ -61,7 +79,8 @@ export async function listMembers(db: Database, projectId: string, orgId: string
     : [];
 
   const byId = new Map<string, { name: string; email?: string; orgRole?: string; sub?: string }>();
-  for (const u of humanRows) byId.set(u.id, { name: u.name, email: u.email, orgRole: u.orgRole });
+  for (const u of humanRows)
+    byId.set(u.id, { name: u.name, email: u.email, orgRole: u.orgRole ?? undefined });
   for (const a of agentRows) byId.set(a.id, { name: a.name, sub: `${a.type} · ${a.status}` });
 
   /** 可指派的角色，按担任者类型分开 —— 界面上人和 Agent 的下拉框内容不同 */
@@ -104,7 +123,7 @@ export interface RoleChangeContext {
 
 export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKey: string) {
   const project = await loadProject(db, ctx.projectId);
-  const target = await loadTarget(db, ctx.actorType, ctx.targetId);
+  const target = await loadTarget(db, ctx.actorType, ctx.targetId, project.orgId);
 
   /**
    * ★ 只能加本组织的人 / 本组织的 Agent。
@@ -190,54 +209,54 @@ export async function removeMember(db: Database, ctx: RoleChangeContext) {
   return { ok: true as const, removed: true };
 }
 
-/** 组织角色变更（§2.2「org_admin：身份管理」）*/
+/**
+ * 组织角色变更（§2.2「org_admin：身份管理」）。
+ *
+ * ★★ 改的是**这个组织里的**角色，不是这个账号的属性。
+ *
+ *   账号可以属于多个组织之后，「把张三降级」这句话必须带上「在哪个组织」——
+ *   否则在 A 组织点一下会顺手把他在 B 组织的管理员身份也拿掉，
+ *   而 B 组织的人完全不知道发生了什么。
+ */
 export async function setOrgRole(
   db: Database,
-  ctx: { targetUserId: string; actorId: string; correlationId: string },
+  ctx: { orgId: string; targetUserId: string; actorId: string; correlationId: string },
   role: OrgRole,
 ) {
-  const target = await loadUser(db, ctx.targetUserId);
-  const actor = await loadUser(db, ctx.actorId);
+  const [target] = await db
+    .select({ orgRole: organizationMembers.orgRole })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.orgId, ctx.orgId),
+        eq(organizationMembers.userId, ctx.targetUserId),
+      ),
+    );
 
   // 组织管理员的「全部权限」以组织为界 —— 越界就是多租户隔离失效
-  if (target.orgId !== actor.orgId) {
+  if (!target) {
     throw new ApiError('NOT_FOUND', '用户不存在，或不在你的组织内', {
       targetUserId: ctx.targetUserId,
     });
   }
   if (target.orgRole === role) return { ok: true as const, orgRole: role, changed: false };
 
-  /**
-   * ★ 不能把最后一个组织管理员降级。
-   *
-   *   没有这条的话，一次手滑就让整个组织再也没有人能管身份、
-   *   定义角色、改组织级 Policy、看审计 —— 而恢复它需要直接改数据库。
-   *   「把自己锁在门外」是权限系统最常见的自伤方式。
-   */
   if (isOrgAdmin(target.orgRole) && !isOrgAdmin(role)) {
-    const others = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(
-          eq(users.orgId, target.orgId),
-          ne(users.id, ctx.targetUserId),
-          inArray(users.orgRole, ['org_admin', 'admin']),
-        ),
-      );
-    if (others.length === 0) {
-      throw new ApiError(
-        'VALIDATION_FAILED',
-        '这是组织里最后一个管理员，降级后将没有人能管理身份与组织级规则。请先指定另一位管理员。',
-        { targetUserId: ctx.targetUserId },
-      );
-    }
+    await assertNotLastAdmin(db, ctx.orgId, ctx.targetUserId);
   }
 
-  await db.update(users).set({ orgRole: role }).where(eq(users.id, ctx.targetUserId));
+  await db
+    .update(organizationMembers)
+    .set({ orgRole: role })
+    .where(
+      and(
+        eq(organizationMembers.orgId, ctx.orgId),
+        eq(organizationMembers.userId, ctx.targetUserId),
+      ),
+    );
 
   await emitAndPublish(db, {
-    orgId: target.orgId,
+    orgId: ctx.orgId,
     projectId: null,
     type: 'user.org_role_changed',
     actor: humanActor(ctx.actorId),
@@ -258,11 +277,12 @@ export async function listOrgUsers(db: Database, orgId: string) {
       name: users.name,
       email: users.email,
       avatarUrl: users.avatarUrl,
-      orgRole: users.orgRole,
+      orgRole: organizationMembers.orgRole,
       status: users.status,
     })
-    .from(users)
-    .where(eq(users.orgId, orgId))
+    .from(organizationMembers)
+    .innerJoin(users, eq(users.id, organizationMembers.userId))
+    .where(eq(organizationMembers.orgId, orgId))
     .orderBy(users.name);
 
   const agentRows = await db
@@ -365,17 +385,26 @@ async function loadProject(db: Database, projectId: string) {
   return row;
 }
 
-async function loadUser(db: Database, userId: string) {
+/**
+ * ★ 账号是全局的，所以「这个人在哪个组织」不再能从 users 上读出来。
+ *   项目成员判定要的是「他在**这个项目所属组织**里有没有位置」，
+ *   所以带上 orgId 去查归属表。
+ */
+async function loadUser(db: Database, userId: string, orgId: string) {
   const [row] = await db
-    .select({ id: users.id, orgId: users.orgId, orgRole: users.orgRole, name: users.name })
+    .select({ id: users.id, name: users.name, orgRole: organizationMembers.orgRole })
     .from(users)
+    .leftJoin(
+      organizationMembers,
+      and(eq(organizationMembers.userId, users.id), eq(organizationMembers.orgId, orgId)),
+    )
     .where(eq(users.id, userId));
   if (!row) throw notFound('用户');
-  return row;
+  return { ...row, orgId: row.orgRole === null ? null : orgId };
 }
 
-async function loadTarget(db: Database, actorType: MemberActorType, id: string) {
-  if (actorType === 'human') return loadUser(db, id);
+async function loadTarget(db: Database, actorType: MemberActorType, id: string, orgId: string) {
+  if (actorType === 'human') return loadUser(db, id, orgId);
   const [row] = await db
     .select({ id: agents.id, orgId: agents.orgId, name: agents.name })
     .from(agents)

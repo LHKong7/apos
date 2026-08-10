@@ -3,6 +3,8 @@ import { ActorType } from '../common/actor';
 import { PolicyContext } from '../policy/index';
 
 export const SubjectType = z.enum([
+  /** 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace，这里不用那个词，见 db schema） */
+  'organization',
   'project',
   'requirement',
   'plan',
@@ -58,6 +60,18 @@ export interface DomainEvent {
 
 /** 事件类型目录 —— docs/tech/03-event-model.md §7。命名规范 {subject}.{过去式动词} */
 export const DOMAIN_EVENT_TYPES = [
+  /**
+   * organization —— 顶层容器的生命周期与归属变更。
+   *
+   * ★ 归属变更必须记审计：「谁把谁加进了哪个组织」是提权路径的第一步，
+   *   查不到它，跨租户的权限累积就无从追溯。
+   */
+  'organization.created',
+  'organization.updated',
+  'organization.deleted',
+  'organization.member_added',
+  'organization.member_removed',
+  'organization.member_role_changed',
   // project
   'project.created',
   'project.autonomy_changed',

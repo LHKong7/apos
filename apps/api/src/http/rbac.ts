@@ -1,6 +1,15 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { agentRuns, agents, projectMembers, projects, roles, users, type Database } from '@apos/db';
+import {
+  agentRuns,
+  agents,
+  organizationMembers,
+  projectMembers,
+  projects,
+  roles,
+  users,
+  type Database,
+} from '@apos/db';
 import { isOrgAdmin, type ActorType, type OrgRole } from '@apos/contracts';
 import {
   PERMISSIONS,
@@ -52,6 +61,61 @@ export interface RequestActor extends RbacActor {
   projectId: string | null;
 }
 
+/** 「当前在哪个组织」的请求头，和 X-User-Id 并列 */
+export const ORG_HEADER = 'x-org-id';
+
+export function orgHeaderOf(req: { headers: Record<string, unknown> }): string | null {
+  const raw = req.headers[ORG_HEADER];
+  return typeof raw === 'string' && raw !== '' ? raw : null;
+}
+
+/**
+ * 解析「这次请求属于哪个组织」。
+ *
+ * ★★ 账号可以属于多个组织之后，这件事不再能从账号上读出来 ——
+ *   必须由请求显式带上。带来的第一个后果是：**没带头时不能报错**。
+ *
+ *   老客户端、直接 curl 的脚本、seed 之后第一次打开的页面都不会带，
+ *   而那时报 400 的表现是「整个站点白屏」。所以没带就取一个确定的
+ *   缺省（按加入时间的第一个组织），并把它回给调用方。
+ *
+ * ★ 带了但不属于 → 404 而不是 403。403 等于确认「这个组织存在」，
+ *   把组织 id 变成可枚举的探针，和项目那一层是同一条理由。
+ */
+export async function resolveCurrentOrg(
+  db: Database,
+  userId: string,
+  requested: string | null,
+): Promise<{ orgId: string; orgRole: OrgRole }> {
+  const rows = await db
+    .select({ orgId: organizationMembers.orgId, orgRole: organizationMembers.orgRole })
+    .from(organizationMembers)
+    .where(eq(organizationMembers.userId, userId))
+    .orderBy(asc(organizationMembers.addedAt), asc(organizationMembers.orgId));
+
+  if (rows.length === 0) {
+    const [exists] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
+    throw new ApiError(
+      'UNAUTHENTICATED',
+      exists
+        ? '这个账号还不属于任何组织。请先创建一个组织，或让管理员把你加进已有组织。'
+        : '用户不存在',
+      { userId },
+    );
+  }
+
+  if (requested) {
+    const hit = rows.find((r) => r.orgId === requested);
+    if (!hit) {
+      throw new ApiError('NOT_FOUND', '组织不存在，或当前身份不是它的成员', { orgId: requested });
+    }
+    return { orgId: hit.orgId, orgRole: (hit.orgRole as OrgRole) ?? 'member' };
+  }
+
+  const first = rows[0]!;
+  return { orgId: first.orgId, orgRole: (first.orgRole as OrgRole) ?? 'member' };
+}
+
 /**
  * 一条路由需要什么权限。
  *
@@ -96,6 +160,11 @@ const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
     pattern: /^\/api\/v1\/dev\/webhook-sink$/,
     why: '开发用回声端点，由 DEV_WEBHOOK_SINK 开关控制，无副作用',
   },
+  {
+    method: 'POST',
+    pattern: /^\/api\/v1\/organizations$/,
+    why: '建组织时还不存在"在哪个组织里"，四层判定的第①层没有输入 —— 门槛只有"是不是一个登录账号"，在 handler 里判',
+  },
 ];
 
 /**
@@ -108,6 +177,17 @@ const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
 type RouteEntry = Permission | PermissionResolver | { deferred: string };
 
 const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
+  // ── 组织 ──────────────────────────────────────────────────────────
+  /**
+   * ★ `POST /organizations` 不在这里，在豁免清单里 —— 它是唯一一条
+   *   「还没有组织」时也要能走通的写路由，四层判定的第①层在这一刻
+   *   没有输入。它的门槛是"有没有一个登录账号"，在 handler 里判。
+   */
+  'PATCH /api/v1/organizations/:id': 'organization.update',
+  'DELETE /api/v1/organizations/:id': 'organization.delete',
+  'POST /api/v1/organizations/:id/members': 'organization.members.manage',
+  'DELETE /api/v1/organizations/:id/members/:userId': 'organization.members.manage',
+
   // ── 项目 ──────────────────────────────────────────────────────────
   'POST /api/v1/projects': 'project.create',
   'PATCH /api/v1/projects/:id/labor-cost': 'project.settings.update',
@@ -136,10 +216,19 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
    *   「改状态」和「让不达标的任务过去」共用一个端点，
    *   但绝不能共用一个权限。
    */
-  'PATCH /api/v1/work-items/:id/status': (req) =>
-    (req.body as { overrideGuards?: unknown } | undefined)?.overrideGuards
+  'PATCH /api/v1/work-items/:id/status': (req) => {
+    const body = req.body as { overrideGuards?: unknown } | undefined;
+    return body?.overrideGuards
       ? ['work_item.execute', 'work_item.force_pass']
-      : 'work_item.execute',
+      : 'work_item.execute';
+  },
+  /**
+   * ★★ 建任务本身门槛很低（能执行任务的人就能建），但**放行去执行**
+   *   仍然要 `plan.approve` —— 那是在 handler 里判的（见 routes.ts
+   *   的 draft → ready 分支），因为它取决于任务**当前**的状态，
+   *   而路由表这一层看不到数据库。
+   */
+  'POST /api/v1/projects/:id/work-items': 'work_item.create',
   'POST /api/v1/work-items/:id/assign': 'work_item.execute',
   'POST /api/v1/work-items/:id/retry': 'work_item.execute',
   'POST /api/v1/work-items/:id/takeover': 'work_item.takeover',
@@ -389,11 +478,7 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
     const cache = (req as { rbacActor?: RequestActor }).rbacActor;
     if (cache && cache.userId === userId && cache.projectId === projectId) return cache;
 
-    const [user] = await db
-      .select({ orgId: users.orgId, orgRole: users.orgRole })
-      .from(users)
-      .where(eq(users.id, userId));
-    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+    const user = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
 
     /**
      * ★ 角色与它的权限一起查出来（一次 join）。

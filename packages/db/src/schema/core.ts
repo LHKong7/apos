@@ -62,12 +62,68 @@ const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'
 
 // ── 组织与身份 ────────────────────────────────────────────────────────────
 
+/**
+ * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace）。
+ *
+ * ★★ 这里**不**叫 workspace，是刻意的。
+ *
+ *   `workspace` 在这个代码库里已经有一个确定含义：Agent 干活的那个
+ *   git 工作区（`AGENT_WORKSPACE_ROOT`、`WorkspaceProvisioner`、
+ *   `agent_runs.workspace`）。两个都叫 workspace 的话，
+ *   「清理 workspace」「workspace 权限」这类句子会同时指向两件毫不相干的事，
+ *   而这种歧义在排障时最贵 —— 看日志的人根本不知道在说哪一个。
+ *
+ *   组织这个概念在这里已经铺满了 25 张表的 `org_id`、整套 `OrgRole`
+ *   与 `org_admin` 判定；改名是纯字面工作，收益为零，还要正面撞车。
+ *   所以：**产品层叫「组织」，`workspace` 一词永远只指 Agent 工作区。**
+ */
 export const organizations = pgTable('organizations', {
   id: uuid().primaryKey().defaultRandom(),
   name: text().notNull(),
+  /**
+   * URL 里的人类可读标识（`acme`）。
+   *
+   * ★ 全局唯一而不是「每个所有者唯一」：它要能单独出现在链接里，
+   *   同名就指不到同一个组织了。
+   */
+  slug: text().notNull(),
+  description: text(),
   settings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+  createdBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
-});
+  updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+}, (t) => [
+  unique('organizations_slug_unique').on(t.slug),
+]);
+
+/**
+ * 谁在哪个组织里、以什么组织身份。
+ *
+ * ★★ 这张表取代了原来的 `users.org_id` + `users.org_role`。
+ *
+ *   那两列把「账号」和「归属」焊死成一对一：一个人要参与第二个组织，
+ *   只能再注册一个账号。而组织之间的边界正是多租户隔离的边界，
+ *   所以「同一个人的两个账号」在审计里是两个不同的人 ——
+ *   跨组织协作的顾问、外包、平台方全都描述不出来。
+ *
+ * ★ 组织角色跟着归属走，不跟着账号走：同一个人可以是 A 组织的管理员、
+ *   B 组织的普通成员。放在 users 上的话这句话就说不出来。
+ */
+export const organizationMembers = pgTable(
+  'organization_members',
+  {
+    orgId: uuid().notNull().references(() => organizations.id),
+    userId: uuid().notNull().references(() => users.id),
+    orgRole: text().notNull().default('member'),
+    addedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.orgId, t.userId] }),
+    /** 「我属于哪些组织」是每个请求都要问的（切换器、当前组织解析），主键前缀对不上 */
+    index('organization_members_user_idx').on(t.userId),
+    check('organization_members_role_check', sql`${t.orgRole} in (${sqlList(OrgRole.options)})`),
+  ],
+);
 
 /**
  * 角色 —— 一组权限的名字（docs/tech/09-security.md §2.2）。
@@ -105,15 +161,20 @@ export const roles = pgTable(
   ],
 );
 
+/**
+ * 账号 —— **全局**的，不属于任何组织。
+ *
+ * ★ 归属与组织角色在 `organization_members`。这里只剩「这个人是谁」。
+ *   email 因此是全局唯一：同一个人在两个组织里必须是同一个账号，
+ *   否则审计里就成了两个人。
+ */
 export const users = pgTable(
   'users',
   {
     id: uuid().primaryKey().defaultRandom(),
-    orgId: uuid().notNull().references(() => organizations.id),
     email: text().notNull(),
     name: text().notNull(),
     avatarUrl: text(),
-    orgRole: text().notNull().default('member'),
     skills: text().array().notNull().default(sql`'{}'`),
     /** 可审批事项，支撑产品文档 8.7.5 的决策责任自动识别 */
     approvalScopes: text().array().notNull().default(sql`'{}'`),
@@ -121,10 +182,7 @@ export const users = pgTable(
     status: text().notNull().default('active'),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
-  (t) => [
-    unique().on(t.orgId, t.email),
-    check('users_org_role_check', sql`${t.orgRole} in (${sqlList(OrgRole.options)})`),
-  ],
+  (t) => [unique('users_email_unique').on(t.email)],
 );
 
 // ── Project ──────────────────────────────────────────────────────────────
@@ -136,6 +194,23 @@ export const projects = pgTable(
     orgId: uuid().notNull().references(() => organizations.id),
     name: text().notNull(),
     goal: text(),
+    /**
+     * 工作项编号的前缀（`ORD` → `ORD-19`）。组织内唯一。
+     *
+     * ★★ 有了它，工作项才有一个**能用嘴说出来**的名字。
+     *   在此之前只有 uuid：站会上没法念，聊天里没法提，
+     *   提交信息里写进去也没人认得。
+     */
+    identifier: text().notNull().default('TASK'),
+    /**
+     * 每项目的工作项序号游标。
+     *
+     * ★ 用列 + 原子自增，不用 Postgres sequence：每个项目一条 sequence
+     *   意味着建项目要 DDL，而 DDL 不能和业务事务放在一起回滚。
+     *   `UPDATE … SET seq = seq + n RETURNING seq` 同样是原子的，
+     *   而且并发下不会跳号。
+     */
+    workItemSeq: integer().notNull().default(0),
     type: text().notNull().default('development'),
     status: projectStatusEnum().notNull().default('active'),
     autonomyLevel: autonomyLevelEnum().notNull().default('agent_led_approval'),
@@ -353,6 +428,18 @@ export const workItems = pgTable(
     requirementId: uuid().references(() => requirements.id),
     planId: uuid().references(() => plans.id),
 
+    /**
+     * 项目内的顺序编号。配合 `projects.identifier` 拼成 `ORD-19`。
+     *
+     * ★ 只存数字，不冗余整个 `ORD-19`：改了项目前缀之后，
+     *   冗余的那份要批量刷一遍，而漏刷的表现是同一个项目里
+     *   两种前缀并存 —— 那比多一次 join 贵得多。
+     *
+     * ★ 可为空：迁移之前的存量数据会在迁移里补号，
+     *   但这一列的 NOT NULL 得等所有写入路径都分配了编号之后再收紧。
+     */
+    number: integer(),
+
     type: workItemTypeEnum().notNull(),
     status: workItemStatusEnum().notNull().default('draft'),
     /** 冗余：由 status 映射，看板按列查询用 */
@@ -415,6 +502,8 @@ export const workItems = pgTable(
     index('work_items_owner_idx').on(t.ownerId),
     index('work_items_blocked_idx').on(t.projectId, t.blockedSince),
     index('work_items_path_idx').on(t.path),
+    /** 「ORD-19 是哪一条」要能直接查到，而不是全表扫 */
+    unique('work_items_project_number_unique').on(t.projectId, t.number),
   ],
 );
 

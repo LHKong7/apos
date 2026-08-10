@@ -404,7 +404,10 @@ describe('★★ Agent 担任角色', () => {
 /** 另建一个组织，用来验证跨组织的东西加不进来 */
 async function seedFixtureOrg() {
   const { organizations } = await import('@apos/db');
-  const [org] = await db.insert(organizations).values({ name: `Other-${randomUUID()}` }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: `Other-${randomUUID()}`, slug: `other-${randomUUID().slice(0, 8)}` })
+    .returning();
   return { orgId: org!.id };
 }
 

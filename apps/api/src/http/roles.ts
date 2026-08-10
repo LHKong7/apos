@@ -4,6 +4,7 @@ import {
   projectMembers,
   roles,
   type Database,
+  type DbTransaction,
 } from '@apos/db';
 import { humanActor } from '@apos/contracts';
 import {
@@ -42,7 +43,15 @@ import { ApiError, notFound } from './errors';
  * ★ 只覆盖 builtin=true 的行。管理员自定义的角色一个字都不碰，
  *   哪怕 key 撞车（撞不了，key 唯一，见下面 onConflict 的条件）。
  */
-export async function syncBuiltinRoles(db: Database, orgId?: string): Promise<number> {
+export async function syncBuiltinRoles(
+  /**
+   * ★ 接 `Database` 也接事务：建组织时这一步必须和「插组织」「设管理员」
+   *   在同一个事务里 —— 少了角色，这个组织里一个成员都加不进任何项目
+   *   （project_members.role 的外键指向 roles），而报错是一句外键冲突。
+   */
+  db: Database | DbTransaction,
+  orgId?: string,
+): Promise<number> {
   const targets = orgId
     ? [{ id: orgId }]
     : await db.select({ id: organizations.id }).from(organizations);

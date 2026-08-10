@@ -730,11 +730,14 @@ describe('★ 批量批准不能绕过逐条确认', () => {
   });
 
   it('★ 别人名下的决策不能被批量代批', async () => {
-    const { users: userTable } = await import('@apos/db');
+    const { organizationMembers, users: userTable } = await import('@apos/db');
     const [other] = await db
       .insert(userTable)
-      .values({ orgId: fx.orgId, email: `o-${randomUUID()}@acme.dev`, name: '他人' })
+      .values({ email: `o-${randomUUID()}@acme.dev`, name: '他人' })
       .returning();
+    await db
+      .insert(organizationMembers)
+      .values({ orgId: fx.orgId, userId: other!.id });
     const d = await makeDecision({ assigneeId: other!.id });
 
     const res = await app.inject({
@@ -836,11 +839,14 @@ describe('★ Idempotency-Key', () => {
     const d = await pendingDecision({ assigneeId: null });
     await approve(d.id, 'key-shared');
 
-    const { users: userTable } = await import('@apos/db');
+    const { organizationMembers, users: userTable } = await import('@apos/db');
     const [other] = await db
       .insert(userTable)
-      .values({ orgId: fx.orgId, email: `x-${randomUUID()}@acme.dev`, name: '另一个人' })
+      .values({ email: `x-${randomUUID()}@acme.dev`, name: '另一个人' })
       .returning();
+    await db
+      .insert(organizationMembers)
+      .values({ orgId: fx.orgId, userId: other!.id });
     await db.insert(projectMembers).values({
       orgId: fx.orgId,
       projectId: fx.projectId,
@@ -886,11 +892,12 @@ describe('★ 决策责任不可代行', () => {
   it('非责任人无法批准，提示用改派', async () => {
     const item = await createWorkItem(db, fx);
 
-    const { users } = await import('@apos/db');
+    const { organizationMembers, users } = await import('@apos/db');
     const [other] = await db
       .insert(users)
-      .values({ orgId: fx.orgId, email: `dba-${randomUUID()}@acme.dev`, name: '王强' })
+      .values({ email: `dba-${randomUUID()}@acme.dev`, name: '王强' })
       .returning();
+    await db.insert(organizationMembers).values({ orgId: fx.orgId, userId: other!.id });
     const otherUserId = other!.id;
 
     const [decision] = await db
@@ -1012,11 +1019,12 @@ describe('★ 决策责任不可代行', () => {
    *   这个测试就是那条路径的锁：一条能批、一条是别人的，只能过一条。
    */
   it('★ 批量批准不绕过「不可代行」：别人的决策照样批不动', async () => {
-    const { users } = await import('@apos/db');
+    const { organizationMembers, users } = await import('@apos/db');
     const [other] = await db
       .insert(users)
-      .values({ orgId: fx.orgId, email: `dba-${randomUUID()}@acme.dev`, name: '王强' })
+      .values({ email: `dba-${randomUUID()}@acme.dev`, name: '王强' })
       .returning();
+    await db.insert(organizationMembers).values({ orgId: fx.orgId, userId: other!.id });
 
     const rows = await db
       .insert(decisions)

@@ -26,6 +26,9 @@ import {
 export const PERMISSIONS = [
   // ── 项目 ──────────────────────────────────────────────────────────
   'project.view',
+  'organization.update',
+  'organization.delete',
+  'organization.members.manage',
   'project.create',
   'project.settings.update',
   'project.autonomy.change',
@@ -43,6 +46,7 @@ export const PERMISSIONS = [
   'plan.approve',
 
   // ── 任务 ──────────────────────────────────────────────────────────
+  'work_item.create',
   'work_item.execute',
   'work_item.takeover',
   'work_item.force_pass',
@@ -244,6 +248,21 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
 
   // ── 任务 ──────────────────────────────────────────────────────────
   /** ★ 这一条给 EXECUTING：干活是 executor 存在的理由，也是 Agent 唯一要的 */
+  /**
+   * ★★ 建任务的门槛低，**放行去执行**的门槛不低。
+   *
+   *   手工建的任务不经过「需求 → 计划 → 批准」那条链，如果建完就能跑，
+   *   任何能建任务的人都可以让 Agent 去做任意事情 —— 两道 Human Gate
+   *   就都被绕开了。所以任务停在 draft，从 draft 走到 ready
+   *   要的是 `plan.approve`（见 routes.ts 的 draft → ready 分支）：
+   *   门禁没有消失，只是粒度从「一份计划」变成「一个任务」。
+   */
+  'work_item.create': {
+    scope: 'project',
+    label: '创建任务',
+    projectRoles: EXECUTING,
+    requires: '需要项目成员权限（只读角色不能建任务）',
+  },
   'work_item.execute': {
     scope: 'project',
     label: '执行任务',
@@ -410,6 +429,40 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     humanOnly: true,
     governance: { audit: true },
     requires: '收紧 Agent 权限需要它的 owner 或组织管理员',
+  },
+
+  // ── 组织本身 ──────────────────────────────────────────────────────
+  /**
+   * ★ 建组织**不在目录里**，因为它没有"在哪个组织里"这个前提 ——
+   *   四层判定的第①层就是组织角色，而这一刻还没有组织。
+   *   它的门槛只有"是不是一个已登录的账号"，判定在路由层（见 rbac.ts 的豁免）。
+   */
+  'organization.update': {
+    scope: 'org',
+    label: '修改组织信息',
+    governance: { audit: true },
+    requires: '改组织名与 slug 需要组织管理员 —— slug 出现在链接里，改了会让已发出去的链接失效',
+  },
+  'organization.delete': {
+    scope: 'org',
+    label: '删除组织',
+    humanOnly: true,
+    governance: { audit: true },
+    requires: '删除组织需要组织管理员',
+  },
+  /**
+   * ★★ 把人加进组织，是跨租户方向上唯一的入口。
+   *
+   *   它和 `org.members.manage`（改组织角色）拆开，是因为两者的后果不同：
+   *   改角色只在组织内部移动权限，加人是把**边界外**的账号放进来。
+   *   前者错了是内部越权，后者错了是数据出了租户。
+   */
+  'organization.members.manage': {
+    scope: 'org',
+    label: '管理组织成员归属',
+    humanOnly: true,
+    governance: { audit: true },
+    requires: '把账号加进 / 移出组织需要组织管理员',
   },
 
   // ── 组织配置 ──────────────────────────────────────────────────────

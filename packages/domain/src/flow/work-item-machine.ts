@@ -12,6 +12,12 @@ export const WORK_ITEM_MACHINE: WorkItemMachine = {
   transitions: [
     // ── Intake / Planning ────────────────────────────────────────────────
     { from: 'draft', trigger: 'plan_approved', to: 'ready' },
+    /**
+     * ★★ 手工建的工作项没有计划，也就没有 `plan_approved` 这条路。
+     *   给它一条自己的路，而不是让它绕开门禁 ——
+     *   放行所需的权限仍然是 `plan.approve`（见 rbac.ts 的路由表）。
+     */
+    { from: 'draft', trigger: 'manual_activated', to: 'ready' },
     { from: 'planning', trigger: 'plan_approved', to: 'ready' },
     { from: 'awaiting_plan_approval', trigger: 'plan_approved', to: 'ready' },
 

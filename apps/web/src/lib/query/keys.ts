@@ -9,6 +9,13 @@ import type { BoardFilters } from '../api/client';
  */
 export const qk = {
   users: () => ['users'] as const,
+  /**
+   * ★ key 里不带 orgId，靠切换组织时整体作废缓存（stores/org 的 apply）——
+   *   与身份切换同一套机制。组织是多租户边界，跨过它的脏缓存
+   *   会把 A 公司的数据摆在 B 公司的界面上。
+   */
+  organizations: () => ['organizations'] as const,
+  organizationMembers: (orgId: string) => ['organizationMembers', orgId] as const,
   projects: () => ['projects'] as const,
   project: (id: string) => ['project', id] as const,
   /**
