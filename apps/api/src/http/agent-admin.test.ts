@@ -396,6 +396,155 @@ describe('代码仓库与工程约定', () => {
     expect(list.json().repositories[0].credentialHint).toBe('****1234');
   });
 
+  /**
+   * ★★ checkCommand 此前在界面上填不了：前端表单 state 里有它，
+   *   提交时被丢掉，RepositoryInput 也不接受这个字段 ——
+   *   而 schema 注释说它是「reviewing 阶段唯一的真实测试数据源」。
+   *   也就是说这道质量门禁只能靠直接改数据库才配得上。
+   */
+  it('★ 质量核验命令能配、能改、能清空', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/repositories',
+      headers: auth(),
+      payload: {
+        ref: 'order-service',
+        name: 'Order Service',
+        remoteUrl: 'https://github.com/acme/order-service.git',
+        checkCommand: 'pnpm test',
+        checkTimeoutSeconds: 600,
+      },
+    });
+    expect(create.statusCode).toBe(201);
+
+    const listed = async () =>
+      (await app.inject({ method: 'GET', url: '/api/v1/admin/repositories', headers: auth() }))
+        .json().repositories[0];
+
+    expect(await listed()).toMatchObject({ checkCommand: 'pnpm test', checkTimeoutSeconds: 600 });
+
+    const id = create.json().repository.id;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/repositories/${id}`,
+      headers: auth(),
+      payload: { checkCommand: 'pnpm test -- --run' },
+    });
+    expect((await listed()).checkCommand).toBe('pnpm test -- --run');
+
+    // null = 清空，回到「不跑核验」
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/repositories/${id}`,
+      headers: auth(),
+      payload: { checkCommand: null },
+    });
+    expect((await listed()).checkCommand).toBeNull();
+  });
+
+  /** ★ 不填核验命令时，reviewing 的门禁没有数据可依据 —— 这一条要说出来 */
+  it('没配核验命令时给出警告', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/repositories',
+      headers: auth(),
+      payload: {
+        ref: 'order-service',
+        name: 'Order Service',
+        remoteUrl: 'https://github.com/acme/order-service.git',
+      },
+    });
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/repositories',
+      headers: auth(),
+    });
+    expect(list.json().repositories[0].warnings.join()).toContain('Agent 自述');
+  });
+
+  /**
+   * ★★ 凭证用户名占位：填错就是 401，而 401 的报错里没有任何东西指向它。
+   *   在此之前它恒为 x-access-token，GitLab 私有仓库从来没通过。
+   */
+  describe('★ 凭证用户名占位', () => {
+    const register = (over: Record<string, unknown>) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/repositories',
+        headers: auth(),
+        payload: {
+          ref: 'r1',
+          name: 'R',
+          remoteUrl: 'https://github.com/acme/app.git',
+          credential: 'env:PATH',
+          ...over,
+        },
+      });
+
+    const first = async () =>
+      (await app.inject({ method: 'GET', url: '/api/v1/admin/repositories', headers: auth() }))
+        .json().repositories[0];
+
+    it('GitHub 推断成 x-access-token', async () => {
+      await register({});
+      expect(await first()).toMatchObject({
+        authUsername: 'x-access-token',
+        authUsernameSource: 'host',
+        authProvider: 'GitHub',
+      });
+    });
+
+    it('★ GitLab 推断成 oauth2', async () => {
+      await register({ remoteUrl: 'https://gitlab.com/acme/app.git' });
+      expect(await first()).toMatchObject({ authUsername: 'oauth2', authProvider: 'GitLab' });
+    });
+
+    it('★ 自建域名认不出来时警告，且明确点名 oauth2', async () => {
+      await register({ remoteUrl: 'https://git.acme.internal/team/app.git' });
+      const repo = await first();
+      expect(repo.authUsernameSource).toBe('default');
+      expect(repo.warnings.join()).toContain('oauth2');
+    });
+
+    it('显式指定优先于域名推断', async () => {
+      await register({ remoteUrl: 'https://github.com/acme/app.git', authUsername: 'oauth2' });
+      expect(await first()).toMatchObject({ authUsername: 'oauth2', authUsernameSource: 'explicit' });
+    });
+
+    /** ssh 地址不走 Basic —— 配了凭证也用不上，要如实说 */
+    it('ssh 地址提示凭证不会被使用', async () => {
+      await register({ remoteUrl: 'git@github.com:acme/app.git' });
+      expect((await first()).warnings.join()).toContain('SSH');
+    });
+  });
+
+  /**
+   * ★ 连通性探测存在的全部理由：凭证配错了要在配置页上知道，
+   *   而不是等第一次派发看到「准备工作区失败：… 401」。
+   */
+  it('★ 探测在凭证取不到时直接说清楚，不去连远端', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/repositories',
+      headers: auth(),
+      payload: {
+        ref: 'order-service',
+        name: 'Order Service',
+        remoteUrl: 'https://github.com/acme/order-service.git',
+        credential: 'env:APOS_DEFINITELY_NOT_SET',
+      },
+    });
+
+    const probe = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/repositories/${create.json().repository.id}/probe`,
+      headers: auth(),
+    });
+    expect(probe.statusCode).toBe(200);
+    expect(probe.json()).toMatchObject({ ok: false, stage: 'credential' });
+    expect(probe.json().message).toContain('APOS_DEFINITELY_NOT_SET');
+  });
+
   it('仓库标识重复时拒绝', async () => {
     const payload = {
       ref: 'order-service',

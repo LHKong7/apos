@@ -466,6 +466,17 @@ export const repositories = pgTable(
     credentialRef: text(),
     credentialHint: text(),
 
+    /**
+     * HTTPS token 走 Basic 认证时的用户名占位（GitHub `x-access-token` /
+     * GitLab `oauth2` / Bitbucket `x-token-auth`）。
+     *
+     * ★ 为空表示按 remoteUrl 的域名推断（见 workspace/git.ts 的
+     *   resolveAuthUsername）。留这一列而不是纯靠推断，是因为自建 GitLab
+     *   装在 git.acme.com 上推断不出来 —— 而推断错的表现是 401，
+     *   错误信息里没有任何东西指向「用户名占位不对」。
+     */
+    authUsername: text(),
+
     /** Agent 分支命名模板，{runId} / {itemId} / {slug} 会被替换 */
     branchPrefix: text().notNull().default('apos/'),
 

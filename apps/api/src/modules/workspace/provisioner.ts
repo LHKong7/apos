@@ -3,8 +3,8 @@ import { join, resolve } from 'node:path';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { agentRuns, repositories, type Database } from '@apos/db';
 import type { AgentPermissions, RunWorkspace } from '@apos/contracts';
-import { resolveSecret } from '../security/secrets';
-import { git, GitError, probeGit, type GitAuth } from './git';
+import { git, GitError, probeGit } from './git';
+import { gitAuthFor } from './credentials';
 
 export interface AcquireInput {
   runId: string;
@@ -216,7 +216,7 @@ export class WorkspaceProvisioner {
     path: string,
     branch: string,
   ): Promise<string | null> {
-    const auth = authFor(repo.credentialRef);
+    const auth = gitAuthFor(repo);
     const mirror = this.mirrorDir(repo.id);
 
     const baseCommit = await this.withMirrorLock(repo.id, async () => {
@@ -333,7 +333,7 @@ export class WorkspaceProvisioner {
 
       if (shouldPush && repo) {
         try {
-          await git.push(ws.path, repo.remoteUrl, ws.branch, authFor(repo.credentialRef));
+          await git.push(ws.path, repo.remoteUrl, ws.branch, gitAuthFor(repo));
           pushed = true;
           notes.push(`已推送分支 ${ws.branch}`);
         } catch (err) {
@@ -454,11 +454,6 @@ export class WorkspaceProvisioner {
   private diagnose(message: string, detail?: unknown) {
     this.options.onDiagnostic?.(message, detail);
   }
-}
-
-function authFor(credentialRef: string | null): GitAuth | undefined {
-  const token = resolveSecret(credentialRef);
-  return token ? { token } : undefined;
 }
 
 /** `apos/add-login-a1b2c3` —— 带任务信息，人在 PR 列表里能认出来 */

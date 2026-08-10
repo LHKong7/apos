@@ -33,6 +33,7 @@ import type {
   RuntimeRow,
   AgentAdminResponse,
   RepositoriesResponse,
+  RepositoryProbe,
   ConventionsResponse,
   RequirementDetail,
   RequirementSummary,
@@ -226,23 +227,37 @@ export const api = {
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
 
-  // ── 配置：Agent 档案（内含运行时）/ 代码仓库 / 项目工程约定 ──
+  /**
+   * ── 配置：Agent 档案（内含运行时）/ 代码仓库 / 项目工程约定 ──
+   *
+   * ★ 这一组必须用 `json:` 而不是 `body: JSON.stringify(...)`。
+   *
+   *   `request()` 只在用 `json` 时才设 Content-Type；用 `body` 的话
+   *   浏览器会自作主张发 `text/plain;charset=UTF-8`，Fastify 用
+   *   text/plain 解析器把整个 JSON 当字符串交给 Zod，于是这一整页的
+   *   写操作全部 400「Expected object, received string」——
+   *   而组件测试用 app.inject（自动带 JSON 头）永远复现不出来。
+   */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
   createAgent: (body: Record<string, unknown>) =>
     request<{ agent: { id: string } }>('/admin/agents', {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateAgent: (id: string, body: Record<string, unknown>) =>
     request<{ agent: unknown; permissionsChanged: boolean }>(`/admin/agents/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      json: body,
     }),
   deleteAgent: (id: string) =>
     request<{ ok: true; retired: boolean; reason: string | null }>(`/admin/agents/${id}`, {
       method: 'DELETE',
     }),
   probeAgent: (id: string) => request<unknown>(`/admin/agents/${id}/probe`, { method: 'POST' }),
+
+  /** 仓库连通性探测 —— 凭证配错了要在这一页知道，不是等第一次派发 */
+  probeRepository: (id: string) =>
+    request<RepositoryProbe>(`/admin/repositories/${id}/probe`, { method: 'POST' }),
 
   repositories: (projectId?: string) =>
     request<RepositoriesResponse>(
@@ -251,10 +266,10 @@ export const api = {
   createRepository: (body: Record<string, unknown>) =>
     request<{ repository: { id: string } }>('/admin/repositories', {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateRepository: (id: string, body: Record<string, unknown>) =>
-    request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', json: body }),
   deleteRepository: (id: string) =>
     request<{ ok: true }>(`/admin/repositories/${id}`, { method: 'DELETE' }),
 
@@ -263,17 +278,17 @@ export const api = {
   createConvention: (projectId: string, body: Record<string, unknown>) =>
     request<{ convention: { id: string } }>(`/projects/${projectId}/conventions`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateConvention: (id: string, body: Record<string, unknown>) =>
-    request<unknown>(`/conventions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    request<unknown>(`/conventions/${id}`, { method: 'PATCH', json: body }),
   deleteConvention: (id: string) =>
     request<{ ok: true }>(`/conventions/${id}`, { method: 'DELETE' }),
 
   assignWorkItem: (id: string, body: { agentId?: string; userId?: string; note?: string }) =>
     request<{ ok: true; runId?: string }>(`/work-items/${id}/assign`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
 
   setLaborCost: (projectId: string, laborHourlyCost: number | null) =>

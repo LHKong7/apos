@@ -1093,7 +1093,29 @@ export interface RepositoryRow {
   credentialHint: string | null;
   credentialUsable: boolean;
   credentialProblem: string | null;
-  warning: string | null;
+  /**
+   * 即将用于 HTTP Basic 的用户名占位。
+   *
+   * ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它 ——
+   *   所以要在配置页上直接显示「现在会用哪个、为什么是它」。
+   */
+  authUsername: string;
+  authUsernameSource: 'explicit' | 'host' | 'default';
+  authProvider: string | null;
+  checkCommand: string | null;
+  checkTimeoutSeconds: number;
+  warnings: string[];
+}
+
+/** 连通性探测结果（git ls-remote）*/
+export interface RepositoryProbe {
+  ok: boolean;
+  stage: 'git' | 'credential' | 'auth' | 'network' | 'branch' | 'ok';
+  message: string | null;
+  authUsername?: string;
+  authUsernameSource?: 'explicit' | 'host' | 'default';
+  branchCount?: number;
+  branches: string[] | null;
 }
 
 export interface RepositoriesResponse {

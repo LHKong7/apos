@@ -431,6 +431,67 @@ async function buildAgentContext(item: WorkItem, agent: Agent): Promise<ContextI
 
 **永不回显**：API 返回时只给后四位（`****1234`）。数据库中的加密字段不进日志、不进事件 payload。
 
+### 5.4 代码仓库凭证（GitHub / GitLab / …）
+
+登记在「Agent 配置 → 代码仓库」（`/api/v1/admin/repositories`，需 `repository.manage`）。
+凭证两种形态，没有第三种（`modules/security/secrets.ts`）：
+
+- `env:GITHUB_TOKEN` —— 库里只存变量名，明文只在进程环境。**生产首选**
+- 直接粘贴 —— AES-256-GCM 加密入库，钥匙是库外的 `APOS_SECRET_KEY`
+
+没配 `APOS_SECRET_KEY` 时接口**直接拒绝**粘贴的凭证并要求改用 `env:` 形态，
+不做「先存着回头再加密」。Token 需要的权限就是 clone / fetch / push
+（GitHub fine-grained PAT 给 Contents: Read and write 即可）——
+平台不调 GitHub / GitLab 的 API。
+
+#### 5.4.1 凭证用户名占位
+
+HTTPS token 走 Basic 认证，用户名那一段各家要求不同：
+
+| 服务 | 用户名占位 |
+| --- | --- |
+| GitHub / GHE | `x-access-token` |
+| GitLab（含自建） | `oauth2` |
+| Bitbucket | `x-token-auth` |
+
+留空时按域名推断（`resolveAuthUsername`）：公有云域名与**首段标签是服务商名**
+的自建实例（`gitlab.acme.com`）都认得出来；`git.acme.com` 认不出来
+—— 底下可能是 Gitea、Gogs、GitLab、Bitbucket Server，猜错就是 401，
+所以如实回落到默认值并在配置页上打警告，让人手填。
+
+★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
+所以配置页会把**即将使用的占位值以及它的来源**（手填 / 按域名推断 / 兜底）
+直接显示出来，探测失败时也会连同占位值一起说。
+
+★ ssh:// 与 `git@` 形态不使用这里配置的凭证 —— 认证走宿主机的 SSH 配置，
+平台目前不管理 SSH key。配置页会如实说明这一点，而不是让人以为配了就生效。
+
+#### 5.4.2 连通性探测
+
+`POST /api/v1/admin/repositories/{id}/probe` 跑一次 `git ls-remote --heads`，
+验三件事：域名通不通、凭证对不对、默认分支在不在。只读、不落盘、不建镜像。
+
+★ 存在的理由是「配错了要在配置页上知道」。没有它，验证凭证的唯一办法
+是派一个任务，然后看它以「准备工作区失败：… 401」告终 ——
+那条报错分不清是 token 过期、scope 不够，还是用户名占位不对，
+而这三种原因的下一步动作完全不同。
+
+用 `ls-remote` 不用 `clone`：要验的三件事它全能答且是秒级，
+而 clone 一个大仓库要几分钟 —— 贵到没人愿意点第二次的检查等于没有检查。
+
+#### 5.4.3 质量核验命令
+
+`checkCommand`（如 `pnpm test`）在 Agent 收工后、**提交之前**于工作区执行，
+失败也照样提交（失败的改动同样需要被人看到）。
+
+★★ 它是 reviewing 阶段唯一的**真实**测试数据源。不配的话，
+`qualityGatePassed` 这道门禁只能依据「Agent 说它跑过测试了」——
+那是一句自述，不是证据。所以未配置时配置页会把这句话直接说出来。
+
+★ 它是在服务端 shell 里执行的任意命令，配置权限就是 `repository.manage`
+（组织管理员），与登记仓库同一档 —— 能登记仓库的人本来就能让 Agent
+往里写代码，不设更高的门槛没有意义。
+
 ---
 
 ## 6. 审计日志

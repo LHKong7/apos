@@ -90,6 +90,7 @@ import {
   ConventionInput,
   createConvention,
   createRepository,
+  probeRepository,
   deleteConvention,
   deleteRepository,
   listConventions,
@@ -1157,6 +1158,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .extend({ status: z.enum(['active', 'disabled']).optional() })
       .parse(req.body);
     return updateRepository(db, id, body);
+  });
+
+  /**
+   * 连通性探测。★ 凭证配错了要在配置页上知道，而不是等第一次派发 ——
+   *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
+   */
+  app.post('/api/v1/admin/repositories/:id/probe', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeRepository(db, id);
   });
 
   app.delete('/api/v1/admin/repositories/:id', async (req) => {

@@ -8,7 +8,15 @@ import {
   type Database,
 } from '@apos/db';
 import { WorkItemType } from '@apos/contracts';
-import { probeGit } from '../modules/workspace/git';
+import {
+  DEFAULT_AUTH_USERNAME,
+  git,
+  GitError,
+  isHttpRemote,
+  probeGit,
+  resolveAuthUsername,
+} from '../modules/workspace/git';
+import { gitAuthFor } from '../modules/workspace/credentials';
 import {
   describeRef,
   encodeSecret,
@@ -49,6 +57,26 @@ export const RepositoryInput = z.object({
   branchPrefix: z.string().default('apos/'),
   /** 明文凭证或 `env:变量名`；不传 = 不改，null = 清除 */
   credential: z.string().nullable().optional(),
+  /**
+   * HTTPS token 的 Basic 用户名占位。留空 = 按域名推断
+   * （GitHub → x-access-token、GitLab → oauth2、Bitbucket → x-token-auth）。
+   *
+   * ★ 自建 GitLab 装在 git.acme.com 上推断不出来，必须显式填 `oauth2`。
+   */
+  authUsername: z.string().max(120).nullable().optional(),
+  /**
+   * 质量核验命令，如 `pnpm test`。Agent 收工后、提交之前在工作区执行。
+   *
+   * ★★ 这是 reviewing 阶段唯一的**真实**测试数据源 —— 没有它，
+   *   `qualityGatePassed` 这道门禁只能靠「Agent 说它跑过测试了」，
+   *   而那是一句自述不是证据。
+   *
+   * ★ 它是在服务端 shell 里执行的任意命令，所以配置权限就是
+   *   `repository.manage`（组织管理员），和登记仓库同一档 ——
+   *   能登记仓库的人本来就能让 Agent 往里写代码，不设更高的门槛。
+   */
+  checkCommand: z.string().max(500).nullable().optional(),
+  checkTimeoutSeconds: z.number().int().min(10).max(7200).optional(),
   /** 不传表示组织级共享仓库 */
   projectId: z.string().uuid().nullable().optional(),
 });
@@ -67,11 +95,12 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
     )
     .orderBy(asc(repositories.ref));
 
-  const git = await probeGit();
+  const gitEnv = await probeGit();
 
   return {
     repositories: rows.map((r) => {
       const cred = describeRef(r.credentialRef);
+      const auth = resolveAuthUsername(r.remoteUrl, r.authUsername);
       return {
         id: r.id,
         ref: r.ref,
@@ -86,19 +115,68 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
         credentialHint: r.credentialHint,
         credentialUsable: cred.usable,
         credentialProblem: cred.problem,
-        /** 私有仓库没凭证会在派发时才失败 —— 提前说 */
-        warning:
-          !r.credentialRef && /^https?:\/\//.test(r.remoteUrl)
-            ? '未配置凭证：私有仓库会在准备工作区时克隆失败'
-            : null,
+        /**
+         * ★ 把**即将用哪个用户名占位**回显出来。
+         *   这一项填错的表现是 401，而 401 的报错里没有任何东西
+         *   指向它 —— 所以它必须在配置页上就看得见。
+         */
+        authUsername: auth.username,
+        authUsernameSource: auth.source,
+        authProvider: auth.provider,
+        checkCommand: r.checkCommand,
+        checkTimeoutSeconds: r.checkTimeoutSeconds,
+        warnings: repoWarnings(r, auth),
       };
     }),
     /** git 环境问题要在这一页说清楚，而不是等第一次派发才炸 */
-    gitAvailable: git.ok,
-    gitVersion: git.version,
-    gitProblem: git.problem,
+    gitAvailable: gitEnv.ok,
+    gitVersion: gitEnv.version,
+    gitProblem: gitEnv.problem,
     canStoreInlineCredential: hasMasterKey(),
   };
+}
+
+/**
+ * 配置页上要提前说出来的问题。
+ *
+ * ★ 每一条都是「不说的话要等第一次派发才炸」的那种，而那时的错误信息
+ *   （clone 失败 / 401 / 没有产物）都不指向真实原因。
+ */
+function repoWarnings(
+  r: typeof repositories.$inferSelect,
+  auth: ReturnType<typeof resolveAuthUsername>,
+): string[] {
+  const out: string[] = [];
+
+  if (!r.credentialRef && isHttpRemote(r.remoteUrl)) {
+    out.push('未配置凭证：私有仓库会在准备工作区时克隆失败');
+  }
+
+  /**
+   * ★ 自建服务最容易踩的一条：域名认不出来，占位就沿用了 GitHub 的写法，
+   *   而自建 GitLab 需要 oauth2 —— 表现是 401，看不出原因。
+   */
+  if (r.credentialRef && isHttpRemote(r.remoteUrl) && auth.source === 'default') {
+    out.push(
+      `认不出这个域名，凭证用户名占位按 ${DEFAULT_AUTH_USERNAME}（GitHub 的写法）处理。` +
+        '如果这是自建 GitLab 请填 oauth2，Bitbucket 填 x-token-auth，否则会 401',
+    );
+  }
+
+  // token 对 ssh 地址没有意义，配了也不会被用上
+  if (r.credentialRef && !isHttpRemote(r.remoteUrl)) {
+    out.push('ssh 地址不使用这里配置的凭证：认证走宿主机的 SSH 配置，平台不管理 SSH key');
+  }
+
+  /**
+   * ★ 没有核验命令时 reviewing 阶段的质量门禁只剩 Agent 自述 ——
+   *   这一条不是可选的锦上添花，是「门禁到底有没有数据」。
+   */
+  if (!r.checkCommand) {
+    out.push('未配置质量核验命令：reviewing 阶段的门禁将只能依据 Agent 自述，没有真实测试结果');
+  }
+
+  return out;
 }
 
 export async function createRepository(
@@ -130,6 +208,9 @@ export async function createRepository(
       remoteUrl: input.remoteUrl.trim(),
       defaultBranch: input.defaultBranch,
       branchPrefix: input.branchPrefix,
+      authUsername: input.authUsername?.trim() || null,
+      checkCommand: input.checkCommand?.trim() || null,
+      ...(input.checkTimeoutSeconds ? { checkTimeoutSeconds: input.checkTimeoutSeconds } : {}),
       ...credentialColumns(input.credential ?? null),
       createdBy: userId,
     })
@@ -155,6 +236,17 @@ export async function updateRepository(
       ...(input.remoteUrl ? { remoteUrl: input.remoteUrl.trim() } : {}),
       ...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
       ...(input.branchPrefix !== undefined ? { branchPrefix: input.branchPrefix } : {}),
+      // ★ null 与 undefined 在这里意义不同：null = 清空（回到按域名推断 /
+      //   不跑核验），undefined = 这次没提这个字段，别动它
+      ...(input.authUsername !== undefined
+        ? { authUsername: input.authUsername?.trim() || null }
+        : {}),
+      ...(input.checkCommand !== undefined
+        ? { checkCommand: input.checkCommand?.trim() || null }
+        : {}),
+      ...(input.checkTimeoutSeconds !== undefined
+        ? { checkTimeoutSeconds: input.checkTimeoutSeconds }
+        : {}),
       ...(credential !== undefined ? credentialColumns(credential) : {}),
       ...(input.status ? { status: input.status } : {}),
       updatedAt: new Date(),
@@ -164,6 +256,90 @@ export async function updateRepository(
 
   return { repository: row };
 }
+
+/**
+ * 连通性探测：`git ls-remote --heads`。
+ *
+ * ★★ 这个端点存在的理由，就是「凭证配错了要在配置页上知道，
+ *   而不是等第一次派发」。
+ *
+ *   在此之前唯一的验证方式是派一个任务，然后看它以
+ *   「准备工作区失败：git clone 失败：… 401」告终 —— 那条报错里
+ *   没有任何东西能告诉你到底是 token 过期、scope 不够，
+ *   还是用户名占位不对。这三种原因的下一步动作完全不同。
+ *
+ * ★ 用 ls-remote 不用 clone：要验的三件事（域名通不通、凭证对不对、
+ *   默认分支在不在）它全能答，而且是秒级 —— clone 一个大仓库要几分钟，
+ *   贵到没人愿意点第二次的检查等于没有检查。
+ *
+ * ★ 只读，不落盘，不建镜像。
+ */
+export async function probeRepository(db: Database, repoId: string) {
+  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId));
+  if (!repo) throw notFound('仓库');
+
+  const gitEnv = await probeGit();
+  if (!gitEnv.ok) {
+    return { ok: false as const, stage: 'git' as const, message: gitEnv.problem, branches: null };
+  }
+
+  const auth = resolveAuthUsername(repo.remoteUrl, repo.authUsername);
+  const cred = describeRef(repo.credentialRef);
+  if (repo.credentialRef && !cred.usable) {
+    return {
+      ok: false as const,
+      stage: 'credential' as const,
+      message: cred.problem ?? '凭证不可用',
+      authUsername: auth.username,
+      branches: null,
+    };
+  }
+
+  try {
+    const branches = await git.lsRemoteHeads(repo.remoteUrl, gitAuthFor(repo));
+    const hasDefault = branches.includes(repo.defaultBranch);
+
+    return {
+      ok: hasDefault,
+      stage: hasDefault ? ('ok' as const) : ('branch' as const),
+      authUsername: auth.username,
+      authUsernameSource: auth.source,
+      branchCount: branches.length,
+      /** 只回前 50 个，仓库可能有上千分支 */
+      branches: branches.slice(0, 50),
+      message: hasDefault
+        ? `连接成功，远端有 ${branches.length} 个分支`
+        : `连接成功，但远端没有默认分支 ${repo.defaultBranch}。派发时会失败 —— ` +
+          `可选的有：${branches.slice(0, 5).join('、')}${branches.length > 5 ? ' …' : ''}`,
+    };
+  } catch (err) {
+    /**
+     * ★ 401/403 时把当前用的用户名占位一起说出来。
+     *   这是整条链路上最难自己想到的一环 —— GitLab 用了 GitHub 的占位
+     *   就是 401，而错误信息本身永远不会提到这件事。
+     */
+    const raw = err instanceof GitError ? err.message : String(err);
+    const authFailed = /401|403|Authentication failed|not authorized|access denied/i.test(raw);
+
+    return {
+      ok: false as const,
+      stage: authFailed ? ('auth' as const) : ('network' as const),
+      authUsername: auth.username,
+      authUsernameSource: auth.source,
+      branches: null,
+      message: authFailed
+        ? `${raw}\n当前使用的凭证用户名占位是 ${auth.username}（${SOURCE_LABEL[auth.source]}）。` +
+          '若这是 GitLab 请填 oauth2，Bitbucket 填 x-token-auth；也可能是 token 过期或缺少仓库读写 scope。'
+        : raw,
+    };
+  }
+}
+
+const SOURCE_LABEL: Record<'explicit' | 'host' | 'default', string> = {
+  explicit: '你显式指定的',
+  host: '按域名推断',
+  default: '兜底默认值',
+};
 
 export async function deleteRepository(db: Database, repoId: string) {
   const [row] = await db.select().from(repositories).where(eq(repositories.id, repoId));

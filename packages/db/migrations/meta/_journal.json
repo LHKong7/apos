@@ -85,6 +85,13 @@
       "when": 1786346304433,
       "tag": "0011_custom_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786353183906,
+      "tag": "0012_repo_auth_username",
+      "breakpoints": true
     }
   ]
 }

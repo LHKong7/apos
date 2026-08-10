@@ -783,6 +783,7 @@ function formatValue(v: unknown): string {
 function RepositoriesSection({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<RepositoryRow | null>(null);
 
   const q = useQuery({
     queryKey: qk.repositories(projectId),
@@ -829,18 +830,29 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
       ) : (
         <div className="space-y-2">
           {data.repositories.map((r) => (
-            <RepositoryCard key={r.id} repo={r} onDelete={() => remove.mutate(r.id)} error={remove.error} />
+            <RepositoryCard
+              key={r.id}
+              repo={r}
+              onDelete={() => remove.mutate(r.id)}
+              onEdit={() => setEditing(r)}
+              error={remove.error}
+            />
           ))}
         </div>
       )}
 
-      {creating && (
+      {(creating || editing) && (
         <RepositoryForm
           projectId={projectId}
+          existing={editing}
           canStoreInline={data.canStoreInlineCredential}
-          onClose={() => setCreating(false)}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
           onDone={() => {
             setCreating(false);
+            setEditing(null);
             void qc.invalidateQueries({ queryKey: qk.repositories(projectId) });
           }}
         />
@@ -849,15 +861,42 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
   );
 }
 
+/**
+ * 表单占位符跟着 git 地址变。
+ *
+ * ★ 与服务端的 resolveAuthUsername 是同一套判据，但这里只用来**提示**，
+ *   真正生效的是服务端算的那份（回显在卡片上）。前端算错顶多提示不准，
+ *   不会让认证行为不一致。
+ */
+function guessedAuthUsername(remoteUrl: string): string {
+  const u = remoteUrl.toLowerCase();
+  if (u.includes('github.com')) return 'x-access-token（GitHub）';
+  if (u.includes('gitlab.com')) return 'oauth2（GitLab）';
+  if (u.includes('bitbucket.org')) return 'x-token-auth（Bitbucket）';
+  if (u.trim()) return '认不出域名 —— 自建 GitLab 请填 oauth2';
+  return 'x-access-token';
+}
+
+const AUTH_SOURCE_LABEL: Record<string, string> = {
+  explicit: '手动指定',
+  host: '按域名推断',
+  default: '兜底默认值',
+};
+
 function RepositoryCard({
   repo,
   onDelete,
+  onEdit,
   error,
 }: {
   repo: RepositoryRow;
   onDelete: () => void;
+  onEdit: () => void;
   error: unknown;
 }) {
+  const probe = useMutation({ mutationFn: () => api.probeRepository(repo.id) });
+  const result = probe.data;
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -868,13 +907,36 @@ function RepositoryCard({
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
           {repo.scope === 'project' ? '本项目' : '组织共享'}
         </span>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="ml-auto rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-        >
-          删除
-        </button>
+        <div className="ml-auto flex gap-1.5">
+          {/*
+            ★ 「测试连接」是这张卡片上最该有的按钮。
+              没有它，验证凭证的唯一办法是派一个任务，然后看它以
+              「准备工作区失败：… 401」告终 —— 那条报错分不清是
+              token 过期、scope 不够，还是用户名占位不对。
+          */}
+          <button
+            type="button"
+            onClick={() => probe.mutate()}
+            disabled={probe.isPending}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {probe.isPending ? '测试中…' : '测试连接'}
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
+          >
+            删除
+          </button>
+        </div>
       </div>
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
@@ -884,11 +946,51 @@ function RepositoryCard({
         <Field label="凭证">
           {repo.credentialHint ?? <span className="text-slate-400">未配置</span>}
         </Field>
+        {/*
+          ★ 用户名占位要显示出来，并注明它是怎么来的。
+            这一项填错就是 401，而 401 的报错里没有任何东西指向它 ——
+            自建 GitLab 踩的就是这个坑。
+        */}
+        <Field label="凭证用户名">
+          <span className={repo.authUsernameSource === 'default' ? 'text-amber-700' : ''}>
+            {repo.authUsername}
+          </span>
+          <span className="ml-1 text-slate-400">
+            （{AUTH_SOURCE_LABEL[repo.authUsernameSource]}
+            {repo.authProvider ? ` · ${repo.authProvider}` : ''}）
+          </span>
+        </Field>
+        <Field label="质量核验">
+          {repo.checkCommand ? (
+            <code className="text-slate-800">{repo.checkCommand}</code>
+          ) : (
+            <span className="text-amber-700">未配置</span>
+          )}
+        </Field>
       </dl>
 
-      {repo.warning && <p className="mt-2 text-[11px] text-amber-700">⚠ {repo.warning}</p>}
+      {repo.warnings.map((w) => (
+        <p key={w} className="mt-2 text-[11px] text-amber-700">
+          ⚠ {w}
+        </p>
+      ))}
       {repo.credentialProblem && (
         <p className="mt-1 text-[11px] text-rose-600">⚠ {repo.credentialProblem}</p>
+      )}
+
+      {result && (
+        <p
+          className={clsx(
+            'mt-2 whitespace-pre-wrap rounded px-2 py-1 text-[11px]',
+            result.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-700',
+          )}
+        >
+          {result.ok ? '✓ ' : '✗ '}
+          {result.message}
+        </p>
+      )}
+      {probe.error instanceof ApiError && (
+        <p className="mt-2 text-[11px] text-rose-600">{probe.error.message}</p>
       )}
       {error instanceof ApiError && <p className="mt-2 text-[11px] text-rose-600">{error.message}</p>}
     </div>
@@ -897,53 +999,78 @@ function RepositoryCard({
 
 function RepositoryForm({
   projectId,
+  existing,
   canStoreInline,
   onClose,
   onDone,
 }: {
   projectId: string;
+  /** 传了就是编辑，标识与远端不可改 */
+  existing?: RepositoryRow | null;
   canStoreInline: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
+  const isEdit = Boolean(existing);
   const [form, setForm] = useState({
-    ref: '',
-    name: '',
-    remoteUrl: '',
-    defaultBranch: 'main',
-    branchPrefix: 'apos/',
-    checkCommand: '',
+    ref: existing?.ref ?? '',
+    name: existing?.name ?? '',
+    remoteUrl: existing?.remoteUrl ?? '',
+    defaultBranch: existing?.defaultBranch ?? 'main',
+    branchPrefix: existing?.branchPrefix ?? 'apos/',
+    // ★ 只回填手填过的那份。推断出来的值回填进去会把它「钉死」成显式值，
+    //   之后换了域名也不会跟着变
+    authUsername: existing?.authUsernameSource === 'explicit' ? existing.authUsername : '',
+    checkCommand: existing?.checkCommand ?? '',
     credential: '',
-    orgWide: false,
+    orgWide: existing ? existing.scope === 'organization' : false,
   });
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
   const create = useMutation({
     mutationFn: () =>
-      api.createRepository({
+      isEdit
+        ? api.updateRepository(existing!.id, {
+            name: form.name,
+            defaultBranch: form.defaultBranch,
+            branchPrefix: form.branchPrefix,
+            authUsername: form.authUsername.trim() || null,
+            checkCommand: form.checkCommand.trim() || null,
+            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
+          })
+        : api.createRepository({
         ref: form.ref,
         name: form.name,
         remoteUrl: form.remoteUrl,
         defaultBranch: form.defaultBranch,
         branchPrefix: form.branchPrefix,
-        credential: form.credential.trim() || null,
-        projectId: form.orgWide ? null : projectId,
-      }),
+        // ★ 这两个此前一直躺在表单 state 里没被提交 ——
+        //   checkCommand 因此只能改数据库才配得上，而它是
+        //   reviewing 阶段唯一的真实测试数据源
+        authUsername: form.authUsername.trim() || null,
+        checkCommand: form.checkCommand.trim() || null,
+            credential: form.credential.trim() || null,
+            projectId: form.orgWide ? null : projectId,
+          }),
     onSuccess: onDone,
   });
 
   return (
     <Modal onClose={onClose}>
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">登记代码仓库</h2>
+        <h2 className="text-sm font-semibold text-slate-900">
+          {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
+        </h2>
         <label className="block">
           <span className="text-xs font-medium text-slate-700">标识</span>
           <input
             value={form.ref}
+            disabled={isEdit}
             onChange={(e) => set('ref', e.target.value)}
             placeholder="order-service"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
           />
           <p className="mt-1 text-[11px] text-slate-500">
             Agent 资源范围里填的就是这个值，登记后不建议再改。
@@ -963,9 +1090,10 @@ function RepositoryForm({
           <span className="text-xs font-medium text-slate-700">git 地址</span>
           <input
             value={form.remoteUrl}
+            disabled={isEdit}
             onChange={(e) => set('remoteUrl', e.target.value)}
             placeholder="https://github.com/acme/order-service.git"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
           />
         </label>
 
@@ -987,6 +1115,49 @@ function RepositoryForm({
             />
           </label>
         </div>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            凭证用户名占位
+            <span className="ml-1 font-normal text-slate-400">选填</span>
+          </span>
+          <input
+            value={form.authUsername}
+            onChange={(e) => set('authUsername', e.target.value)}
+            placeholder={guessedAuthUsername(form.remoteUrl)}
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          {/*
+            ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
+              留空能按 github.com / gitlab.com 推断出来，但**自建** GitLab
+              装在 git.acme.com 上推不出来 —— 那正是最常见的部署形态。
+          */}
+          <p className="mt-1 text-[11px] text-slate-500">
+            留空按域名推断（GitHub → <code>x-access-token</code>，GitLab →{' '}
+            <code>oauth2</code>，Bitbucket → <code>x-token-auth</code>）。
+            <span className="text-amber-700">自建 GitLab 推断不出来，需要手填 oauth2。</span>
+          </p>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            质量核验命令
+            <span className="ml-1 font-normal text-slate-400">选填</span>
+          </span>
+          <input
+            value={form.checkCommand}
+            onChange={(e) => set('checkCommand', e.target.value)}
+            placeholder="pnpm test"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          {/*
+            ★ 不填不是「少个功能」，是 reviewing 阶段的门禁没有数据可依据。
+          */}
+          <p className="mt-1 text-[11px] text-slate-500">
+            Agent 收工后、提交之前在工作区执行。不填的话，reviewing
+            阶段的质量门禁只能依据 Agent 自述 —— 那是一句话，不是证据。
+          </p>
+        </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">访问凭证</span>

@@ -17,8 +17,119 @@ export class GitError extends Error {
 export interface GitAuth {
   /** 明文 token；只在内存里活到本次调用结束 */
   token: string | null;
-  /** HTTPS token 的用户名占位，GitHub 用 x-access-token，GitLab 用 oauth2 */
+  /** HTTPS token 的 Basic 用户名占位，见 {@link resolveAuthUsername} */
   username?: string;
+}
+
+/**
+ * HTTPS token 走 Basic 认证时的用户名占位。
+ *
+ * ★★ 这个值不是随便填的，各家要求不一样，填错的表现是 401 ——
+ *   而 401 发生在派发时（clone 那一刻），错误信息只说「认证失败」，
+ *   没有任何东西指向「用户名占位不对」这个真实原因。
+ *
+ * ★ 在此之前这里恒为 `x-access-token`（GitHub 的写法），
+ *   `GitAuth.username` 字段建了却从没有人传值 —— 也就是说
+ *   GitLab 私有仓库从来没通过。类型里留了口子而调用方不传，
+ *   是比没有这个口子更糟的状态：它看起来是支持的。
+ *
+ * ★ 按 host 推断只覆盖公有云域名。自建 GitLab 装在 git.acme.com 上
+ *   是最常见的情况，推断不出来 —— 所以登记仓库时可以显式指定，
+ *   显式值永远优先。推断结果会在接口里回显，用户看得到即将用哪个。
+ */
+interface HostRule {
+  /** 公有云域名（含子域）*/
+  domain: RegExp;
+  /**
+   * 自建实例的首段标签。`gitlab.acme.com` 几乎必然是 GitLab ——
+   * 而 `git.acme.com` 不是（Gitea / Gogs / GitLab / Bitbucket Server 都可能），
+   * 所以只认服务商名本身，不认 `git`。认不出来就如实说认不出来。
+   *
+   * 没有自建形态的服务（Azure DevOps）不给这个字段。
+   */
+  selfHostedLabel?: string;
+  username: string;
+  provider: string;
+}
+
+const HOST_AUTH_USERNAME: HostRule[] = [
+  {
+    domain: /(^|\.)github\.com$/i,
+    selfHostedLabel: 'github',
+    username: 'x-access-token',
+    provider: 'GitHub',
+  },
+  {
+    domain: /(^|\.)gitlab\.com$/i,
+    selfHostedLabel: 'gitlab',
+    username: 'oauth2',
+    provider: 'GitLab',
+  },
+  {
+    domain: /(^|\.)bitbucket\.org$/i,
+    selfHostedLabel: 'bitbucket',
+    username: 'x-token-auth',
+    provider: 'Bitbucket',
+  },
+  {
+    domain: /(^|\.)dev\.azure\.com$/i,
+    // 没有自建形态，不给 selfHostedLabel
+    username: 'apos',
+    provider: 'Azure DevOps',
+  },
+  {
+    domain: /(^|\.)codeberg\.org$/i,
+    selfHostedLabel: 'codeberg',
+    username: 'oauth2',
+    provider: 'Codeberg',
+  },
+];
+
+/** 兜底沿用 GitHub 的写法 —— 改默认值会让现有 GitHub 仓库一起变，风险不对等 */
+export const DEFAULT_AUTH_USERNAME = 'x-access-token';
+
+export interface ResolvedAuthUsername {
+  username: string;
+  /** 'explicit' = 用户填的；'host' = 按域名认出来的；'default' = 兜底 */
+  source: 'explicit' | 'host' | 'default';
+  /** 认出来的服务商，用于界面提示；认不出为 null */
+  provider: string | null;
+}
+
+export function resolveAuthUsername(
+  remoteUrl: string,
+  explicit?: string | null,
+): ResolvedAuthUsername {
+  const trimmed = explicit?.trim();
+  if (trimmed) return { username: trimmed, source: 'explicit', provider: null };
+
+  const host = hostOf(remoteUrl);
+  const firstLabel = host?.split('.')[0];
+  const hit = host
+    ? HOST_AUTH_USERNAME.find(
+        (h) => h.domain.test(host) || (h.selfHostedLabel && firstLabel === h.selfHostedLabel),
+      )
+    : undefined;
+  if (hit) return { username: hit.username, source: 'host', provider: hit.provider };
+
+  return { username: DEFAULT_AUTH_USERNAME, source: 'default', provider: null };
+}
+
+/** 从 https / ssh / scp 三种 git 地址里取 host */
+export function hostOf(remoteUrl: string): string | null {
+  const url = remoteUrl.trim();
+  const scp = url.match(/^[\w.-]+@([^:/]+):/); // git@github.com:owner/repo.git
+  if (scp) return scp[1]!.toLowerCase();
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** ssh:// 与 scp 形态都不走 HTTP Basic —— token 对它们没有意义 */
+export function isHttpRemote(remoteUrl: string): boolean {
+  return /^https?:\/\//i.test(remoteUrl.trim());
 }
 
 /**
@@ -171,6 +282,21 @@ export const git = {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * 列远端分支。用于登记时的连通性探测 —— 不落盘、不改任何东西。
+   *
+   * ★ 探测用 ls-remote 而不是 clone：一个大仓库 clone 要几分钟，
+   *   而这里要验的三件事（域名通不通、凭证对不对、默认分支在不在）
+   *   ls-remote 全都能答，且是秒级。
+   */
+  async lsRemoteHeads(remoteUrl: string, auth?: GitAuth): Promise<string[]> {
+    const out = await run(['ls-remote', '--heads', remoteUrl], { auth, timeoutMs: 60_000 });
+    return out
+      .split('\n')
+      .map((line) => line.split('\t')[1]?.replace(/^refs\/heads\//, '') ?? '')
+      .filter(Boolean);
   },
 };
 

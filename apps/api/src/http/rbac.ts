@@ -198,6 +198,7 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   // ── 组织配置 ──────────────────────────────────────────────────────
   'POST /api/v1/admin/repositories': 'repository.manage',
   'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
+  'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
   'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
   'PATCH /api/v1/admin/users/:id/org-role': 'org.members.manage',
   'POST /api/v1/admin/roles': 'org.roles.manage',
