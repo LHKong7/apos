@@ -82,10 +82,19 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 
 **③ 与 ①② 的区别**：①② 回答"你有没有资格做"，③ 回答"这件事该不该自动做"。一个 `tech_lead` 有资格批准计划（②通过），但如果计划涉及生产 DDL，Policy 仍要求 DBA 签字（③）。
 
-### 2.1.1 ② 层的实现位置
+### 2.1.1 ①② 层的实现位置
 
-②（项目角色）在 `apps/api/src/http/routes.ts` 里以一个 `preHandler` 钩子统一落地，
+①② 在 `apps/api/src/http/routes.ts` 的**同一个 `preHandler` 钩子**里统一落地
+（判定逻辑在 `apps/api/src/http/rbac.ts`，规则本身在 `packages/domain/src/rbac/`），
 不在各个 handler 里分别写：
+
+```
+preHandler → 解析身份（X-User-Id）
+           → ② 成员关系闸门（非成员 404）
+           → ① 权限矩阵（角色不够 403）
+```
+
+**② 项目成员**按 URL 形状拦截：
 
 | 形状 | 判定 |
 | --- | --- |
@@ -100,6 +109,28 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 **非成员返回 404 而不是 403**：403 等于确认「这个项目存在」，
 会把项目 id 变成可枚举的探针。文案用「不存在**或**没有权限」，
 既不确认存在性，又能让被分享链接的人知道该去切换身份。
+
+**同组织的 `org_admin` 即使不是成员也放行**（§2.2「全部权限」），
+但**跨组织不行**——管理员的「全部」以组织为界，越界就是多租户隔离失效。
+
+**① 权限矩阵**靠一张路由表逐条登记（`rbac.ts` 的 `ROUTE_PERMISSIONS`）。
+这里不能照搬②层「按 URL 形状拦截」的办法：
+「批准计划要 `tech_lead`」推不出 URL 形状，只能一条条写。
+
+于是改用另一个保证：**写路由漏登记，服务起不来**。
+`guardRouteCoverage` 在注册路由时清点，任何 `POST/PUT/PATCH/DELETE`
+既没登记权限、也不在豁免清单里，`buildApp` 直接抛错。
+豁免必须写明理由（目前三条：健康探针、Agent 回调、开发用 webhook sink），
+理由会出现在错误信息里。
+
+跨项目的批量接口（`/decisions/batch-approve`）用 `deferred('理由')` 标记：
+一次提交的十条决策可能属于十个项目，URL 上一个都看不出来，
+只能在 handler 里按每条各自的归属逐条判。这是唯一合法的例外形态，
+且同样要求写出理由。
+
+**判定规则本身在 `packages/domain/src/rbac/`，前后端共用**：
+前端用 `GET /api/v1/projects/{id}/permissions` 一次拿全权限与拒绝理由，
+据此灰按钮并显示「该找谁」。灰按钮不是权限——服务端仍然独立判一遍。
 
 ### 2.2 角色定义
 
@@ -132,6 +163,42 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 | 导出审计日志 | `org_admin` | 导出行为本身记审计 |
 
 **不对称设计**：收紧权限比放宽权限要求低。收紧总是安全的，放宽需要更高门槛与额外证据（模拟结果、影响预演）。
+
+#### 2.3.1 「这次改动算收紧还是放宽」怎么判
+
+不对称设计只有在能**可靠区分**两个方向时才成立。判据在
+`packages/domain/src/rbac/change-direction.ts`，两条都是**看结果不看写法**：
+
+- **Policy**：把新旧规则集各在场景网格上跑一遍。只要存在一个场景从
+  「要人确认」变成「自动放行」，整次改动就算放宽。
+  比较两条规则谁更严会漏掉「插一条更高优先级的宽松规则把严格规则挡在后面」——
+  规则本身没被改动，生效的却已经是新的那条。
+- **Agent 权限**：白名单变长、`deniedTools` **变短**、资源 scope 升级，
+  三者任一即为扩大。黑名单那条最容易判反：从里面拿掉一项是撤掉一条硬约束，
+  按「列表变短 = 收紧」的直觉会判成收紧，于是 owner 就能自己把
+  「绝对不能合并代码」这条撤了。
+
+判定发生在路由层之后、副作用之前。路由表只挡掉「连收紧都不够格」的人；
+方向算出来之后再判一次（`savePolicy` / `updateAgent` 的 `assertCan` 回调）。
+**顺序不能反**：Policy 的模拟要扫 90 天历史评估，
+放在权限判定之前等于让没资格放宽的人白跑一遍，
+还把「哪些历史任务会被自动放行」送给了不该看到它的人。
+
+#### 2.3.2 角色怎么改
+
+`GET/PUT/DELETE /api/v1/projects/{id}/members/...`（`pm` / `tech_lead`）与
+`PATCH /api/v1/admin/users/{id}/org-role`（`org_admin`），实现在
+`apps/api/src/http/members.ts`，全部记审计（§6.3）。
+
+一套改不了的权限体系，实践中的结局是「所有人共用一个账号」——
+因为换角色比换个人麻烦。两条防自伤的约束：
+
+- 项目里至少留一个 `pm` / `tech_lead`，否则这个项目的权限只有组织管理员能修；
+- 组织里至少留一个 `org_admin`，否则再没有人能管身份、改组织级 Policy、看审计。
+
+角色取值另有库级 CHECK 约束（迁移 `0010_rbac_roles`）：拼错的角色写不进去。
+存进一个 `techlead` 不会报错，只会让这个人**什么都做不了**——
+而现象是「他明明是负责人却处处受限」，没有任何报错指向根因。
 
 ### 2.4 决策责任不可代行
 
@@ -365,6 +432,16 @@ REVOKE UPDATE, DELETE ON events FROM apos_app;
 - 集成连接/断开、Source of Truth 变更
 - 敏感数据原文查看
 - 审计日志导出
+
+对应的事件类型见 `packages/contracts/src/events/index.ts` 的 `AUDIT_EVENTS`。
+其中人类授权变更是四条以「被改的那个人」为 subject 的事件：
+`project.member_added` / `project.member_role_changed` / `project.member_removed` /
+`user.org_role_changed`。
+
+**为什么这四条必须有**：§7 把「权限累积」列为本产品的特有威胁，
+它的第一条缓解手段就是「权限变更全审计」。没有这几条事件，
+「谁在什么时候把谁提成了 `tech_lead`」查不到——
+而那恰恰是提权路径上最关键的一步。
 
 ---
 

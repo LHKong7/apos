@@ -7,6 +7,7 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { duration, eventLabel, money, relativeTime, riskLabel } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { RoleBadge } from '../../components/Gated';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
@@ -82,6 +83,9 @@ export function OverviewPage() {
           <Tab to={`/projects/${projectId}/settings/policies`}>Policy</Tab>
           <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
           <Tab to={`/projects/${projectId}/settings/agents`}>Agent 配置</Tab>
+          <Tab to={`/projects/${projectId}/settings/members`}>成员与角色</Tab>
+          {/* 当前身份在本项目的角色 —— 「为什么这个按钮是灰的」的第一手线索 */}
+          <RoleBadge projectId={projectId} />
         </nav>
       </div>
 

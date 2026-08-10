@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z, ZodError } from 'zod';
 import {
   agentRuns,
@@ -28,6 +28,8 @@ import {
   humanActor,
   IntegrationProvider,
   NotificationConfig,
+  OrgRole,
+  ProjectRole,
   SyncMapping,
   WorkItemStatus,
   type PolicyContext,
@@ -37,6 +39,7 @@ import {
   LAYOUTS,
   POLICY_TEMPLATES,
   batchDenyReason,
+  check,
   explainPolicy,
   templateById,
   WORK_ITEM_MACHINE,
@@ -66,6 +69,8 @@ import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
+import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
+import { createRbac, guardRouteCoverage } from './rbac';
 import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
@@ -192,6 +197,13 @@ function corr(req: { headers: Record<string, unknown> }): string {
 export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   const { db } = deps;
 
+  /**
+   * ★★ 必须在注册任何路由之前挂上：它靠 onRoute 钩子逐条清点，
+   *   挂晚了就漏掉前面那些 —— 而「清点器自己漏了」的表现是「一切正常」。
+   *   实际断言在函数末尾，那时路由才注册完。
+   */
+  const assertRoutesCovered = guardRouteCoverage(app);
+
   app.setErrorHandler((error: unknown, _req, reply) => {
     if (error instanceof ApiError) return sendError(reply, error);
     if (error instanceof ZodError) {
@@ -283,28 +295,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
-   * ★★ 项目成员闸门 —— docs/tech/09-security.md §2.1 的第②层「项目角色」。
+   * ★★ 授权闸门 —— docs/tech/09-security.md §2.1 的 ①② 两层。
    *
-   *   规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在集成端点上
-   *   实现了（assertIntegration），其余项目数据一律没查成员关系。
+   *   ② 项目成员：规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在
+   *   集成端点上实现了（assertIntegration），其余项目数据一律没查成员关系。
    *   实测后果：A 组织的用户可以读、也可以写 B 组织项目的看板、执行图、
    *   Analytics、Policy、需求 —— 跨租户数据在应用层是敞开的。
+   *
+   *   ① 组织/项目角色：成员关系只回答「是不是自己人」，回答不了
+   *   「批准计划要 tech_lead」「放宽 Policy 要模拟结果」。权限矩阵（§2.3）
+   *   在 rbac.ts 的路由表里逐条登记，写路由漏登记则服务起不来。
    *
    * ★ 做成 preHandler 而不是在四十个 handler 里各写一行，是因为这一类
    *   漏洞的成因就是「漏了一处」。钩子按 URL 形状统一拦截，
    *   以后新增的 /projects/:id/* 路由默认就是关着的，
    *   不需要作者记得加检查。
    */
-  // ★ 不能拿 UUID_RE.source 拼：那个是带 ^$ 锚点的，嵌进来会变成永不匹配的正则，
-  //   而「闸门永不触发」的表现恰恰是「一切正常」——最坏的一种失败方式
-  const PROJECT_SCOPED_URL =
-    /^\/api\/v1\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
-
   /**
    * 调用者能看见的项目 id。
    *
    * ★ 列表类端点（决策收件箱、Agent 花名册）的 URL 里没有项目 id，
-   *   上面那个按 URL 形状的闸门够不着它们 —— 实测中一个只属于一个项目的用户，
+   *   按 URL 形状的闸门够不着它们 —— 实测中一个只属于一个项目的用户，
    *   收件箱里能看到三个项目、跨三个组织的决策。这类端点必须自己带上范围。
    */
   async function visibleProjectIds(userId: string): Promise<string[]> {
@@ -315,35 +326,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return rows.map((r) => r.projectId);
   }
 
-  async function assertProjectMember(projectId: string, userId: string) {
-    const [membership] = await db
-      .select({ role: projectMembers.role })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.projectId, projectId),
-          eq(projectMembers.actorType, 'human'),
-          eq(projectMembers.actorId, userId),
-        ),
-      );
-    if (membership) return membership.role;
-
-    /**
-     * ★ 非成员回 404 而不是 403。
-     *   403 等于确认「这个项目存在」，把项目 id 变成一个可枚举的探针 ——
-     *   对方能借此摸出别的组织有哪些项目。这类端点的存在性本身就是信息。
-     *
-     * ★ 但文案要给出路。别人分享一个项目链接过来、而你恰好不是成员时，
-     *   光说「项目不存在」会让人以为链接失效了去问对方要新的 ——
-     *   真实原因是当前身份不对。措辞保持「或」，不确认项目是否存在。
-     */
-    throw new ApiError(
-      'NOT_FOUND',
-      '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
-      { projectId },
-    );
-  }
-
   /**
    * 资源 id → 它属于哪个项目。
    *
@@ -351,9 +333,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   一样要过②层。加新的资源路由时必须在这里登记 ——
    *   没登记就等于这条路由不设防。
    */
-  const RESOURCE_SCOPED_URL =
-    /^\/api\/v1\/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
-
   async function projectOfResource(kind: string, id: string): Promise<string | null> {
     const one = async <T extends { projectId: string | null }>(rows: T[]) =>
       rows[0]?.projectId ?? null;
@@ -388,25 +367,21 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     }
   }
 
-  app.addHook('preHandler', async (req) => {
-    const path = req.url.split('?')[0] ?? '';
-
-    const inProject = PROJECT_SCOPED_URL.exec(path);
-    if (inProject) {
-      const { userId } = actorFrom(req);
-      await assertProjectMember(inProject[1]!, userId);
-      return;
-    }
-
-    const onResource = RESOURCE_SCOPED_URL.exec(path);
-    if (onResource) {
-      const { userId } = actorFrom(req);
-      const projectId = await projectOfResource(onResource[1]!.toLowerCase(), onResource[2]!);
-      // 资源不存在时不在这里报 404：让各自的 handler 去说「决策不存在」
-      // 这类更准确的话，这里只管「存在但不属于你」
-      if (projectId) await assertProjectMember(projectId, userId);
-    }
+  const rbac = createRbac({
+    db,
+    projectOfResource,
+    requireUserId: (req) => actorFrom(req).userId,
   });
+
+  app.addHook('preHandler', async (req) => {
+    await rbac.guard(req);
+  });
+
+  /** handler 里还要用的成员关系判定（角色本身是 preHandler 已经查过的缓存） */
+  async function assertProjectMember(projectId: string, userId: string, req: FastifyRequest) {
+    const actor = await rbac.assertProjectAccess(req, projectId, userId);
+    return actor.projectRole;
+  }
 
   // ── 项目 ────────────────────────────────────────────────────────────
   /**
@@ -465,13 +440,108 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.post('/api/v1/projects', async (req, reply) => {
     const { userId } = actorFrom(req);
     const body = CreateProject.parse(req.body);
+    const actor = await rbac.resolveActor(req, userId, null);
+
+    /**
+     * ★ orgId 以调用者的组织为准，不听请求体的。
+     *   照抄 body.orgId 的话，任何人都能往别的组织里塞一个项目 ——
+     *   而那个项目从此挂在对方的项目列表、对方的成本统计里。
+     */
+    if (body.orgId !== actor.orgId) {
+      throw new ApiError('FORBIDDEN', '只能在自己所属的组织下创建项目', {
+        orgId: actor.orgId,
+      });
+    }
 
     const [project] = await db
       .insert(projects)
-      .values({ ...body, techLeadId: userId })
+      .values({ ...body, orgId: actor.orgId, techLeadId: userId })
       .returning();
 
+    /**
+     * ★★ 创建者必须落成成员，否则他建完就进不去自己的项目 ——
+     *   成员关系闸门（§2.1.1）不认 techLeadId 这个字段，只认 project_members。
+     *   这类「功能看起来完成了，实际第一步就走不通」的缺口，
+     *   只有在权限真的生效之后才暴露得出来。
+     */
+    await db.insert(projectMembers).values({
+      projectId: project!.id,
+      actorType: 'human',
+      actorId: userId,
+      role: 'tech_lead',
+    });
+
+    await emitAndPublish(db, {
+      orgId: actor.orgId,
+      projectId: project!.id,
+      type: 'project.member_added',
+      actor: humanActor(userId),
+      subjectType: 'user',
+      subjectId: userId,
+      payload: { from: null, to: 'tech_lead', projectId: project!.id, reason: 'project_creator' },
+      correlationId: corr(req),
+    });
+
     return reply.status(201).send({ project });
+  });
+
+  // ── 成员与角色（09-security §2.2）────────────────────────────────────
+  /**
+   * ★ 权限判定本身也要能被看见。
+   *
+   *   前端不该靠猜哪个按钮能点：一次拿全当前身份在这个项目里的
+   *   全部权限与拒绝理由，界面据此灰按钮并给出「该找谁」。
+   *   服务端仍然独立判一遍 —— 共用一份规则不等于信任前端。
+   */
+  app.get('/api/v1/projects/:id/permissions', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const actor = await rbac.resolveActor(req, userId, id);
+
+    return {
+      projectId: id,
+      userId,
+      orgRole: actor.orgRole,
+      projectRole: actor.projectRole,
+      permissions: rbac.permissionsOf(actor),
+      denyReasons: rbac.denyReasonsOf(actor),
+    };
+  });
+
+  app.get('/api/v1/projects/:id/members', async (req) => {
+    const { id } = req.params as { id: string };
+    return listMembers(db, id);
+  });
+
+  app.put('/api/v1/projects/:id/members/:userId', async (req) => {
+    const { userId: actorId } = actorFrom(req);
+    const { id, userId: targetUserId } = req.params as { id: string; userId: string };
+    const body = z.object({ role: ProjectRole }).parse(req.body);
+
+    return setMemberRole(
+      db,
+      { projectId: id, targetUserId, actorId, correlationId: corr(req) },
+      body.role,
+    );
+  });
+
+  app.delete('/api/v1/projects/:id/members/:userId', async (req) => {
+    const { userId: actorId } = actorFrom(req);
+    const { id, userId: targetUserId } = req.params as { id: string; userId: string };
+    return removeMember(db, { projectId: id, targetUserId, actorId, correlationId: corr(req) });
+  });
+
+  /** 组织通讯录与身份管理（§2.2「org_admin：身份管理」）*/
+  app.get('/api/v1/admin/users', async (req) => {
+    const { orgId } = await callerOrg(req);
+    return listOrgUsers(db, orgId);
+  });
+
+  app.patch('/api/v1/admin/users/:id/org-role', async (req) => {
+    const { userId: actorId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z.object({ orgRole: OrgRole }).parse(req.body);
+    return setOrgRole(db, { targetUserId: id, actorId, correlationId: corr(req) }, body.orgRole);
   });
 
   // ── 需求 ────────────────────────────────────────────────────────────
@@ -843,7 +913,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
      *   连带它们的成本、成功率、负责人。
      */
     const { userId } = actorFrom(req);
-    if (projectId) await assertProjectMember(projectId, userId);
+    if (projectId) await assertProjectMember(projectId, userId, req);
     const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId));
     if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
 
@@ -952,7 +1022,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId, userId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
-    const result = await updateAgent(db, deps.registry, id, body, userId);
+
+    // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
+    const subject = await rbac.subjectForAgent(req, userId, id);
+    const result = await updateAgent(db, deps.registry, id, body, userId, (permission) =>
+      rbac.assertPermission(subject, permission, { agentId: id }),
+    );
 
     if (result.permissionsChanged) {
       // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
@@ -1019,17 +1094,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   // ── 项目工程约定 ────────────────────────────────────────────────────
+  // 成员关系与 convention.manage 权限都由 preHandler 统一判过（见闸门那一节）
   app.get('/api/v1/projects/:id/conventions', async (req) => {
-    const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
-    await assertProjectMember(id, userId);
     return listConventions(db, id);
   });
 
   app.post('/api/v1/projects/:id/conventions', async (req, reply) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
-    await assertProjectMember(id, userId);
     const body = ConventionInput.parse(req.body);
     return reply.status(201).send(await createConvention(db, id, userId, body));
   });
@@ -1082,6 +1155,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const targets = await db
       .select({
         id: decisions.id,
+        projectId: decisions.projectId,
         riskLevel: decisions.riskLevel,
         reversible: decisions.reversible,
         assigneeId: decisions.assigneeId,
@@ -1090,6 +1164,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .where(inArray(decisions.id, body.ids));
     const byId = new Map(targets.map((d) => [d.id, d]));
 
+    /**
+     * ★★ 权限也必须逐条判，按**这条决策所属的项目**。
+     *
+     *   批量接口的 URL 里没有项目 id，闸门（②层）够不着它 ——
+     *   而这里此前只判了「是不是责任人」。一条无人认领的决策
+     *   （assigneeId 为空，产品口径里它照样进批量）因此对任何人开放：
+     *   把 id 猜出来或从别处拿到，非成员就能替别的项目做批准。
+     *   一次跨项目的提交要按每条各自的归属判，不能按调用者「大概是谁」判。
+     */
+    const visible = new Set(await visibleProjectIds(userId));
     const blocked: { id: string; ok: false; error: string }[] = [];
     const allowed: string[] = [];
     for (const id of body.ids) {
@@ -1097,6 +1181,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       if (!d) {
         // 不存在的 id 交给单条批准去报「决策不存在」，口径一致
         allowed.push(id);
+        continue;
+      }
+      if (!visible.has(d.projectId)) {
+        // 与②层同一口径：不确认「这条决策存在」，只说够不着
+        blocked.push({ id, ok: false, error: '决策不存在，或当前身份没有访问权限' });
+        continue;
+      }
+      const permission = check(await rbac.resolveActor(req, userId, d.projectId), 'decision.act');
+      if (!permission.allowed) {
+        blocked.push({ id, ok: false, error: permission.reason ?? '权限不足' });
         continue;
       }
       const candidate = {
@@ -1200,37 +1294,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   /**
    * 项目角色 + 组织角色 → 权限判定。
    *
-   * ★ 判定本身在 @apos/domain，前后端共用一份 —— 界面上灰掉的按钮
-   *   和服务端真正拦住的请求必须是同一条规则。这一页管的是
+   * ★ 判定本身在 @apos/domain 的权限目录，前后端共用一份 —— 界面上灰掉的
+   *   按钮和服务端真正拦住的请求必须是同一条规则。这一页管的是
    *   「谁能给外部系统开写权限」，两边说法不一致的代价太高。
    */
-  async function integrationActor(projectId: string, userId: string): Promise<Actor> {
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
-
-    const [membership] = await db
-      .select()
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.projectId, projectId),
-          eq(projectMembers.actorType, 'human'),
-          eq(projectMembers.actorId, userId),
-        ),
-      );
-
-    return {
-      projectRole: (membership?.role as Actor['projectRole']) ?? null,
-      orgRole: (user.orgRole as Actor['orgRole']) ?? 'member',
-    };
+  async function integrationActor(
+    projectId: string,
+    userId: string,
+    req: FastifyRequest,
+  ): Promise<Actor> {
+    const actor = await rbac.resolveActor(req, userId, projectId);
+    return { projectRole: actor.projectRole, orgRole: actor.orgRole };
   }
 
   async function assertIntegration(
     projectId: string,
     userId: string,
     action: Parameters<typeof canIntegration>[1],
+    req: FastifyRequest,
   ) {
-    const actor = await integrationActor(projectId, userId);
+    const actor = await integrationActor(projectId, userId, req);
     if (!canIntegration(actor, action)) {
       throw new ApiError('FORBIDDEN', denyReason(actor, action) ?? '权限不足', {
         action,
@@ -1252,7 +1335,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const userId = optionalUserId(req);
     const data = await listIntegrations(db, deps.integrations, id);
     const actor = userId
-      ? await integrationActor(id, userId)
+      ? await integrationActor(id, userId, req)
       : ({ projectRole: null, orgRole: 'member' } as Actor);
 
     return { ...data, permissions: integrationPermissions(actor) };
@@ -1272,12 +1355,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       })
       .parse(req.body);
 
-    await assertIntegration(id, userId, 'connect');
+    await assertIntegration(id, userId, 'connect', req);
     /**
      * ★ 写权限是比「连上」高一个量级的授权，单独判一次。
      *   pm 能连 GitHub，但让它能改代码需要 tech_lead。
      */
-    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write');
+    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write', req);
 
     const created = await createIntegration(db, deps.integrations, {
       projectId: id,
@@ -1311,7 +1394,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const body = z.object({ mappings: z.array(SyncMapping).min(1) }).parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'change_sot');
+    await assertIntegration(projectId, userId, 'change_sot', req);
 
     const result = await updateSyncMapping(db, id, body.mappings, userId);
 
@@ -1341,7 +1424,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const { userId } = actorFrom(req);
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view');
+    await assertIntegration(projectId, userId, 'view', req);
     return ingestCiResults(db, deps.integrations, id);
   });
 
@@ -1349,7 +1432,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const { userId } = actorFrom(req);
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view');
+    await assertIntegration(projectId, userId, 'view', req);
 
     return runSync(db, deps.integrations, id);
   });
@@ -1371,7 +1454,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
     if (!conflict) throw notFound('冲突');
-    await assertIntegration(conflict.projectId, userId, 'resolve_conflict');
+    await assertIntegration(conflict.projectId, userId, 'resolve_conflict', req);
 
     const result = await resolveConflict(db, deps.integrations, {
       conflictId: id,
@@ -1411,7 +1494,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'connect');
+    await assertIntegration(projectId, userId, 'connect', req);
 
     const link = await linkObject(db, { integrationId: id, ...body });
     reply.code(201);
@@ -1431,7 +1514,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     void body;
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'disconnect');
+    await assertIntegration(projectId, userId, 'disconnect', req);
 
     const result = await disconnectIntegration(db, id);
     await emitAndPublish(db, {
@@ -1454,7 +1537,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const config = NotificationConfig.parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'configure_notification');
+    await assertIntegration(projectId, userId, 'configure_notification', req);
 
     return updateNotificationConfig(db, id, config);
   });
@@ -1504,6 +1587,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     acknowledgeMismatches: z.boolean().optional(),
   });
 
+  /**
+   * ★ 收紧还是放宽，要把新旧规则各跑一遍场景才知道 ——
+   *   路由表只挡掉「连收紧都不够格」的人，方向判定交给 savePolicy 回调。
+   */
+  async function policyGuard(req: FastifyRequest, projectId: string) {
+    const { userId } = actorFrom(req);
+    const actor = await rbac.resolveActor(req, userId, projectId);
+    return (permission: 'policy.tighten' | 'policy.loosen') =>
+      rbac.assertPermission(actor, permission, { projectId });
+  }
+
   app.post('/api/v1/projects/:id/policies', async (req, reply) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
@@ -1521,7 +1615,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         enabled: body.enabled,
       },
       userId,
-      { acknowledgeMismatches: body.acknowledgeMismatches },
+      {
+        acknowledgeMismatches: body.acknowledgeMismatches,
+        assertCan: await policyGuard(req, id),
+      },
     );
     return reply.code(201).send(result);
   });
@@ -1543,7 +1640,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         enabled: body.enabled,
       },
       userId,
-      { policyId, acknowledgeMismatches: body.acknowledgeMismatches },
+      {
+        policyId,
+        acknowledgeMismatches: body.acknowledgeMismatches,
+        assertCan: await policyGuard(req, id),
+      },
     );
   });
 
@@ -2290,6 +2391,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       lastEventId: typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined,
     });
   });
+
+  // ★ 全部路由注册完，清点一次：有写路由没登记权限就在这里炸，服务起不来
+  assertRoutesCovered();
 }
 
 /**

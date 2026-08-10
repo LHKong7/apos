@@ -57,9 +57,25 @@ export async function seedFixture(
   overrides: { autonomyLevel?: 'human_led' | 'agent_led_approval' | 'agent_autonomous' } = {},
 ): Promise<Fixture> {
   const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  /**
+   * ★ 夹具身份 = 项目 tech_lead + 组织管理员，与 seed-dev 里的「张伟」一致。
+   *
+   *   功能测试不该同时是权限测试：让夹具身份权限充足，
+   *   「录需求 → 批计划 → 派发」这条链路才验证的是流程本身，
+   *   而不是「这个角色能不能做第三步」。
+   *
+   * ★ 但夹具也不能因此比真实数据宽松（成员关系那条的教训见下）——
+   *   所以权限相关的断言一律用 {@link createMember} 造明确角色的人，
+   *   绝不复用这个身份。用它去测「viewer 不能改」只会永远是绿的。
+   */
   const [user] = await db
     .insert(users)
-    .values({ orgId: org!.id, email: `u-${randomUUID()}@acme.dev`, name: '张伟' })
+    .values({
+      orgId: org!.id,
+      email: `u-${randomUUID()}@acme.dev`,
+      name: '张伟',
+      orgRole: 'org_admin',
+    })
     .returning();
   const [project] = await db
     .insert(projects)
@@ -99,6 +115,43 @@ export async function createOutsider(db: Database, fx: Fixture) {
     .values({ orgId: org!.id, email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
     .returning();
   return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
+}
+
+/**
+ * 造一个角色明确的本组织用户。
+ *
+ * ★ 权限断言必须用它，不能用夹具身份 —— 夹具是组织管理员，
+ *   拿它去测「谁不能做什么」永远是绿的。
+ *
+ * `projectRole` 传 null 表示「本组织但不是这个项目的成员」，
+ * 用来区分「跨组织越权」与「同组织但没被加进项目」这两种情况。
+ */
+export async function createMember(
+  db: Database,
+  fx: Fixture,
+  opts: {
+    projectRole?: 'sponsor' | 'tech_lead' | 'pm' | 'member' | 'viewer' | null;
+    orgRole?: 'org_admin' | 'member';
+    name?: string;
+  } = {},
+): Promise<string> {
+  const [user] = await db
+    .insert(users)
+    .values({
+      orgId: fx.orgId,
+      email: `m-${randomUUID()}@acme.dev`,
+      name: opts.name ?? opts.projectRole ?? 'member',
+      orgRole: opts.orgRole ?? 'member',
+    })
+    .returning();
+
+  const role = opts.projectRole === undefined ? 'member' : opts.projectRole;
+  if (role !== null) {
+    await db
+      .insert(projectMembers)
+      .values({ projectId: fx.projectId, actorType: 'human', actorId: user!.id, role });
+  }
+  return user!.id;
 }
 
 export async function createWorkItem(

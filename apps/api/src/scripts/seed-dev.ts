@@ -60,13 +60,25 @@ async function main() {
   const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
   const orgId = org!.id;
 
-  const [lead, dba, pm] = await db
+  /**
+   * ★ 角色要凑齐，演示数据才验证得了权限（09-security §2.2）。
+   *
+   *   全是 admin 的种子数据看着一切正常，但它把整套 RBAC 屏蔽掉了：
+   *   界面上没有一个灰按钮，「谁能批准计划」「谁能放宽规则」这些
+   *   产品里最需要被看见的边界，一次都不会出现在演示里。
+   *   所以这里刻意留了 sponsor 和 viewer —— 切到他们身上，
+   *   页面才会露出真实形态。
+   */
+  const [lead, dba, pm, sponsor, viewer] = await db
     .insert(users)
     .values([
-      { orgId, email: 'zhangwei@acme.dev', name: '张伟', orgRole: 'admin' },
+      { orgId, email: 'zhangwei@acme.dev', name: '张伟', orgRole: 'org_admin' },
       { orgId, email: 'wangqiang@acme.dev', name: '王强', orgRole: 'member',
         approvalScopes: ['database', 'production'] },
       { orgId, email: 'lina@acme.dev', name: '李娜', orgRole: 'member' },
+      { orgId, email: 'chenjing@acme.dev', name: '陈静', orgRole: 'member',
+        approvalScopes: ['budget'] },
+      { orgId, email: 'zhaomin@acme.dev', name: '赵敏', orgRole: 'member' },
     ])
     .returning();
 
@@ -88,6 +100,10 @@ async function main() {
     { projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
     { projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
     { projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
+    // 需求确认是业务判断，归 sponsor / pm —— tech_lead 也批不了（§2.3）
+    { projectId, actorType: 'human', actorId: sponsor!.id, role: 'sponsor' },
+    // 切到赵敏能看出「只读」是真的只读：整页没有一个可点的写操作
+    { projectId, actorType: 'human', actorId: viewer!.id, role: 'viewer' },
   ]);
 
   // ── Agent ────────────────────────────────────────────────────────────
@@ -553,10 +569,14 @@ async function main() {
   console.log('\n✓ 种子数据就绪');
   console.log(`  项目      ${project!.name}  ${projectId}`);
   console.log(`  任务      ${final.length} 项`, byStage);
+  // ★ 角色写在名字旁边：这份清单同时是 RBAC 的演示入口 ——
+  //   切到陈静才看得到「tech_lead 也批不了需求」，切到赵敏才看得到只读长什么样
   console.log('\n  可用身份（前端右上角切换）：');
-  console.log(`    张伟  tech_lead   ${lead!.id}`);
-  console.log(`    王强  DBA（决策人） ${dba!.id}`);
-  console.log(`    李娜  pm          ${pm!.id}`);
+  console.log(`    张伟  tech_lead + 组织管理员  ${lead!.id}`);
+  console.log(`    李娜  pm（收紧规则、成员管理） ${pm!.id}`);
+  console.log(`    陈静  sponsor（确认需求）      ${sponsor!.id}`);
+  console.log(`    王强  member / DBA（决策人）   ${dba!.id}`);
+  console.log(`    赵敏  viewer（只读）           ${viewer!.id}`);
   // 单机部署里前端和 API 同源（默认 :8080），不是开发时的 Vite :5173——
   // 打印一个打不开的链接比不打印更误导
   const webBase = process.env['WEB_BASE_URL'] ?? 'http://localhost:5173';

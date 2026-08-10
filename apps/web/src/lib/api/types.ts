@@ -1,10 +1,13 @@
-import type { PlanDiff } from '@apos/domain';
+import type { PlanDiff, Permission } from '@apos/domain';
 import type {
   HumanGate,
+  ProjectRole,
   RiskLevel,
   Stage,
   WorkItemStatus,
 } from '@apos/contracts';
+
+export type { Permission, ProjectRole };
 
 /**
  * 接口返回形状。
@@ -71,6 +74,40 @@ export interface User {
   avatarUrl: string | null;
   orgRole: string;
   approvalScopes: string[];
+}
+
+/**
+ * 当前身份在某个项目里的权限（docs/tech/09-security.md §2）。
+ *
+ * ★ 判定口径来自服务端，不在前端重算 —— 界面上灰掉的按钮
+ *   和服务端真正拦住的请求必须是同一条规则。
+ *
+ * ★ `denyReasons` 不是可选的装饰：一个灰掉但不说明原因的按钮
+ *   比没有这个按钮更让人困惑，用户会反复点它。
+ */
+export interface ProjectPermissions {
+  projectId: string;
+  userId: string;
+  orgRole: string;
+  projectRole: ProjectRole | null;
+  permissions: Record<Permission, boolean>;
+  denyReasons: Partial<Record<Permission, string>>;
+}
+
+export interface ProjectMemberRow {
+  actorId: string;
+  actorType: 'human' | 'agent' | 'service' | 'external' | 'system';
+  role: string;
+  roleLabel: string;
+  addedAt: string;
+  name: string | null;
+  email: string | null;
+  orgRole: string | null;
+}
+
+export interface MembersResponse {
+  members: ProjectMemberRow[];
+  assignableRoles: { role: ProjectRole; label: string }[];
 }
 
 export interface Project {

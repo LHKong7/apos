@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
 import { Clarifications } from './Clarifications';
@@ -258,22 +259,27 @@ export function RequirementPage() {
             </section>
           )}
 
+          {/*
+            ★ 确认与驳回同一档权限（sponsor / pm，§2.3）。
+              驳回也是结论 —— 「需求不成立」和「需求成立」都是业务判断，
+              把驳回放低一档，等于让没资格拍板的人拍另一半的板。
+          */}
           {analyzed && !readOnly && (
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
+              <GatedButton
+                permission="requirement.approve"
                 onClick={() => setRejecting(true)}
                 className="text-xs text-slate-500 hover:text-slate-800"
               >
                 驳回
-              </button>
-              <button
-                type="button"
+              </GatedButton>
+              <GatedButton
+                permission="requirement.approve"
                 onClick={() => setConfirming(true)}
                 className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
               >
                 确认需求 →
-              </button>
+              </GatedButton>
             </div>
           )}
 

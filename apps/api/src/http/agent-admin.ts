@@ -18,6 +18,7 @@ import {
   WorkItemType,
   type AgentPermissions,
 } from '@apos/contracts';
+import { agentPermissionChangeDirection } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { registerAgentNow, type AgentRow } from '../modules/agent/runtime-factory';
 import {
@@ -164,6 +165,13 @@ export async function updateAgent(
   agentId: string,
   input: Partial<AgentInput> & { reason?: string },
   actorUserId: string,
+  /**
+   * 权限方向判定回调（09-security §2.3）。
+   *
+   * ★ 扩大要 tech_lead、收紧只要 owner —— 而方向要把新旧权限比过才知道，
+   *   路由层只挡得住「连改档案都不够格」的人。同 savePolicy 的处理。
+   */
+  assertCan?: (permission: 'agent.permissions.expand' | 'agent.permissions.restrict') => void,
 ) {
   const [existing] = await db.select().from(agents).where(eq(agents.id, agentId));
   if (!existing) throw notFound('Agent');
@@ -188,6 +196,11 @@ export async function updateAgent(
    *   而放宽的默认解释（「大概是需要吧」）几乎总是不够。
    */
   const direction = permissionsChanged ? directionOf(before, merged) : null;
+  if (direction && assertCan) {
+    assertCan(
+      direction === 'grant' ? 'agent.permissions.expand' : 'agent.permissions.restrict',
+    );
+  }
   if (direction === 'grant' && !input.reason?.trim()) {
     throw new ApiError('VALIDATION_FAILED', '放宽 Agent 权限必须填写原因');
   }
@@ -519,20 +532,14 @@ function permissionsOf(row: AgentRow): AgentPermissions {
   };
 }
 
-/** 放宽还是收紧：只要有任何一项变宽就算 grant */
+/**
+ * 权限改动的方向：只要有任何一项变宽就算 grant。
+ *
+ * ★ 判据本身在 @apos/domain（agentPermissionChangeDirection）—— 与 Policy 的
+ *   收紧/放宽判定同源。这个方向同时决定三件事：要不要填原因、
+ *   审计里怎么记、以及需要哪一档权限（§2.3 的不对称设计）。
+ *   三处用三份判据的话，总有一处会和另外两处说的不一样。
+ */
 function directionOf(before: AgentPermissions, after: AgentPermissions): 'grant' | 'revoke' {
-  const beforeTools = new Set(before.allowedTools);
-  const widened = after.allowedTools.some((t) => !beforeTools.has(t));
-
-  const beforeScopes = new Map(before.resourceScopes.map((s) => [`${s.kind}:${s.ref}`, s.access]));
-  const RANK = { none: 0, read: 1, write: 2 } as const;
-  const scopeWidened = after.resourceScopes.some(
-    (s) => RANK[s.access] > RANK[beforeScopes.get(`${s.kind}:${s.ref}`) ?? 'none'],
-  );
-
-  const beforeDenied = new Set(before.deniedTools);
-  const denyRemoved =
-    before.deniedTools.some((t) => !after.deniedTools.includes(t)) && beforeDenied.size > 0;
-
-  return widened || scopeWidened || denyRemoved ? 'grant' : 'revoke';
+  return agentPermissionChangeDirection(before, after) === 'loosen' ? 'grant' : 'revoke';
 }

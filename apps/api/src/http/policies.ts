@@ -105,7 +105,18 @@ export async function savePolicy(
   projectId: string,
   draft: PolicyDraft,
   actorId: string,
-  opts: { policyId?: string; acknowledgeMismatches?: boolean } = {},
+  opts: {
+    policyId?: string;
+    acknowledgeMismatches?: boolean;
+    /**
+     * 权限判定回调（09-security §2.3 的不对称设计）。
+     *
+     * ★ 收紧与放宽是两档权限，而「这次改动算哪一档」要把新旧规则
+     *   各跑一遍才知道 —— 路由层只能挡住连收紧都不够格的人。
+     *   所以判定必须在这里、在方向算出来之后，用回调把结论问回去。
+     */
+    assertCan?: (permission: 'policy.tighten' | 'policy.loosen') => void;
+  } = {},
 ) {
   const project = await loadProject(db, projectId);
   const existing = await loadProjectPolicies(db, project.orgId, projectId);
@@ -135,6 +146,22 @@ export async function savePolicy(
 
   const loosened = loosenedScenarios(existing, next, level);
   let simulation: SimulationResult | null = null;
+
+  /**
+   * ★★ 权限判定要在跑模拟**之前**。
+   *
+   *   模拟要扫 90 天的历史评估记录，是这条路径上最贵的一步。
+   *   放在权限之后判，等于让一个没资格放宽规则的人也能把它跑一遍 ——
+   *   既白烧数据库，又把「哪些历史任务会被自动放行」这份信息
+   *   送给了不该看到它的人。判定顺序在这里不只是效率问题。
+   *
+   *   方向的判据与审计口径保持一致（见下方 direction 的说明）：
+   *   一条会自动放行的规则，即使场景网格没变松，也按放宽处理。
+   */
+  if (opts.assertCan) {
+    const willAutoApprove = isAutoApprove(candidate.action) && candidate.enabled;
+    opts.assertCan(loosened > 0 || willAutoApprove ? 'policy.loosen' : 'policy.tighten');
+  }
 
   /**
    * ★ 只要这条规则会自动放行，就跑一遍模拟 —— 判据不是「场景网格有没有变松」。

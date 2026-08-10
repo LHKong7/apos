@@ -13,6 +13,8 @@ export const SubjectType = z.enum([
   'artifact',
   'policy',
   'integration',
+  /** 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）*/
+  'user',
 ]);
 export type SubjectType = z.infer<typeof SubjectType>;
 
@@ -61,6 +63,10 @@ export const DOMAIN_EVENT_TYPES = [
   'project.resumed',
   'project.budget_threshold_reached',
   'project.completed',
+  /** 授权变更（09-security §6.3 强制记审计）*/
+  'project.member_added',
+  'project.member_role_changed',
+  'project.member_removed',
   // requirement
   'requirement.created',
   'requirement.analyzed',
@@ -123,6 +129,8 @@ export const DOMAIN_EVENT_TYPES = [
   'agent.permissions_changed',
   'agent.permission_violation',
   'agent.paused',
+  // 身份
+  'user.org_role_changed',
   // artifact & integration
   'artifact.produced',
   'integration.connected',
@@ -156,6 +164,18 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'agent.permission_violation',
   'work_item.force_passed',
   'project.autonomy_changed',
+  /**
+   * ★ 授权变更必须可审计（§6.3）。
+   *
+   *   §7 把「权限累积」列为本产品的特有威胁：逐次小幅放宽，
+   *   最终权限过大。它的缓解手段第一条就是「权限变更全审计」——
+   *   没有这几条事件，谁在什么时候把谁提成 tech_lead 就查不到，
+   *   而那恰恰是提权路径上最关键的一步。
+   */
+  'project.member_added',
+  'project.member_role_changed',
+  'project.member_removed',
+  'user.org_role_changed',
 ] as const;
 
 export const EventInput = z.object({

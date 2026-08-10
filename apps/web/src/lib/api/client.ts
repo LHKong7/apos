@@ -19,6 +19,9 @@ import type {
   DecisionInbox,
   DisconnectImpact,
   IntegrationsResponse,
+  MembersResponse,
+  ProjectPermissions,
+  ProjectRole,
   NotificationConfigRow,
   SyncConflictRow,
   SyncSummary,
@@ -125,6 +128,35 @@ export const api = {
 
   project: (id: string) =>
     request<{ project: Project; metrics: Record<string, unknown> }>(`/projects/${id}`),
+
+  // ── 权限与成员（docs/tech/09-security.md §2）────────────────────────
+  permissions: (projectId: string) =>
+    request<ProjectPermissions>(`/projects/${projectId}/permissions`),
+
+  members: (projectId: string) => request<MembersResponse>(`/projects/${projectId}/members`),
+
+  setMemberRole: (projectId: string, userId: string, role: ProjectRole) =>
+    request<{ ok: true; role: string; changed: boolean; previousRole?: string }>(
+      `/projects/${projectId}/members/${userId}`,
+      { method: 'PUT', json: { role } },
+    ),
+
+  removeMember: (projectId: string, userId: string) =>
+    request<{ ok: true; removed: boolean }>(`/projects/${projectId}/members/${userId}`, {
+      method: 'DELETE',
+    }),
+
+  orgUsers: () =>
+    request<{
+      users: (User & { orgRoleLabel: string; status: string })[];
+      assignableOrgRoles: { role: string; label: string }[];
+    }>('/admin/users'),
+
+  setOrgRole: (userId: string, orgRole: string) =>
+    request<{ ok: true; orgRole: string; changed: boolean }>(`/admin/users/${userId}/org-role`, {
+      method: 'PATCH',
+      json: { orgRole },
+    }),
 
   board: (projectId: string, filters: BoardFilters) =>
     request<BoardResponse>(`/projects/${projectId}/board${boardQueryString(filters)}`),

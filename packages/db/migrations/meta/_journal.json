@@ -71,6 +71,13 @@
       "when": 1786291497033,
       "tag": "0009_chubby_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786340155160,
+      "tag": "0010_rbac_roles",
+      "breakpoints": true
     }
   ]
 }

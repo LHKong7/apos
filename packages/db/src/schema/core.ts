@@ -3,6 +3,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -27,6 +28,7 @@ import type {
   PolicyContext,
   ResourceScope,
 } from '@apos/contracts';
+import { OrgRole, ProjectRole } from '@apos/contracts';
 import {
   actorTypeEnum,
   autonomyLevelEnum,
@@ -43,6 +45,19 @@ import {
 } from './enums';
 
 const now = sql`now()`;
+
+/**
+ * 角色取值的库级约束（docs/tech/09-security.md §2.2）。
+ *
+ * ★ 角色是权限判定的输入。库里存进一个拼错的 `techlead`，判定会把它
+ *   当成「不是任何已知角色」——也就是**什么都做不了**，而现象是
+ *   「这个人明明是负责人却处处受限」，没有任何报错指向根因。
+ *   取值收在库里，错的写不进去。
+ *
+ * ★ 清单直接来自 contracts，与判定共用一份定义：改枚举时迁移会跟着变，
+ *   不会出现「代码认得这个角色、库不认」的错位。
+ */
+const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
 
 // ── 组织与身份 ────────────────────────────────────────────────────────────
 
@@ -69,7 +84,10 @@ export const users = pgTable(
     status: text().notNull().default('active'),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
-  (t) => [unique().on(t.orgId, t.email)],
+  (t) => [
+    unique().on(t.orgId, t.email),
+    check('users_org_role_check', sql`${t.orgRole} in (${sqlList(OrgRole.options)})`),
+  ],
 );
 
 // ── Project ──────────────────────────────────────────────────────────────
@@ -133,7 +151,24 @@ export const projectMembers = pgTable(
     role: text().notNull(),
     addedAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.actorType, t.actorId] })],
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.actorType, t.actorId] }),
+    /**
+     * ★ 「这个人是哪些项目的成员」是每个请求都要问的问题（授权闸门、
+     *   决策收件箱、项目列表），而主键是 (project_id, …)，前缀对不上，
+     *   这类查询只能全表扫。加了权限判定之后它从偶发变成了每请求一次。
+     */
+    index('project_members_actor_idx').on(t.actorType, t.actorId),
+    /**
+     * ★ 角色只约束人类行：Agent 走同一张表，但它的 role 是执行角色
+     *   （「这个 Agent 在本项目里干什么」），不是 09-security §2.2 的权限角色。
+     *   一刀切地约束会把 Agent 的行也一并卡住。
+     */
+    check(
+      'project_members_role_check',
+      sql`${t.actorType} <> 'human' or ${t.role} in (${sqlList(ProjectRole.options)})`,
+    ),
+  ],
 );
 
 // ── Requirement ──────────────────────────────────────────────────────────
