@@ -463,10 +463,56 @@ HTTPS token 走 Basic 认证，用户名那一段各家要求不同：
 所以配置页会把**即将使用的占位值以及它的来源**（手填 / 按域名推断 / 兜底）
 直接显示出来，探测失败时也会连同占位值一起说。
 
-★ ssh:// 与 `git@` 形态不使用这里配置的凭证 —— 认证走宿主机的 SSH 配置，
-平台目前不管理 SSH key。配置页会如实说明这一点，而不是让人以为配了就生效。
+#### 5.4.2 SSH 私钥（`ssh://` 与 `git@` 形态）
 
-#### 5.4.2 连通性探测
+同一个凭证字段，ssh 地址填的是**私钥全文**，两种形态共用
+`env:` / 加密内联那套存储。登记时就会验形态（`inspectPrivateKey`）。
+
+**★★ 私钥不落盘，走 ssh-agent。**
+
+OpenSSH 的 `ssh -i` 只接受文件路径，所以「写个临时 key 文件」是最容易
+想到的做法，但在这个平台上它不成立：容器里同时跑着别的 Run 的 Agent，
+它们是**同一个 OS 用户**的进程，只要 key 在磁盘上，任何一个 Agent 的
+Bash 工具都能 `cat` 到它 ——「跑之前写、跑完删」挡不住这一点，因为并发的
+Run 里总有别人的 Agent 正在跑。这和 §5.4 已有的两条纪律是同一条：
+token 不拼进 remote URL（`.git/config` 就在 Agent 的工作目录里），
+不用 credential helper（要落盘）。私钥比 token 更值钱，标准不该更低。
+
+所以：key 从 stdin 喂给 `ssh-add -`，只活在 agent 进程的内存里；
+`SSH_AUTH_SOCK` 只进 **git 子进程**的环境（Agent 的运行时环境另外构造，
+拿不到）；socket 在 0700 的临时目录里；agent 的生命周期严格包在
+`withSshAgent` 里，`finally` 里 kill + 删目录。
+
+**★★ 不支持带密码短语的私钥，且在保存那一刻就拒。**
+
+无人值守场景没法输入密码，所以它注定用不了。放进库的话失败会推迟到
+第一次派发，而且**不是报错**——是 `ssh-add` 挂在那里等密码，表现成
+「任务一直在执行中」。运行时另外用 `SSH_ASKPASS_REQUIRE=never` 兜底，
+保证任何漏网的情况也是当场失败而不是挂住。
+
+**★★ 主机公钥 TOFU 之后固定。**
+
+`repositories.ssh_known_hosts` 存主机公钥（明文——它本来就是要公开比对
+的那一份）。为空时首次连接用 `accept-new`，**连上之后立刻把学到的公钥
+写回库**，此后转 `StrictHostKeyChecking=yes`。
+
+不固定的话 `accept-new` 等于 `no`：每次连接都是一个全新的临时
+known_hosts，「未知主机」这个条件永远成立，于是每次都放行 ——
+中间人换掉主机公钥也照连不误。TOFU 要成立，第一次学到的东西必须留下来。
+任何时候都不用 `StrictHostKeyChecking=no`。管理员也可以用
+`ssh-keyscan` 预先填好（更强），或清空以重新学习（服务器真换了密钥时）。
+
+**★ 用 `IdentityAgent` + `IdentityFile=none` 限定身份，不能用 `IdentitiesOnly=yes`。**
+
+`IdentitiesOnly` 的语义是「只用配置/命令行里指定的身份**文件**」，
+它会把 agent 提供的身份一并排除掉 —— 而我们的 key 只存在于 agent 里。
+加上它的表现是 `Permission denied (publickey)`：看起来像仓库没授权，
+实际上 key 根本没被拿出来试过。
+
+★ 没配私钥的 ssh 仓库仍然回退到宿主机的 `~/.ssh`（历史行为，部署在有
+SSH 配置的机器上是合法用法），配置页会说明容器里通常没有这份配置。
+
+#### 5.4.3 连通性探测
 
 `POST /api/v1/admin/repositories/{id}/probe` 跑一次 `git ls-remote --heads`，
 验三件事：域名通不通、凭证对不对、默认分支在不在。只读、不落盘、不建镜像。
@@ -479,7 +525,7 @@ HTTPS token 走 Basic 认证，用户名那一段各家要求不同：
 用 `ls-remote` 不用 `clone`：要验的三件事它全能答且是秒级，
 而 clone 一个大仓库要几分钟 —— 贵到没人愿意点第二次的检查等于没有检查。
 
-#### 5.4.3 质量核验命令
+#### 5.4.4 质量核验命令
 
 `checkCommand`（如 `pnpm test`）在 Agent 收工后、**提交之前**于工作区执行，
 失败也照样提交（失败的改动同样需要被人看到）。

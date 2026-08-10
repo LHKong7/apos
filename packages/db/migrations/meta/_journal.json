@@ -92,6 +92,13 @@
       "when": 1786353183906,
       "tag": "0012_repo_auth_username",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786355781352,
+      "tag": "0013_repo_ssh_known_hosts",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,8 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { agentPermissionChanges, agents } from '@apos/db';
+import { agentPermissionChanges, agents, repositories } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -511,10 +512,161 @@ describe('代码仓库与工程约定', () => {
       expect(await first()).toMatchObject({ authUsername: 'oauth2', authUsernameSource: 'explicit' });
     });
 
-    /** ssh 地址不走 Basic —— 配了凭证也用不上，要如实说 */
-    it('ssh 地址提示凭证不会被使用', async () => {
-      await register({ remoteUrl: 'git@github.com:acme/app.git' });
-      expect((await first()).warnings.join()).toContain('SSH');
+  });
+
+  /**
+   * ★★ SSH 形态。
+   *
+   *   这一整条链路的失败都不指向真实原因：带密码的私钥会让派发挂住而不是
+   *   报错，主机公钥不固定的话 TOFU 等于没有校验，把 .pub 贴进 known_hosts
+   *   的表现是「连不上」。所以每一条都要在**配置页上**被拦住或说出来。
+   */
+  describe('★ SSH 形态', () => {
+    /** 现生成一把真 key —— 仓库里放私钥是绝对不行的，哪怕是测试用的 */
+    const freshKey = (passphrase?: string) =>
+      generateKeyPairSync('ed25519', {
+        publicKeyEncoding: { format: 'pem', type: 'spki' },
+        privateKeyEncoding: passphrase
+          ? { format: 'pem', type: 'pkcs8', cipher: 'aes-256-cbc', passphrase }
+          : { format: 'pem', type: 'pkcs8' },
+      }).privateKey;
+
+    const register = (over: Record<string, unknown>) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/repositories',
+        headers: auth(),
+        payload: {
+          ref: 'r1',
+          name: 'R',
+          remoteUrl: 'git@github.com:acme/app.git',
+          ...over,
+        },
+      });
+
+    const first = async () =>
+      (await app.inject({ method: 'GET', url: '/api/v1/admin/repositories', headers: auth() }))
+        .json().repositories[0];
+
+    it('ssh 地址标成 ssh_key 形态，凭证 hint 认得出是私钥', async () => {
+      expect((await register({ credential: freshKey() })).statusCode).toBe(201);
+      const repo = await first();
+      expect(repo.authKind).toBe('ssh_key');
+      // ★ 私钥的后四位是 `----`，显示出来等于什么都没说
+      expect(repo.credentialHint).toContain('私钥');
+      expect(repo.credentialHint).not.toContain('----');
+    });
+
+    /**
+     * ★★ 带密码的私钥必须在保存那一刻被拒。
+     *   放进库的话失败会推迟到第一次派发，而且不是报错 ——
+     *   是 ssh-add 挂在那里等密码，表现成「任务一直在执行中」。
+     */
+    it('★ 带密码短语的私钥当场拒绝，不进库', async () => {
+      const res = await register({ credential: freshKey('hunter2') });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('密码短语');
+      expect(await db.select().from(repositories)).toHaveLength(0);
+    });
+
+    it('★ 把 token 填给 ssh 地址会被拦下来', async () => {
+      const res = await register({ credential: 'ghp_token_abcd1234' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('私钥');
+    });
+
+    it('★ 没配私钥时说明会回退到宿主机 ~/.ssh —— 容器里通常没有', async () => {
+      await register({});
+      expect((await first()).warnings.join()).toContain('~/.ssh');
+    });
+
+    /**
+     * ★★ 不固定主机公钥的话 accept-new 等于 no：每次都是全新的临时
+     *   known_hosts，「未知主机」这个条件永远成立。所以「什么时候会自动
+     *   固定」这件事必须说出来 —— 不说没人猜得到。
+     */
+    it('★ 配了私钥但没固定主机公钥时给出说明', async () => {
+      await register({ credential: freshKey() });
+      const repo = await first();
+      expect(repo.sshHostKeyPinned).toBe(false);
+      expect(repo.warnings.join()).toContain('TOFU');
+    });
+
+    it('固定过之后不再警告，并回显固定了哪台主机', async () => {
+      await register({
+        credential: freshKey(),
+        sshKnownHosts: 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoq',
+      });
+      const repo = await first();
+      expect(repo.sshHostKeyPinned).toBe(true);
+      expect(repo.sshHosts).toEqual(['github.com']);
+      expect(repo.warnings.join()).not.toContain('TOFU');
+    });
+
+    /**
+     * ★★ 这一栏**不加密**。把私钥贴进来等于私钥明文进库，
+     *   而且没有任何提示 —— 必须在入口拦住。
+     */
+    it('★ 把私钥贴进「主机公钥」一栏要被拒', async () => {
+      const res = await register({ credential: freshKey(), sshKnownHosts: freshKey() });
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toContain('不是私钥');
+    });
+
+    it('贴成 .pub 公钥格式也被拒，并指出该用 ssh-keyscan', async () => {
+      const res = await register({
+        sshKnownHosts: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMq me@laptop',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toContain('ssh-keyscan');
+    });
+
+    /** null = 清空，回到重新学习（服务器真换了密钥时要用） */
+    it('主机公钥能改、能清空', async () => {
+      const id = (await register({ credential: freshKey() })).json().repository.id;
+
+      const patch = (sshKnownHosts: unknown) =>
+        app.inject({
+          method: 'PATCH',
+          url: `/api/v1/admin/repositories/${id}`,
+          headers: auth(),
+          payload: { sshKnownHosts },
+        });
+
+      await patch('github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ');
+      expect((await first()).sshHosts).toEqual(['github.com']);
+
+      await patch(null);
+      expect(await first()).toMatchObject({ sshKnownHosts: null, sshHostKeyPinned: false });
+    });
+
+    /**
+     * ★ 凭证要按**改完之后**的地址验：把 https 仓库改成 ssh 地址、
+     *   同时换上私钥，是一次提交里的两个字段。拿旧地址去验会把这一步
+     *   判成「往 https 仓库里填了一把私钥」。
+     */
+    it('★ 同一次改动里换地址 + 换凭证，按新地址判定', async () => {
+      const create = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/repositories',
+        headers: auth(),
+        payload: {
+          ref: 'r2',
+          name: 'R2',
+          remoteUrl: 'https://github.com/acme/app.git',
+          credential: 'ghp_token_abcd1234',
+        },
+      });
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/admin/repositories/${create.json().repository.id}`,
+        headers: auth(),
+        payload: { remoteUrl: 'git@github.com:acme/app.git', credential: freshKey() },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(await first()).toMatchObject({ authKind: 'ssh_key' });
     });
   });
 

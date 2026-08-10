@@ -1094,6 +1094,11 @@ export interface RepositoryRow {
   credentialUsable: boolean;
   credentialProblem: string | null;
   /**
+   * 认证形态。token 那套（用户名占位）和 SSH 那套（私钥、主机公钥）
+   * 不重叠，配置页按它二选一渲染 —— 同时摆出来只会让人填错栏。
+   */
+  authKind: 'token' | 'ssh_key';
+  /**
    * 即将用于 HTTP Basic 的用户名占位。
    *
    * ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它 ——
@@ -1102,6 +1107,11 @@ export interface RepositoryRow {
   authUsername: string;
   authUsernameSource: 'explicit' | 'host' | 'default';
   authProvider: string | null;
+  /** 主机公钥不是秘密，明文回显。空 = 还没固定，首次连接走 TOFU */
+  sshKnownHosts: string | null;
+  sshHostKeyPinned: boolean;
+  /** 这段 known_hosts 固定了哪几台主机 */
+  sshHosts: string[];
   checkCommand: string | null;
   checkTimeoutSeconds: number;
   warnings: string[];
@@ -1110,8 +1120,14 @@ export interface RepositoryRow {
 /** 连通性探测结果（git ls-remote）*/
 export interface RepositoryProbe {
   ok: boolean;
-  stage: 'git' | 'credential' | 'auth' | 'network' | 'branch' | 'ok';
+  /**
+   * ★ ssh 与 host_key 是两档独立的失败：前者是「这把 key / 工具链有问题」，
+   *   后者是「服务器换了密钥或有人在中间」。混进 network 的话，
+   *   报错会把人指向网络，而那两种情况的下一步动作都不在网络上。
+   */
+  stage: 'git' | 'ssh' | 'host_key' | 'credential' | 'auth' | 'network' | 'branch' | 'ok';
   message: string | null;
+  authKind?: 'token' | 'ssh_key';
   authUsername?: string;
   authUsernameSource?: 'explicit' | 'host' | 'default';
   branchCount?: number;
@@ -1123,6 +1139,9 @@ export interface RepositoriesResponse {
   gitAvailable: boolean;
   gitVersion: string | null;
   gitProblem: string | null;
+  /** 镜像里少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */
+  sshAvailable: boolean;
+  sshProblem: string | null;
   canStoreInlineCredential: boolean;
 }
 

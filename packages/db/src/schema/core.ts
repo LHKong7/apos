@@ -477,6 +477,22 @@ export const repositories = pgTable(
      */
     authUsername: text(),
 
+    /**
+     * SSH 主机公钥（known_hosts 格式）。
+     *
+     * ★★ 这不是秘密 —— 它本来就是要公开比对的那一份，
+     *   存明文是对的。
+     *
+     * ★ 为空表示还没固定：首次连接走 TOFU（accept-new），连上之后
+     *   立刻把学到的公钥写进来，此后转严格校验。不固定的话
+     *   `accept-new` 等于 `no` —— 每次都是全新的临时 known_hosts，
+     *   「未知主机」这个条件永远成立，中间人换掉主机公钥也照连不误。
+     *
+     * ★ 管理员可以预先填好（比 TOFU 强），或清空以重新学习
+     *   （服务器真的换了密钥时）。
+     */
+    sshKnownHosts: text(),
+
     /** Agent 分支命名模板，{runId} / {itemId} / {slug} 会被替换 */
     branchPrefix: text().notNull().default('apos/'),
 

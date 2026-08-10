@@ -14,12 +14,25 @@ export class GitError extends Error {
   }
 }
 
-export interface GitAuth {
-  /** 明文 token；只在内存里活到本次调用结束 */
-  token: string | null;
-  /** HTTPS token 的 Basic 用户名占位，见 {@link resolveAuthUsername} */
-  username?: string;
-}
+/**
+ * git 认证。两种形态互斥，由 remote 地址决定 —— 一个仓库只有一个远端，
+ * 所以「用 token 还是用 key」不是配置项，是推出来的。
+ */
+export type GitAuth =
+  | {
+      kind: 'basic';
+      /** 明文 token；只在内存里活到本次调用结束 */
+      token: string;
+      /** Basic 用户名占位，见 {@link resolveAuthUsername} */
+      username: string;
+    }
+  | {
+      kind: 'ssh';
+      /** ssh-agent 的 socket —— 私钥不落盘，见 workspace/ssh.ts */
+      authSock: string;
+      /** 完整的 ssh 命令行（含 known_hosts 与严格程度）*/
+      sshCommand: string;
+    };
 
 /**
  * HTTPS token 走 Basic 认证时的用户名占位。
@@ -157,12 +170,21 @@ async function run(
     GIT_ASKPASS: 'echo',
   };
 
-  if (opts.auth?.token) {
-    const user = opts.auth.username ?? 'x-access-token';
-    const basic = Buffer.from(`${user}:${opts.auth.token}`).toString('base64');
+  if (opts.auth?.kind === 'basic') {
+    const basic = Buffer.from(`${opts.auth.username}:${opts.auth.token}`).toString('base64');
     env['GIT_CONFIG_COUNT'] = '1';
     env['GIT_CONFIG_KEY_0'] = 'http.extraHeader';
     env['GIT_CONFIG_VALUE_0'] = `Authorization: Basic ${basic}`;
+  }
+
+  /**
+   * ★ SSH 走 agent，环境里只出现 socket 路径与命令行，没有任何密钥material。
+   *   `GIT_SSH_COMMAND` 里带的是 known_hosts 路径和严格程度 ——
+   *   都不是秘密，进 argv/日志也无所谓。
+   */
+  if (opts.auth?.kind === 'ssh') {
+    env['SSH_AUTH_SOCK'] = opts.auth.authSock;
+    env['GIT_SSH_COMMAND'] = opts.auth.sshCommand;
   }
 
   try {

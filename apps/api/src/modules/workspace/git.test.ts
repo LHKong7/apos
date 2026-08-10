@@ -110,9 +110,9 @@ describe('hostOf', () => {
 
 describe('isHttpRemote', () => {
   /**
-   * ★ token 对 ssh 地址没有意义。分辨这一点是为了两件事：
-   *   不给 ssh 挂一个永远用不到的 Authorization 头，
-   *   以及在配置页上如实说明「这里配的凭证不会被用上」。
+   * ★ 这是两套认证的分岔口：http 走 Basic 头，ssh 走 ssh-agent 里的私钥。
+   *   同一个凭证字段在两边存的是完全不同的东西（token vs 私钥全文），
+   *   所以判错的表现不是「少了个头」，而是把 token 当私钥去加载。
    */
   it('只有 http/https 走 Basic 认证', () => {
     expect(isHttpRemote('https://github.com/a/b.git')).toBe(true);

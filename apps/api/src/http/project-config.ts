@@ -16,7 +16,13 @@ import {
   probeGit,
   resolveAuthUsername,
 } from '../modules/workspace/git';
-import { gitAuthFor } from '../modules/workspace/credentials';
+import { authKindOf, withRepoAuth } from '../modules/workspace/credentials';
+import {
+  inspectKnownHosts,
+  inspectPrivateKey,
+  probeSsh,
+  SshError,
+} from '../modules/workspace/ssh';
 import {
   describeRef,
   encodeSecret,
@@ -55,8 +61,32 @@ export const RepositoryInput = z.object({
     ),
   defaultBranch: z.string().min(1).default('main'),
   branchPrefix: z.string().default('apos/'),
-  /** 明文凭证或 `env:变量名`；不传 = 不改，null = 清除 */
+  /**
+   * 明文凭证或 `env:变量名`；不传 = 不改，null = 清除。
+   *
+   * https 远端填 token，ssh 远端填**私钥全文**（-----BEGIN … 那一整段）。
+   * 两者都只以加密引用入库，接口永远读不回原值。
+   */
   credential: z.string().nullable().optional(),
+  /**
+   * SSH 主机公钥（known_hosts 格式），如 `ssh-keyscan github.com` 的输出。
+   *
+   * ★ 不是秘密 —— 它本来就是拿来公开比对的那一份，所以明文存、明文回显。
+   *
+   * ★ 留空不等于不校验：首次连接会按 TOFU 学到主机公钥并自动固定，
+   *   此后转严格校验。填在这里只是把 TOFU 的那一次窗口也关掉。
+   */
+  sshKnownHosts: z
+    .string()
+    .max(8000)
+    .nullable()
+    .optional()
+    // ★ 用 superRefine 是为了把 inspectKnownHosts 的**具体**说法带出去；
+    //   「格式不正确」这种笼统结论没法据以行动
+    .superRefine((v, ctx) => {
+      const problem = v ? inspectKnownHosts(v).problem : null;
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+    }),
   /**
    * HTTPS token 的 Basic 用户名占位。留空 = 按域名推断
    * （GitHub → x-access-token、GitLab → oauth2、Bitbucket → x-token-auth）。
@@ -95,12 +125,13 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
     )
     .orderBy(asc(repositories.ref));
 
-  const gitEnv = await probeGit();
+  const [gitEnv, sshEnv] = await Promise.all([probeGit(), probeSsh()]);
 
   return {
     repositories: rows.map((r) => {
       const cred = describeRef(r.credentialRef);
       const auth = resolveAuthUsername(r.remoteUrl, r.authUsername);
+      const kind = authKindOf(r.remoteUrl);
       return {
         id: r.id,
         ref: r.ref,
@@ -116,6 +147,12 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
         credentialUsable: cred.usable,
         credentialProblem: cred.problem,
         /**
+         * ★ 认证形态决定了配置页该显示哪些字段：token 那套
+         *   （用户名占位）和 SSH 那套（私钥、主机公钥）不重叠，
+         *   同时摆出来只会让人填错栏。
+         */
+        authKind: kind,
+        /**
          * ★ 把**即将用哪个用户名占位**回显出来。
          *   这一项填错的表现是 401，而 401 的报错里没有任何东西
          *   指向它 —— 所以它必须在配置页上就看得见。
@@ -123,15 +160,22 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
         authUsername: auth.username,
         authUsernameSource: auth.source,
         authProvider: auth.provider,
+        /** 主机公钥不是秘密，明文回显；空 = 还没固定，首次连接走 TOFU */
+        sshKnownHosts: r.sshKnownHosts,
+        sshHostKeyPinned: Boolean(r.sshKnownHosts?.trim()),
+        sshHosts: inspectKnownHosts(r.sshKnownHosts ?? '').hosts,
         checkCommand: r.checkCommand,
         checkTimeoutSeconds: r.checkTimeoutSeconds,
-        warnings: repoWarnings(r, auth),
+        warnings: repoWarnings(r, auth, sshEnv),
       };
     }),
     /** git 环境问题要在这一页说清楚，而不是等第一次派发才炸 */
     gitAvailable: gitEnv.ok,
     gitVersion: gitEnv.version,
     gitProblem: gitEnv.problem,
+    /** 同理：镜像里少装 openssh-client，ssh 形态的仓库一个都用不了 */
+    sshAvailable: sshEnv.ok,
+    sshProblem: sshEnv.problem,
     canStoreInlineCredential: hasMasterKey(),
   };
 }
@@ -145,10 +189,12 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
 function repoWarnings(
   r: typeof repositories.$inferSelect,
   auth: ReturnType<typeof resolveAuthUsername>,
+  sshEnv: { ok: boolean; problem: string | null },
 ): string[] {
   const out: string[] = [];
+  const http = isHttpRemote(r.remoteUrl);
 
-  if (!r.credentialRef && isHttpRemote(r.remoteUrl)) {
+  if (!r.credentialRef && http) {
     out.push('未配置凭证：私有仓库会在准备工作区时克隆失败');
   }
 
@@ -156,16 +202,39 @@ function repoWarnings(
    * ★ 自建服务最容易踩的一条：域名认不出来，占位就沿用了 GitHub 的写法，
    *   而自建 GitLab 需要 oauth2 —— 表现是 401，看不出原因。
    */
-  if (r.credentialRef && isHttpRemote(r.remoteUrl) && auth.source === 'default') {
+  if (r.credentialRef && http && auth.source === 'default') {
     out.push(
       `认不出这个域名，凭证用户名占位按 ${DEFAULT_AUTH_USERNAME}（GitHub 的写法）处理。` +
         '如果这是自建 GitLab 请填 oauth2，Bitbucket 填 x-token-auth，否则会 401',
     );
   }
 
-  // token 对 ssh 地址没有意义，配了也不会被用上
-  if (r.credentialRef && !isHttpRemote(r.remoteUrl)) {
-    out.push('ssh 地址不使用这里配置的凭证：认证走宿主机的 SSH 配置，平台不管理 SSH key');
+  if (!http) {
+    /**
+     * ★ 没配私钥时会回退到宿主机的 ~/.ssh —— 这是历史行为，保留是对的
+     *   （部署在有 SSH 配置的机器上是合法用法），但容器里通常什么都没有，
+     *   表现是 `Permission denied (publickey)`，而那句报错不会提到
+     *   「你没在平台上配过私钥」。
+     */
+    if (!r.credentialRef) {
+      out.push(
+        '未配置 SSH 私钥：认证会回退到宿主机的 ~/.ssh。容器化部署里通常没有这份配置，' +
+          '表现为克隆时 Permission denied (publickey)',
+      );
+    }
+
+    if (!sshEnv.ok) out.push(sshEnv.problem ?? 'SSH 工具链不可用');
+
+    /**
+     * ★ 还没固定主机公钥不是错误，只是首次连接有一次 TOFU 窗口。
+     *   说出来是因为「什么时候会自动固定」这件事不说没人猜得到。
+     */
+    if (r.credentialRef && !r.sshKnownHosts?.trim()) {
+      out.push(
+        '尚未固定主机公钥：首次连接会按 TOFU 接受远端公钥并自动记录，此后转严格校验。' +
+          '想连这一次窗口也关掉，可以用 ssh-keyscan 把主机公钥预先填进来',
+      );
+    }
   }
 
   /**
@@ -209,9 +278,10 @@ export async function createRepository(
       defaultBranch: input.defaultBranch,
       branchPrefix: input.branchPrefix,
       authUsername: input.authUsername?.trim() || null,
+      sshKnownHosts: input.sshKnownHosts?.trim() || null,
       checkCommand: input.checkCommand?.trim() || null,
       ...(input.checkTimeoutSeconds ? { checkTimeoutSeconds: input.checkTimeoutSeconds } : {}),
-      ...credentialColumns(input.credential ?? null),
+      ...credentialColumns(input.credential ?? null, input.remoteUrl),
       createdBy: userId,
     })
     .returning({ id: repositories.id, ref: repositories.ref });
@@ -228,18 +298,27 @@ export async function updateRepository(
   if (!existing) throw notFound('仓库');
 
   const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
+  /**
+   * ★ 凭证要按**改完之后**的远端地址来验：把 https 仓库改成 ssh 地址、
+   *   同时换上私钥，是一次提交里的两个字段。拿旧地址去验会把这一步判成
+   *   「往 https 仓库里填了一把私钥」。
+   */
+  const remoteUrl = input.remoteUrl?.trim() || existing.remoteUrl;
 
   const [row] = await db
     .update(repositories)
     .set({
       ...(input.name ? { name: input.name } : {}),
-      ...(input.remoteUrl ? { remoteUrl: input.remoteUrl.trim() } : {}),
+      ...(input.remoteUrl ? { remoteUrl } : {}),
       ...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
       ...(input.branchPrefix !== undefined ? { branchPrefix: input.branchPrefix } : {}),
       // ★ null 与 undefined 在这里意义不同：null = 清空（回到按域名推断 /
-      //   不跑核验），undefined = 这次没提这个字段，别动它
+      //   不跑核验 / 重新 TOFU），undefined = 这次没提这个字段，别动它
       ...(input.authUsername !== undefined
         ? { authUsername: input.authUsername?.trim() || null }
+        : {}),
+      ...(input.sshKnownHosts !== undefined
+        ? { sshKnownHosts: input.sshKnownHosts?.trim() || null }
         : {}),
       ...(input.checkCommand !== undefined
         ? { checkCommand: input.checkCommand?.trim() || null }
@@ -247,7 +326,7 @@ export async function updateRepository(
       ...(input.checkTimeoutSeconds !== undefined
         ? { checkTimeoutSeconds: input.checkTimeoutSeconds }
         : {}),
-      ...(credential !== undefined ? credentialColumns(credential) : {}),
+      ...(credential !== undefined ? credentialColumns(credential, remoteUrl) : {}),
       ...(input.status ? { status: input.status } : {}),
       updatedAt: new Date(),
     })
@@ -278,61 +357,139 @@ export async function probeRepository(db: Database, repoId: string) {
   const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId));
   if (!repo) throw notFound('仓库');
 
+  const kind = authKindOf(repo.remoteUrl);
+  const auth = resolveAuthUsername(repo.remoteUrl, repo.authUsername);
+  const base = { authKind: kind, authUsername: auth.username, authUsernameSource: auth.source };
+
   const gitEnv = await probeGit();
   if (!gitEnv.ok) {
-    return { ok: false as const, stage: 'git' as const, message: gitEnv.problem, branches: null };
+    return { ok: false as const, stage: 'git' as const, ...base, message: gitEnv.problem, branches: null };
   }
 
-  const auth = resolveAuthUsername(repo.remoteUrl, repo.authUsername);
+  /** ssh 形态先看工具链 —— 少装 openssh-client 的表现是一句认不出的 git 报错 */
+  if (kind === 'ssh_key') {
+    const sshEnv = await probeSsh();
+    if (!sshEnv.ok) {
+      return {
+        ok: false as const,
+        stage: 'ssh' as const,
+        ...base,
+        message: sshEnv.problem ?? 'SSH 工具链不可用',
+        branches: null,
+      };
+    }
+  }
+
   const cred = describeRef(repo.credentialRef);
   if (repo.credentialRef && !cred.usable) {
     return {
       ok: false as const,
       stage: 'credential' as const,
+      ...base,
       message: cred.problem ?? '凭证不可用',
-      authUsername: auth.username,
       branches: null,
     };
   }
 
+  const pinnedBefore = Boolean(repo.sshKnownHosts?.trim());
+
   try {
-    const branches = await git.lsRemoteHeads(repo.remoteUrl, gitAuthFor(repo));
+    /**
+     * ★ ssh 形态下这次探测会顺带把主机公钥固定下来（withRepoAuth 里的 TOFU）。
+     *   这是有意的：在配置页上点一下就把 TOFU 那一次窗口用掉，比留到
+     *   第一次派发时在无人看着的情况下用掉要好。
+     */
+    const branches = await withRepoAuth(db, repo, (auth) =>
+      git.lsRemoteHeads(repo.remoteUrl, auth),
+    );
     const hasDefault = branches.includes(repo.defaultBranch);
+    const pinnedNow = kind === 'ssh_key' && !pinnedBefore && Boolean(repo.credentialRef);
 
     return {
       ok: hasDefault,
       stage: hasDefault ? ('ok' as const) : ('branch' as const),
-      authUsername: auth.username,
-      authUsernameSource: auth.source,
+      ...base,
       branchCount: branches.length,
       /** 只回前 50 个，仓库可能有上千分支 */
       branches: branches.slice(0, 50),
-      message: hasDefault
-        ? `连接成功，远端有 ${branches.length} 个分支`
-        : `连接成功，但远端没有默认分支 ${repo.defaultBranch}。派发时会失败 —— ` +
-          `可选的有：${branches.slice(0, 5).join('、')}${branches.length > 5 ? ' …' : ''}`,
+      message:
+        (hasDefault
+          ? `连接成功，远端有 ${branches.length} 个分支`
+          : `连接成功，但远端没有默认分支 ${repo.defaultBranch}。派发时会失败 —— ` +
+            `可选的有：${branches.slice(0, 5).join('、')}${branches.length > 5 ? ' …' : ''}`) +
+        (pinnedNow ? '\n已记录该主机的公钥，此后的连接会严格校验它。' : ''),
     };
   } catch (err) {
+    /**
+     * ★ SSH 认证准备阶段的失败（私钥加载不了、ssh-agent 起不来）要和
+     *   「连上了但被拒」分开：前者是**这把 key 本身**的问题，改的是
+     *   凭证一栏；混进 network 的话报错会指向网络，方向就错了。
+     */
+    if (err instanceof SshError) {
+      return {
+        ok: false as const,
+        stage: 'ssh' as const,
+        ...base,
+        branches: null,
+        message: err.hint ? `${err.message}：${err.hint}` : err.message,
+      };
+    }
+
+    const raw = err instanceof GitError ? err.message : String(err);
+
+    /**
+     * ★★ 主机公钥对不上不是网络问题，也不是凭证问题 —— 它只有两种可能：
+     *   服务器换了密钥，或者有人在中间。两者的下一步动作都很具体，
+     *   而它默认会落进 network 那一档，指向完全错误的方向。
+     */
+    if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(raw)) {
+      return {
+        ok: false as const,
+        stage: 'host_key' as const,
+        ...base,
+        branches: null,
+        message:
+          '远端的主机公钥和已固定的那份不一致。要么服务器换过密钥，要么连接被中间人接管了 —— ' +
+          '请先用 `ssh-keyscan` 核对新公钥，确认无误后再更新「主机公钥」一栏（清空则会重新学习）。\n' +
+          raw,
+      };
+    }
+
     /**
      * ★ 401/403 时把当前用的用户名占位一起说出来。
      *   这是整条链路上最难自己想到的一环 —— GitLab 用了 GitHub 的占位
      *   就是 401，而错误信息本身永远不会提到这件事。
      */
-    const raw = err instanceof GitError ? err.message : String(err);
-    const authFailed = /401|403|Authentication failed|not authorized|access denied/i.test(raw);
+    const authFailed =
+      /401|403|Authentication failed|not authorized|access denied|Permission denied \(publickey/i.test(
+        raw,
+      );
 
     return {
       ok: false as const,
       stage: authFailed ? ('auth' as const) : ('network' as const),
-      authUsername: auth.username,
-      authUsernameSource: auth.source,
+      ...base,
       branches: null,
-      message: authFailed
-        ? `${raw}\n当前使用的凭证用户名占位是 ${auth.username}（${SOURCE_LABEL[auth.source]}）。` +
-          '若这是 GitLab 请填 oauth2，Bitbucket 填 x-token-auth；也可能是 token 过期或缺少仓库读写 scope。'
-        : raw,
+      message: authFailed ? `${raw}\n${authAdvice(kind, repo.credentialRef, auth)}` : raw,
     };
   }
+}
+
+/** 认证失败时该往哪儿看 —— 两种形态的下一步动作完全不同 */
+function authAdvice(
+  kind: 'token' | 'ssh_key',
+  credentialRef: string | null,
+  auth: ReturnType<typeof resolveAuthUsername>,
+): string {
+  if (kind === 'ssh_key') {
+    return credentialRef
+      ? '这把私钥被远端拒绝了：确认对应的公钥已加到仓库的 Deploy keys（或账号的 SSH keys）里，且有写权限。'
+      : '这个仓库没有配置 SSH 私钥，刚才用的是宿主机的 ~/.ssh —— 容器里通常没有。请在凭证一栏填入私钥全文。';
+  }
+  return (
+    `当前使用的凭证用户名占位是 ${auth.username}（${SOURCE_LABEL[auth.source]}）。` +
+    '若这是 GitLab 请填 oauth2，Bitbucket 填 x-token-auth；也可能是 token 过期或缺少仓库读写 scope。'
+  );
 }
 
 const SOURCE_LABEL: Record<'explicit' | 'host' | 'default', string> = {
@@ -474,14 +631,48 @@ export async function deleteConvention(db: Database, conventionId: string) {
 
 // ── 共用 ──────────────────────────────────────────────────────────────
 
-function credentialColumns(credential: string | null) {
+function credentialColumns(credential: string | null, remoteUrl: string) {
   if (credential === null) return { credentialRef: null, credentialHint: null };
+
+  const label = describeSshKey(remoteUrl, credential);
   try {
-    return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential) };
+    return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential, label) };
   } catch (err) {
     if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
     throw err;
   }
+}
+
+/**
+ * ssh 远端的凭证在**保存那一刻**验形态，顺带产出页面上认得出的 hint。
+ *
+ * ★★ 带密码的私钥必须在这里拒掉。
+ *
+ *   它注定用不了（无人值守场景没法输入密码短语），而放进库的话失败会
+ *   推迟到第一次派发，表现成一条「准备工作区失败」—— 管理员会往权限和
+ *   网络上找，因为他保存的时候平台什么都没说。
+ *
+ * ★ 顺带也挡住了「把 token 填给 ssh 地址」这个形近错误。
+ *
+ * @returns hint 用的说法（`ssh 私钥（ed25519）`），不适用时 null
+ */
+function describeSshKey(remoteUrl: string, credential: string): string | null {
+  if (isHttpRemote(remoteUrl)) return null;
+
+  /**
+   * ★ env: 形态取不到值时不拦：变量可能是部署时才注入的，
+   *   现在没有不代表配错了。「环境变量未设置」这条由 describeRef 单独报。
+   */
+  const trimmed = credential.trim();
+  const plaintext = trimmed.startsWith('env:')
+    ? (process.env[trimmed.slice(4).trim()] ?? null)
+    : trimmed;
+  if (!plaintext) return null;
+
+  const key = inspectPrivateKey(plaintext);
+  if (key.problem) throw new ApiError('VALIDATION_FAILED', `SSH 私钥不可用：${key.problem}`);
+
+  return key.keyType ? `ssh 私钥（${key.keyType}）` : 'ssh 私钥';
 }
 
 function redactUrl(url: string): string {
