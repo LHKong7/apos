@@ -120,6 +120,17 @@ export function MembersPage() {
           >
             角色定义 →
           </Link>
+          {/*
+            ★ 通向「开账号」的入口必须在这里。
+              候选人名单空着的时候，管理员在这一页找不到任何出路 ——
+              账号是组织级的，而这一页是项目级的，两者的关系不写出来就得靠猜。
+          */}
+          <Link
+            to={`/projects/${projectId}/settings/accounts`}
+            className="text-xs text-slate-500 hover:text-slate-700"
+          >
+            账号 →
+          </Link>
           <div className="ml-auto flex gap-1.5">
             <GatedButton
               permission="project.members.manage"

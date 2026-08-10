@@ -21,10 +21,47 @@ const base = process.env.WEB_URL ?? 'http://localhost:5173';
 const results = [];
 const problems = [];
 
+/**
+ * ★★ 先登录换一张令牌，再让浏览器带着它开页面。
+ *
+ *   身份改由 JWT 证明之后，直接 goto 看板只会停在登录页 ——
+ *   而那时所有断言都会失败在「找不到看板」上，指向完全错误的方向。
+ *
+ * ★ 凭证默认取 .env 里的超管。冒烟要跑通「批准决策」这类写操作，
+ *   身份必须是项目成员且权限够 —— 种子数据里那个人正是超管。
+ */
+const apiBase = process.env.API_URL ?? 'http://localhost:3000';
+const smokeEmail = process.env.APOS_SMOKE_EMAIL ?? process.env.APOS_SUPERADMIN_EMAIL;
+const smokePassword = process.env.APOS_SMOKE_PASSWORD ?? process.env.APOS_SUPERADMIN_PASSWORD;
+if (!smokeEmail || !smokePassword) {
+  console.error(
+    '冒烟需要一个能登录的账号。请设置 APOS_SUPERADMIN_EMAIL / APOS_SUPERADMIN_PASSWORD\n' +
+      '（或 APOS_SMOKE_EMAIL / APOS_SMOKE_PASSWORD 单独指定）。',
+  );
+  process.exit(1);
+}
+
+const loginRes = await fetch(`${apiBase}/api/v1/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: smokeEmail, password: smokePassword }),
+});
+if (!loginRes.ok) {
+  console.error(`登录失败（HTTP ${loginRes.status}）：${JSON.stringify(await loginRes.json())}`);
+  process.exit(1);
+}
+const { token: smokeToken, user: smokeUser } = await loginRes.json();
+
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium',
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+
+/**
+ * ★ 令牌要在**任何页面脚本跑之前**写进 localStorage。
+ *   goto 之后再写的话，应用已经读过一次「没有令牌」并渲染了登录页。
+ */
+await page.addInitScript((t) => localStorage.setItem('apos.token', t), smokeToken);
 
 page.on('pageerror', (e) => problems.push(`PAGEERROR ${e.message}`));
 page.on('requestfinished', async (r) => {
@@ -97,47 +134,37 @@ await page.goto(`${base}/projects/${projectId}/board`, { waitUntil: 'networkidle
 await page.waitForTimeout(800);
 const headersBefore = await page.locator('section > header').allInnerTexts();
 
-const apiBase = process.env.API_URL ?? 'http://localhost:3000';
-
 /**
- * ★ 直连 API 的请求必须带身份。
- *   服务端按项目成员关系鉴权（09-security §2.1 第②层），
- *   不带 X-User-Id 的请求一律拒 —— 这个脚本在这里扮演的是
- *   「服务端替某个人操作」，所以要挑一个本项目的成员。
+ * ★ 直连 API 的请求必须带令牌 —— 和浏览器里那条是同一张。
+ *   服务端按项目成员关系鉴权（09-security §2.1 第②层）。
  */
-let actingAs = null;
-async function asMember() {
-  if (actingAs) return actingAs;
-  // ★ 这里必须用裸 fetch：走 authed 会回头再调 asMember，直接无限递归
-  const { users } = await (await fetch(`${apiBase}/api/v1/users`)).json();
-  for (const u of users) {
-    const r = await fetch(`${apiBase}/api/v1/projects/${projectId}/board`, {
-      headers: { 'X-User-Id': u.id },
-    });
-    if (r.ok) {
-      actingAs = u.id;
-      return actingAs;
-    }
-  }
-  throw new Error('找不到该项目的成员身份');
-}
 async function authed(url, init = {}) {
-  const headers = { ...(init.headers ?? {}) };
-  if (!headers['X-User-Id']) headers['X-User-Id'] = await asMember();
-  return fetch(url, { ...init, headers });
+  return fetch(url, {
+    ...init,
+    headers: { ...(init.headers ?? {}), Authorization: `Bearer ${smokeToken}` },
+  });
 }
 const boardJson = await (await authed(`${apiBase}/api/v1/projects/${projectId}/board`)).json();
 const gated = boardJson.columns.flatMap((c) => c.items).find((c) => c.humanGateRef);
 
-if (gated) {
-  const detail = await (await authed(`${apiBase}/api/v1/decisions/${gated.humanGateRef}`)).json();
-  // 决策可能没有指定责任人（未分派），此时随便一个成员都能批
-  const { users } = await (await authed(`${apiBase}/api/v1/users`)).json();
-  const actorId = detail.decision.assigneeId ?? users[0]?.id;
+const detail = gated
+  ? await (await authed(`${apiBase}/api/v1/decisions/${gated.humanGateRef}`)).json()
+  : null;
 
+/**
+ * ★★ 身份改由令牌证明之后，这个脚本只能以**它登录的那个人**去批。
+ *
+ *   此前它会挑出决策的责任人再冒充他 —— 那正是「决策不可代行」
+ *   要禁止的事，只不过当时 X-User-Id 让它做得到。
+ *   所以这里改成：责任人是别人时就跳过，而不是想办法绕过去。
+ */
+const canApprove =
+  gated && (detail.decision.assigneeId === null || detail.decision.assigneeId === smokeUser.id);
+
+if (gated && canApprove) {
   const approved = await authed(`${apiBase}/api/v1/decisions/${gated.humanGateRef}/approve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note: 'smoke' }),
   });
   await page.waitForTimeout(2500);
@@ -149,6 +176,8 @@ if (gated) {
   );
   check('移动后出现汇总提示条', (await page.locator('text=/张卡片/').count()) > 0);
   await shot('watch');
+} else if (gated) {
+  console.log('· 跳过旁观模式检查：这条决策的责任人不是冒烟身份，代行会（正确地）被拒');
 } else {
   console.log('· 跳过旁观模式检查：当前没有待决策卡片');
 }
@@ -454,7 +483,7 @@ if ((await rate.count()) > 0) {
 // ── 通知投递记录（产品文档十一）──────────────────────────────────────
 const notif = await page.request.get(
   `${base}/api/v1/projects/${projectId}/notifications`,
-  { headers: { 'x-user-id': (await page.evaluate(() => localStorage.getItem('apos.userId'))) ?? '' } },
+  { headers: { Authorization: `Bearer ${smokeToken}` } },
 );
 if (notif.ok()) {
   const body = await notif.json();
@@ -509,13 +538,9 @@ check(
 await shot('policy-test');
 
 // ── 治理硬约束：项目规则不能放宽组织规则 ──
-const apiBase2 = process.env.API_URL ?? 'http://localhost:3000';
-const { users: allUsers } = await (await authed(`${apiBase2}/api/v1/users`)).json();
-const actorId = allUsers[0]?.id;
-
-const loosenOrg = await authed(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+const loosenOrg = await authed(`${apiBase}/api/v1/projects/${projectId}/policies`, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     name: '冒烟：抢在组织规则前面放行生产库变更',
     priority: 3,
@@ -536,9 +561,9 @@ check(
 );
 
 // ── 安全阀：自动放行类规则必须先过模拟 ──
-const autoPass = await authed(`${apiBase2}/api/v1/projects/${projectId}/policies`, {
+const autoPass = await authed(`${apiBase}/api/v1/projects/${projectId}/policies`, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-User-Id': actorId },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     name: '冒烟：中低风险部署自动放行',
     priority: 190,
@@ -568,7 +593,7 @@ if (autoPass.status === 422) {
 // ── riskLevel 的 in 比较必须真的生效 ──
 // 这条曾经是个静默失效的 bug：规则界面上看着对，却永远不命中
 const evalRes = await (
-  await authed(`${apiBase2}/api/v1/projects/${projectId}/policies/evaluate`, {
+  await authed(`${apiBase}/api/v1/projects/${projectId}/policies/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

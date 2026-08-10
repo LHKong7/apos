@@ -9,7 +9,7 @@
  * 用法：pnpm --filter @apos/api seed
  */
 import { randomUUID } from 'node:crypto';
-import { and, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   agents,
   createDatabase,
@@ -37,6 +37,7 @@ import { scheduleRound } from '../modules/flow/scheduler';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { transition } from '../modules/flow/transition';
 import { createRole, syncBuiltinRoles } from '../http/roles';
+import { ensureSuperadminAccount } from '../modules/auth';
 import { allocateNumbers } from '../modules/work-item/numbering';
 import { seedHistory } from './seed-history';
 
@@ -71,33 +72,57 @@ async function main() {
   await syncBuiltinRoles(db, orgId);
 
   /**
-   * ★ 角色要凑齐，演示数据才验证得了权限（09-security §2.2）。
+   * ★★ 种子**不建账号**。
    *
-   *   全是 admin 的种子数据看着一切正常，但它把整套 RBAC 屏蔽掉了：
-   *   界面上没有一个灰按钮，「谁能批准计划」「谁能放宽规则」这些
-   *   产品里最需要被看见的边界，一次都不会出现在演示里。
-   *   所以这里刻意留了 sponsor 和 viewer —— 切到他们身上，
-   *   页面才会露出真实形态。
+   *   账号只有两个来源：超管来自 .env（modules/auth/bootstrap.ts），
+   *   其余由超管在界面上创建。种子再造几个演示账号的话，那几个号
+   *   既没有口令也没人管，却是真实的组织成员 —— 一个能在生产库里
+   *   长出无主账号的种子脚本，比没有演示数据糟得多。
+   *
+   * ★ 代价要说清楚：演示数据因此只有一个人。「只看需我处理」、
+   *   「决策不可代行」、viewer 的只读形态，都需要第二个人才看得出来。
+   *   要验证那些，登录超管后在「组织设置 → 成员」里建几个号，
+   *   分别给 pm / sponsor / viewer 角色，再换着登录。
    */
-  const [lead, dba, pm, sponsor, viewer] = await db
-    .insert(users)
-    .values([
-      { email: 'zhangwei@acme.dev', name: '张伟' },
-      { email: 'wangqiang@acme.dev', name: '王强', approvalScopes: ['database', 'production'] },
-      { email: 'lina@acme.dev', name: '李娜' },
-      { email: 'chenjing@acme.dev', name: '陈静', approvalScopes: ['budget'] },
-      { email: 'zhaomin@acme.dev', name: '赵敏' },
-    ])
-    .returning();
+  const { userId: adminId } = await ensureSuperadminAccount(db, (m) => console.log(m));
+  if (!adminId) {
+    throw new Error(
+      '种子数据需要一个账号来充当负责人，但超管还不存在。\n' +
+        '请在 .env 里设置 APOS_SUPERADMIN_EMAIL 与 APOS_SUPERADMIN_PASSWORD 后重跑。',
+    );
+  }
+  const [admin] = await db.select().from(users).where(eq(users.id, adminId));
+
+  /**
+   * ★ 审批范围要给全：决策卡片按 approvalScopes 找责任人（产品文档 8.7.5），
+   *   一个都不给的话，演示里的高风险决策会显示「找不到能批的人」——
+   *   那是数据没造对，不是产品在表达什么。
+   */
+  await db
+    .update(users)
+    .set({ approvalScopes: ['database', 'production', 'budget'] })
+    .where(eq(users.id, adminId));
 
   // 归属与组织角色在 organization_members —— 账号本身是全局的
-  await db.insert(organizationMembers).values([
-    { orgId, userId: lead!.id, orgRole: 'org_admin' },
-    { orgId, userId: dba!.id, orgRole: 'member' },
-    { orgId, userId: pm!.id, orgRole: 'member' },
-    { orgId, userId: sponsor!.id, orgRole: 'member' },
-    { orgId, userId: viewer!.id, orgRole: 'member' },
-  ]);
+  await db
+    .insert(organizationMembers)
+    .values({ orgId, userId: adminId, orgRole: 'org_admin' })
+    .onConflictDoNothing();
+
+  /**
+   * 演示数据里所有角色都由这一个人担任。
+   *
+   * ★ 保留这几个名字（而不是全文替换成 admin），是为了让「这里本来该是
+   *   几个不同的人」这件事在代码里仍然看得见 —— 哪天要恢复多人演示，
+   *   要改的就只有这几行。
+   *
+   *   sponsor / viewer 两个角色在下面已经没有落点了（一个人在一个项目里
+   *   只能有一个角色），所以连变量都不留：留一个没人用的别名，
+   *   只会让人以为演示数据里还有那两个视角。
+   */
+  const lead = admin;
+  const dba = admin;
+  const pm = admin;
 
   const [project] = await db
     .insert(projects)
@@ -115,15 +140,22 @@ async function main() {
     .returning();
   const projectId = project!.id;
 
-  await db.insert(projectMembers).values([
-    { orgId, projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
-    { orgId, projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
-    { orgId, projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
-    // 需求确认是业务判断，归 sponsor / pm —— tech_lead 也批不了（§2.3）
-    { orgId, projectId, actorType: 'human', actorId: sponsor!.id, role: 'sponsor' },
-    // 切到赵敏能看出「只读」是真的只读：整页没有一个可点的写操作
-    { orgId, projectId, actorType: 'human', actorId: viewer!.id, role: 'viewer' },
-  ]);
+  /**
+   * ★ 只有一行：project_members 的主键是 (project, actorType, actorId)，
+   *   同一个人担任五个角色写不进去。角色取 tech_lead ——
+   *   演示链路里需要它批计划。
+   *
+   * ★★ 于是「需求确认归 sponsor，tech_lead 也批不了」（§2.3）这条
+   *   在演示数据上验证不了：批需求的人和批计划的人成了同一个。
+   *   这不是规则被放宽了（服务端照判），是种子数据看不见它。
+   */
+  await db.insert(projectMembers).values({
+    orgId,
+    projectId,
+    actorType: 'human',
+    actorId: lead!.id,
+    role: 'tech_lead',
+  });
 
   // ── Agent ────────────────────────────────────────────────────────────
   // ★ 工具名用 mock 运行时的词汇表（read_file / write_file / …），
@@ -286,7 +318,6 @@ async function main() {
 
   // 澄清问题一律用建议答案，让种子可重复执行
   const { requirementClarifications } = await import('@apos/db');
-  const { eq } = await import('drizzle-orm');
   const questions = await db
     .select()
     .from(requirementClarifications)
@@ -649,14 +680,18 @@ async function main() {
   console.log('\n✓ 种子数据就绪');
   console.log(`  项目      ${project!.name}  ${projectId}`);
   console.log(`  任务      ${final.length} 项`, byStage);
-  // ★ 角色写在名字旁边：这份清单同时是 RBAC 的演示入口 ——
-  //   切到陈静才看得到「tech_lead 也批不了需求」，切到赵敏才看得到只读长什么样
-  console.log('\n  可用身份（前端右上角切换）：');
-  console.log(`    张伟  tech_lead + 组织管理员  ${lead!.id}`);
-  console.log(`    李娜  pm（收紧规则、成员管理） ${pm!.id}`);
-  console.log(`    陈静  sponsor（确认需求）      ${sponsor!.id}`);
-  console.log(`    王强  member / DBA（决策人）   ${dba!.id}`);
-  console.log(`    赵敏  viewer（只读）           ${viewer!.id}`);
+  /**
+   * ★ 只有超管一个人。要看出 RBAC 的形态（「只看需我处理」、
+   *   viewer 的只读、「决策不可代行」）得自己再建几个号 ——
+   *   这里把下一步直接写出来，否则演示者只会得出「产品没有权限体系」的印象。
+   */
+  console.log('\n  登录身份：');
+  console.log(`    ${admin!.name}  ${admin!.email}  tech_lead + 组织管理员`);
+  console.log('    口令是 .env 里的 APOS_SUPERADMIN_PASSWORD');
+  console.log(
+    '\n  演示数据只有这一个人。要看权限边界（只读视角、决策不可代行），\n' +
+      '  登录后到「组织设置 → 成员」建几个号，分别给 pm / sponsor / viewer 角色。',
+  );
   // 单机部署里前端和 API 同源（默认 :8080），不是开发时的 Vite :5173——
   // 打印一个打不开的链接比不打印更误导
   const webBase = process.env['WEB_BASE_URL'] ?? 'http://localhost:5173';

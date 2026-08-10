@@ -7,6 +7,7 @@ import { qk } from './lib/query/keys';
 import { useAuthStore } from './stores/auth';
 import { useOrgStore } from './stores/org';
 import { Modal } from './features/work-item/ManualMoveDialog';
+import { LoginPage } from './pages/Login';
 import { ProjectListPage } from './pages/ProjectList';
 import { OverviewPage } from './pages/Overview';
 import { BoardPage } from './pages/Board';
@@ -23,6 +24,7 @@ import { DecisionsPage } from './pages/Decisions';
 import { IntegrationsPage } from './pages/Settings/Integrations';
 import { AgentConfigPage } from './pages/Settings/AgentConfig';
 import { MembersPage } from './pages/Settings/Members';
+import { AccountsPage } from './pages/Settings/Accounts';
 import { RolesPage } from './pages/Settings/Roles';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
@@ -35,28 +37,73 @@ import { ConnectionBanner } from './components/ConnectionBanner';
  *   页面本身不滚动，内部区域各自滚。
  */
 export function App() {
-  const setUsers = useAuthStore((s) => s.setUsers);
-  const userId = useAuthStore((s) => s.userId);
-  const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
+  const token = useAuthStore((s) => s.token);
+  const resolving = useAuthStore((s) => s.resolving);
+  const setUser = useAuthStore((s) => s.setUser);
+  const signOut = useAuthStore((s) => s.signOut);
+
+  /**
+   * ★★ 拿着令牌先问一次「我是谁」。
+   *
+   *   localStorage 里的令牌可能已经过期、可能是被删掉的账号的。
+   *   不先验一次就渲染的话，用户看到的是一整屏各自失败的组件，
+   *   而真正的原因（该重新登录了）一个字都没写在页面上。
+   */
+  const me = useQuery({
+    queryKey: qk.me(),
+    queryFn: api.me,
+    enabled: Boolean(token),
+    retry: false,
+    staleTime: Infinity,
+  });
 
   const setOrganizations = useOrgStore((s) => s.setOrganizations);
+  const adoptServerOrg = useOrgStore((s) => s.adoptServerOrg);
+  const currentOrgId = useOrgStore((s) => s.orgId);
+
   /**
-   * ★ 组织列表要等身份落定再拉：没有 X-User-Id 时后端回的是
-   *   「不属于任何组织」，缓存住之后切换器会一直是空的。
+   * ★★ 浏览器记着的 orgId 可能已经失效（组织被删、人被移出、库被重建过），
+   *   而它会被塞进每个请求的 X-Org-Id，让那些请求全部 404。
+   *   `/auth/me` 是唯一不受影响的那条（服务端对它宽容，见 rbac.ts），
+   *   所以拿它回来的 currentOrgId 纠正本地那个。
+   *
+   * ★★ 纠正**完成之前不能渲染任何页面**。
+   *
+   *   这不是保守：子组件的 effect 比父组件先跑，看板那几个查询会赶在
+   *   这次纠正之前带着失效的 orgId 发出去。而 invalidateQueries 对
+   *   **正在飞行中**的请求不起作用 —— 它们随后带着 404 落地，就停在那儿了，
+   *   表现是看板永远停在骨架屏，且再也不会自己恢复。
+   *
+   * ★ 本地那个有效时，服务端回的就是它自己，`orgSynced` 首次渲染即为真，
+   *   不会多等一帧。
    */
+  const orgSynced = Boolean(me.data) && currentOrgId === me.data?.currentOrgId;
+
   const orgs = useQuery({
     queryKey: qk.organizations(),
     queryFn: api.organizations,
-    enabled: Boolean(userId),
+    enabled: Boolean(token) && orgSynced,
   });
 
   useEffect(() => {
-    if (users.data) setUsers(users.data.users);
-  }, [users.data, setUsers]);
+    if (!me.data) return;
+    setUser(me.data.user);
+    adoptServerOrg(me.data.currentOrgId);
+  }, [me.data, setUser, adoptServerOrg]);
+
+  /**
+   * ★ 令牌被服务端拒了就当场退出登录。
+   *   留着一张废令牌的表现是「每个页面都在报错」，而不是「请重新登录」。
+   */
+  useEffect(() => {
+    if (me.error instanceof ApiError && me.error.status === 401) signOut();
+  }, [me.error, signOut]);
 
   useEffect(() => {
     if (orgs.data) setOrganizations(orgs.data.organizations, orgs.data.currentOrgId);
   }, [orgs.data, setOrganizations]);
+
+  if (!token) return <LoginPage />;
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -64,16 +111,14 @@ export function App() {
       <ConnectionBanner />
       <main className="flex min-h-0 flex-1 flex-col">
         {/*
-          ★ 身份没落定之前不渲染任何页面。
+          ★ 身份确认之前不渲染任何页面。
 
-            服务端按项目成员关系鉴权（09-security §2.1 第②层），
-            没有 X-User-Id 的请求一律拒。而首次访问时 localStorage 里没有身份，
-            /users 回来之前发出的请求都是匿名的 —— 不挡住的话，
-            用户第一眼看到的是一屏「加载失败」，刷新一下又好了，
-            这种偶发失败最难被报告清楚。
+            服务端按项目成员关系鉴权（09-security §2.1 第②层）。
+            /auth/me 回来之前就渲染的话，用户第一眼看到的是一屏
+            「加载失败」，刷新一下又好了 —— 这种偶发失败最难被报告清楚。
         */}
-        {!userId ? (
-          <IdentityGate error={users.error} />
+        {!orgSynced ? (
+          <IdentityGate error={resolving ? null : me.error} />
         ) : (
         <Routes>
           <Route path="/" element={<ProjectListPage />} />
@@ -88,6 +133,7 @@ export function App() {
           <Route path="/projects/:projectId/settings/integrations" element={<IntegrationsPage />} />
           <Route path="/projects/:projectId/settings/agents" element={<AgentConfigPage />} />
           <Route path="/projects/:projectId/settings/members" element={<MembersPage />} />
+          <Route path="/projects/:projectId/settings/accounts" element={<AccountsPage />} />
           <Route path="/projects/:projectId/settings/roles" element={<RolesPage />} />
           {/* 运行时曾经是单独一页；页面文档 14 把它归为集成的一类，旧链接直接转过去 */}
           <Route
@@ -108,13 +154,13 @@ export function App() {
   );
 }
 
-/** 身份就绪之前的占位。用户几乎不会看到它 —— 除非 /users 拿不到 */
+/** 身份就绪之前的占位。用户几乎不会看到它 —— 除非 /auth/me 拿不到 */
 function IdentityGate({ error }: { error: unknown }) {
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
         <div className="max-w-md text-center">
-          <p className="text-sm text-slate-800">拿不到可用身份，页面无法加载</p>
+          <p className="text-sm text-slate-800">确认不了当前身份，页面无法加载</p>
           <p className="mt-1 text-xs text-slate-500">
             后端可能没起来。确认 API 可达后刷新重试。
           </p>
@@ -137,7 +183,8 @@ function RuntimesRedirect() {
 
 function TopNav() {
   const navigate = useNavigate();
-  const { user, users, switchUser } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
+  const signOut = useAuthStore((s) => s.signOut);
 
   return (
     <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
@@ -153,24 +200,22 @@ function TopNav() {
 
       <DecisionBadge />
 
+      {/*
+        ★ 此前这里是一个身份下拉框，选中谁就是谁。那是 X-User-Id 时代的
+          遗物 —— 一个自助改名的界面。现在身份由登录决定，
+          换人看只能退出再登录，这也正是它本来该有的样子。
+      */}
       <div className="ml-auto flex items-center gap-2">
-        <label className="text-[11px] text-slate-500" htmlFor="user-switch">
-          当前身份
-        </label>
-        <select
-          id="user-switch"
-          value={user?.id ?? ''}
-          onChange={(e) => switchUser(e.target.value)}
-          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+        <span className="text-xs text-slate-600" title={user?.email}>
+          {user?.name ?? '…'}
+        </span>
+        <button
+          type="button"
+          onClick={signOut}
+          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
         >
-          {users.length === 0 && <option value="">加载中…</option>}
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-              {u.orgRole ? `（${u.orgRole}）` : ''}
-            </option>
-          ))}
-        </select>
+          退出登录
+        </button>
       </div>
     </header>
   );

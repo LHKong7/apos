@@ -14,6 +14,7 @@ import {
 } from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
 import { syncBuiltinRoles } from '../http/roles';
+import { signToken } from '../modules/auth';
 import { allocateNumbers } from '../modules/work-item/numbering';
 
 /**
@@ -53,6 +54,20 @@ export interface Fixture {
   orgId: string;
   userId: string;
   projectId: string;
+}
+
+/**
+ * 测试用的认证头。
+ *
+ * ★★ 测试必须走**真实的**认证路径 —— 也就是一张签名过的令牌，
+ *   而不是某个「测试模式」旁路。旁路一旦存在，它就成了唯一没被
+ *   测过的那条路径，而它恰恰是鉴权的入口。
+ *
+ * ★ 用 signToken 而不是手写字符串：签名算法、声明字段、过期时间
+ *   任何一处改了，测试跟着变，不需要改这里。
+ */
+export function auth(userId: string): Record<string, string> {
+  return { authorization: `Bearer ${signToken(userId)}` };
 }
 
 export async function seedFixture(

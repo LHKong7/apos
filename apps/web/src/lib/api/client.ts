@@ -66,15 +66,20 @@ export class ApiError extends Error {
   }
 }
 
-/** 当前身份。MVP 用 X-User-Id 头，见 docs/tech/09-security.md */
-let currentUserId: string | null = null;
+/**
+ * 会话令牌（docs/tech/09-security.md §1.3）。
+ *
+ * ★ 此前这里是 `X-User-Id` —— 一个没有凭证的头，写上谁的 id 就是谁。
+ *   现在身份必须由服务端签发的 JWT 证明。
+ */
+let authToken: string | null = null;
 
-export function setCurrentUserId(id: string | null) {
-  currentUserId = id;
+export function setAuthToken(token: string | null) {
+  authToken = token;
 }
 
-export function getCurrentUserId(): string | null {
-  return currentUserId;
+export function getAuthToken(): string | null {
+  return authToken;
 }
 
 /**
@@ -102,7 +107,7 @@ async function request<T>(
   init: RequestInit & { json?: unknown } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  if (currentUserId) headers.set('X-User-Id', currentUserId);
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
   if (currentOrgId) headers.set('X-Org-Id', currentOrgId);
   if (init.json !== undefined) headers.set('Content-Type', 'application/json');
 
@@ -148,6 +153,27 @@ export function boardQueryString(filters: BoardFilters): string {
 }
 
 export const api = {
+  // ── 登录（docs/tech/09-security.md §1.3）────────────────────────────
+  login: (body: { email: string; password: string }) =>
+    request<{ token: string; user: User }>('/auth/login', { method: 'POST', json: body }),
+
+  me: () => request<{ user: User; currentOrgId: string; orgRole: string }>('/auth/me'),
+
+  changePassword: (body: { currentPassword: string; newPassword: string }) =>
+    request<{ ok: true; token: string }>('/auth/password', { method: 'POST', json: body }),
+
+  /** 开账号 —— 只有组织管理员能调（§2.2 身份管理）*/
+  createAccount: (body: {
+    email: string;
+    name: string;
+    password: string;
+    orgRole?: string;
+  }) =>
+    request<{ id: string; name: string; email: string; orgRole: string }>('/admin/users', {
+      method: 'POST',
+      json: body,
+    }),
+
   users: () => request<{ users: User[] }>('/users'),
 
   // ── 组织（顶层容器；Plane 里叫 Workspace）────────────────────────────

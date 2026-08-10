@@ -8,6 +8,8 @@ import type { BoardFilters } from '../api/client';
  * 「数据变了但界面不动」，非常难查。
  */
 export const qk = {
+  /** 当前登录者。与 users（组织通讯录）分开 —— 前者随登录变，后者随组织变 */
+  me: () => ['me'] as const,
   users: () => ['users'] as const,
   /**
    * ★ key 里不带 orgId，靠切换组织时整体作废缓存（stores/org 的 apply）——

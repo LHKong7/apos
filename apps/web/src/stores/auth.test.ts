@@ -1,67 +1,92 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryClient } from '../lib/query/client';
-import { getCurrentUserId } from '../lib/api/client';
+import { getAuthToken } from '../lib/api/client';
 import { useAuthStore } from './auth';
 
-const USERS = [
-  { id: 'u-1', name: '张伟', email: 'a@x.dev', orgRole: 'admin' },
-  { id: 'u-2', name: '李娜', email: 'b@x.dev', orgRole: 'pm' },
-] as never as Parameters<ReturnType<typeof useAuthStore.getState>['setUsers']>[0];
+const USER = {
+  id: 'u-1',
+  name: '张伟',
+  email: 'a@x.dev',
+  avatarUrl: null,
+  orgRole: 'org_admin',
+  approvalScopes: [],
+};
+const OTHER = { ...USER, id: 'u-2', name: '李娜', email: 'b@x.dev' };
 
 beforeEach(() => {
   localStorage.clear();
   queryClient.clear();
-  useAuthStore.setState({ userId: null, user: null, users: [] });
+  useAuthStore.setState({ token: null, user: null, userId: null, resolving: false });
 });
 
 /**
- * 身份与缓存。
+ * 登录态与缓存。
  *
- * ★ 后端有一整类响应按 X-User-Id 计算（决策收件箱的「待我处理」、
- *   总览的「需要你处理」、决策卡片的 canAct）。这些查询的 key 里没有用户 id，
- *   所以身份一变就必须让缓存失效 —— 否则界面会拿上一个人的答案继续显示，
+ * ★★ 后端有一整类响应是按当前身份算的（决策收件箱的「待我处理」、
+ *   总览的「需要你处理」、决策卡片的 canAct）。这些查询的 key 里没有
+ *   用户 id —— 所以换人就必须动缓存，否则界面会拿上一个人的答案继续显示，
  *   而且看起来毫无异常：一个声称「决策不可代行」的系统，
  *   把张三的待办摆给李四看。
  */
-describe('身份变化让查询缓存失效', () => {
-  it('★ 首次落定身份（匿名 → 有人）也要作废：启动时那批匿名请求已经被缓存了', () => {
-    const spy = vi.spyOn(queryClient, 'invalidateQueries');
-    useAuthStore.getState().setUsers(USERS);
+describe('登录', () => {
+  it('登录后令牌进 localStorage 并同步到请求头', () => {
+    useAuthStore.getState().signIn('token-abc', USER);
 
-    expect(getCurrentUserId()).toBe('u-1');
+    expect(useAuthStore.getState().userId).toBe('u-1');
+    expect(getAuthToken()).toBe('token-abc');
+    expect(localStorage.getItem('apos.token')).toBe('token-abc');
+  });
+
+  it('★ 登录让上一个人的缓存作废', () => {
+    useAuthStore.getState().signIn('token-abc', USER);
+
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    useAuthStore.getState().signIn('token-def', OTHER);
+
+    expect(useAuthStore.getState().userId).toBe('u-2');
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
 
-  it('★ 切换身份让缓存失效，并同步请求头', () => {
-    useAuthStore.getState().setUsers(USERS);
+  /**
+   * ★★ 退出要 clear 而不是 invalidate。
+   *
+   *   invalidateQueries 只是把数据标记为陈旧，它仍然在内存里 ——
+   *   下一个人登录后，在重新拉取回来之前会先看到上一个人的页面。
+   */
+  it('★ 退出登录清空缓存与令牌，而不只是标记陈旧', () => {
+    useAuthStore.getState().signIn('token-abc', USER);
 
-    const spy = vi.spyOn(queryClient, 'invalidateQueries');
-    useAuthStore.getState().switchUser('u-2');
+    const clear = vi.spyOn(queryClient, 'clear');
+    useAuthStore.getState().signOut();
 
-    expect(useAuthStore.getState().userId).toBe('u-2');
-    expect(getCurrentUserId()).toBe('u-2');
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
+    expect(clear).toHaveBeenCalled();
+    expect(useAuthStore.getState().token).toBeNull();
+    expect(useAuthStore.getState().userId).toBeNull();
+    expect(getAuthToken()).toBeNull();
+    expect(localStorage.getItem('apos.token')).toBeNull();
+    clear.mockRestore();
   });
 
-  it('身份没变时不动缓存 —— 每次 /users 回来都清一遍等于关掉了缓存', () => {
-    useAuthStore.getState().setUsers(USERS);
-
-    const spy = vi.spyOn(queryClient, 'invalidateQueries');
-    useAuthStore.getState().setUsers(USERS);
-
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+  it('没登录时退出不做任何事 —— 否则每次渲染都清一遍缓存', () => {
+    const clear = vi.spyOn(queryClient, 'clear');
+    useAuthStore.getState().signOut();
+    expect(clear).not.toHaveBeenCalled();
+    clear.mockRestore();
   });
 
-  it('记住的身份仍在名单里时不被顶掉', () => {
-    localStorage.setItem('apos.userId', 'u-2');
-    useAuthStore.setState({ userId: 'u-2', user: null, users: [] });
+  /**
+   * ★ X-User-Id 时代的 `apos.userId` 必须被清掉。
+   *   它现在不起作用，但留在浏览器里是一条真实的身份痕迹，
+   *   而且会让「我明明退出了」这类疑问永远查不清。
+   */
+  it('★ 登录与退出都清掉旧版遗留的身份键', () => {
+    localStorage.setItem('apos.userId', 'u-9');
+    useAuthStore.getState().signIn('token-abc', USER);
+    expect(localStorage.getItem('apos.userId')).toBeNull();
 
-    useAuthStore.getState().setUsers(USERS);
-
-    expect(useAuthStore.getState().userId).toBe('u-2');
-    expect(getCurrentUserId()).toBe('u-2');
+    localStorage.setItem('apos.userId', 'u-9');
+    useAuthStore.getState().signOut();
+    expect(localStorage.getItem('apos.userId')).toBeNull();
   });
 });

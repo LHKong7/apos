@@ -130,7 +130,7 @@ B 组织的普通成员。放在 users 上这句话就说不出来。
 ### 2.2 「当前是哪个组织」由请求显式带上
 
 账号能属于多个组织之后，这件事不再能从账号上读出来，所以走 `X-Org-Id` 头
-（与 `X-User-Id` 并列，见 `rbac.ts` 的 `resolveCurrentOrg`）。
+（身份走 `Authorization: Bearer`，组织走这个头；见 `rbac.ts` 的 `resolveCurrentOrg`）。
 
 ★ **没带头时不能报错**：老客户端、curl 脚本、seed 之后第一次打开的页面
 都不会带，那时报 400 的表现是「整个站点白屏」。所以没带就回落到确定的缺省

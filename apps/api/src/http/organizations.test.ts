@@ -15,6 +15,7 @@ import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
+  auth,
   createMember,
   integrationRegistry,
   resetDb,
@@ -56,7 +57,7 @@ afterAll(async () => {
 });
 
 const as = (userId: string, orgId?: string) => ({
-  'x-user-id': userId,
+  ...auth(userId),
   ...(orgId ? { 'x-org-id': orgId } : {}),
 });
 
@@ -168,7 +169,7 @@ describe('账号属于多个组织', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/organizations',
-      headers: { 'x-user-id': fx.userId },
+      headers: auth(fx.userId),
     });
     expect(res.statusCode).toBe(200);
     // 按加入时间排，夹具那个组织在前
@@ -224,17 +225,26 @@ describe('账号属于多个组织', () => {
 
 describe('身份列表', () => {
   /**
-   * ★★ 一个人属于两个组织之后，未带身份的 /users 如果按归属 join
-   *   就会出现两行 —— 前端按 id 做 key，表现是一句 React 重复 key 警告
-   *   加一个重复的下拉项。改动之前不可能发生，所以钉住它。
+   * ★★ 未认证的调用者拿不到通讯录。
+   *
+   *   这个端点此前在不带身份时返回**全库**用户 —— 那是 X-User-Id 时代
+   *   身份切换器的自举缺口（第一次打开时得先有一份名单才选得出人）。
+   *   身份改由登录签发之后缺口不再需要，而它留在那里就是一个
+   *   不需要认证的全局通讯录导出接口：姓名与邮箱，跨所有租户。
    */
-  it('★ 属于多个组织的人在身份列表里只出现一次', async () => {
-    await create({ name: 'Second Co' });
+  it('★ 未登录拿不到用户名单', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/users' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().users).toBeUndefined();
+  });
 
-    const anonymous = await app.inject({ method: 'GET', url: '/api/v1/users' });
-    const ids = (anonymous.json().users as { id: string }[]).map((u) => u.id);
-    expect(ids.filter((id) => id === fx.userId)).toHaveLength(1);
-    expect(new Set(ids).size).toBe(ids.length);
+  /**
+   * ★ 一个人属于两个组织时，名单里也只该出现一次 —— 按当前组织过滤，
+   *   而不是把归属表整个 join 出来。前端按 id 做 key，
+   *   重复的表现是一句 React 重复 key 警告加一个重复的下拉项。
+   */
+  it('★ 属于多个组织的人在名单里只出现一次', async () => {
+    await create({ name: 'Second Co' });
 
     const scoped = await app.inject({
       method: 'GET',
@@ -242,14 +252,8 @@ describe('身份列表', () => {
       headers: as(fx.userId),
     });
     const scopedIds = (scoped.json().users as { id: string }[]).map((u) => u.id);
+    expect(scopedIds.filter((id) => id === fx.userId)).toHaveLength(1);
     expect(new Set(scopedIds).size).toBe(scopedIds.length);
-  });
-
-  /** ★ 还没选组织时不编一个组织角色出来 —— 那一刻任何值都是假的 */
-  it('★ 未带身份时组织角色为空，而不是随便挑一个', async () => {
-    await create({ name: 'Second Co' });
-    const res = await app.inject({ method: 'GET', url: '/api/v1/users' });
-    expect((res.json().users as { orgRole: string | null }[])[0]!.orgRole).toBeNull();
   });
 
   it('带了身份时按**当前组织**给组织角色', async () => {

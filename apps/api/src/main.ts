@@ -12,6 +12,7 @@ import {
 import { DevExternalStore } from './modules/integration/dev-store';
 import { buildApp } from './app';
 import { syncBuiltinRoles } from './http/roles';
+import { bootstrapSuperadmin } from './modules/auth';
 import { syncAgents } from './modules/agent/runtime-factory';
 import { WorkspaceProvisioner } from './modules/workspace/provisioner';
 import { probeGit } from './modules/workspace/git';
@@ -40,6 +41,18 @@ async function main() {
    */
   const syncedRoles = await syncBuiltinRoles(db);
   if (syncedRoles > 0) console.log(`[rbac] 内置角色已对齐（${syncedRoles} 条）`);
+
+  /**
+   * ★★ 超管自举（09-security §1.3）。
+   *
+   *   账号只能由组织管理员创建，而第一个管理员没人能创建他 ——
+   *   所以他必须来自数据库之外，也就是部署者手里的 .env。
+   *   幂等：已存在就什么都不做，尤其**不会**用 .env 里的口令覆盖他改过的口令。
+   *
+   *   放在 syncBuiltinRoles 之后：自举可能要建一个默认组织，
+   *   而建组织依赖内置角色目录（成员表对 roles 有外键）。
+   */
+  await bootstrapSuperadmin(db, (m) => console.log(m));
 
   const registry = new RuntimeRegistry();
 

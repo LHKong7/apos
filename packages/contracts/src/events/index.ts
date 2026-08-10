@@ -146,6 +146,12 @@ export const DOMAIN_EVENT_TYPES = [
   'agent.permission_violation',
   'agent.paused',
   // 身份与角色
+  /**
+   * ★ 建账号是提权路径的**第零步**：在此之前那个人还不存在。
+   *   「谁给谁开的号」查不到的话，提权链条从一开始就断了。
+   */
+  'user.created',
+  'user.password_changed',
   'user.org_role_changed',
   'role.created',
   'role.updated',
@@ -194,6 +200,8 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'project.member_added',
   'project.member_role_changed',
   'project.member_removed',
+  'user.created',
+  'user.password_changed',
   'user.org_role_changed',
   /**
    * ★ 角色定义的变更比成员变更更要紧：改一次角色，所有担任它的人的权限

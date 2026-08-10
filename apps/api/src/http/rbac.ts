@@ -61,7 +61,7 @@ export interface RequestActor extends RbacActor {
   projectId: string | null;
 }
 
-/** 「当前在哪个组织」的请求头，和 X-User-Id 并列 */
+/** 「当前在哪个组织」的请求头。身份走 Authorization: Bearer，组织走这个 */
 export const ORG_HEADER = 'x-org-id';
 
 export function orgHeaderOf(req: { headers: Record<string, unknown> }): string | null {
@@ -117,6 +117,37 @@ export async function resolveCurrentOrg(
 }
 
 /**
+ * 「带的组织不认就退回缺省」——**只给 `/auth/me` 一个端点用**。
+ *
+ * ★★ 浏览器会一直记着上次选的组织并原样带回来（localStorage 的 apos.orgId）。
+ *   那个组织可能已经被删、这个人可能已经被移出去、或者整个库被重建过。
+ *   此时严格判定是 404，而这会**锁死**前端：每个请求都带着那个陈旧值，
+ *   于是每个请求都 404，包括本该用来纠正它的那些。表现是登录成功但整站空白，
+ *   退出重登也没用 —— 陈旧 id 还在 localStorage 里。
+ *
+ *   `/auth/me` 是打破死锁的地方：「我是谁」根本不需要组织作用域，
+ *   它照常回答，并把**真实的** currentOrgId 给前端，让它纠正自己。
+ *
+ * ★★ 其余端点一律不能用它，包括 `/organizations` ——
+ *   带错组织在别处必须是 404，那是多租户边界本身（§2.1.2），
+ *   `assertCurrentOrg` 整条防线都建立在上面，
+ *   而 404 同时也是「不确认这个组织存在」的那一层。
+ *   「一个组织都不属于」仍然照旧抛：那是真的没有作用域，不是陈旧数据。
+ */
+export async function resolveCurrentOrgLenient(
+  db: Database,
+  userId: string,
+  requested: string | null,
+): Promise<{ orgId: string; orgRole: OrgRole }> {
+  try {
+    return await resolveCurrentOrg(db, userId, requested);
+  } catch (err) {
+    if (requested === null) throw err;
+    return resolveCurrentOrg(db, userId, null);
+  }
+}
+
+/**
  * 一条路由需要什么权限。
  *
  * `permission` 给函数形态，是因为有一类操作的所需权限取决于**请求内容**
@@ -150,6 +181,16 @@ export function deferred(why: string): { deferred: string } {
  */
 const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
   { method: '*', pattern: /^\/health$/, why: '存活探针，无身份' },
+  {
+    method: 'POST',
+    pattern: /^\/api\/v1\/auth\/login$/,
+    why: '身份的来源本身 —— 要求"先登录才能登录"不成立。它的门槛是邮箱与口令，在 handler 里判',
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/v1\/auth\/password$/,
+    why: '改自己的口令，作用域是调用者自己，与组织角色无关；当前口令在 handler 里验',
+  },
   {
     method: 'POST',
     pattern: /^\/api\/v1\/agent-callback\//,
@@ -289,6 +330,11 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
   'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
   'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
+  /**
+   * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
+   *   后者只在组织内部移动权限，前者错了是数据出了租户。
+   */
+  'POST /api/v1/admin/users': 'organization.members.manage',
   'PATCH /api/v1/admin/users/:id/org-role': 'org.members.manage',
   'POST /api/v1/admin/roles': 'org.roles.manage',
   'PATCH /api/v1/admin/roles/:key': 'org.roles.manage',
@@ -459,7 +505,7 @@ export interface RbacDeps {
   db: Database;
   /** 资源 id → 所属项目。由 routes.ts 提供，那里已经有一份登记表 */
   projectOfResource: (kind: string, id: string) => Promise<string | null>;
-  /** 取当前身份，取不到就抛 401。MVP 是 X-User-Id 头（§1） */
+  /** 取当前身份，取不到就抛 401。身份来自 Authorization: Bearer 的 JWT（§1.3） */
   requireUserId: (req: FastifyRequest) => string;
 }
 

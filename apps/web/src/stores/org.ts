@@ -11,6 +11,8 @@ interface OrgState {
   organizations: OrganizationRow[];
   setOrganizations: (orgs: OrganizationRow[], currentOrgId: string) => void;
   switchOrg: (id: string) => void;
+  /** 启动时用 `/auth/me` 给的组织纠正本地记着的那个。见实现处 */
+  adoptServerOrg: (orgId: string) => void;
 }
 
 /**
@@ -50,6 +52,26 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     persist(id);
     apply(id, get().orgId);
     set({ orgId: id, org: get().organizations.find((o) => o.id === id) ?? null });
+  },
+
+  /**
+   * ★★ 用 `/auth/me` 回来的组织纠正本地记着的那个。
+   *
+   *   localStorage 里的 orgId 可能已经失效（组织被删、人被移出、库被重建过）。
+   *   失效之后它会被塞进每个请求的 X-Org-Id，而那些请求一律 404 ——
+   *   包括本该用来纠正它的 `/organizations`。于是死锁：登录成功但整站空白，
+   *   退出重登也没用，因为陈旧值还在浏览器里。
+   *
+   * ★ 「不相等就采纳」这条规则不会干扰正常的组织切换：
+   *   本地那个**有效**时，服务端拿到 X-Org-Id 后回的 currentOrgId
+   *   就是它自己，两者相等，什么都不会发生。只有失效时才会不等。
+   */
+  adoptServerOrg: (orgId) => {
+    const stored = get().orgId;
+    if (stored === orgId) return;
+    persist(orgId);
+    apply(orgId, stored);
+    set({ orgId, org: get().organizations.find((o) => o.id === orgId) ?? null });
   },
 }));
 

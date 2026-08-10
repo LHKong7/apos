@@ -1,6 +1,7 @@
 import { and, eq, gt } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { idempotencyKeys, type Database } from '@apos/db';
+import { tokenFrom, verifyToken } from '../modules/auth';
 import { ApiError } from './errors';
 
 /**
@@ -53,7 +54,23 @@ export function registerIdempotency(app: FastifyInstance, db: Database) {
     const endpoint = (req.url.split('?')[0] ?? '').toLowerCase();
     if (!IDEMPOTENT_PATHS.some((re) => re.test(endpoint))) return;
 
-    const actorId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'] : null;
+    /**
+     * ★ 身份取自令牌，不能取自请求头里的任意值 —— 下面那条「换个人重放
+     *   不能拿到上一个人的响应」的判定，如果比对的是调用方自己写上的
+     *   userId，那么换个人只要照抄原来的头就绕过去了。
+     *
+     * ★ 令牌不合法时当作"没有身份"而不是在这里 401：真正的鉴权在
+     *   rbac 的 preHandler 里，那里的报错更准确。这一层只负责分桶。
+     */
+    const token = tokenFrom(req);
+    let actorId: string | null = null;
+    if (token) {
+      try {
+        actorId = verifyToken(token).sub;
+      } catch {
+        actorId = null;
+      }
+    }
 
     const [hit] = await db
       .select()

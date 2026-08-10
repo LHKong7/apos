@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z, ZodError } from 'zod';
 import {
@@ -69,10 +69,27 @@ import { dispatchRun } from '../modules/agent/dispatch';
 import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
+import {
+  ChangePasswordInput,
+  CreateAccountInput,
+  LoginInput,
+  TokenError,
+  changeOwnPassword,
+  createAccount,
+  login,
+  tokenFrom,
+  verifyToken,
+} from '../modules/auth';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
 import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
 import { createRole, deleteRole, listRoles, updateRole } from './roles';
-import { createRbac, guardRouteCoverage, orgHeaderOf, resolveCurrentOrg } from './rbac';
+import {
+  createRbac,
+  guardRouteCoverage,
+  orgHeaderOf,
+  resolveCurrentOrg,
+  resolveCurrentOrgLenient,
+} from './rbac';
 import { formatRef, freeIdentifier, IDENTIFIER_RE } from '../modules/work-item/numbering';
 import { createWorkItem, WorkItemInput } from './work-items';
 import {
@@ -171,38 +188,44 @@ const FALLBACK: Record<string, string | null> = {
 };
 
 /**
- * MVP 阶段的身份来源：请求头。真实认证见 docs/tech/09-security.md
+ * 身份来源：`Authorization: Bearer <JWT>`（docs/tech/09-security.md §1.3）。
  *
- * ★ 必须校验格式。不校验的话，`X-User-Id: null`（客户端常见的
- *   「变量是 null 被拼成字符串」）会一路走到 SQL，报
- *   `invalid input syntax for type uuid` 变成 500 —— 调用方以为服务端挂了，
- *   实际是自己传错了。客户端的错必须以 4xx 的形式还给客户端。
+ * ★★ 此前这里读的是 `X-User-Id` —— 一个**没有凭证**的头：任何人写上
+ *   别人的 uuid 就是别人。整套 RBAC 建立在它之上，因此也就都是摆设。
+ *   现在身份必须由服务端签发的令牌证明，userId 从签名过的声明里取，
+ *   调用方说了不算。
+ *
+ * ★ 令牌不合法与没带令牌回同一个 401，但**消息不同**：
+ *   「没登录」和「登录过期了」对用户是两件事，前者去登录，
+ *   后者知道自己刚才是登着的、不用怀疑账号出了问题。
  */
-function actorFrom(req: { headers: Record<string, unknown> }) {
-  const id = req.headers['x-user-id'];
-  if (typeof id !== 'string' || id === '') {
-    throw new ApiError('UNAUTHENTICATED', '缺少 X-User-Id 头');
+function actorFrom(req: { headers: Record<string, unknown>; query?: unknown }) {
+  const token = tokenFrom(req);
+  if (!token) {
+    throw new ApiError('UNAUTHENTICATED', '未登录：请求缺少 Authorization: Bearer 令牌');
   }
-  if (!UUID_RE.test(id)) {
-    throw new ApiError('UNAUTHENTICATED', 'X-User-Id 不是合法的用户 ID', { received: id });
+  try {
+    const claims = verifyToken(token);
+    if (!UUID_RE.test(claims.sub)) {
+      throw new ApiError('UNAUTHENTICATED', '令牌里的身份不是合法的用户 ID');
+    }
+    return { userId: claims.sub, actor: humanActor(claims.sub) };
+  } catch (err) {
+    if (err instanceof TokenError) throw new ApiError('UNAUTHENTICATED', err.message);
+    throw err;
   }
-  return { userId: id, actor: humanActor(id) };
 }
 
 /**
  * 身份可选的端点用这个（列表筛选、看板的「只看需我处理」）。
  *
- * 没带头就返回 null，带了就必须合法 —— 「带了但格式不对」不能被当成
+ * 没带令牌就返回 null，带了就必须合法 —— 「带了但不合法」不能被当成
  * 「没带」静默忽略：用户会看到一个「我的待办为空」的页面，
- * 而真实原因是请求头拼错了。
+ * 而真实原因是令牌过期了。
  */
-function optionalUserId(req: { headers: Record<string, unknown> }): string | null {
-  const id = req.headers['x-user-id'];
-  if (typeof id !== 'string' || id === '') return null;
-  if (!UUID_RE.test(id)) {
-    throw new ApiError('UNAUTHENTICATED', 'X-User-Id 不是合法的用户 ID', { received: id });
-  }
-  return id;
+function optionalUserId(req: { headers: Record<string, unknown>; query?: unknown }): string | null {
+  if (!tokenFrom(req)) return null;
+  return actorFrom(req).userId;
 }
 
 /**
@@ -278,65 +301,93 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   app.get('/health', async () => ({ ok: true }));
 
-  // ── 身份 ────────────────────────────────────────────────────────────
-  // MVP 用 X-User-Id 头认证，前端需要一份可选身份列表来切换视角
-  // （验证「只看需我处理」和「决策不可代行」都要换人看）
+  // ── 登录 ────────────────────────────────────────────────────────────
   /**
-   * 可切换的身份列表。
+   * 用邮箱与口令换一张 JWT（docs/tech/09-security.md §1.3）。
    *
-   * ★ 带了身份就只返回**同组织**的人。此前无条件返回全库用户 ——
-   *   多组织实例上，右上角的切换器会把别的组织的人列出来，
-   *   而选中他之后每个项目都 404（他确实不是任何一个本组织项目的成员），
-   *   表现为「产品坏了」。
+   * ★★ 这是唯一一条不需要身份的写路由，所以它在 rbac 的豁免清单里 ——
+   *   要求「先登录才能登录」显然不成立。它自己就是身份的来源。
    *
-   * ★ 不带身份时只能返回全部：首次访问（localStorage 里还没有身份）
-   *   得先有一份名单才选得出人。这是 MVP 身份模型的自举缺口，
-   *   接入真实认证后这个端点应当整个下线（09-security）。
+   * ★ 账号从哪来：第一个（超管）来自 .env，启动时自举
+   *   （modules/auth/bootstrap.ts）；其余由组织管理员创建
+   *   （POST /api/v1/admin/users）。**没有自助注册** ——
+   *   一个能自助注册的实例，等于任何人都能进到某个组织的边界里。
+   */
+  app.post('/api/v1/auth/login', async (req) => {
+    return login(db, LoginInput.parse(req.body));
+  });
+
+  /** 当前登录者。前端拿它确认令牌还有效，以及显示"我是谁" */
+  app.get('/api/v1/auth/me', async (req) => {
+    const { userId } = actorFrom(req);
+    const [row] = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatarUrl: users.avatarUrl,
+        approvalScopes: users.approvalScopes,
+      })
+      .from(users)
+      .where(eq(users.id, userId));
+    /**
+     * ★ 令牌验过了但人没了（被删号）——  这是 401 不是 404：
+     *   对调用方而言结论是「这张令牌不再代表任何人，去重新登录」，
+     *   而 404 会被前端当成"某个资源不存在"接着往下走。
+     */
+    if (!row) throw new ApiError('UNAUTHENTICATED', '账号不存在或已被删除，请重新登录');
+
+    /**
+     * ★ 用 lenient 版：这个端点必须能回答「我是谁」，
+     *   哪怕请求里带的组织已经不存在了。理由见 rbac.ts 的
+     *   {@link resolveCurrentOrgLenient} —— 严格判定会把前端锁死。
+     */
+    const current = await resolveCurrentOrgLenient(db, userId, orgHeaderOf(req));
+    return { user: row, currentOrgId: current.orgId, orgRole: current.orgRole };
+  });
+
+  /** 改自己的口令。超管的初始口令来自 .env，登录后应当第一时间改掉 */
+  app.post('/api/v1/auth/password', async (req) => {
+    const { userId } = actorFrom(req);
+    const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
+    return changeOwnPassword(
+      db,
+      { userId, orgId, correlationId: corr(req) },
+      ChangePasswordInput.parse(req.body),
+    );
+  });
+
+  // ── 身份 ────────────────────────────────────────────────────────────
+  /**
+   * 本组织的人。指派负责人、筛选「谁的任务」都要它。
+   *
+   * ★★ 必须带身份，而且只返回**同组织**的人。
+   *   此前不带身份时会返回全库用户 —— 那是 X-User-Id 时代身份切换器的
+   *   自举缺口（第一次打开时得先有一份名单才选得出人）。
+   *   现在身份来自登录，这个缺口不再需要，于是它变回它本来的样子：
+   *   一个未认证的全局通讯录导出接口。
    */
   app.get('/api/v1/users', async (req) => {
-    const callerId = optionalUserId(req);
-    const columns = {
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      avatarUrl: users.avatarUrl,
-      orgRole: organizationMembers.orgRole,
-      approvalScopes: users.approvalScopes,
-    };
+    const { userId } = actorFrom(req);
+    const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
 
     /**
      * ★ 组织角色跟着**归属**走，所以这份名单必须按当前组织 join 出来。
      *   照旧从 users 上读的话，同一个人在别的组织的管理员身份
      *   会被显示成他在这里的身份 —— 而那会让人以为他能批准东西。
      */
-    if (callerId) {
-      const { orgId } = await resolveCurrentOrg(db, callerId, orgHeaderOf(req)).catch(() => ({
-        orgId: null,
-      }));
-      if (orgId) {
-        const rows = await db
-          .select(columns)
-          .from(organizationMembers)
-          .innerJoin(users, eq(users.id, organizationMembers.userId))
-          .where(eq(organizationMembers.orgId, orgId))
-          .orderBy(users.name);
-        return { users: rows };
-      }
-    }
-
-    /**
-     * 还没选身份时（首次打开）给全量 —— 这是开发期的身份切换器。
-     *
-     * ★★ 这里**不能** join 归属表：没有当前组织就没有 org 过滤条件，
-     *   而一个人属于两个组织就会出现两行 —— 前端按 id 做 key，
-     *   表现是一句 React 重复 key 警告加一个重复的下拉项。
-     *
-     * ★ 也不该硬挑一个组织的角色显示：这一刻还没有"当前组织"，
-     *   任何一个都是编的。如实给 null。
-     */
     const rows = await db
-      .select({ ...columns, orgRole: sql<string | null>`null` })
-      .from(users)
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatarUrl: users.avatarUrl,
+        orgRole: organizationMembers.orgRole,
+        approvalScopes: users.approvalScopes,
+      })
+      .from(organizationMembers)
+      .innerJoin(users, eq(users.id, organizationMembers.userId))
+      .where(eq(organizationMembers.orgId, orgId))
       .orderBy(users.name);
     return { users: rows };
   });
@@ -498,6 +549,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     /**
      * ★ 把「当前是哪个」一并回出去。前端不该自己猜缺省值 ——
      *   猜错的表现是切换器显示 A、实际数据是 B，而两边都没有报错。
+     *
+     * ★★ 这里**保持严格**：带了但不是成员一律 404，不确认这个组织存在
+     *   （见下方 organizations.test.ts 的同名用例）。
+     *   陈旧 orgId 的自愈走 `/auth/me` —— 那个端点根本不需要组织作用域，
+     *   让它一个人宽容就够了，不必把这条也放开。
      */
     const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
     return { ...list, currentOrgId: orgId };
@@ -728,6 +784,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/admin/users', async (req) => {
     const { orgId } = await callerOrg(req);
     return listOrgUsers(db, orgId);
+  });
+
+  /**
+   * 开账号 —— 组织管理员给别人建号并直接加进本组织。
+   *
+   * ★★ 这是账号进入系统的**唯一**入口（超管那一个除外，他来自 .env）。
+   *   没有自助注册：这个产品的组织边界就是多租户边界，
+   *   能自助注册等于任何人都能把自己放进那条边界里。
+   *
+   * ★ 权限用 `organization.members.manage` 而不是 `org.members.manage`：
+   *   catalog 里这两条是分开的，前者是「把边界外的账号放进来」，
+   *   后者是「在组织内部改角色」。建号显然是前者 —— 而且更靠前一步。
+   */
+  app.post('/api/v1/admin/users', async (req, reply) => {
+    const { orgId, userId: actorId } = await callerOrg(req);
+    const created = await createAccount(
+      db,
+      { orgId, actorId, correlationId: corr(req) },
+      CreateAccountInput.parse(req.body),
+    );
+    return reply.status(201).send(created);
   });
 
   app.patch('/api/v1/admin/users/:id/org-role', async (req) => {
@@ -2663,6 +2740,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   // ── SSE ─────────────────────────────────────────────────────────────
   app.get('/api/v1/stream', async (req, reply) => {
+    /**
+     * ★★ 这条流此前**完全不鉴权**：任何人猜到频道名就能拿到那个项目
+     *   实时推送的全部事件 —— 状态流转、决策、Run 的产出。REST 那边
+     *   查同样的数据要过成员关系闸门，这里绕过去了。
+     *
+     * ★ 令牌走 query 而不是 Authorization 头，是 EventSource 的限制：
+     *   它不能带自定义头（同一页的 Last-Event-ID 也是因此走 query 的）。
+     *   代价是令牌会进 access log，缓解靠短 TTL。
+     */
+    actorFrom(req);
+
     const q = req.query as { channels?: string };
     const channels = (q.channels ?? '').split(',').filter(Boolean);
     if (channels.length === 0) {

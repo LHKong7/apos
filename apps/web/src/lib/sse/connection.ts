@@ -1,4 +1,5 @@
 import { DOMAIN_EVENT_TYPES } from '@apos/contracts';
+import { getAuthToken } from '../api/client';
 import type { StreamEvent } from '../api/types';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'open' | 'reconnecting';
@@ -102,6 +103,22 @@ export class SSEConnection {
     // EventSource 不能带自定义头，Last-Event-ID 只能走 query；
     // 后端两处都读
     if (this.lastEventId) params.set('lastEventId', this.lastEventId);
+
+    /**
+     * ★★ 令牌同样只能走 query —— 和上面 Last-Event-ID 是同一个限制。
+     *
+     *   没有它这条连接就是 401，而 EventSource 对 401 的表现是
+     *   「静默重连」：页面不报错，只是所有实时更新都不来了，
+     *   看起来像后端不推事件。所以未登录时**根本不连**，
+     *   让它在登录后由订阅方重新触发。
+     */
+    const token = getAuthToken();
+    if (!token) {
+      this.connectedChannels = [];
+      this.setStatus('idle');
+      return;
+    }
+    params.set('access_token', token);
 
     const es = new EventSource(`${this.baseUrl}?${params.toString()}`);
     this.es = es;

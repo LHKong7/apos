@@ -34,7 +34,7 @@ import { ApiError, notFound } from './errors';
  *
  * ★ 这一页管的是「Agent 能自己做什么」。所有写操作都受两条硬约束：
  *   1. 项目规则只能收紧组织规则，永远不能放宽（产品文档 十·权限与安全）；
- *   2. Agent 不能修改 Policy —— 这些端点只认 `X-User-Id`（人类身份），
+ *   2. Agent 不能修改 Policy —— 这些端点只认人类身份（登录签发的 JWT），
  *      Agent 回调用的是 run-scoped token，走不到这里。
  *      如果 Agent 能改自己的约束，整个治理体系就失效了。
  */

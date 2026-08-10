@@ -8,6 +8,7 @@ import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
+  auth as authFor,
   createMember,
   integrationRegistry,
   resetDb,
@@ -48,7 +49,7 @@ afterAll(async () => {
   await resetDb(db);
 });
 
-const as = (userId: string) => ({ 'x-user-id': userId });
+const as = (userId: string) => authFor(userId);
 
 const postRole = (userId: string, body: Record<string, unknown>) =>
   app.inject({ method: 'POST', url: '/api/v1/admin/roles', headers: as(userId), payload: body });

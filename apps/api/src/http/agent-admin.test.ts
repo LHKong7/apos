@@ -7,7 +7,14 @@ import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
-import { integrationRegistry, resetDb, seedFixture, testDb, type Fixture } from '../test/db';
+import {
+  auth as authFor,
+  integrationRegistry,
+  resetDb,
+  seedFixture,
+  testDb,
+  type Fixture,
+} from '../test/db';
 
 const db = testDb();
 let app: FastifyInstance;
@@ -40,7 +47,7 @@ afterAll(async () => {
   await resetDb(db);
 });
 
-const auth = () => ({ 'x-user-id': fx.userId });
+const auth = () => authFor(fx.userId);
 
 async function createAgent(payload: Record<string, unknown> = {}) {
   return app.inject({

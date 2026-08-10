@@ -17,6 +17,7 @@ import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
+  auth as authFor,
   createMember,
   createOutsider,
   createWorkItem,
@@ -66,7 +67,7 @@ afterAll(async () => {
   await resetDb(db);
 });
 
-const as = (userId: string) => ({ 'x-user-id': userId });
+const as = (userId: string) => authFor(userId);
 
 async function makeRequirement(status = 'clarifying') {
   const res = await app.inject({

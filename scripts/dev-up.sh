@@ -125,5 +125,34 @@ curl -s -m 1 "localhost:$WEB_PORT/" >/dev/null 2>&1 ||
   { echo "Vite 起不来："; tail -20 "$LOG_DIR/web.log"; exit 1; }
 
 echo "就绪  API :$API_PORT   Web :$WEB_PORT   Postgres :$PGPORT   日志 $LOG_DIR"
-curl -s "localhost:$API_PORT/api/v1/projects" |
-  WEB_PORT="$WEB_PORT" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s).projects[0];if(p)console.log('项目  '+p.name+'  http://localhost:'+process.env.WEB_PORT+'/projects/'+p.id+'/board')})"
+
+# ── 看板链接 ──────────────────────────────────────────────────────────
+# ★★ 要先登录。身份改由 JWT 证明之后（09-security §1.0），
+#   匿名 GET /projects 一律 401 —— 而这一步只是锦上添花的收尾输出，
+#   拿不到链接不该让整个脚本失败：此刻环境其实已经就绪了。
+#   所以下面每一步都容错，任何一步不成就只少打印一行。
+read_env() {
+  [ -f "$ROOT/.env" ] || return 1
+  sed -n "s/^$1=//p" "$ROOT/.env" | tail -1 | tr -d '\r'
+}
+ADMIN_EMAIL="${APOS_SUPERADMIN_EMAIL:-$(read_env APOS_SUPERADMIN_EMAIL)}"
+ADMIN_PASSWORD="${APOS_SUPERADMIN_PASSWORD:-$(read_env APOS_SUPERADMIN_PASSWORD)}"
+
+if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
+  echo "提示  .env 里没有 APOS_SUPERADMIN_EMAIL / APOS_SUPERADMIN_PASSWORD —— 现在没有账号能登录。"
+  echo "      照 .env.example 补上这两行再重跑（系统没有自助注册）。"
+else
+  TOKEN="$(
+    curl -s -m 5 -X POST "localhost:$API_PORT/api/v1/auth/login" \
+      -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" |
+      node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(JSON.parse(s).token??'')}catch{}})" 2>/dev/null
+  )"
+  if [ -z "$TOKEN" ]; then
+    echo "提示  用 $ADMIN_EMAIL 登录失败，跳过看板链接。日志：$LOG_DIR/api.log"
+  else
+    curl -s -m 5 "localhost:$API_PORT/api/v1/projects" -H "Authorization: Bearer $TOKEN" |
+      WEB_PORT="$WEB_PORT" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const p=JSON.parse(s).projects[0];if(p)console.log('项目  '+p.name+'  http://localhost:'+process.env.WEB_PORT+'/projects/'+p.id+'/board')}catch{}})" 2>/dev/null
+    echo "登录  $ADMIN_EMAIL（口令见 .env 的 APOS_SUPERADMIN_PASSWORD）"
+  fi
+fi

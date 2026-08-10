@@ -101,10 +101,15 @@ Idempotency-Key: dec_52_approve_01J8X...
 ### 5.1 连接
 
 ```
-GET /api/v1/stream?channels=project:abc:board,user:me:decisions
+GET /api/v1/stream?channels=project:abc:board,user:me:decisions&access_token=<jwt>
 Accept: text/event-stream
 Last-Event-ID: 1284531
 ```
+
+★ 令牌走 **query 参数**而不是 `Authorization` 头：EventSource 带不了自定义头
+（同一个原因下面 §5.3 的 `Last-Event-ID` 也要支持 query 形态）。
+代价是令牌会进 access log，靠短 TTL 缓解。**不带令牌是 401** ——
+这条流推的是项目全部实时事件，与 REST 那边同一份数据同样要过鉴权。
 
 ```
 id: 1284532
@@ -153,6 +158,38 @@ ORDER BY id LIMIT 500;
 ## 6. 端点
 
 按页面文档组织。仅列关键端点与非显然的设计点。
+
+### 6.0 登录与账号
+
+设计理由见 [09-security §1.0](09-security.md#10-人类凭证与账号来源)。
+
+```
+POST   /auth/login                      ★ 唯一不需要身份的写路由 —— 它就是身份的来源
+       ← { email, password }
+       → { token, user }
+       401 时「账号不存在」「没有口令」「口令错」回同一句话且耗时相同，
+          分开说等于给出一个通讯录枚举探针
+
+GET    /auth/me
+       → { user, currentOrgId, orgRole }
+       前端启动时先问一次：令牌可能过期、可能属于已删除的账号。
+       401 → 前端当场退出登录（而不是让每个页面各自报错）
+
+POST   /auth/password                   改自己的口令，作用域是调用者自己
+       ← { currentPassword, newPassword }
+       → { ok, token }                  ★ 换一张新令牌回去
+
+POST   /admin/users                     开账号，需 organization.members.manage
+       ← { email, name, password, orgRole? }
+       → 201 { id, name, email, orgRole }
+       ★ 建号与加入本组织在同一个事务里 —— 分开的话第二步失败会留下一个
+         「能登录但不属于任何组织」的账号，他的每个请求都是 401
+       409 表示邮箱已有账号：那时正确的动作是「添加成员」而不是新建，
+       同一个人两个账号在审计里就是两个人
+```
+
+**没有自助注册。** 组织边界就是多租户边界，能自助注册等于任何人
+都可以把自己放进某条边界里。第一个账号（超管）来自 `.env`。
 
 ### 6.1 项目
 

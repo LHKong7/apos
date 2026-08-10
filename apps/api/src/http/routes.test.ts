@@ -8,6 +8,7 @@ import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
+  auth as authFor,
   createOutsider,
   createWorkItem,
   integrationRegistry,
@@ -16,6 +17,7 @@ import {
   testDb,
   type Fixture,
 } from '../test/db';
+import { signToken } from '../modules/auth';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { dispatchRun } from '../modules/agent/dispatch';
 
@@ -45,10 +47,10 @@ afterAll(async () => {
   await resetDb(db);
 });
 
-const auth = () => ({ 'x-user-id': fx.userId });
+const auth = () => authFor(fx.userId);
 
 describe('认证与错误映射', () => {
-  it('缺少身份头返回 401', async () => {
+  it('缺少令牌返回 401', async () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/projects/${fx.projectId}/requirements`,
@@ -59,30 +61,52 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * `X-User-Id: null` 是客户端很常见的失误（变量是 null 被拼成字符串）。
-   * 不校验格式的话它会一路走到 SQL，报 uuid 语法错误变成 500，
-   * 调用方以为服务端挂了。
+   * ★★ 伪造的令牌必须被拒。
+   *
+   *   这是整套鉴权的地基：如果签名没被真的验，那么「身份」就退回成
+   *   调用方自己说了算，下面所有角色与成员关系的断言都失去意义。
+   *   `alg: none` 单列一条 —— 那是 JWT 最经典的绕过方式，
+   *   而它的表现是「攻击者随便变成谁」，测不出来就等于没设防。
    */
-  it('★ 格式非法的身份头返回 401 而不是 500', async () => {
-    // 身份可选的端点同样不能把格式错误吞成 500
+  it('★ 伪造、篡改、过期的令牌一律 401', async () => {
+    const real = signToken(fx.userId);
+    const [head, body, mac] = real.split('.') as [string, string, string];
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+
+    const forged: Array<[string, string]> = [
+      ['不是 JWT 形状', 'null'],
+      ['只有两段', `${head}.${body}`],
+      ['签名被改', `${head}.${body}.${mac.slice(0, -2)}xy`],
+      // payload 换成别人，签名不变 —— 最直接的越权尝试
+      ['声明被篡改', `${head}.${b64({ sub: randomUUID(), iat: 1, exp: 99999999999 })}.${mac}`],
+      // alg: none + 空签名
+      ['alg 为 none', `${b64({ alg: 'none', typ: 'JWT' })}.${body}.`],
+      ['已过期', signToken(fx.userId, { ttlSeconds: -60 })],
+    ];
+
+    for (const [why, token] of forged) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/projects/${fx.projectId}/requirements`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { rawInput: '测试' },
+      });
+      expect(res.statusCode, why).toBe(401);
+      expect(res.json().error.code, why).toBe('UNAUTHENTICATED');
+    }
+
+    // 身份可选的端点同样不能把坏令牌当成「没带」静默放过
     for (const url of [
       '/api/v1/decisions',
       `/api/v1/projects/${fx.projectId}/board?onlyMine=true`,
     ]) {
-      for (const bad of ['null', 'undefined', 'admin', '123']) {
-        const res = await app.inject({ method: 'GET', url, headers: { 'x-user-id': bad } });
-        expect(res.statusCode).toBe(401);
-      }
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: { authorization: 'Bearer not-a-token' },
+      });
+      expect(res.statusCode, url).toBe(401);
     }
-
-    const res = await app.inject({
-      method: 'POST',
-      url: `/api/v1/projects/${fx.projectId}/requirements`,
-      headers: { 'x-user-id': 'null' },
-      payload: { rawInput: '测试' },
-    });
-    expect(res.statusCode).toBe(401);
-    expect(res.json().error.details.received).toBe('null');
   });
 
   it('不存在的资源返回 404 且带中文说明', async () => {
@@ -116,7 +140,7 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * 身份头那条路径当初已经单独修过（见上面的「格式非法的身份头返回 401」），
+   * 身份那条路径当初已经单独修过（见上面的「伪造、篡改、过期的令牌一律 401」），
    * 但同一个坑在路径参数和查询参数上还开着：值一路走到 SQL，
    * Postgres 报 22P02，错误处理器不认这个码，于是吞成 500。
    *
@@ -174,7 +198,7 @@ describe('认证与错误映射', () => {
         const res = await app.inject({
           method: 'GET',
           url,
-          headers: { 'x-user-id': outsider.userId },
+          headers: authFor(outsider.userId),
         });
         expect(res.statusCode, url).toBe(404);
       }
@@ -185,7 +209,7 @@ describe('认证与错误映射', () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/v1/projects/${fx.projectId}/requirements`,
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
         payload: { rawInput: '越权写入' },
       });
       expect(res.statusCode).toBe(404);
@@ -201,14 +225,14 @@ describe('认证与错误映射', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/work-items/${item.id}`,
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(res.statusCode).toBe(404);
 
       const patch = await app.inject({
         method: 'PATCH',
         url: `/api/v1/work-items/${item.id}/status`,
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
         payload: { toStatus: 'executing', reason: '越权', reasonCategory: 'other' },
       });
       expect(patch.statusCode).toBe(404);
@@ -219,7 +243,7 @@ describe('认证与错误映射', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/projects/${fx.projectId}`,
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(res.statusCode).toBe(404);
       expect(res.json().error.code).toBe('NOT_FOUND');
@@ -237,7 +261,7 @@ describe('认证与错误映射', () => {
       const theirs = await app.inject({
         method: 'GET',
         url: '/api/v1/projects',
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(theirs.json().projects).toEqual([]);
     });
@@ -273,7 +297,7 @@ describe('认证与错误映射', () => {
       const theirs = await app.inject({
         method: 'GET',
         url: '/api/v1/decision-inbox?scope=all',
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(theirs.json().decisions).toEqual([]);
       expect(theirs.json().stats.total).toBe(0);
@@ -284,7 +308,7 @@ describe('认证与错误映射', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/decision-inbox?scope=all&projectId=${fx.projectId}`,
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(res.statusCode).toBe(404);
     });
@@ -298,7 +322,7 @@ describe('认证与错误映射', () => {
       const theirs = await app.inject({
         method: 'GET',
         url: '/api/v1/agents',
-        headers: { 'x-user-id': outsider.userId },
+        headers: authFor(outsider.userId),
       });
       expect(theirs.json().agents).toEqual([]);
     });
@@ -858,7 +882,7 @@ describe('★ Idempotency-Key', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/decisions/${d.id}/approve`,
-      headers: { 'x-user-id': other!.id, 'idempotency-key': 'key-shared' },
+      headers: { ...authFor(other!.id), 'idempotency-key': 'key-shared' },
       payload: { note: 'x' },
     });
     expect(res.statusCode).toBe(400);
@@ -877,7 +901,7 @@ describe('★ Idempotency-Key', () => {
     const failed = await app.inject({
       method: 'POST',
       url: `/api/v1/decisions/${d.id}/approve`,
-      headers: { 'x-user-id': outsider.userId, 'idempotency-key': 'key-retry' },
+      headers: { ...authFor(outsider.userId), 'idempotency-key': 'key-retry' },
       payload: { note: 'x' },
     });
     expect(failed.statusCode).toBeGreaterThanOrEqual(400);

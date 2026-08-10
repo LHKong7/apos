@@ -37,9 +37,23 @@ Postgres/Redis 容器 → 建 apos 与 apos_test 两个库 → 迁移 → 空库
 ```
 就绪  API :3000   Web :5173   Postgres :5433   日志 /tmp/apos-dev
 项目  订单系统重构  http://localhost:5173/projects/<id>/board
+登录  admin@example.com（口令见 .env 的 APOS_SUPERADMIN_PASSWORD）
 ```
 
-把那个链接贴进浏览器就是了。
+把那个链接贴进浏览器，用超管账号登录。
+
+> **先配超管再跑。** `cp .env.example .env` 之后至少要改这两行 ——
+> 系统没有自助注册，第一个账号只能来自这里（[§4](#4-环境变量)、
+> [09-security §1.0](tech/09-security.md#10-人类凭证与账号来源)）：
+>
+> ```
+> APOS_SUPERADMIN_EMAIL=admin@example.com
+> APOS_SUPERADMIN_PASSWORD=change-me-please
+> ```
+>
+> 没配的话，启动日志里会有一条
+> `[auth] 没有配置 APOS_SUPERADMIN_EMAIL，且库里没有任何可登录的账号`，
+> 而界面上只是登录反复失败 —— 从前端完全看不出原因。
 
 **端口被占时**换一个，脚本会在检测到占用时直接告诉你这条命令：
 
@@ -96,8 +110,14 @@ DATABASE_URL=postgres://apos@localhost:5433/apos pnpm --filter @apos/api seed
 
 > 种子是**追加**不是重置。反复跑会攒出多个同名项目，要干净重来见 [§7 清理](#7-停止与清理)。
 
-输出末尾会给出看板链接和三个可用身份（张伟 / 王强 / 李娜），
-在界面右上角切换 —— 验证「只看需我处理」和「决策不可代行」都要换人看。
+**种子不再造账号。** 演示数据里所有角色都由 `.env` 里那个超管担任 ——
+一个能在库里长出无主账号（没有口令、没人管、却是真实组织成员）的种子脚本，
+比没有演示数据糟得多。
+
+代价是演示里只有一个人，于是「只看需我处理」「决策不可代行」「viewer 的只读」
+这几类行为看不出来 —— 它们都需要第二个人。要验证的话，登录后到
+**项目 → 成员与角色 → 账号 → 开账号** 建几个号，分别给 pm / sponsor / viewer
+角色，再退出登录换人进来。
 
 ### 3.4 起 API 与前端
 
@@ -129,6 +149,12 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `TEST_DATABASE_URL` | `postgres://apos@localhost:5433/apos_test` | **必须与上面不同**，测试会清表 |
 | `PORT` | `3000` | API 端口 |
 | `API_URL` | `http://localhost:3000` | Vite `/api` 代理指向哪儿 |
+| `APOS_SUPERADMIN_EMAIL` | — | **必填**。第一个账号。系统没有自助注册，账号只能由管理员创建，而第一个管理员只能来自这里 |
+| `APOS_SUPERADMIN_PASSWORD` | — | **必填**。**初始**口令，只在建号那一次用；之后在界面上改了，重启不会被打回去 |
+| `APOS_SUPERADMIN_NAME` | `超级管理员` | 显示名 |
+| `APOS_SUPERADMIN_ORG` | `默认组织` | 自举时他还不属于任何组织的话，用这个名字建一个 |
+| `APOS_JWT_SECRET` | — | 令牌签名密钥。不设置就每进程随机生成：**重启后所有人要重新登录**，多副本部署会表现为随机掉线 |
+| `APOS_JWT_TTL_SECONDS` | `43200` | 令牌有效期。令牌无状态，改口令 / 停用账号都要等它自然过期，所以不宜太长 |
 | `RUNTIME_SYNC_INTERVAL_MS` | `15000` | 多久重新扫一次数据库里的 Agent 运行时，`0` 关闭 |
 | `INTEGRATION_MEMORY_ADAPTERS` | — | 设成 `all` 强制所有集成走进程内适配器（离线开发／演示） |
 | `REDIS_URL` | `redis://localhost:6379` | 目前**还没有代码读它**，留给后续的 BullMQ 队列与多实例 SSE 扇出 |
@@ -148,7 +174,7 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 ```bash
 pnpm typecheck
 pnpm lint
-pnpm test        # 592 个，含跑真数据库的集成测试
+pnpm test        # 941 个，含跑真数据库的集成测试
 pnpm build
 ```
 
@@ -163,9 +189,16 @@ pnpm build
 npx playwright install chromium      # 只需一次
 
 API_URL=http://localhost:3000 \
+APOS_SUPERADMIN_EMAIL=admin@example.com \
+APOS_SUPERADMIN_PASSWORD=change-me-please \
 CHROMIUM_PATH="$(node -e "console.log(require('playwright').chromium.executablePath())")" \
 node apps/web/scripts/smoke.mjs <projectId>
 ```
+
+> 冒烟脚本自己先登录换一张令牌，再把它写进浏览器的 localStorage ——
+> 不给凭证的话它只会停在登录页，而那时所有断言都失败在「找不到看板」上，
+> 指向完全错误的方向。凭证也可以用 `APOS_SMOKE_EMAIL` / `APOS_SMOKE_PASSWORD`
+> 单独指定。
 
 `<projectId>` 用 `dev-up.sh` 或 seed 输出里的那个。全绿是 `111/111 项通过`。
 

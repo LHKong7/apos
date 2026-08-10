@@ -39,7 +39,7 @@ function wrapper(children: ReactNode) {
 }
 
 beforeEach(() => {
-  useAuthStore.setState({ userId: 'u-1', user: null, users: [] });
+  useAuthStore.setState({ token: 't', userId: 'u-1', user: null, resolving: false });
   vi.spyOn(api, 'permissions').mockResolvedValue(PERMS());
 });
 

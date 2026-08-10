@@ -17,6 +17,7 @@ import { EventBus } from '../modules/event/bus';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
+  auth as authFor,
   createWorkItem,
   integrationRegistry,
   memoryAdapter,
@@ -52,7 +53,7 @@ async function newUser(name: string): Promise<string> {
 }
 
 function auth(userId = fx.userId) {
-  return { 'x-user-id': userId };
+  return authFor(userId);
 }
 
 beforeEach(async () => {

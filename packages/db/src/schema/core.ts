@@ -174,6 +174,17 @@ export const users = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     email: text().notNull(),
     name: text().notNull(),
+    /**
+     * scrypt 口令散列（`scrypt$N$r$p$salt$hash`），见 modules/auth/password.ts。
+     *
+     * ★★ 可空，而且空的含义是**这个账号登不进来**，不是「口令为空」。
+     *   登录路径对 null 与「口令错」返回同一句话、走同一条耗时路径 ——
+     *   区分开来的话，这一列就成了「哪些邮箱是真账号」的探针。
+     *
+     * ★ 之所以不设成 notNull：账号可以先由超管建出来占位（还没发口令），
+     *   而 notNull 会逼出一个哨兵值，那个哨兵值迟早会被当成真口令校验。
+     */
+    passwordHash: text(),
     avatarUrl: text(),
     skills: text().array().notNull().default(sql`'{}'`),
     /** 可审批事项，支撑产品文档 8.7.5 的决策责任自动识别 */

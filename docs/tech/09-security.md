@@ -24,6 +24,44 @@ type ActorType = 'human' | 'agent' | 'service' | 'external' | 'system';
 
 **关键设计：`system` 与 `agent` 分开。** Flow Engine 按状态机自动推进状态时，操作者是 `system` 而非某个 Agent。这让审计能区分"规则驱动的自动行为"与"AI 决策的自动行为"——前者是确定性的、可预测的，后者不是。这个区分在事故复盘时非常重要。
 
+### 1.0 人类凭证与账号来源
+
+人类身份走**邮箱 + 口令 → JWT**：`POST /api/v1/auth/login` 换一张令牌，
+之后每个请求带 `Authorization: Bearer <token>`。实现在
+`apps/api/src/modules/auth/`。
+
+> **在此之前身份是一个 `X-User-Id` 头**——没有任何凭证，写上谁的 uuid 就是谁。
+> 下面整套四层判定都建立在它之上，因此也全都是摆设。更麻烦的是，
+> 这件事从接口清单上完全看不出来：每条路由都在认真地判角色、判成员关系，
+> 只是那个"谁"是调用方自己填的。
+
+| 环节 | 做法 | 为什么 |
+| --- | --- | --- |
+| 口令存储 | scrypt，参数与盐一起写进 `scrypt$N$r$p$salt$hash` | 散列参数迟早要调。写死在代码里的话，调参那天全库口令一次性作废——没人知道旧的那批用的什么参数 |
+| 口令比对 | `timingSafeEqual` | 字符串 `===` 在第一个不同字节短路，耗时差异足以把散列逐位试出来 |
+| 登录失败 | 账号不存在 / 没有口令 / 口令错误**回同一句话，且耗时相同** | 区分开来的每一种都是「哪个邮箱是真账号」的枚举探针，而那是撞库的第一步 |
+| 令牌算法 | HS256，`verify` 只认字面量 `HS256` | `alg: none` 是 JWT 最经典的绕过方式，根因永远是「库愿意接受另一种 alg」 |
+| 令牌有效期 | 默认 12 小时，无状态 | 不做撤销（要引会话表或黑名单）。代价是改口令、停用账号都要等它自然过期，所以 TTL 不能长 |
+| SSE 的令牌 | query 参数 `access_token` | EventSource 带不了自定义头（同一页的 Last-Event-ID 也是因此走 query）。代价是令牌进 access log，靠短 TTL 缓解 |
+
+**账号只有两个来源，没有第三个：**
+
+1. **超级管理员**——来自 `.env`（`APOS_SUPERADMIN_EMAIL` / `_PASSWORD`），
+   启动时幂等自举（`modules/auth/bootstrap.ts`）。账号只能由组织管理员创建，
+   而第一个管理员没人能创建他，所以他必须来自数据库之外。
+   `.env` 里那个口令是**初始**口令，只在建号那一次用——每次启动都按 `.env`
+   重置的话，它就成了一个改不掉的后门。
+2. **组织管理员开的号**——`POST /api/v1/admin/users`，权限
+   `organization.members.manage`。
+
+**刻意没有自助注册。** 组织边界就是多租户边界（§2.1.2），
+能自助注册等于任何人都可以把自己放进某条边界里。
+
+> ★ 建号与加入组织在**同一个事务**里。分开的话，第二步失败会留下一个
+> 「存在但不属于任何组织」的账号：他能登录，但登录后每个请求都是 401
+> （`resolveCurrentOrg`），而管理员那边看到的是「加成员时说没有这个邮箱」——
+> 他其实建成了。
+
 ### 1.1 Agent 凭证
 
 ```typescript
@@ -89,7 +127,7 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 不在各个 handler 里分别写：
 
 ```
-preHandler → 解析身份（X-User-Id）
+preHandler → 解析身份（Authorization: Bearer 里的 JWT，§1.0）
            → ② 成员关系闸门（非成员 404）
            → ① 权限矩阵（角色不够 403）
 ```
@@ -120,8 +158,12 @@ preHandler → 解析身份（X-User-Id）
 于是改用另一个保证：**写路由漏登记，服务起不来**。
 `guardRouteCoverage` 在注册路由时清点，任何 `POST/PUT/PATCH/DELETE`
 既没登记权限、也不在豁免清单里，`buildApp` 直接抛错。
-豁免必须写明理由（目前四条：健康探针、Agent 回调、开发用 webhook sink、
-建组织），理由会出现在错误信息里。
+豁免必须写明理由（目前六条：健康探针、Agent 回调、开发用 webhook sink、
+建组织、登录、改自己的口令），理由会出现在错误信息里。
+
+> 登录（`POST /api/v1/auth/login`）在豁免清单里是必然的：它**就是**身份的来源，
+> 要求「先登录才能登录」不成立。改口令（`/auth/password`）的作用域是
+> 调用者自己，与组织角色无关，当前口令在 handler 里验。
 
 跨项目的批量接口（`/decisions/batch-approve`）用 `deferred('理由')` 标记：
 一次提交的十条决策可能属于十个项目，URL 上一个都看不出来，
@@ -230,6 +272,7 @@ deniedTools / resourceScopes）另在 Agent 档案里独立配置，两者不互
 | 建任务（手工） | `work_item.create`（执行角色） | 一律落成 `draft`，不可派发 |
 | **放行手工任务去执行** | `tech_lead`（`plan.approve`） | 见下 |
 | 建组织 | 任何登录账号 | 创建者成为该组织的 `org_admin` |
+| **开账号** | `org_admin`（`organization.members.manage`） | 审计（`user.created`）；账号进入系统的唯一入口，见 §1.0 |
 | 改组织信息 / 成员归属 | `org_admin` | 审计 |
 | 处理决策 | 该决策的责任人 | **不可代行**，见 §2.4 |
 | 终止 Agent Run | `tech_lead` / `pm` / `agent_owner` | — |
