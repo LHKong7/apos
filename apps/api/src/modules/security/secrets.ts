@@ -157,10 +157,26 @@ export function describeRef(ref: string | null): {
  *
  * env: 形态显示变量名而不是值 —— 用户要认出的是「哪一把钥匙」，
  * 而这时钥匙的身份就是那个变量名。
+ *
+ * @param label 调用方比这里更懂这条凭证是什么时给的替代说法
+ *   （比如 SSH 私钥可以给出算法名）。这里不认识 label 的内容，
+ *   只负责它不为空时优先用它。
  */
-export function hintOf(input: string): string {
+export function hintOf(input: string, label?: string | null): string {
   const trimmed = input.trim();
   if (trimmed.startsWith('env:')) return `env:${trimmed.slice(4).trim()}`;
+  if (label) return label;
+
+  /**
+   * ★ 私钥的后四位是 `----`（PEM 尾巴），显示出来等于什么都没说。
+   *   一个不能用来辨认的 hint 比没有更糟：管理员会以为凭证没存进去。
+   */
+  const pem = /-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----/.exec(trimmed);
+  if (pem) {
+    const kind = (pem[1] ?? '').trim();
+    return kind ? `私钥（${kind}）` : '私钥';
+  }
+
   return `****${trimmed.slice(-4)}`;
 }
 

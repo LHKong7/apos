@@ -55,28 +55,53 @@ CREATE VIEW actors AS
 
 ## 2. 身份与组织
 
+**组织**是一切数据的顶层容器：项目、工作项、Agent、代码仓库、成员、审计事件
+全都挂在某一个 `org_id` 下，彼此完全隔离。对应 Plane 的 Workspace。
+
+### 2.0 为什么不叫 Workspace
+
+★★ `workspace` 在这个代码库里已经有一个确定含义：**Agent 干活的那个 git
+工作区**（`AGENT_WORKSPACE_ROOT`、`WorkspaceProvisioner`、`agent_runs.workspace`）。
+两个概念共用一个词，「清理 workspace」「workspace 权限」这类句子会同时指向
+两件毫不相干的事，而这种歧义在排障时最贵——看日志的人根本不知道在说哪一个。
+
+组织这个概念已经铺满 25 张表的 `org_id`、整套 `OrgRole` 与 `org_admin` 判定；
+改名是纯字面工作，收益为零，还要正面撞车。所以：
+**产品层叫「组织」，`workspace` 一词永远只指 Agent 工作区。**
+
 ```sql
 CREATE TABLE organizations (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name          text NOT NULL,
+  slug          text NOT NULL UNIQUE,             -- URL 里的人类可读标识
+  description   text,
   settings      jsonb NOT NULL DEFAULT '{}',
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_by    uuid,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- ★ 账号是**全局**的，不属于任何组织
 CREATE TABLE users (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id        uuid NOT NULL REFERENCES organizations(id),
-  email         citext NOT NULL,
+  email         citext NOT NULL UNIQUE,
   name          text NOT NULL,
   avatar_url    text,
-  org_role      text NOT NULL DEFAULT 'member',   -- org_admin | member | viewer
   -- 产品文档 6.5
   skills        text[] NOT NULL DEFAULT '{}',
   approval_scopes text[] NOT NULL DEFAULT '{}',   -- 可审批事项：db_change, security_exception...
   notification_prefs jsonb NOT NULL DEFAULT '{}',
   status        text NOT NULL DEFAULT 'active',   -- active | suspended | offboarded
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (org_id, email)
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- ★★ 归属与组织角色在这里，不在 users 上
+CREATE TABLE organization_members (
+  org_id        uuid NOT NULL REFERENCES organizations(id),
+  user_id       uuid NOT NULL REFERENCES users(id),
+  org_role      text NOT NULL DEFAULT 'member',   -- org_admin | member
+  added_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, user_id)
 );
 
 CREATE TABLE service_accounts (
@@ -87,6 +112,37 @@ CREATE TABLE service_accounts (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 ```
+
+### 2.1 为什么账号与归属是多对多
+
+★★ 原来的 `users.org_id` + `users.org_role` 把账号和归属焊死成一对一：
+一个人要参与第二个组织，只能再注册一个账号。而组织之间的边界正是多租户隔离
+的边界，所以「同一个人的两个账号」在审计里是**两个不同的人**——跨组织协作的
+顾问、外包、平台方全都描述不出来。
+
+★ 组织角色跟着归属走而不是跟着账号走：同一个人可以是 A 组织的管理员、
+B 组织的普通成员。放在 users 上这句话就说不出来。
+
+★ email 因此是全局唯一。同一个邮箱此前可以在两个组织里各有一个账号，
+那两行现在必须合并——迁移 0014 会显式报错列出它们，而不是让 Postgres
+抛一句认不出来的约束冲突。
+
+### 2.2 「当前是哪个组织」由请求显式带上
+
+账号能属于多个组织之后，这件事不再能从账号上读出来，所以走 `X-Org-Id` 头
+（与 `X-User-Id` 并列，见 `rbac.ts` 的 `resolveCurrentOrg`）。
+
+★ **没带头时不能报错**：老客户端、curl 脚本、seed 之后第一次打开的页面
+都不会带，那时报 400 的表现是「整个站点白屏」。所以没带就回落到确定的缺省
+（按加入时间的第一个组织），并把算出来的 `currentOrgId` 回给调用方——
+前端不该自己猜，猜错的表现是切换器显示 A、数据来自 B，而两边都不报错。
+
+★ 带了但不是成员 → **404 而不是 403**。403 等于确认「这个组织存在」，
+把组织 id 变成可枚举的探针，和项目那一层同一条理由。
+
+★ URL 里带组织 id 的写路由（`PATCH /organizations/:id`）必须校验它就是
+**当前**组织：权限判定拿的是当前组织的 orgRole，handler 如果转头去改
+URL 里的另一个组织，那次判定就白判了。
 
 `approval_scopes` 支撑产品文档 8.7.5 的决策责任自动识别——决策创建时按类型查找具备对应 scope 的人。
 
@@ -238,6 +294,49 @@ CREATE TABLE requirement_assumptions (
 ---
 
 ## 5. Work Item（6.3）
+
+### 5.0 编号与创建路径
+
+**编号**：`<项目前缀>-<项目内序号>`（`ORD-19`）。前缀在 `projects.identifier`
+（组织内唯一），序号由 `projects.work_item_seq` 原子自增分配
+（`modules/work-item/numbering.ts`）。
+
+★★ 它存在的理由是「能用嘴说出来」。只有 uuid 的时候，站会上没法念、
+聊天里没法提、提交信息里写进去也没人认得——「那个订单导出的任务」是唯一的
+指代方式，而一个项目里往往有三个叫这个的。
+
+★ 用列 + 原子自增，不用 Postgres sequence：每个项目一条 sequence 意味着建项目
+要 DDL，而 DDL 不能和业务事务一起回滚。`UPDATE … SET seq = seq + n RETURNING seq`
+同样原子，并发下不跳号。**一次要 n 个**（计划分解一次建十几条），
+循环分配会让别人的号插进中间，同一份计划出来的任务编号不连续，
+读起来像是丢了几条。
+
+★ 只存 `number`，不冗余整个 `ORD-19`：改了项目前缀之后冗余那份要批量刷，
+漏刷的表现是同一个项目里两种前缀并存——比多一次 join 贵得多。
+
+**两条创建路径**：
+
+| 路径 | 入口 | 落地状态 | 门禁 |
+| --- | --- | --- | --- |
+| 计划分解 | `POST /requirements/:id/plans` → 批准 | `draft` → `ready` | `requirement.approve` + `plan.approve` |
+| 手工创建 | `POST /projects/:id/work-items` | `draft`，需人放行 | `work_item.create` + 放行时 `plan.approve` |
+
+★★ 手工创建**不绕过 Human Gate**。
+
+在此之前工作项只能被生成出来，那条链是产品的核心（两道 Human Gate 都在上面），
+但它同时让「随手记一个 bug」在系统里做不到——而那是任何任务系统最高频的动作。
+
+补入口的同时不能把门禁一起补没了：手工建的任务如果建完就能派发，任何能建任务
+的人都可以让 Agent 去做任意事情。所以手工建的一律停在 `draft`
+（接口**不接受**调用方指定状态），从 `draft` 走到 `ready` 要 `plan.approve`——
+门禁的粒度从「批一份计划」变成「批一个任务」，而不是没有门禁。
+
+★ 判定放在 handler 而不是路由表：路由表看不到任务**当前**的状态，而
+`changes_requested → ready`（返工重新开始）同样落在 ready 上，那一步的计划
+早就批过了，再要一次批准权限会让每次返工都惊动 tech_lead。
+
+★ 手工建的任务在 `type_data.origin = 'manual'` 留痕——审计时
+「它是怎么来的」要答得上。
 
 ```sql
 CREATE TYPE work_item_type AS ENUM (

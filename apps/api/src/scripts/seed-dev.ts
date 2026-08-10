@@ -13,6 +13,7 @@ import { and, isNull, sql } from 'drizzle-orm';
 import {
   agents,
   createDatabase,
+  organizationMembers,
   organizations,
   projectMembers,
   projects,
@@ -35,6 +36,8 @@ import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { transition } from '../modules/flow/transition';
+import { createRole, syncBuiltinRoles } from '../http/roles';
+import { allocateNumbers } from '../modules/work-item/numbering';
 import { seedHistory } from './seed-history';
 
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
@@ -48,33 +51,61 @@ async function main() {
       TRUNCATE TABLE
         events, run_events, artifacts,
         decision_approvals, decision_evidence, decision_options, decisions,
-        agent_runs, agent_permission_changes, agents, agent_runtimes,
+        agent_runs, agent_permission_changes, agents,
+        repositories, project_conventions,
         work_item_dependencies, work_items, plans,
         requirement_assumptions, requirement_clarifications, requirements,
         policy_versions, policies,
-        project_members, projects, users, organizations
+        project_members, roles, projects, organization_members, users, organizations
       RESTART IDENTITY CASCADE
     `);
   }
 
-  const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Acme', slug: 'acme', description: '演示组织' })
+    .returning();
   const orgId = org!.id;
 
-  const [lead, dba, pm] = await db
+  // 建组织就要预置内置角色 —— 成员表对 roles 有外键（§2.2）
+  await syncBuiltinRoles(db, orgId);
+
+  /**
+   * ★ 角色要凑齐，演示数据才验证得了权限（09-security §2.2）。
+   *
+   *   全是 admin 的种子数据看着一切正常，但它把整套 RBAC 屏蔽掉了：
+   *   界面上没有一个灰按钮，「谁能批准计划」「谁能放宽规则」这些
+   *   产品里最需要被看见的边界，一次都不会出现在演示里。
+   *   所以这里刻意留了 sponsor 和 viewer —— 切到他们身上，
+   *   页面才会露出真实形态。
+   */
+  const [lead, dba, pm, sponsor, viewer] = await db
     .insert(users)
     .values([
-      { orgId, email: 'zhangwei@acme.dev', name: '张伟', orgRole: 'admin' },
-      { orgId, email: 'wangqiang@acme.dev', name: '王强', orgRole: 'member',
-        approvalScopes: ['database', 'production'] },
-      { orgId, email: 'lina@acme.dev', name: '李娜', orgRole: 'member' },
+      { email: 'zhangwei@acme.dev', name: '张伟' },
+      { email: 'wangqiang@acme.dev', name: '王强', approvalScopes: ['database', 'production'] },
+      { email: 'lina@acme.dev', name: '李娜' },
+      { email: 'chenjing@acme.dev', name: '陈静', approvalScopes: ['budget'] },
+      { email: 'zhaomin@acme.dev', name: '赵敏' },
     ])
     .returning();
+
+  // 归属与组织角色在 organization_members —— 账号本身是全局的
+  await db.insert(organizationMembers).values([
+    { orgId, userId: lead!.id, orgRole: 'org_admin' },
+    { orgId, userId: dba!.id, orgRole: 'member' },
+    { orgId, userId: pm!.id, orgRole: 'member' },
+    { orgId, userId: sponsor!.id, orgRole: 'member' },
+    { orgId, userId: viewer!.id, orgRole: 'member' },
+  ]);
 
   const [project] = await db
     .insert(projects)
     .values({
       orgId,
       name: '订单系统重构',
+      // 工作项编号的前缀 —— 演示数据里要看得见 ORD-1 这种形态
+      identifier: 'ORD',
       goal: '把订单查询从 8s 降到 1s 以内，并支持多条件组合查询',
       techLeadId: lead!.id,
       autonomyLevel: 'agent_led_approval',
@@ -85,9 +116,13 @@ async function main() {
   const projectId = project!.id;
 
   await db.insert(projectMembers).values([
-    { projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
-    { projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
-    { projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
+    { orgId, projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
+    { orgId, projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
+    { orgId, projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
+    // 需求确认是业务判断，归 sponsor / pm —— tech_lead 也批不了（§2.3）
+    { orgId, projectId, actorType: 'human', actorId: sponsor!.id, role: 'sponsor' },
+    // 切到赵敏能看出「只读」是真的只读：整页没有一个可点的写操作
+    { orgId, projectId, actorType: 'human', actorId: viewer!.id, role: 'viewer' },
   ]);
 
   // ── Agent ────────────────────────────────────────────────────────────
@@ -166,6 +201,63 @@ async function main() {
   // ★ 每个 Agent 一个适配器实例：注册表按 agentId 键控，
   //   因为 Agent 各自带一套运行时参数
   for (const a of agentRows) registry.register(a.id, runtime);
+
+  /**
+   * ── 自定义角色（09-security §2.2）────────────────────────────────────
+   *
+   * ★★ 这几行是整套角色机制的演示入口：内置的六个覆盖「项目怎么运转」，
+   *   覆盖不了「这个组织怎么分工」。研发、测试、运营各自是什么权限，
+   *   由超管在这里定义。
+   *
+   * ★ 「研发」「测试」允许 Agent 担任，「运营」只给人 —— 差别不是随便定的：
+   *   前两个只含执行类权限，后一个含处理决策（humanOnly），
+   *   服务端会按这条规则校验，塞不进去。
+   */
+  const roleCtx = { orgId, actorId: lead!.id, correlationId: randomUUID() };
+  await createRole(db, roleCtx, {
+    key: 'dev',
+    name: '研发',
+    description: '写代码、跑测试、接管任务；不参与需求与计划审批',
+    permissions: [
+      'project.view',
+      'policy.view',
+      'work_item.execute',
+      'work_item.takeover',
+      'plan.generate',
+      'clarification.answer',
+      'integration.view',
+    ],
+    appliesTo: ['human', 'agent'],
+  });
+  await createRole(db, roleCtx, {
+    key: 'qa',
+    name: '测试',
+    description: '执行测试任务、看规则与集成状态；不能改任何配置',
+    permissions: ['project.view', 'policy.view', 'work_item.execute', 'integration.view'],
+    appliesTo: ['human', 'agent'],
+  });
+  await createRole(db, roleCtx, {
+    key: 'ops',
+    name: '运营',
+    description: '处理决策、催办、看数据；不碰代码与计划',
+    permissions: ['project.view', 'policy.view', 'decision.act', 'decision.remind'],
+    // ★ 含 decision.act（humanOnly），所以只能给人 —— 这不是选择，是校验结果
+    appliesTo: ['human'],
+  });
+
+  /**
+   * ★★ 让 Agent 真正担任角色。
+   *
+   *   在此之前 Agent 只是「被派发任务的对象」，不在成员表里。
+   *   现在它和人一样是项目成员、担任同一套角色里的一个 ——
+   *   这才是「Human–Agent 混合团队」在数据上的样子：
+   *   「测试」这个岗位上，可能坐着一个人，也可能是 test-agent-1。
+   */
+  const [codeAgent, testAgent] = agentRows;
+  await db.insert(projectMembers).values([
+    { orgId, projectId, actorType: 'agent', actorId: codeAgent!.id, role: 'dev' },
+    { orgId, projectId, actorType: 'agent', actorId: testAgent!.id, role: 'qa' },
+  ]);
 
   // ── 走真实链路：需求 → 计划 → 执行 ────────────────────────────────
   const provider = new StubPlanningProvider();
@@ -283,11 +375,13 @@ async function main() {
    * 这让「手动拖动」这条异常路径在演示数据上根本走不通。
    * 真实项目里也总有临时插进来的独立任务，补一张。
    */
+  const [standaloneNumber] = await allocateNumbers(db, projectId, 1);
   const [standalone] = await db
     .insert(workItems)
     .values({
       orgId,
       projectId,
+      number: standaloneNumber!,
       type: 'bug',
       status: 'executing',
       stage: 'execution',
@@ -329,11 +423,13 @@ async function main() {
    * 根本派发不出去，注入失败样本会静默落空（种子跑完看起来一切正常，
    * 但界面上的失败态、错误 Tab、恢复决策全都没有数据）。
    */
+  const [failingNumber] = await allocateNumbers(db, projectId, 1);
   const [failing] = await db
     .insert(workItems)
     .values({
       orgId,
       projectId,
+      number: failingNumber!,
       type: 'bug',
       status: 'ready',
       stage: 'execution',
@@ -553,10 +649,14 @@ async function main() {
   console.log('\n✓ 种子数据就绪');
   console.log(`  项目      ${project!.name}  ${projectId}`);
   console.log(`  任务      ${final.length} 项`, byStage);
+  // ★ 角色写在名字旁边：这份清单同时是 RBAC 的演示入口 ——
+  //   切到陈静才看得到「tech_lead 也批不了需求」，切到赵敏才看得到只读长什么样
   console.log('\n  可用身份（前端右上角切换）：');
-  console.log(`    张伟  tech_lead   ${lead!.id}`);
-  console.log(`    王强  DBA（决策人） ${dba!.id}`);
-  console.log(`    李娜  pm          ${pm!.id}`);
+  console.log(`    张伟  tech_lead + 组织管理员  ${lead!.id}`);
+  console.log(`    李娜  pm（收紧规则、成员管理） ${pm!.id}`);
+  console.log(`    陈静  sponsor（确认需求）      ${sponsor!.id}`);
+  console.log(`    王强  member / DBA（决策人）   ${dba!.id}`);
+  console.log(`    赵敏  viewer（只读）           ${viewer!.id}`);
   // 单机部署里前端和 API 同源（默认 :8080），不是开发时的 Vite :5173——
   // 打印一个打不开的链接比不打印更误导
   const webBase = process.env['WEB_BASE_URL'] ?? 'http://localhost:5173';

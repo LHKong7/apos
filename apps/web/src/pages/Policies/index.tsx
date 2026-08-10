@@ -6,6 +6,8 @@ import type { AutonomyLevel } from '@apos/contracts';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { GatedButton, RoleBadge } from '../../components/Gated';
+import { usePermissions } from '../../lib/permissions/usePermissions';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { PolicyRow, PolicyTemplateRow } from '../../lib/api/types';
 import { RuleList } from './RuleList';
@@ -45,6 +47,7 @@ export function PoliciesPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
+  const perms = usePermissions(projectId);
 
   const tab = (TABS.find((t) => t.key === params.get('tab'))?.key ?? 'rules') as 'rules' | 'test';
   const [expandSummary, setExpandSummary] = useState(false);
@@ -98,13 +101,20 @@ export function PoliciesPage() {
             ← 回到看板
           </Link>
 
+          <RoleBadge projectId={projectId} />
+
           {/* ★ 自治等级是 Policy 的总开关，放在最显眼处 */}
           <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600">
             自治等级
             <select
               value={data?.project.autonomyLevel ?? 'agent_led_approval'}
               onChange={(e) => setAutonomyTarget(e.target.value as AutonomyLevel)}
-              className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+              // ★ 改自治等级是 pm / tech_lead 的事（§2.3）。
+              //   禁用的同时把原因挂上去 —— 一个灰着又不说话的下拉框
+              //   会让人以为页面卡住了。
+              disabled={!perms.can('project.autonomy.change')}
+              title={perms.why('project.autonomy.change')}
+              className="rounded border border-slate-300 px-1.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="自治等级"
             >
               {AUTONOMY.map((a) => (
@@ -241,19 +251,25 @@ export function PoliciesPage() {
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-slate-500">从模板新建：</span>
+                  {/*
+                    ★ 模板自己就标了方向，正好对上 §2.3 的两档权限：
+                      放宽类模板对 pm 是灰的，收紧类不是。这一排按钮
+                      因此成了整套不对称设计最直观的一处展示 ——
+                      用户不用读文档就能看出「收紧比放宽容易」。
+                  */}
                   {templates.data?.templates.map((t) => (
-                    <button
+                    <GatedButton
                       key={t.id}
-                      type="button"
+                      permission={t.direction === 'loosen' ? 'policy.loosen' : 'policy.tighten'}
+                      projectId={projectId}
                       onClick={() => {
                         setTemplate(t);
                         setCreating(true);
                       }}
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
-                      title={t.purpose}
                     >
                       {t.direction === 'loosen' ? '↓' : '↑'} {t.name}
-                    </button>
+                    </GatedButton>
                   ))}
                 </div>
 

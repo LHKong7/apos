@@ -1,10 +1,13 @@
-import type { PlanDiff } from '@apos/domain';
+import type { PlanDiff, Permission } from '@apos/domain';
 import type {
   HumanGate,
+  ProjectRole,
   RiskLevel,
   Stage,
   WorkItemStatus,
 } from '@apos/contracts';
+
+export type { Permission, ProjectRole };
 
 /**
  * 接口返回形状。
@@ -16,6 +19,8 @@ import type {
 
 export interface BoardCard {
   id: string;
+  /** 人类可读编号（`ORD-19`）—— 卡片上要能指着它说出名字 */
+  ref: string;
   title: string;
   type: string;
   status: WorkItemStatus;
@@ -69,11 +74,90 @@ export interface User {
   name: string;
   email: string;
   avatarUrl: string | null;
-  orgRole: string;
+  /**
+   * ★ 可能为 null：身份还没落定时没有"当前组织"，
+   *   组织角色是跟着归属走的，那一刻任何一个值都是编的。
+   */
+  orgRole: string | null;
   approvalScopes: string[];
 }
 
+/**
+ * 当前身份在某个项目里的权限（docs/tech/09-security.md §2）。
+ *
+ * ★ 判定口径来自服务端，不在前端重算 —— 界面上灰掉的按钮
+ *   和服务端真正拦住的请求必须是同一条规则。
+ *
+ * ★ `denyReasons` 不是可选的装饰：一个灰掉但不说明原因的按钮
+ *   比没有这个按钮更让人困惑，用户会反复点它。
+ */
+export interface ProjectPermissions {
+  projectId: string;
+  userId: string;
+  orgRole: string;
+  projectRole: ProjectRole | null;
+  permissions: Record<Permission, boolean>;
+  denyReasons: Partial<Record<Permission, string>>;
+}
+
+export interface ProjectMemberRow {
+  actorId: string;
+  actorType: 'human' | 'agent' | 'service' | 'external' | 'system';
+  role: string;
+  roleLabel: string;
+  permissionCount: number;
+  addedAt: string;
+  name: string | null;
+  email: string | null;
+  /** Agent 用：类型与状态 */
+  detail: string | null;
+  orgRole: string | null;
+}
+
+export interface AssignableRole {
+  role: string;
+  label: string;
+  description: string;
+  /** 这个角色能由谁担任 —— 人的下拉框和 Agent 的下拉框内容不同 */
+  appliesTo: ('human' | 'agent')[];
+  builtin: boolean;
+  permissions: Permission[];
+}
+
+export interface MembersResponse {
+  members: ProjectMemberRow[];
+  assignableRoles: AssignableRole[];
+}
+
+/** 角色定义（docs/tech/09-security.md §2.2）—— 超管在角色页里维护 */
+export interface RoleRow {
+  key: string;
+  name: string;
+  description: string;
+  permissions: Permission[];
+  appliesTo: ('human' | 'agent')[];
+  builtin: boolean;
+  /** 有多少人 / 多少 Agent 正在担任 —— 删除前要知道会影响谁 */
+  memberCount: { human: number; agent: number };
+}
+
+export interface AvailablePermission {
+  key: Permission;
+  label: string;
+  scope: string;
+  /** 带这个标记的权限进不了 Agent 角色 */
+  humanOnly: boolean;
+  group: string;
+}
+
+export interface RolesResponse {
+  roles: RoleRow[];
+  availablePermissions: AvailablePermission[];
+}
+
 export interface Project {
+  /** 工作项编号的前缀（`ORD` → `ORD-19`）*/
+  identifier: string;
   id: string;
   name: string;
   goal: string | null;
@@ -142,6 +226,8 @@ export interface DecisionDetail {
 export interface WorkItemDetail {
   item: {
     id: string;
+    /** 人类可读编号（`ORD-19`）*/
+    ref: string;
     title: string;
     description: string | null;
     type: string;
@@ -1017,7 +1103,45 @@ export interface RepositoryRow {
   credentialHint: string | null;
   credentialUsable: boolean;
   credentialProblem: string | null;
-  warning: string | null;
+  /**
+   * 认证形态。token 那套（用户名占位）和 SSH 那套（私钥、主机公钥）
+   * 不重叠，配置页按它二选一渲染 —— 同时摆出来只会让人填错栏。
+   */
+  authKind: 'token' | 'ssh_key';
+  /**
+   * 即将用于 HTTP Basic 的用户名占位。
+   *
+   * ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它 ——
+   *   所以要在配置页上直接显示「现在会用哪个、为什么是它」。
+   */
+  authUsername: string;
+  authUsernameSource: 'explicit' | 'host' | 'default';
+  authProvider: string | null;
+  /** 主机公钥不是秘密，明文回显。空 = 还没固定，首次连接走 TOFU */
+  sshKnownHosts: string | null;
+  sshHostKeyPinned: boolean;
+  /** 这段 known_hosts 固定了哪几台主机 */
+  sshHosts: string[];
+  checkCommand: string | null;
+  checkTimeoutSeconds: number;
+  warnings: string[];
+}
+
+/** 连通性探测结果（git ls-remote）*/
+export interface RepositoryProbe {
+  ok: boolean;
+  /**
+   * ★ ssh 与 host_key 是两档独立的失败：前者是「这把 key / 工具链有问题」，
+   *   后者是「服务器换了密钥或有人在中间」。混进 network 的话，
+   *   报错会把人指向网络，而那两种情况的下一步动作都不在网络上。
+   */
+  stage: 'git' | 'ssh' | 'host_key' | 'credential' | 'auth' | 'network' | 'branch' | 'ok';
+  message: string | null;
+  authKind?: 'token' | 'ssh_key';
+  authUsername?: string;
+  authUsernameSource?: 'explicit' | 'host' | 'default';
+  branchCount?: number;
+  branches: string[] | null;
 }
 
 export interface RepositoriesResponse {
@@ -1025,6 +1149,9 @@ export interface RepositoriesResponse {
   gitAvailable: boolean;
   gitVersion: string | null;
   gitProblem: string | null;
+  /** 镜像里少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */
+  sshAvailable: boolean;
+  sshProblem: string | null;
   canStoreInlineCredential: boolean;
 }
 
@@ -1042,4 +1169,43 @@ export interface ConventionRow {
 export interface ConventionsResponse {
   conventions: ConventionRow[];
   notice: string;
+}
+
+// ── 组织（顶层容器；Plane 里叫 Workspace）──────────────────────────────
+/**
+ * ★ 这里不叫 Workspace：`workspace` 在这个代码库里已经指 Agent 的 git 工作区。
+ *   两个都叫这个名字，排障时没人分得清在说哪一个。
+ */
+export interface OrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  /** 当前身份在**这个**组织里的角色 —— 同一个人在别的组织可以不一样 */
+  orgRole: string;
+  orgRoleLabel: string;
+  projectCount: number;
+  joinedAt: string;
+}
+
+export interface OrganizationsResponse {
+  organizations: OrganizationRow[];
+  /** ★ 服务端算出来的当前组织。前端不该自己猜缺省值 */
+  currentOrgId: string;
+}
+
+export interface OrganizationMemberRow {
+  userId: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  status: string;
+  orgRole: string;
+  orgRoleLabel: string;
+  addedAt: string;
+}
+
+export interface OrganizationMembersResponse {
+  members: OrganizationMemberRow[];
+  assignableOrgRoles: { role: string; label: string }[];
 }

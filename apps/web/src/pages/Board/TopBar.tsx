@@ -3,6 +3,7 @@ import type { BoardSummary } from '../../lib/api/types';
 import type { BoardView } from '../../stores/board';
 import { useBoardStore } from '../../stores/board';
 import type { BoardFilters } from '../../lib/api/client';
+import { GatedButton } from '../../components/Gated';
 
 const VIEWS: { key: BoardView; label: string }[] = [
   { key: 'kanban', label: 'Kanban' },
@@ -17,6 +18,7 @@ interface Props {
   onOpenAnalytics: () => void;
   onOpenPolicies: () => void;
   onOpenRequirements: () => void;
+  onNewWorkItem: () => void;
   summary: BoardSummary | undefined;
   view: BoardView;
   filters: BoardFilters;
@@ -38,6 +40,7 @@ export function TopBar({
   onOpenAnalytics,
   onOpenPolicies,
   onOpenRequirements,
+  onNewWorkItem,
   summary,
   view,
   filters,
@@ -102,6 +105,20 @@ export function TopBar({
           >
             Policy ↗
           </button>
+          {/*
+            ★★ 在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解）。
+              那条链是产品的核心，但它同时让「随手记一个 bug」在系统里做不到 ——
+              而那是任何任务系统最高频的一个动作。
+            ★ 建出来的是**草稿**，还不能派发；放行去执行仍然要 tech_lead，
+              两道 Human Gate 一个都没被绕开（见 http/work-items.ts）。
+          */}
+          <GatedButton
+            permission="work_item.create"
+            onClick={onNewWorkItem}
+            className="ml-1 rounded bg-slate-900 px-2 py-0.5 text-xs font-medium text-white hover:bg-slate-700"
+          >
+            + 新建任务
+          </GatedButton>
         </div>
 
         <select

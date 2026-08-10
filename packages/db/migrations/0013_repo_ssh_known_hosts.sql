@@ -1,0 +1,13 @@
+-- SSH 主机公钥（known_hosts 格式）。
+--
+-- ★ 这不是秘密 —— 它本来就是要公开比对的那一份，所以存明文是对的。
+--   私钥仍然走 credential_ref（加密引用），且运行时只进 ssh-agent 的内存，
+--   永不落盘（见 modules/workspace/ssh.ts）。
+--
+-- ★ 为空 = 还没固定：首次连接走 TOFU（accept-new），连上之后立刻把学到的
+--   公钥写进来，此后转严格校验。不固定的话 accept-new 等于 no ——
+--   每次都是全新的临时 known_hosts，「未知主机」这个条件永远成立。
+--
+-- 存量数据一律留空：已有的 ssh 仓库此前走的是宿主机 SSH 配置，
+-- 它们的主机公钥在宿主机的 ~/.ssh/known_hosts 里，不在我们这。
+ALTER TABLE "repositories" ADD COLUMN "ssh_known_hosts" text;

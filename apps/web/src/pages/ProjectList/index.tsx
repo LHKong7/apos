@@ -1,9 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { api } from '../../lib/api/client';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { QueryBoundary } from '../../components/states';
+import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { money, relativeTime } from '../../lib/format';
+import { useOrgStore } from '../../stores/org';
 
 const AUTONOMY_LABELS: Record<string, string> = {
   human_led: '人主导',
@@ -13,19 +16,40 @@ const AUTONOMY_LABELS: Record<string, string> = {
 
 export function ProjectListPage() {
   const projects = useQuery({ queryKey: qk.projects(), queryFn: api.projects });
+  const org = useOrgStore((s) => s.org);
+  const [creating, setCreating] = useState(false);
 
   return (
     <div className="mx-auto w-full max-w-4xl p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-900">项目</h1>
+      <div className="mb-4 flex items-center gap-3">
+        <h1 className="text-lg font-semibold text-slate-900">项目</h1>
+        {org && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+            {org.name}
+          </span>
+        )}
+        {/*
+          ★★ 在此之前这一页只有列表：`POST /api/v1/projects` 存在，
+            但界面上没有任何入口，空态提示是「先跑一遍 seed」——
+            也就是说建项目这件事只有开发者做得到。
+        */}
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+        >
+          + 新建项目
+        </button>
+      </div>
 
       <QueryBoundary
         query={projects}
         isEmpty={(d) => d.projects.length === 0}
         empty={{
           icon: '📁',
-          message: '还没有项目',
-          hint: '先跑一遍 pnpm --filter @apos/api seed 造一份演示数据',
-          action: { label: '刷新', onClick: () => void projects.refetch() },
+          message: org ? `「${org.name}」下还没有项目` : '还没有项目',
+          hint: '项目是需求、任务、Agent 与代码仓库的容器。也可以切换到别的组织看看。',
+          action: { label: '新建项目', onClick: () => setCreating(true) },
         }}
       >
         {(data) => (
@@ -59,6 +83,125 @@ export function ProjectListPage() {
           </ul>
         )}
       </QueryBoundary>
+
+      {creating && <CreateProjectModal onClose={() => setCreating(false)} />}
     </div>
+  );
+}
+
+function CreateProjectModal({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [goal, setGoal] = useState('');
+  const [autonomyLevel, setAutonomyLevel] = useState('agent_led_approval');
+  const [budget, setBudget] = useState('');
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createProject({
+        name: name.trim(),
+        ...(goal.trim() ? { goal: goal.trim() } : {}),
+        autonomyLevel,
+        ...(budget.trim() ? { budgetAmount: budget.trim() } : {}),
+      }),
+    onSuccess: async (res) => {
+      await qc.invalidateQueries({ queryKey: qk.projects() });
+      navigate(`/projects/${res.project.id}`);
+      onClose();
+    },
+  });
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">新建项目</h2>
+        <p className="text-[11px] text-slate-500">
+          项目建在**当前组织**下，创建者自动成为 tech_lead。
+        </p>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">项目名</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="订单系统重构"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            目标
+            <span className="ml-1 font-normal text-slate-400">选填</span>
+          </span>
+          <textarea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            rows={2}
+            placeholder="把订单查询从 8s 降到 1s 以内"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">自治等级</span>
+          <select
+            value={autonomyLevel}
+            onChange={(e) => setAutonomyLevel(e.target.value)}
+            className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          >
+            {Object.entries(AUTONOMY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {/*
+            ★ 这一项决定「哪些事 Agent 可以自己做」，是项目里最该被
+              一眼看见的设置。默认取中间那档，而不是最自主的那档。
+          */}
+          <p className="mt-1 text-[11px] text-slate-500">
+            建完之后可以在项目设置里改，改动会记审计。
+          </p>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            预算上限
+            <span className="ml-1 font-normal text-slate-400">选填 · 美元</span>
+          </span>
+          <input
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+            placeholder="500.00"
+            inputMode="decimal"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+
+        {create.error instanceof ApiError && (
+          <p className="text-xs text-rose-600">{create.error.message}</p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-slate-300 px-3 py-1.5 text-xs"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!name.trim() || create.isPending}
+            onClick={() => create.mutate()}
+            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {create.isPending ? '创建中…' : '创建'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

@@ -3,6 +3,8 @@ import { ActorType } from '../common/actor';
 import { PolicyContext } from '../policy/index';
 
 export const SubjectType = z.enum([
+  /** 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace，这里不用那个词，见 db schema） */
+  'organization',
   'project',
   'requirement',
   'plan',
@@ -13,6 +15,10 @@ export const SubjectType = z.enum([
   'artifact',
   'policy',
   'integration',
+  /** 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）*/
+  'user',
+  /** 角色定义的变更 —— 定义角色就是定义权限本身 */
+  'role',
 ]);
 export type SubjectType = z.infer<typeof SubjectType>;
 
@@ -54,6 +60,18 @@ export interface DomainEvent {
 
 /** 事件类型目录 —— docs/tech/03-event-model.md §7。命名规范 {subject}.{过去式动词} */
 export const DOMAIN_EVENT_TYPES = [
+  /**
+   * organization —— 顶层容器的生命周期与归属变更。
+   *
+   * ★ 归属变更必须记审计：「谁把谁加进了哪个组织」是提权路径的第一步，
+   *   查不到它，跨租户的权限累积就无从追溯。
+   */
+  'organization.created',
+  'organization.updated',
+  'organization.deleted',
+  'organization.member_added',
+  'organization.member_removed',
+  'organization.member_role_changed',
   // project
   'project.created',
   'project.autonomy_changed',
@@ -61,6 +79,10 @@ export const DOMAIN_EVENT_TYPES = [
   'project.resumed',
   'project.budget_threshold_reached',
   'project.completed',
+  /** 授权变更（09-security §6.3 强制记审计）*/
+  'project.member_added',
+  'project.member_role_changed',
+  'project.member_removed',
   // requirement
   'requirement.created',
   'requirement.analyzed',
@@ -123,6 +145,11 @@ export const DOMAIN_EVENT_TYPES = [
   'agent.permissions_changed',
   'agent.permission_violation',
   'agent.paused',
+  // 身份与角色
+  'user.org_role_changed',
+  'role.created',
+  'role.updated',
+  'role.deleted',
   // artifact & integration
   'artifact.produced',
   'integration.connected',
@@ -156,6 +183,26 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'agent.permission_violation',
   'work_item.force_passed',
   'project.autonomy_changed',
+  /**
+   * ★ 授权变更必须可审计（§6.3）。
+   *
+   *   §7 把「权限累积」列为本产品的特有威胁：逐次小幅放宽，
+   *   最终权限过大。它的缓解手段第一条就是「权限变更全审计」——
+   *   没有这几条事件，谁在什么时候把谁提成 tech_lead 就查不到，
+   *   而那恰恰是提权路径上最关键的一步。
+   */
+  'project.member_added',
+  'project.member_role_changed',
+  'project.member_removed',
+  'user.org_role_changed',
+  /**
+   * ★ 角色定义的变更比成员变更更要紧：改一次角色，所有担任它的人的权限
+   *   一起变。「谁给研发这个角色加上了放宽规则的权限」查不到的话，
+   *   逐个人查授权记录也拼不出真相 —— 每个人的记录都会显示「他一直是研发」。
+   */
+  'role.created',
+  'role.updated',
+  'role.deleted',
 ] as const;
 
 export const EventInput = z.object({

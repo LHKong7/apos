@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z, ZodError } from 'zod';
 import {
   agentRuns,
@@ -13,6 +13,7 @@ import {
   policies,
   projects,
   integrations,
+  organizationMembers,
   projectMembers,
   requirementClarifications,
   requirements,
@@ -28,6 +29,8 @@ import {
   humanActor,
   IntegrationProvider,
   NotificationConfig,
+  OrgRole,
+  ProjectRole,
   SyncMapping,
   WorkItemStatus,
   type PolicyContext,
@@ -37,6 +40,7 @@ import {
   LAYOUTS,
   POLICY_TEMPLATES,
   batchDenyReason,
+  check,
   explainPolicy,
   templateById,
   WORK_ITEM_MACHINE,
@@ -66,6 +70,22 @@ import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
+import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
+import { createRole, deleteRole, listRoles, updateRole } from './roles';
+import { createRbac, guardRouteCoverage, orgHeaderOf, resolveCurrentOrg } from './rbac';
+import { formatRef, freeIdentifier, IDENTIFIER_RE } from '../modules/work-item/numbering';
+import { createWorkItem, WorkItemInput } from './work-items';
+import {
+  addOrganizationMember,
+  createOrganization,
+  deleteOrganization,
+  listMyOrganizations,
+  listOrganizationMembers,
+  OrganizationInput,
+  OrganizationPatch,
+  removeOrganizationMember,
+  updateOrganization,
+} from './organizations';
 import { handleSse } from './sse';
 import { getBoard } from './board';
 import { getGraph } from './graph';
@@ -84,6 +104,7 @@ import {
   ConventionInput,
   createConvention,
   createRepository,
+  probeRepository,
   deleteConvention,
   deleteRepository,
   listConventions,
@@ -184,6 +205,19 @@ function optionalUserId(req: { headers: Record<string, unknown> }): string | nul
   return id;
 }
 
+/**
+ * 角色 key → 内置角色，认不出就是 null。
+ *
+ * ★ 集成设置那个窄接口（canIntegration）只按内置角色判。自定义角色
+ *   在那里退化成「非内置」，但这不会放宽任何东西 —— preHandler 已经
+ *   按权限集合判过一次，这里是第二道，只会更严不会更松。
+ */
+function asBuiltinRole(role: string | null): ProjectRole | null {
+  return role !== null && (ProjectRole.options as readonly string[]).includes(role)
+    ? (role as ProjectRole)
+    : null;
+}
+
 function corr(req: { headers: Record<string, unknown> }): string {
   const header = req.headers['x-correlation-id'];
   return typeof header === 'string' ? header : randomUUID();
@@ -191,6 +225,13 @@ function corr(req: { headers: Record<string, unknown> }): string {
 
 export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   const { db } = deps;
+
+  /**
+   * ★★ 必须在注册任何路由之前挂上：它靠 onRoute 钩子逐条清点，
+   *   挂晚了就漏掉前面那些 —— 而「清点器自己漏了」的表现是「一切正常」。
+   *   实际断言在函数末尾，那时路由才注册完。
+   */
+  const assertRoutesCovered = guardRouteCoverage(app);
 
   app.setErrorHandler((error: unknown, _req, reply) => {
     if (error instanceof ApiError) return sendError(reply, error);
@@ -259,52 +300,69 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       name: users.name,
       email: users.email,
       avatarUrl: users.avatarUrl,
-      orgRole: users.orgRole,
+      orgRole: organizationMembers.orgRole,
       approvalScopes: users.approvalScopes,
     };
 
+    /**
+     * ★ 组织角色跟着**归属**走，所以这份名单必须按当前组织 join 出来。
+     *   照旧从 users 上读的话，同一个人在别的组织的管理员身份
+     *   会被显示成他在这里的身份 —— 而那会让人以为他能批准东西。
+     */
     if (callerId) {
-      const [caller] = await db
-        .select({ orgId: users.orgId })
-        .from(users)
-        .where(eq(users.id, callerId));
-      if (caller) {
+      const { orgId } = await resolveCurrentOrg(db, callerId, orgHeaderOf(req)).catch(() => ({
+        orgId: null,
+      }));
+      if (orgId) {
         const rows = await db
           .select(columns)
-          .from(users)
-          .where(eq(users.orgId, caller.orgId))
+          .from(organizationMembers)
+          .innerJoin(users, eq(users.id, organizationMembers.userId))
+          .where(eq(organizationMembers.orgId, orgId))
           .orderBy(users.name);
         return { users: rows };
       }
     }
 
-    const rows = await db.select(columns).from(users).orderBy(users.name);
+    /**
+     * 还没选身份时（首次打开）给全量 —— 这是开发期的身份切换器。
+     *
+     * ★★ 这里**不能** join 归属表：没有当前组织就没有 org 过滤条件，
+     *   而一个人属于两个组织就会出现两行 —— 前端按 id 做 key，
+     *   表现是一句 React 重复 key 警告加一个重复的下拉项。
+     *
+     * ★ 也不该硬挑一个组织的角色显示：这一刻还没有"当前组织"，
+     *   任何一个都是编的。如实给 null。
+     */
+    const rows = await db
+      .select({ ...columns, orgRole: sql<string | null>`null` })
+      .from(users)
+      .orderBy(users.name);
     return { users: rows };
   });
 
   /**
-   * ★★ 项目成员闸门 —— docs/tech/09-security.md §2.1 的第②层「项目角色」。
+   * ★★ 授权闸门 —— docs/tech/09-security.md §2.1 的 ①② 两层。
    *
-   *   规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在集成端点上
-   *   实现了（assertIntegration），其余项目数据一律没查成员关系。
+   *   ② 项目成员：规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在
+   *   集成端点上实现了（assertIntegration），其余项目数据一律没查成员关系。
    *   实测后果：A 组织的用户可以读、也可以写 B 组织项目的看板、执行图、
    *   Analytics、Policy、需求 —— 跨租户数据在应用层是敞开的。
+   *
+   *   ① 组织/项目角色：成员关系只回答「是不是自己人」，回答不了
+   *   「批准计划要 tech_lead」「放宽 Policy 要模拟结果」。权限矩阵（§2.3）
+   *   在 rbac.ts 的路由表里逐条登记，写路由漏登记则服务起不来。
    *
    * ★ 做成 preHandler 而不是在四十个 handler 里各写一行，是因为这一类
    *   漏洞的成因就是「漏了一处」。钩子按 URL 形状统一拦截，
    *   以后新增的 /projects/:id/* 路由默认就是关着的，
    *   不需要作者记得加检查。
    */
-  // ★ 不能拿 UUID_RE.source 拼：那个是带 ^$ 锚点的，嵌进来会变成永不匹配的正则，
-  //   而「闸门永不触发」的表现恰恰是「一切正常」——最坏的一种失败方式
-  const PROJECT_SCOPED_URL =
-    /^\/api\/v1\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
-
   /**
    * 调用者能看见的项目 id。
    *
    * ★ 列表类端点（决策收件箱、Agent 花名册）的 URL 里没有项目 id，
-   *   上面那个按 URL 形状的闸门够不着它们 —— 实测中一个只属于一个项目的用户，
+   *   按 URL 形状的闸门够不着它们 —— 实测中一个只属于一个项目的用户，
    *   收件箱里能看到三个项目、跨三个组织的决策。这类端点必须自己带上范围。
    */
   async function visibleProjectIds(userId: string): Promise<string[]> {
@@ -315,35 +373,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return rows.map((r) => r.projectId);
   }
 
-  async function assertProjectMember(projectId: string, userId: string) {
-    const [membership] = await db
-      .select({ role: projectMembers.role })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.projectId, projectId),
-          eq(projectMembers.actorType, 'human'),
-          eq(projectMembers.actorId, userId),
-        ),
-      );
-    if (membership) return membership.role;
-
-    /**
-     * ★ 非成员回 404 而不是 403。
-     *   403 等于确认「这个项目存在」，把项目 id 变成一个可枚举的探针 ——
-     *   对方能借此摸出别的组织有哪些项目。这类端点的存在性本身就是信息。
-     *
-     * ★ 但文案要给出路。别人分享一个项目链接过来、而你恰好不是成员时，
-     *   光说「项目不存在」会让人以为链接失效了去问对方要新的 ——
-     *   真实原因是当前身份不对。措辞保持「或」，不确认项目是否存在。
-     */
-    throw new ApiError(
-      'NOT_FOUND',
-      '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
-      { projectId },
-    );
-  }
-
   /**
    * 资源 id → 它属于哪个项目。
    *
@@ -351,9 +380,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   一样要过②层。加新的资源路由时必须在这里登记 ——
    *   没登记就等于这条路由不设防。
    */
-  const RESOURCE_SCOPED_URL =
-    /^\/api\/v1\/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
-
   async function projectOfResource(kind: string, id: string): Promise<string | null> {
     const one = async <T extends { projectId: string | null }>(rows: T[]) =>
       rows[0]?.projectId ?? null;
@@ -388,25 +414,21 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     }
   }
 
-  app.addHook('preHandler', async (req) => {
-    const path = req.url.split('?')[0] ?? '';
-
-    const inProject = PROJECT_SCOPED_URL.exec(path);
-    if (inProject) {
-      const { userId } = actorFrom(req);
-      await assertProjectMember(inProject[1]!, userId);
-      return;
-    }
-
-    const onResource = RESOURCE_SCOPED_URL.exec(path);
-    if (onResource) {
-      const { userId } = actorFrom(req);
-      const projectId = await projectOfResource(onResource[1]!.toLowerCase(), onResource[2]!);
-      // 资源不存在时不在这里报 404：让各自的 handler 去说「决策不存在」
-      // 这类更准确的话，这里只管「存在但不属于你」
-      if (projectId) await assertProjectMember(projectId, userId);
-    }
+  const rbac = createRbac({
+    db,
+    projectOfResource,
+    requireUserId: (req) => actorFrom(req).userId,
   });
+
+  app.addHook('preHandler', async (req) => {
+    await rbac.guard(req);
+  });
+
+  /** handler 里还要用的成员关系判定（角色本身是 preHandler 已经查过的缓存） */
+  async function assertProjectMember(projectId: string, userId: string, req: FastifyRequest) {
+    const actor = await rbac.assertProjectAccess(req, projectId, userId);
+    return actor.projectRole;
+  }
 
   // ── 项目 ────────────────────────────────────────────────────────────
   /**
@@ -415,12 +437,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   都能拿到全部组织的项目清单。
    */
   app.get('/api/v1/projects', async (req) => {
-    const { userId } = actorFrom(req);
+    const { orgId, userId } = await callerOrg(req);
+    /**
+     * ★★ 必须同时按**当前组织**收窄，不能只按成员关系。
+     *
+     *   一个账号能属于多个组织之后，「我是成员的项目」会横跨组织 ——
+     *   切到 A 组织却看见 B 组织的项目，而两边都不会报错。
+     *   组织是多租户的边界，列表就得停在这条边界上。
+     */
     const rows = await db
       .select()
       .from(projects)
       .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
-      .where(and(eq(projectMembers.actorType, 'human'), eq(projectMembers.actorId, userId)))
+      .where(
+        and(
+          eq(projects.orgId, orgId),
+          eq(projectMembers.actorType, 'human'),
+          eq(projectMembers.actorId, userId),
+        ),
+      )
       .orderBy(desc(projects.updatedAt));
     return { projects: rows.map((r) => r.projects) };
   });
@@ -451,6 +486,92 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     };
   });
 
+  // ── 组织（顶层容器；Plane 里叫 Workspace）────────────────────────────
+  /**
+   * ★★ 在此之前组织只是一列 `org_id`：表在、外键在、多租户判定也在，
+   *   但**没有任何接口能创建、改名或切换它**，唯一的来源是 seed 脚本。
+   *   于是「多租户」只在数据库层面成立，产品上是个单租户实例。
+   */
+  app.get('/api/v1/organizations', async (req) => {
+    const { userId } = actorFrom(req);
+    const list = await listMyOrganizations(db, userId);
+    /**
+     * ★ 把「当前是哪个」一并回出去。前端不该自己猜缺省值 ——
+     *   猜错的表现是切换器显示 A、实际数据是 B，而两边都没有报错。
+     */
+    const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
+    return { ...list, currentOrgId: orgId };
+  });
+
+  app.post('/api/v1/organizations', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const body = OrganizationInput.parse(req.body);
+    const result = await createOrganization(
+      db,
+      { actorId: userId, correlationId: corr(req) },
+      body,
+    );
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/api/v1/organizations/:id', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    assertCurrentOrg(req, orgId);
+    const body = OrganizationPatch.parse(req.body);
+    return updateOrganization(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
+  });
+
+  app.delete('/api/v1/organizations/:id', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    assertCurrentOrg(req, orgId);
+    return deleteOrganization(db, { orgId, actorId: userId, correlationId: corr(req) });
+  });
+
+  app.get('/api/v1/organizations/:id/members', async (req) => {
+    const { orgId } = await callerOrg(req);
+    assertCurrentOrg(req, orgId);
+    return listOrganizationMembers(db, orgId);
+  });
+
+  app.post('/api/v1/organizations/:id/members', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    assertCurrentOrg(req, orgId);
+    const body = z.object({ email: z.string().email(), orgRole: OrgRole.default('member') }).parse(
+      req.body,
+    );
+    return addOrganizationMember(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
+  });
+
+  app.delete('/api/v1/organizations/:id/members/:userId', async (req) => {
+    const { orgId, userId: actorId } = await callerOrg(req);
+    assertCurrentOrg(req, orgId);
+    const { userId: targetId } = req.params as { userId: string };
+    return removeOrganizationMember(
+      db,
+      { orgId, actorId, correlationId: corr(req) },
+      targetId,
+    );
+  });
+
+  /**
+   * ★★ URL 里的组织必须就是**当前**组织。
+   *
+   *   权限判定（rbac 的 resolveActor）拿的是当前组织的 orgRole，
+   *   如果 handler 转头去改 URL 里的另一个组织，那次判定就白判了 ——
+   *   在自己是管理员的 A 组织里发一个指向 B 组织的请求，
+   *   就能拿 A 的管理员身份去改 B。这是最典型的一类越权。
+   */
+  function assertCurrentOrg(req: FastifyRequest, orgId: string) {
+    const { id } = req.params as { id?: string };
+    if (id && id !== orgId) {
+      throw new ApiError(
+        'FORBIDDEN',
+        '只能操作当前组织。请先切换到目标组织（X-Org-Id）后再试',
+        { currentOrgId: orgId, requested: id },
+      );
+    }
+  }
+
   const CreateProject = z.object({
     name: z.string().min(1),
     goal: z.string().optional(),
@@ -459,19 +580,195 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .enum(['human_led', 'agent_led_approval', 'agent_autonomous'])
       .default('agent_led_approval'),
     budgetAmount: z.string().optional(),
-    orgId: z.string().uuid(),
+    /**
+     * 工作项编号的前缀（`ORD` → `ORD-19`）。不传则从项目名推。
+     * 组织内唯一 —— 撞车时自动加序号。
+     */
+    identifier: z
+      .string()
+      .regex(IDENTIFIER_RE, '前缀只能用大写字母和数字，2–10 位，且以字母开头')
+      .optional(),
+    /** ★ 不传就是当前组织。传了必须和当前组织一致（见下面的判定）*/
+    orgId: z.string().uuid().optional(),
   });
 
   app.post('/api/v1/projects', async (req, reply) => {
     const { userId } = actorFrom(req);
     const body = CreateProject.parse(req.body);
+    const actor = await rbac.resolveActor(req, userId, null);
 
+    /**
+     * ★ orgId 以调用者的当前组织为准，不听请求体的。
+     *   照抄 body.orgId 的话，任何人都能往别的组织里塞一个项目 ——
+     *   而那个项目从此挂在对方的项目列表、对方的成本统计里。
+     *
+     * ★ 不传则用当前组织。要求前端必须知道自己的 orgId 才能建项目，
+     *   是把实现细节变成了它的负担 —— 而这个值服务端本来就有。
+     */
+    if (body.orgId && body.orgId !== actor.orgId) {
+      throw new ApiError('FORBIDDEN', '只能在当前组织下创建项目', {
+        orgId: actor.orgId,
+      });
+    }
+
+    const { orgId: _ignored, identifier, ...fields } = body;
+    /**
+     * ★ 前缀不能留给默认值。所有项目共用 `TASK` 的话，
+     *   `TASK-19` 在组织里指向好几条 —— 而编号存在的全部理由
+     *   就是"说出来能指到唯一一条"。
+     */
+    const prefix = identifier ?? (await freeIdentifier(db, actor.orgId, body.name));
     const [project] = await db
       .insert(projects)
-      .values({ ...body, techLeadId: userId })
+      .values({ ...fields, identifier: prefix, orgId: actor.orgId, techLeadId: userId })
       .returning();
 
+    /**
+     * ★★ 创建者必须落成成员，否则他建完就进不去自己的项目 ——
+     *   成员关系闸门（§2.1.1）不认 techLeadId 这个字段，只认 project_members。
+     *   这类「功能看起来完成了，实际第一步就走不通」的缺口，
+     *   只有在权限真的生效之后才暴露得出来。
+     */
+    await db.insert(projectMembers).values({
+      orgId: actor.orgId,
+      projectId: project!.id,
+      actorType: 'human',
+      actorId: userId,
+      role: 'tech_lead',
+    });
+
+    await emitAndPublish(db, {
+      orgId: actor.orgId,
+      projectId: project!.id,
+      type: 'project.member_added',
+      actor: humanActor(userId),
+      subjectType: 'user',
+      subjectId: userId,
+      payload: { from: null, to: 'tech_lead', projectId: project!.id, reason: 'project_creator' },
+      correlationId: corr(req),
+    });
+
     return reply.status(201).send({ project });
+  });
+
+  // ── 成员与角色（09-security §2.2）────────────────────────────────────
+  /**
+   * ★ 权限判定本身也要能被看见。
+   *
+   *   前端不该靠猜哪个按钮能点：一次拿全当前身份在这个项目里的
+   *   全部权限与拒绝理由，界面据此灰按钮并给出「该找谁」。
+   *   服务端仍然独立判一遍 —— 共用一份规则不等于信任前端。
+   */
+  app.get('/api/v1/projects/:id/permissions', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const actor = await rbac.resolveActor(req, userId, id);
+
+    return {
+      projectId: id,
+      userId,
+      orgRole: actor.orgRole,
+      projectRole: actor.projectRole,
+      permissions: rbac.permissionsOf(actor),
+      denyReasons: rbac.denyReasonsOf(actor),
+    };
+  });
+
+  app.get('/api/v1/projects/:id/members', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const actor = await rbac.resolveActor(req, userId, id);
+    return listMembers(db, id, actor.orgId);
+  });
+
+  /**
+   * 指派角色。
+   *
+   * ★ 路径上的 `:memberId` 既可以是用户 id，也可以是 Agent id ——
+   *   由 `actorType` 区分。一个岗位由人还是由 Agent 担任，
+   *   在这个产品里是同一个问题的两个答案，不该是两条 API。
+   */
+  const MemberRoleBody = z.object({
+    role: z.string().min(1),
+    actorType: z.enum(['human', 'agent']).default('human'),
+  });
+
+  app.put('/api/v1/projects/:id/members/:memberId', async (req) => {
+    const { userId: actorId } = actorFrom(req);
+    const { id, memberId } = req.params as { id: string; memberId: string };
+    const body = MemberRoleBody.parse(req.body);
+
+    return setMemberRole(
+      db,
+      {
+        projectId: id,
+        actorType: body.actorType,
+        targetId: memberId,
+        actorId,
+        correlationId: corr(req),
+      },
+      body.role,
+    );
+  });
+
+  app.delete('/api/v1/projects/:id/members/:memberId', async (req) => {
+    const { userId: actorId } = actorFrom(req);
+    const { id, memberId } = req.params as { id: string; memberId: string };
+    const q = req.query as { actorType?: string };
+    return removeMember(db, {
+      projectId: id,
+      actorType: q.actorType === 'agent' ? 'agent' : 'human',
+      targetId: memberId,
+      actorId,
+      correlationId: corr(req),
+    });
+  });
+
+  /** 组织通讯录与身份管理（§2.2「org_admin：身份管理」）*/
+  app.get('/api/v1/admin/users', async (req) => {
+    const { orgId } = await callerOrg(req);
+    return listOrgUsers(db, orgId);
+  });
+
+  app.patch('/api/v1/admin/users/:id/org-role', async (req) => {
+    const { orgId, userId: actorId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = z.object({ orgRole: OrgRole }).parse(req.body);
+    return setOrgRole(
+      db,
+      { orgId, targetUserId: id, actorId, correlationId: corr(req) },
+      body.orgRole,
+    );
+  });
+
+  // ── 角色定义（§2.2）─────────────────────────────────────────────────
+  /**
+   * ★★ 超管在这里造出「研发」「运营」「测试」这些角色。
+   *
+   *   内置的六个是预置数据，不是全集 —— 它们覆盖「项目怎么运转」，
+   *   覆盖不了「这个组织怎么分工」。
+   */
+  app.get('/api/v1/admin/roles', async (req) => {
+    const { orgId } = await callerOrg(req);
+    return listRoles(db, orgId);
+  });
+
+  app.post('/api/v1/admin/roles', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const result = await createRole(db, { orgId, actorId: userId, correlationId: corr(req) }, req.body);
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/api/v1/admin/roles/:key', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    return updateRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key, req.body);
+  });
+
+  app.delete('/api/v1/admin/roles/:key', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    return deleteRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key);
   });
 
   // ── 需求 ────────────────────────────────────────────────────────────
@@ -843,11 +1140,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
      *   连带它们的成本、成功率、负责人。
      */
     const { userId } = actorFrom(req);
-    if (projectId) await assertProjectMember(projectId, userId);
-    const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId));
-    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+    if (projectId) await assertProjectMember(projectId, userId, req);
+    const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
 
-    return listAgents(db, projectId, user.orgId);
+    return listAgents(db, projectId, orgId);
   });
 
   app.get('/api/v1/agents/:agentId', async (req) => {
@@ -911,11 +1207,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ 在此之前整个系统只有一个写操作（暂停 Agent），Agent 与运行时
    *   只能靠 seed 脚本灌进去 —— 「用户去配置 code agent」一步都做不了。
    */
-  async function callerOrg(req: { headers: Record<string, unknown> }): Promise<{ orgId: string; userId: string }> {
+  /**
+   * 「这次请求属于哪个组织」。
+   *
+   * ★★ 账号可以属于多个组织之后，这个答案不再能从账号上读出来 ——
+   *   由 `X-Org-Id` 头显式带上，没带则回落到确定的缺省（见 resolveCurrentOrg）。
+   */
+  async function callerOrg(req: {
+    headers: Record<string, unknown>;
+  }): Promise<{ orgId: string; userId: string }> {
     const { userId } = actorFrom(req);
-    const [user] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId));
-    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
-    return { orgId: user.orgId, userId };
+    const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
+    return { orgId, userId };
   }
 
   /**
@@ -952,7 +1255,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId, userId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
-    const result = await updateAgent(db, deps.registry, id, body, userId);
+
+    // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
+    const subject = await rbac.subjectForAgent(req, userId, id);
+    const result = await updateAgent(db, deps.registry, id, body, userId, (permission) =>
+      rbac.assertPermission(subject, permission, { agentId: id }),
+    );
 
     if (result.permissionsChanged) {
       // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
@@ -1012,6 +1320,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return updateRepository(db, id, body);
   });
 
+  /**
+   * 连通性探测。★ 凭证配错了要在配置页上知道，而不是等第一次派发 ——
+   *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
+   */
+  app.post('/api/v1/admin/repositories/:id/probe', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeRepository(db, id);
+  });
+
   app.delete('/api/v1/admin/repositories/:id', async (req) => {
     await callerOrg(req);
     const { id } = req.params as { id: string };
@@ -1019,17 +1337,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   // ── 项目工程约定 ────────────────────────────────────────────────────
+  // 成员关系与 convention.manage 权限都由 preHandler 统一判过（见闸门那一节）
   app.get('/api/v1/projects/:id/conventions', async (req) => {
-    const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
-    await assertProjectMember(id, userId);
     return listConventions(db, id);
   });
 
   app.post('/api/v1/projects/:id/conventions', async (req, reply) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
-    await assertProjectMember(id, userId);
     const body = ConventionInput.parse(req.body);
     return reply.status(201).send(await createConvention(db, id, userId, body));
   });
@@ -1082,6 +1398,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const targets = await db
       .select({
         id: decisions.id,
+        projectId: decisions.projectId,
         riskLevel: decisions.riskLevel,
         reversible: decisions.reversible,
         assigneeId: decisions.assigneeId,
@@ -1090,6 +1407,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .where(inArray(decisions.id, body.ids));
     const byId = new Map(targets.map((d) => [d.id, d]));
 
+    /**
+     * ★★ 权限也必须逐条判，按**这条决策所属的项目**。
+     *
+     *   批量接口的 URL 里没有项目 id，闸门（②层）够不着它 ——
+     *   而这里此前只判了「是不是责任人」。一条无人认领的决策
+     *   （assigneeId 为空，产品口径里它照样进批量）因此对任何人开放：
+     *   把 id 猜出来或从别处拿到，非成员就能替别的项目做批准。
+     *   一次跨项目的提交要按每条各自的归属判，不能按调用者「大概是谁」判。
+     */
+    const visible = new Set(await visibleProjectIds(userId));
     const blocked: { id: string; ok: false; error: string }[] = [];
     const allowed: string[] = [];
     for (const id of body.ids) {
@@ -1097,6 +1424,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       if (!d) {
         // 不存在的 id 交给单条批准去报「决策不存在」，口径一致
         allowed.push(id);
+        continue;
+      }
+      if (!visible.has(d.projectId)) {
+        // 与②层同一口径：不确认「这条决策存在」，只说够不着
+        blocked.push({ id, ok: false, error: '决策不存在，或当前身份没有访问权限' });
+        continue;
+      }
+      const permission = check(await rbac.resolveActor(req, userId, d.projectId), 'decision.act');
+      if (!permission.allowed) {
+        blocked.push({ id, ok: false, error: permission.reason ?? '权限不足' });
         continue;
       }
       const candidate = {
@@ -1200,37 +1537,31 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   /**
    * 项目角色 + 组织角色 → 权限判定。
    *
-   * ★ 判定本身在 @apos/domain，前后端共用一份 —— 界面上灰掉的按钮
-   *   和服务端真正拦住的请求必须是同一条规则。这一页管的是
+   * ★ 判定本身在 @apos/domain 的权限目录，前后端共用一份 —— 界面上灰掉的
+   *   按钮和服务端真正拦住的请求必须是同一条规则。这一页管的是
    *   「谁能给外部系统开写权限」，两边说法不一致的代价太高。
    */
-  async function integrationActor(projectId: string, userId: string): Promise<Actor> {
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
-
-    const [membership] = await db
-      .select()
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.projectId, projectId),
-          eq(projectMembers.actorType, 'human'),
-          eq(projectMembers.actorId, userId),
-        ),
-      );
-
-    return {
-      projectRole: (membership?.role as Actor['projectRole']) ?? null,
-      orgRole: (user.orgRole as Actor['orgRole']) ?? 'member',
-    };
+  async function integrationActor(
+    projectId: string,
+    userId: string,
+    req: FastifyRequest,
+  ): Promise<Actor> {
+    const actor = await rbac.resolveActor(req, userId, projectId);
+    /**
+     * ★ 集成设置那个窄接口只认内置角色。自定义角色在这里退化成
+     *   「不是内置角色」（null）—— 但它们的权限判定并不受影响：
+     *   assertIntegration 之外，preHandler 已经按权限集合判过一次了。
+     */
+    return { projectRole: asBuiltinRole(actor.projectRole), orgRole: actor.orgRole };
   }
 
   async function assertIntegration(
     projectId: string,
     userId: string,
     action: Parameters<typeof canIntegration>[1],
+    req: FastifyRequest,
   ) {
-    const actor = await integrationActor(projectId, userId);
+    const actor = await integrationActor(projectId, userId, req);
     if (!canIntegration(actor, action)) {
       throw new ApiError('FORBIDDEN', denyReason(actor, action) ?? '权限不足', {
         action,
@@ -1252,7 +1583,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const userId = optionalUserId(req);
     const data = await listIntegrations(db, deps.integrations, id);
     const actor = userId
-      ? await integrationActor(id, userId)
+      ? await integrationActor(id, userId, req)
       : ({ projectRole: null, orgRole: 'member' } as Actor);
 
     return { ...data, permissions: integrationPermissions(actor) };
@@ -1272,12 +1603,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       })
       .parse(req.body);
 
-    await assertIntegration(id, userId, 'connect');
+    await assertIntegration(id, userId, 'connect', req);
     /**
      * ★ 写权限是比「连上」高一个量级的授权，单独判一次。
      *   pm 能连 GitHub，但让它能改代码需要 tech_lead。
      */
-    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write');
+    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write', req);
 
     const created = await createIntegration(db, deps.integrations, {
       projectId: id,
@@ -1311,7 +1642,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const body = z.object({ mappings: z.array(SyncMapping).min(1) }).parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'change_sot');
+    await assertIntegration(projectId, userId, 'change_sot', req);
 
     const result = await updateSyncMapping(db, id, body.mappings, userId);
 
@@ -1341,7 +1672,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const { userId } = actorFrom(req);
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view');
+    await assertIntegration(projectId, userId, 'view', req);
     return ingestCiResults(db, deps.integrations, id);
   });
 
@@ -1349,7 +1680,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const { userId } = actorFrom(req);
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view');
+    await assertIntegration(projectId, userId, 'view', req);
 
     return runSync(db, deps.integrations, id);
   });
@@ -1371,7 +1702,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
     if (!conflict) throw notFound('冲突');
-    await assertIntegration(conflict.projectId, userId, 'resolve_conflict');
+    await assertIntegration(conflict.projectId, userId, 'resolve_conflict', req);
 
     const result = await resolveConflict(db, deps.integrations, {
       conflictId: id,
@@ -1411,7 +1742,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'connect');
+    await assertIntegration(projectId, userId, 'connect', req);
 
     const link = await linkObject(db, { integrationId: id, ...body });
     reply.code(201);
@@ -1431,7 +1762,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     void body;
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'disconnect');
+    await assertIntegration(projectId, userId, 'disconnect', req);
 
     const result = await disconnectIntegration(db, id);
     await emitAndPublish(db, {
@@ -1454,7 +1785,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const config = NotificationConfig.parse(req.body);
 
     const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'configure_notification');
+    await assertIntegration(projectId, userId, 'configure_notification', req);
 
     return updateNotificationConfig(db, id, config);
   });
@@ -1504,6 +1835,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     acknowledgeMismatches: z.boolean().optional(),
   });
 
+  /**
+   * ★ 收紧还是放宽，要把新旧规则各跑一遍场景才知道 ——
+   *   路由表只挡掉「连收紧都不够格」的人，方向判定交给 savePolicy 回调。
+   */
+  async function policyGuard(req: FastifyRequest, projectId: string) {
+    const { userId } = actorFrom(req);
+    const actor = await rbac.resolveActor(req, userId, projectId);
+    return (permission: 'policy.tighten' | 'policy.loosen') =>
+      rbac.assertPermission(actor, permission, { projectId });
+  }
+
   app.post('/api/v1/projects/:id/policies', async (req, reply) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
@@ -1521,7 +1863,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         enabled: body.enabled,
       },
       userId,
-      { acknowledgeMismatches: body.acknowledgeMismatches },
+      {
+        acknowledgeMismatches: body.acknowledgeMismatches,
+        assertCan: await policyGuard(req, id),
+      },
     );
     return reply.code(201).send(result);
   });
@@ -1543,7 +1888,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         enabled: body.enabled,
       },
       userId,
-      { policyId, acknowledgeMismatches: body.acknowledgeMismatches },
+      {
+        policyId,
+        acknowledgeMismatches: body.acknowledgeMismatches,
+        assertCan: await policyGuard(req, id),
+      },
     );
   });
 
@@ -1673,7 +2022,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .orderBy(desc(events.id))
       .limit(50);
 
-    return { item, runs, artifacts: arts, timeline: timeline.map(serializeEvent) };
+    const [project] = await db
+      .select({ identifier: projects.identifier })
+      .from(projects)
+      .where(eq(projects.id, item.projectId));
+
+    return {
+      // ★ 人类可读编号跟着详情一起回 —— 详情页的标题栏要显示它
+      item: { ...item, ref: formatRef(project?.identifier ?? 'TASK', item.number) },
+      runs,
+      artifacts: arts,
+      timeline: timeline.map(serializeEvent),
+    };
   });
 
   const StatusChange = z.object({
@@ -1686,13 +2046,45 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     overrideGuards: z.array(z.string()).optional(),
   });
 
+  app.post('/api/v1/projects/:id/work-items', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = WorkItemInput.parse(req.body);
+    const result = await createWorkItem(
+      db,
+      { projectId: id, actorId: userId, correlationId: corr(req) },
+      body,
+    );
+    return reply.status(201).send(result);
+  });
+
   app.patch('/api/v1/work-items/:id/status', async (req) => {
-    const { actor } = actorFrom(req);
+    const { userId, actor } = actorFrom(req);
     const { id } = req.params as { id: string };
     const body = StatusChange.parse(req.body);
 
     const [current] = await db.select().from(workItems).where(eq(workItems.id, id));
     if (!current) throw notFound('任务');
+
+    /**
+     * ★★ `draft → ready` 是把一个任务放进**可派发队列**，
+     *   那正是 `plan.approve` 这道 Human Gate 的内容。
+     *
+     *   手工建的任务不经过「需求 → 计划 → 批准」那条链，如果这一步
+     *   只要 `work_item.execute`，那么任何能建任务的人都能让 Agent
+     *   去做任意事情 —— 两道 Human Gate 就都被绕开了。
+     *
+     * ★ 判定放在 handler 而不是路由表：路由表看不到任务**当前**的状态，
+     *   而 `changes_requested → ready`（返工重新开始）同样落在 ready 上，
+     *   那一步的计划早就批过了，不该再要一次批准权限。
+     */
+    if (current.status === 'draft' && body.toStatus === 'ready') {
+      const gateActor = await rbac.resolveActor(req, userId, current.projectId);
+      rbac.assertPermission(gateActor, 'plan.approve', {
+        workItemId: id,
+        why: '手工建的任务没有经过计划批准，放行去执行等同于批准一份计划',
+      });
+    }
 
     const trigger = manualTriggerFor(current.status, body.toStatus);
     if (!trigger) {
@@ -2290,6 +2682,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       lastEventId: typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined,
     });
   });
+
+  // ★ 全部路由注册完，清点一次：有写路由没登记权限就在这里炸，服务起不来
+  assertRoutesCovered();
 }
 
 /**

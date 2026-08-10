@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { api } from './lib/api/client';
+import { api, ApiError } from './lib/api/client';
 import { qk } from './lib/query/keys';
 import { useAuthStore } from './stores/auth';
+import { useOrgStore } from './stores/org';
+import { Modal } from './features/work-item/ManualMoveDialog';
 import { ProjectListPage } from './pages/ProjectList';
 import { OverviewPage } from './pages/Overview';
 import { BoardPage } from './pages/Board';
@@ -20,6 +22,8 @@ import { AgentDetailPage } from './pages/Agents/Detail';
 import { DecisionsPage } from './pages/Decisions';
 import { IntegrationsPage } from './pages/Settings/Integrations';
 import { AgentConfigPage } from './pages/Settings/AgentConfig';
+import { MembersPage } from './pages/Settings/Members';
+import { RolesPage } from './pages/Settings/Roles';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -35,9 +39,24 @@ export function App() {
   const userId = useAuthStore((s) => s.userId);
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
 
+  const setOrganizations = useOrgStore((s) => s.setOrganizations);
+  /**
+   * ★ 组织列表要等身份落定再拉：没有 X-User-Id 时后端回的是
+   *   「不属于任何组织」，缓存住之后切换器会一直是空的。
+   */
+  const orgs = useQuery({
+    queryKey: qk.organizations(),
+    queryFn: api.organizations,
+    enabled: Boolean(userId),
+  });
+
   useEffect(() => {
     if (users.data) setUsers(users.data.users);
   }, [users.data, setUsers]);
+
+  useEffect(() => {
+    if (orgs.data) setOrganizations(orgs.data.organizations, orgs.data.currentOrgId);
+  }, [orgs.data, setOrganizations]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -68,6 +87,8 @@ export function App() {
           <Route path="/projects/:projectId/settings/policies" element={<PoliciesPage />} />
           <Route path="/projects/:projectId/settings/integrations" element={<IntegrationsPage />} />
           <Route path="/projects/:projectId/settings/agents" element={<AgentConfigPage />} />
+          <Route path="/projects/:projectId/settings/members" element={<MembersPage />} />
+          <Route path="/projects/:projectId/settings/roles" element={<RolesPage />} />
           {/* 运行时曾经是单独一页；页面文档 14 把它归为集成的一类，旧链接直接转过去 */}
           <Route
             path="/projects/:projectId/settings/runtimes"
@@ -128,6 +149,8 @@ function TopNav() {
         Autonomous Project OS
       </button>
 
+      <OrgSwitcher />
+
       <DecisionBadge />
 
       <div className="ml-auto flex items-center gap-2">
@@ -143,12 +166,63 @@ function TopNav() {
           {users.length === 0 && <option value="">加载中…</option>}
           {users.map((u) => (
             <option key={u.id} value={u.id}>
-              {u.name}（{u.orgRole}）
+              {u.name}
+              {u.orgRole ? `（${u.orgRole}）` : ''}
             </option>
           ))}
         </select>
       </div>
     </header>
+  );
+}
+
+/**
+ * 组织切换器。
+ *
+ * ★★ 和身份切换器分开放，因为两者正交：同一个人在 A 组织是管理员、
+ *   在 B 组织是普通成员。合成一个下拉框的话，「切身份」会顺手把组织
+ *   也改掉 —— 用户看到的是「我只换了个人，项目全没了」。
+ *
+ * ★ 切完要跳回项目列表：当前 URL 里的 projectId 属于上一个组织，
+ *   留在原地的表现是一屏 404，而用户刚做的动作是"换个组织看看"。
+ */
+function OrgSwitcher() {
+  const navigate = useNavigate();
+  const { org, orgId, organizations, switchOrg } = useOrgStore();
+  const [creating, setCreating] = useState(false);
+
+  if (organizations.length === 0) return null;
+
+  return (
+    <>
+      <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
+        <span className="text-[11px] text-slate-400">组织</span>
+        <select
+          aria-label="切换组织"
+          value={orgId ?? ''}
+          onChange={(e) => {
+            if (e.target.value === '__new__') {
+              setCreating(true);
+              return;
+            }
+            switchOrg(e.target.value);
+            navigate('/');
+          }}
+          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+        >
+          {organizations.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+          <option value="__new__">+ 新建组织…</option>
+        </select>
+        {org && (
+          <code className="text-[10px] text-slate-400">{org.slug}</code>
+        )}
+      </div>
+      {creating && <CreateOrgModal onClose={() => setCreating(false)} />}
+    </>
   );
 }
 
@@ -189,4 +263,103 @@ function DecisionBadge() {
       {stats.overdue > 0 && <span className="ml-1 font-medium">（{stats.overdue} 条已超时）</span>}
     </Link>
   );
+}
+
+/**
+ * 建组织。
+ *
+ * ★★ 这是 Plane 的 Workspace 在这里的对应物。在此之前组织只能由
+ *   seed 脚本造出来 —— 于是「多租户」只在数据库层面成立。
+ *
+ * ★ slug 留空就按名字推（中文名回落到 org-xxxx）。要求用户先想一个
+ *   英文短名，是把实现细节变成了他的问题。
+ */
+function CreateOrgModal({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [slug, setSlug] = useState('');
+  const qc = useQueryClient();
+  const switchOrg = useOrgStore((s) => s.switchOrg);
+  const navigate = useNavigate();
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createOrganization({ name: name.trim(), ...(slug.trim() ? { slug: slug.trim() } : {}) }),
+    onSuccess: async (res) => {
+      await qc.invalidateQueries({ queryKey: qk.organizations() });
+      // ★ 建完直接切过去 —— 建了却停在原来的组织，是让用户再点一次
+      switchOrg(res.organization.id);
+      navigate('/');
+      onClose();
+    },
+  });
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">新建组织</h2>
+        <p className="text-[11px] text-slate-500">
+          组织是一切数据的顶层容器：项目、Agent、代码仓库、成员都属于某一个组织，
+          彼此之间完全隔离。
+        </p>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">组织名</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Acme 科技"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            slug
+            <span className="ml-1 font-normal text-slate-400">选填</span>
+          </span>
+          <input
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder={slugPreview(name)}
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            出现在链接里，全局唯一。留空按组织名推断。
+          </p>
+        </label>
+
+        {create.error instanceof ApiError && (
+          <p className="text-xs text-rose-600">{create.error.message}</p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-slate-300 px-3 py-1.5 text-xs"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!name.trim() || create.isPending}
+            onClick={() => create.mutate()}
+            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {create.isPending ? '创建中…' : '创建'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** 和服务端 slugify 同一套判据；这里只用于**提示**，真正生效的是服务端算的那份 */
+function slugPreview(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return base || 'org-xxxxxxxx';
 }

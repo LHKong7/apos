@@ -783,6 +783,7 @@ function formatValue(v: unknown): string {
 function RepositoriesSection({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<RepositoryRow | null>(null);
 
   const q = useQuery({
     queryKey: qk.repositories(projectId),
@@ -818,6 +819,10 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
           {data.gitProblem} —— 需要代码仓库的任务将无法派发。
         </Notice>
       )}
+      {/* ★ 同理：少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */}
+      {!data.sshAvailable && data.repositories.some((r) => r.authKind === 'ssh_key') && (
+        <Notice tone="error">{data.sshProblem}</Notice>
+      )}
 
       {data.repositories.length === 0 ? (
         <EmptyState
@@ -829,18 +834,29 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
       ) : (
         <div className="space-y-2">
           {data.repositories.map((r) => (
-            <RepositoryCard key={r.id} repo={r} onDelete={() => remove.mutate(r.id)} error={remove.error} />
+            <RepositoryCard
+              key={r.id}
+              repo={r}
+              onDelete={() => remove.mutate(r.id)}
+              onEdit={() => setEditing(r)}
+              error={remove.error}
+            />
           ))}
         </div>
       )}
 
-      {creating && (
+      {(creating || editing) && (
         <RepositoryForm
           projectId={projectId}
+          existing={editing}
           canStoreInline={data.canStoreInlineCredential}
-          onClose={() => setCreating(false)}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
           onDone={() => {
             setCreating(false);
+            setEditing(null);
             void qc.invalidateQueries({ queryKey: qk.repositories(projectId) });
           }}
         />
@@ -849,15 +865,42 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
   );
 }
 
+/**
+ * 表单占位符跟着 git 地址变。
+ *
+ * ★ 与服务端的 resolveAuthUsername 是同一套判据，但这里只用来**提示**，
+ *   真正生效的是服务端算的那份（回显在卡片上）。前端算错顶多提示不准，
+ *   不会让认证行为不一致。
+ */
+function guessedAuthUsername(remoteUrl: string): string {
+  const u = remoteUrl.toLowerCase();
+  if (u.includes('github.com')) return 'x-access-token（GitHub）';
+  if (u.includes('gitlab.com')) return 'oauth2（GitLab）';
+  if (u.includes('bitbucket.org')) return 'x-token-auth（Bitbucket）';
+  if (u.trim()) return '认不出域名 —— 自建 GitLab 请填 oauth2';
+  return 'x-access-token';
+}
+
+const AUTH_SOURCE_LABEL: Record<string, string> = {
+  explicit: '手动指定',
+  host: '按域名推断',
+  default: '兜底默认值',
+};
+
 function RepositoryCard({
   repo,
   onDelete,
+  onEdit,
   error,
 }: {
   repo: RepositoryRow;
   onDelete: () => void;
+  onEdit: () => void;
   error: unknown;
 }) {
+  const probe = useMutation({ mutationFn: () => api.probeRepository(repo.id) });
+  const result = probe.data;
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -868,13 +911,36 @@ function RepositoryCard({
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
           {repo.scope === 'project' ? '本项目' : '组织共享'}
         </span>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="ml-auto rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-        >
-          删除
-        </button>
+        <div className="ml-auto flex gap-1.5">
+          {/*
+            ★ 「测试连接」是这张卡片上最该有的按钮。
+              没有它，验证凭证的唯一办法是派一个任务，然后看它以
+              「准备工作区失败：… 401」告终 —— 那条报错分不清是
+              token 过期、scope 不够，还是用户名占位不对。
+          */}
+          <button
+            type="button"
+            onClick={() => probe.mutate()}
+            disabled={probe.isPending}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {probe.isPending ? '测试中…' : '测试连接'}
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
+          >
+            删除
+          </button>
+        </div>
       </div>
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
@@ -884,11 +950,64 @@ function RepositoryCard({
         <Field label="凭证">
           {repo.credentialHint ?? <span className="text-slate-400">未配置</span>}
         </Field>
+        {/*
+          ★ 两种认证形态各显示各的那一项。
+            token 这边最容易错的是用户名占位（错了就是 401，而 401 的报错
+            不指向它 —— 自建 GitLab 踩的就是这个坑）；ssh 这边最容易被忽略
+            的是主机公钥有没有固定 —— 没固定的话 TOFU 等于没有校验。
+        */}
+        {repo.authKind === 'token' ? (
+          <Field label="凭证用户名">
+            <span className={repo.authUsernameSource === 'default' ? 'text-amber-700' : ''}>
+              {repo.authUsername}
+            </span>
+            <span className="ml-1 text-slate-400">
+              （{AUTH_SOURCE_LABEL[repo.authUsernameSource]}
+              {repo.authProvider ? ` · ${repo.authProvider}` : ''}）
+            </span>
+          </Field>
+        ) : (
+          <Field label="主机公钥">
+            {repo.sshHostKeyPinned ? (
+              <span className="text-emerald-700">
+                已固定{repo.sshHosts.length > 0 ? `（${repo.sshHosts.join('、')}）` : ''}
+              </span>
+            ) : (
+              <span className="text-amber-700">未固定 · 首次连接学习</span>
+            )}
+          </Field>
+        )}
+        <Field label="质量核验">
+          {repo.checkCommand ? (
+            <code className="text-slate-800">{repo.checkCommand}</code>
+          ) : (
+            <span className="text-amber-700">未配置</span>
+          )}
+        </Field>
       </dl>
 
-      {repo.warning && <p className="mt-2 text-[11px] text-amber-700">⚠ {repo.warning}</p>}
+      {repo.warnings.map((w) => (
+        <p key={w} className="mt-2 text-[11px] text-amber-700">
+          ⚠ {w}
+        </p>
+      ))}
       {repo.credentialProblem && (
         <p className="mt-1 text-[11px] text-rose-600">⚠ {repo.credentialProblem}</p>
+      )}
+
+      {result && (
+        <p
+          className={clsx(
+            'mt-2 whitespace-pre-wrap rounded px-2 py-1 text-[11px]',
+            result.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-700',
+          )}
+        >
+          {result.ok ? '✓ ' : '✗ '}
+          {result.message}
+        </p>
+      )}
+      {probe.error instanceof ApiError && (
+        <p className="mt-2 text-[11px] text-rose-600">{probe.error.message}</p>
       )}
       {error instanceof ApiError && <p className="mt-2 text-[11px] text-rose-600">{error.message}</p>}
     </div>
@@ -897,53 +1016,90 @@ function RepositoryCard({
 
 function RepositoryForm({
   projectId,
+  existing,
   canStoreInline,
   onClose,
   onDone,
 }: {
   projectId: string;
+  /** 传了就是编辑，标识与远端不可改 */
+  existing?: RepositoryRow | null;
   canStoreInline: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
+  const isEdit = Boolean(existing);
   const [form, setForm] = useState({
-    ref: '',
-    name: '',
-    remoteUrl: '',
-    defaultBranch: 'main',
-    branchPrefix: 'apos/',
-    checkCommand: '',
+    ref: existing?.ref ?? '',
+    name: existing?.name ?? '',
+    remoteUrl: existing?.remoteUrl ?? '',
+    defaultBranch: existing?.defaultBranch ?? 'main',
+    branchPrefix: existing?.branchPrefix ?? 'apos/',
+    // ★ 只回填手填过的那份。推断出来的值回填进去会把它「钉死」成显式值，
+    //   之后换了域名也不会跟着变
+    authUsername: existing?.authUsernameSource === 'explicit' ? existing.authUsername : '',
+    checkCommand: existing?.checkCommand ?? '',
     credential: '',
-    orgWide: false,
+    sshKnownHosts: existing?.sshKnownHosts ?? '',
+    orgWide: existing ? existing.scope === 'organization' : false,
   });
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
+  /**
+   * ★ 两种认证形态的字段不重叠，同时摆出来只会让人填错栏 ——
+   *   往 ssh 仓库里填 token、往 https 仓库里贴私钥都是真实发生过的错误。
+   *   判据和服务端的 isHttpRemote 一致；这里只决定显示什么，
+   *   真正生效的判定在服务端。
+   */
+  const isSsh = !/^https?:\/\//i.test((isEdit ? existing!.remoteUrl : form.remoteUrl).trim());
+
   const create = useMutation({
     mutationFn: () =>
-      api.createRepository({
+      isEdit
+        ? api.updateRepository(existing!.id, {
+            name: form.name,
+            defaultBranch: form.defaultBranch,
+            branchPrefix: form.branchPrefix,
+            authUsername: form.authUsername.trim() || null,
+            checkCommand: form.checkCommand.trim() || null,
+            // null = 清空（下次连接重新学习），这是服务器换了密钥时的出路
+            sshKnownHosts: form.sshKnownHosts.trim() || null,
+            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
+          })
+        : api.createRepository({
         ref: form.ref,
         name: form.name,
         remoteUrl: form.remoteUrl,
         defaultBranch: form.defaultBranch,
         branchPrefix: form.branchPrefix,
-        credential: form.credential.trim() || null,
-        projectId: form.orgWide ? null : projectId,
-      }),
+        // ★ 这两个此前一直躺在表单 state 里没被提交 ——
+        //   checkCommand 因此只能改数据库才配得上，而它是
+        //   reviewing 阶段唯一的真实测试数据源
+        authUsername: form.authUsername.trim() || null,
+        checkCommand: form.checkCommand.trim() || null,
+            sshKnownHosts: form.sshKnownHosts.trim() || null,
+            credential: form.credential.trim() || null,
+            projectId: form.orgWide ? null : projectId,
+          }),
     onSuccess: onDone,
   });
 
   return (
     <Modal onClose={onClose}>
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">登记代码仓库</h2>
+        <h2 className="text-sm font-semibold text-slate-900">
+          {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
+        </h2>
         <label className="block">
           <span className="text-xs font-medium text-slate-700">标识</span>
           <input
             value={form.ref}
+            disabled={isEdit}
             onChange={(e) => set('ref', e.target.value)}
             placeholder="order-service"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
           />
           <p className="mt-1 text-[11px] text-slate-500">
             Agent 资源范围里填的就是这个值，登记后不建议再改。
@@ -963,10 +1119,15 @@ function RepositoryForm({
           <span className="text-xs font-medium text-slate-700">git 地址</span>
           <input
             value={form.remoteUrl}
+            disabled={isEdit}
             onChange={(e) => set('remoteUrl', e.target.value)}
             placeholder="https://github.com/acme/order-service.git"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
           />
+          <p className="mt-1 text-[11px] text-slate-500">
+            https 用 token 认证，<code>git@…</code> / <code>ssh://…</code> 用 SSH 私钥 ——
+            填完地址下面的凭证字段会跟着切换。
+          </p>
         </label>
 
         <div className="grid grid-cols-2 gap-2">
@@ -988,17 +1149,120 @@ function RepositoryForm({
           </label>
         </div>
 
+        {!isSsh && (
+          <label className="block">
+            <span className="text-xs font-medium text-slate-700">
+              凭证用户名占位
+              <span className="ml-1 font-normal text-slate-400">选填</span>
+            </span>
+            <input
+              value={form.authUsername}
+              onChange={(e) => set('authUsername', e.target.value)}
+              placeholder={guessedAuthUsername(form.remoteUrl)}
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+            {/*
+              ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
+                留空能按 github.com / gitlab.com 推断出来，但**自建** GitLab
+                装在 git.acme.com 上推不出来 —— 那正是最常见的部署形态。
+            */}
+            <p className="mt-1 text-[11px] text-slate-500">
+              留空按域名推断（GitHub → <code>x-access-token</code>，GitLab →{' '}
+              <code>oauth2</code>，Bitbucket → <code>x-token-auth</code>）。
+              <span className="text-amber-700">自建 GitLab 推断不出来，需要手填 oauth2。</span>
+            </p>
+          </label>
+        )}
+
+        {isSsh && (
+          <label className="block">
+            <span className="text-xs font-medium text-slate-700">
+              主机公钥
+              <span className="ml-1 font-normal text-slate-400">选填 · known_hosts 格式</span>
+            </span>
+            <textarea
+              value={form.sshKnownHosts}
+              onChange={(e) => set('sshKnownHosts', e.target.value)}
+              rows={2}
+              placeholder="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…"
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-[11px]"
+            />
+            {/*
+              ★ 留空不等于不校验 —— 首次连接会 TOFU 学到并自动固定。
+                但那一次窗口是真实存在的，所以要给出关掉它的办法。
+              ★ 这一栏**不加密**，因为主机公钥本来就是公开比对的那一份。
+                必须说清楚，否则会有人把私钥贴进来。
+            */}
+            <p className="mt-1 text-[11px] text-slate-500">
+              用 <code>ssh-keyscan github.com</code> 生成。留空的话首次连接会自动学习并固定，
+              此后转严格校验 —— 填在这里只是把首次那一次的信任窗口也关掉。
+              <span className="text-amber-700">这是公开信息，不加密保存；私钥请填在下面一栏。</span>
+            </p>
+          </label>
+        )}
+
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">访问凭证</span>
+          <span className="text-xs font-medium text-slate-700">
+            质量核验命令
+            <span className="ml-1 font-normal text-slate-400">选填</span>
+          </span>
           <input
-            value={form.credential}
-            onChange={(e) => set('credential', e.target.value)}
-            type="password"
-            placeholder={canStoreInline ? 'ghp_… 或 env:变量名' : 'env:变量名'}
+            value={form.checkCommand}
+            onChange={(e) => set('checkCommand', e.target.value)}
+            placeholder="pnpm test"
             className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
           />
+          {/*
+            ★ 不填不是「少个功能」，是 reviewing 阶段的门禁没有数据可依据。
+          */}
           <p className="mt-1 text-[11px] text-slate-500">
-            私有仓库必填，否则准备工作区时会克隆失败。
+            Agent 收工后、提交之前在工作区执行。不填的话，reviewing
+            阶段的质量门禁只能依据 Agent 自述 —— 那是一句话，不是证据。
+          </p>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            {isSsh ? 'SSH 私钥' : '访问凭证'}
+          </span>
+          {/*
+            ★★ 私钥必须用 textarea：`<input>` 会把粘贴内容里的换行吃掉，
+              而 PEM 是多行的 —— 单行输入框根本装不下一把 key，
+              表现是保存后提示「格式不正确」，而用户明明整段复制了。
+          */}
+          {isSsh ? (
+            <textarea
+              value={form.credential}
+              onChange={(e) => set('credential', e.target.value)}
+              rows={4}
+              placeholder={
+                canStoreInline
+                  ? '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n\n或 env:变量名'
+                  : 'env:变量名'
+              }
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-[11px]"
+            />
+          ) : (
+            <input
+              value={form.credential}
+              onChange={(e) => set('credential', e.target.value)}
+              type="password"
+              placeholder={canStoreInline ? 'ghp_… 或 env:变量名' : 'env:变量名'}
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          )}
+          <p className="mt-1 text-[11px] text-slate-500">
+            {isSsh ? (
+              <>
+                粘贴私钥全文（部署密钥即可，只需这个仓库的读写权限）。加密保存，接口永不回显。
+                <span className="text-amber-700">
+                  不支持带密码短语的私钥 —— 无人值守场景没法输入，保存时会被拒。
+                </span>
+                {' '}留空则回退到宿主机的 <code>~/.ssh</code>，容器化部署里通常没有。
+              </>
+            ) : (
+              '私有仓库必填，否则准备工作区时会克隆失败。'
+            )}
           </p>
         </label>
 

@@ -9,8 +9,23 @@ import type { BoardFilters } from '../api/client';
  */
 export const qk = {
   users: () => ['users'] as const,
+  /**
+   * ★ key 里不带 orgId，靠切换组织时整体作废缓存（stores/org 的 apply）——
+   *   与身份切换同一套机制。组织是多租户边界，跨过它的脏缓存
+   *   会把 A 公司的数据摆在 B 公司的界面上。
+   */
+  organizations: () => ['organizations'] as const,
+  organizationMembers: (orgId: string) => ['organizationMembers', orgId] as const,
   projects: () => ['projects'] as const,
   project: (id: string) => ['project', id] as const,
+  /**
+   * 当前身份在这个项目里的权限。
+   *
+   * ★ key 里不带 userId，靠切换身份时整体作废缓存（stores/auth 的 applyIdentity）——
+   *   与决策收件箱、总览「需要你处理」同一套机制。
+   */
+  permissions: (projectId: string) => ['permissions', projectId] as const,
+  members: (projectId: string) => ['members', projectId] as const,
   board: (projectId: string, filters: BoardFilters) =>
     ['board', projectId, normalizeFilters(filters)] as const,
   /** 匹配某项目下所有筛选组合的看板缓存 */

@@ -82,10 +82,19 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 
 **③ 与 ①② 的区别**：①② 回答"你有没有资格做"，③ 回答"这件事该不该自动做"。一个 `tech_lead` 有资格批准计划（②通过），但如果计划涉及生产 DDL，Policy 仍要求 DBA 签字（③）。
 
-### 2.1.1 ② 层的实现位置
+### 2.1.1 ①② 层的实现位置
 
-②（项目角色）在 `apps/api/src/http/routes.ts` 里以一个 `preHandler` 钩子统一落地，
+①② 在 `apps/api/src/http/routes.ts` 的**同一个 `preHandler` 钩子**里统一落地
+（判定逻辑在 `apps/api/src/http/rbac.ts`，规则本身在 `packages/domain/src/rbac/`），
 不在各个 handler 里分别写：
+
+```
+preHandler → 解析身份（X-User-Id）
+           → ② 成员关系闸门（非成员 404）
+           → ① 权限矩阵（角色不够 403）
+```
+
+**② 项目成员**按 URL 形状拦截：
 
 | 形状 | 判定 |
 | --- | --- |
@@ -101,17 +110,109 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 会把项目 id 变成可枚举的探针。文案用「不存在**或**没有权限」，
 既不确认存在性，又能让被分享链接的人知道该去切换身份。
 
+**同组织的 `org_admin` 即使不是成员也放行**（§2.2「全部权限」），
+但**跨组织不行**——管理员的「全部」以组织为界，越界就是多租户隔离失效。
+
+**① 权限矩阵**靠一张路由表逐条登记（`rbac.ts` 的 `ROUTE_PERMISSIONS`）。
+这里不能照搬②层「按 URL 形状拦截」的办法：
+「批准计划要 `tech_lead`」推不出 URL 形状，只能一条条写。
+
+于是改用另一个保证：**写路由漏登记，服务起不来**。
+`guardRouteCoverage` 在注册路由时清点，任何 `POST/PUT/PATCH/DELETE`
+既没登记权限、也不在豁免清单里，`buildApp` 直接抛错。
+豁免必须写明理由（目前四条：健康探针、Agent 回调、开发用 webhook sink、
+建组织），理由会出现在错误信息里。
+
+跨项目的批量接口（`/decisions/batch-approve`）用 `deferred('理由')` 标记：
+一次提交的十条决策可能属于十个项目，URL 上一个都看不出来，
+只能在 handler 里按每条各自的归属逐条判。这是唯一合法的例外形态，
+且同样要求写出理由。
+
+**判定规则本身在 `packages/domain/src/rbac/`，前后端共用**：
+前端用 `GET /api/v1/projects/{id}/permissions` 一次拿全权限与拒绝理由，
+据此灰按钮并显示「该找谁」。灰按钮不是权限——服务端仍然独立判一遍。
+
+#### 2.1.2 「当前是哪个组织」
+
+账号与组织是**多对多**（`organization_members`，见 02-domain-model §2.1），
+所以四层判定的第①层需要先知道「这次请求属于哪个组织」。答案由 `X-Org-Id`
+头显式带上，解析在 `rbac.ts` 的 `resolveCurrentOrg`：
+
+| 情况 | 行为 | 理由 |
+| --- | --- | --- |
+| 没带头 | 回落到确定的缺省（按加入时间第一个），并把 `currentOrgId` 回给调用方 | 报错的表现是整个站点白屏；前端猜缺省值会导致「显示 A、数据来自 B」 |
+| 带了但不是成员 | **404**，不是 403 | 403 等于确认这个组织存在，把 id 变成可枚举的探针 |
+| 一个组织都不属于 | 401 并说明要先建/加入一个组织 | 这时任何操作都没有作用域 |
+
+★★ URL 里带组织 id 的写路由必须校验它就是**当前**组织
+（`assertCurrentOrg`）。权限判定拿的是当前组织的 orgRole，handler 如果照着
+URL 去改另一个组织，那次判定就白判了——在自己是管理员的 A 组织里发一个指向
+B 组织的请求，就能拿 A 的管理员身份去改 B。这是最典型的一类越权。
+
+★ `POST /api/v1/organizations`（建组织）在豁免清单里：这一刻还不存在
+「在哪个组织里」，第①层没有输入。它的门槛只有「是不是一个登录账号」。
+
 ### 2.2 角色定义
 
-| 角色 | 层级 | 关键权限 |
-| --- | --- | --- |
-| `org_admin` | 组织 | 全部；身份管理、组织级 Policy、模型接入、审计查看 |
-| `sponsor` | 项目 | 需求确认、预算超限审批、业务验收、结项 |
-| `tech_lead` | 项目 | 计划批准、架构决策、Agent 权限调整、Policy 配置、强制放行 |
-| `pm` | 项目 | 项目设置、计划批准、调度调整、WIP 配置 |
-| `member` | 项目 | 执行任务、接管 Agent、发起决策、重试 |
-| `agent_owner` | 资源 | 所属 Agent 的配置（跨项目） |
-| `viewer` | 项目 | 只读 |
+**角色是数据，不是枚举。** 下面这几个是每个组织建立时预置的**内置角色**，
+组织可以在它们之外自定义（研发、运营、测试、安全、数据…），见 §2.2.1。
+
+| 角色 | 层级 | 关键权限 | 谁能担任 |
+| --- | --- | --- | --- |
+| `org_admin` | 组织 | 全部；身份管理、定义角色、组织级 Policy、模型接入、审计查看 | 人 |
+| `sponsor` | 项目 | 需求确认、预算超限审批、业务验收、结项 | 人 |
+| `tech_lead` | 项目 | 计划批准、架构决策、Agent 权限调整、Policy 配置、强制放行 | 人 |
+| `pm` | 项目 | 项目设置、收紧 Policy、调度调整、成员管理 | 人 |
+| `member` | 项目 | 执行任务、接管 Agent、处理决策、重试 | 人 |
+| `executor` | 项目 | **只执行任务，不参与任何决策与审批** | 人 / **Agent** |
+| `agent_owner` | 资源 | 所属 Agent 的配置（跨项目） | 人 |
+| `viewer` | 项目 | 只读 | 人 / Agent |
+
+内置角色的权限集合由**权限目录反推**（`packages/domain/src/rbac/roles.ts` 的
+`BUILTIN_ROLE_PERMISSIONS`），不手写第二份 —— 手写反向表意味着改矩阵时要记得同步，
+而漏同步的表现是「矩阵里写着 pm 能做，实际 pm 做不了」，没有任何报错。
+服务启动时把库里的内置角色对齐到当前代码（`syncBuiltinRoles`），
+库里那几行退化成一份缓存。
+
+内置角色**不可修改也不可删除** —— 它们就是 §2.3 的权限矩阵本身。
+每个组织都能改的话，「tech_lead 能批准计划」这句话在文档、审计、支持里
+就失去了共同语义。要不一样，就自定义一个新角色。
+
+#### 2.2.1 自定义角色
+
+`org_admin` 可以定义组织自己的角色（`/api/v1/admin/roles`，
+实现在 `apps/api/src/http/roles.ts`）。一个角色 = 一个名字 + 一组权限 +
+**谁能担任**。三条限制，每一条都堵一条提权路径：
+
+| 限制 | 堵掉的路径 |
+| --- | --- |
+| 不认识的权限名当场拒 | 「我明明给了他权限」的幽灵故障 —— 那条权限永远不生效 |
+| **组织级权限不能下放** | 造一个「能创建角色的角色」发出去，拿到的人再造一个更宽的，一步走到组织管理员 |
+| **`humanOnly` 权限不能进 Agent 角色** | 自定义一个叫「研发」的角色，把「改 Policy」塞进去，再指派给 Agent（§7.2 的绕法） |
+
+#### 2.2.2 角色由人担任还是由 Agent 担任
+
+这是本产品的基本形状：「测试」这个岗位上可能坐着一个人，也可能是
+`test-agent-1`，还可能两者都有。所以 `project_members` 里人与 Agent 同表，
+担任**同一套角色**，走同一个指派接口（`PUT /projects/{id}/members/{memberId}`
+带 `actorType`）。
+
+但 Agent 能担任的角色有硬边界：**带 `humanOnly` 权限的角色永远给不了 Agent**。
+这些权限是「人类始终掌握目标、风险与最终决策权」这句话的全部落点：
+
+- `requirement.approve` —— 产品的第一个 Human Gate
+- `plan.approve` —— 批准计划 = 批准一批自动化行为
+- `decision.act` —— 决策**就是**被升级给人的那些事；Agent 拿到它，Human Gate 会变成自问自答的环
+- `policy.*` / `agent.permissions.*` / 成员与角色管理 —— §7.2
+
+`appliesTo` 由这条规则算出下限（`assignableBy`），管理员可以在范围内再收窄
+（「研发我们只给人」），但放不宽。指派时还会再判一次 ——
+「把决策塞进研发角色」和「把研发角色指派给 Agent」是两次独立操作，
+任何一次都可能是最后一步。
+
+★ Agent 担任角色**不等于** Agent 继承人类权限（§1.2）。角色管的是
+「能调哪些产品操作」，Agent 的工具与资源权限（§3.1 的 allowedTools /
+deniedTools / resourceScopes）另在 Agent 档案里独立配置，两者不互相推导。
 
 ### 2.3 权限矩阵（关键操作）
 
@@ -126,12 +227,73 @@ async function dispatchRun(item: WorkItem, agent: Agent) {
 | **放宽 Policy** | `tech_lead` | **必须携带模拟结果** |
 | 收紧 Policy | `pm` | — |
 | 强制放行验收标准 | `tech_lead` | 必填原因 + 审计 |
+| 建任务（手工） | `work_item.create`（执行角色） | 一律落成 `draft`，不可派发 |
+| **放行手工任务去执行** | `tech_lead`（`plan.approve`） | 见下 |
+| 建组织 | 任何登录账号 | 创建者成为该组织的 `org_admin` |
+| 改组织信息 / 成员归属 | `org_admin` | 审计 |
 | 处理决策 | 该决策的责任人 | **不可代行**，见 §2.4 |
 | 终止 Agent Run | `tech_lead` / `pm` / `agent_owner` | — |
 | 查看 Run 详细模式 | `tech_lead` / `agent_owner` | 可能含敏感上下文 |
 | 导出审计日志 | `org_admin` | 导出行为本身记审计 |
 
 **不对称设计**：收紧权限比放宽权限要求低。收紧总是安全的，放宽需要更高门槛与额外证据（模拟结果、影响预演）。
+
+★★ **手工建的任务不绕过 Human Gate。**
+
+工作项原本只能由「需求 → 计划 → 批准 → 分解」生成，两道 Human Gate
+（`requirement.approve` / `plan.approve`）都在那条链上。补上手工创建入口之后，
+如果建完就能派发，那么任何能建任务的人都可以让 Agent 去做任意事情——
+两道门就都被绕开了，而且绕开的方式在接口清单上完全看不出来。
+
+所以手工建的任务一律停在 `draft`（接口**不接受**调用方指定状态），
+`draft → ready` 这一步要 `plan.approve`。门禁的粒度从「批一份计划」变成
+「批一个任务」，而不是没有门禁。
+
+★ 这条判定在 handler 里（`routes.ts` 的状态路由）而不是路由表：路由表看不到
+任务**当前**的状态，而 `changes_requested → ready`（返工重新开始）同样落在
+ready 上，那一步的计划早就批过了，再要一次批准权限会让每次返工都惊动
+tech_lead，而返工是执行者的日常动作。
+
+#### 2.3.1 「这次改动算收紧还是放宽」怎么判
+
+不对称设计只有在能**可靠区分**两个方向时才成立。判据在
+`packages/domain/src/rbac/change-direction.ts`，两条都是**看结果不看写法**：
+
+- **Policy**：把新旧规则集各在场景网格上跑一遍。只要存在一个场景从
+  「要人确认」变成「自动放行」，整次改动就算放宽。
+  比较两条规则谁更严会漏掉「插一条更高优先级的宽松规则把严格规则挡在后面」——
+  规则本身没被改动，生效的却已经是新的那条。
+- **Agent 权限**：白名单变长、`deniedTools` **变短**、资源 scope 升级，
+  三者任一即为扩大。黑名单那条最容易判反：从里面拿掉一项是撤掉一条硬约束，
+  按「列表变短 = 收紧」的直觉会判成收紧，于是 owner 就能自己把
+  「绝对不能合并代码」这条撤了。
+
+判定发生在路由层之后、副作用之前。路由表只挡掉「连收紧都不够格」的人；
+方向算出来之后再判一次（`savePolicy` / `updateAgent` 的 `assertCan` 回调）。
+**顺序不能反**：Policy 的模拟要扫 90 天历史评估，
+放在权限判定之前等于让没资格放宽的人白跑一遍，
+还把「哪些历史任务会被自动放行」送给了不该看到它的人。
+
+#### 2.3.2 角色怎么改
+
+- 定义角色：`/api/v1/admin/roles`（`org_admin`），见 §2.2.1
+- 指派角色：`/api/v1/projects/{id}/members/{memberId}`（带 `project.members.manage` 的角色）
+- 组织身份：`PATCH /api/v1/admin/users/{id}/org-role`（`org_admin`）
+
+全部记审计（§6.3）。一套改不了的权限体系，实践中的结局是
+「所有人共用一个账号」—— 因为换角色比换个人麻烦。三条防自伤的约束：
+
+- 项目里至少留一个**带 `project.members.manage` 的人**，否则这个项目的权限
+  只有组织管理员能修。★ 判据是权限不是角色名 —— 角色可自定义之后，
+  「负责人」可能叫「运营主管」，按名字判会让这条保护静默失效；
+- 组织里至少留一个 `org_admin`，否则再没有人能管身份、定义角色、看审计；
+- 有人（或 Agent）正在担任的角色删不掉，也不能把 `appliesTo` 改窄到
+  把他们排除在外 —— 否则会留下一批权限说不清算不算数的成员。
+
+角色取值由**外键**保证（`project_members(org_id, role) → roles(org_id, key)`，
+迁移 `0011_custom_roles`）。外键比 CHECK 强的地方不在写入侧而在删除侧：
+它让「正在被人担任的角色」删不掉，而「角色被删了、成员权限静默归零」
+正是最难查的那种故障。`users.org_role` 仍是 CHECK（组织角色不可自定义）。
 
 ### 2.4 决策责任不可代行
 
@@ -309,6 +471,113 @@ async function buildAgentContext(item: WorkItem, agent: Agent): Promise<ContextI
 
 **永不回显**：API 返回时只给后四位（`****1234`）。数据库中的加密字段不进日志、不进事件 payload。
 
+### 5.4 代码仓库凭证（GitHub / GitLab / …）
+
+登记在「Agent 配置 → 代码仓库」（`/api/v1/admin/repositories`，需 `repository.manage`）。
+凭证两种形态，没有第三种（`modules/security/secrets.ts`）：
+
+- `env:GITHUB_TOKEN` —— 库里只存变量名，明文只在进程环境。**生产首选**
+- 直接粘贴 —— AES-256-GCM 加密入库，钥匙是库外的 `APOS_SECRET_KEY`
+
+没配 `APOS_SECRET_KEY` 时接口**直接拒绝**粘贴的凭证并要求改用 `env:` 形态，
+不做「先存着回头再加密」。Token 需要的权限就是 clone / fetch / push
+（GitHub fine-grained PAT 给 Contents: Read and write 即可）——
+平台不调 GitHub / GitLab 的 API。
+
+#### 5.4.1 凭证用户名占位
+
+HTTPS token 走 Basic 认证，用户名那一段各家要求不同：
+
+| 服务 | 用户名占位 |
+| --- | --- |
+| GitHub / GHE | `x-access-token` |
+| GitLab（含自建） | `oauth2` |
+| Bitbucket | `x-token-auth` |
+
+留空时按域名推断（`resolveAuthUsername`）：公有云域名与**首段标签是服务商名**
+的自建实例（`gitlab.acme.com`）都认得出来；`git.acme.com` 认不出来
+—— 底下可能是 Gitea、Gogs、GitLab、Bitbucket Server，猜错就是 401，
+所以如实回落到默认值并在配置页上打警告，让人手填。
+
+★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
+所以配置页会把**即将使用的占位值以及它的来源**（手填 / 按域名推断 / 兜底）
+直接显示出来，探测失败时也会连同占位值一起说。
+
+#### 5.4.2 SSH 私钥（`ssh://` 与 `git@` 形态）
+
+同一个凭证字段，ssh 地址填的是**私钥全文**，两种形态共用
+`env:` / 加密内联那套存储。登记时就会验形态（`inspectPrivateKey`）。
+
+**★★ 私钥不落盘，走 ssh-agent。**
+
+OpenSSH 的 `ssh -i` 只接受文件路径，所以「写个临时 key 文件」是最容易
+想到的做法，但在这个平台上它不成立：容器里同时跑着别的 Run 的 Agent，
+它们是**同一个 OS 用户**的进程，只要 key 在磁盘上，任何一个 Agent 的
+Bash 工具都能 `cat` 到它 ——「跑之前写、跑完删」挡不住这一点，因为并发的
+Run 里总有别人的 Agent 正在跑。这和 §5.4 已有的两条纪律是同一条：
+token 不拼进 remote URL（`.git/config` 就在 Agent 的工作目录里），
+不用 credential helper（要落盘）。私钥比 token 更值钱，标准不该更低。
+
+所以：key 从 stdin 喂给 `ssh-add -`，只活在 agent 进程的内存里；
+`SSH_AUTH_SOCK` 只进 **git 子进程**的环境（Agent 的运行时环境另外构造，
+拿不到）；socket 在 0700 的临时目录里；agent 的生命周期严格包在
+`withSshAgent` 里，`finally` 里 kill + 删目录。
+
+**★★ 不支持带密码短语的私钥，且在保存那一刻就拒。**
+
+无人值守场景没法输入密码，所以它注定用不了。放进库的话失败会推迟到
+第一次派发，而且**不是报错**——是 `ssh-add` 挂在那里等密码，表现成
+「任务一直在执行中」。运行时另外用 `SSH_ASKPASS_REQUIRE=never` 兜底，
+保证任何漏网的情况也是当场失败而不是挂住。
+
+**★★ 主机公钥 TOFU 之后固定。**
+
+`repositories.ssh_known_hosts` 存主机公钥（明文——它本来就是要公开比对
+的那一份）。为空时首次连接用 `accept-new`，**连上之后立刻把学到的公钥
+写回库**，此后转 `StrictHostKeyChecking=yes`。
+
+不固定的话 `accept-new` 等于 `no`：每次连接都是一个全新的临时
+known_hosts，「未知主机」这个条件永远成立，于是每次都放行 ——
+中间人换掉主机公钥也照连不误。TOFU 要成立，第一次学到的东西必须留下来。
+任何时候都不用 `StrictHostKeyChecking=no`。管理员也可以用
+`ssh-keyscan` 预先填好（更强），或清空以重新学习（服务器真换了密钥时）。
+
+**★ 用 `IdentityAgent` + `IdentityFile=none` 限定身份，不能用 `IdentitiesOnly=yes`。**
+
+`IdentitiesOnly` 的语义是「只用配置/命令行里指定的身份**文件**」，
+它会把 agent 提供的身份一并排除掉 —— 而我们的 key 只存在于 agent 里。
+加上它的表现是 `Permission denied (publickey)`：看起来像仓库没授权，
+实际上 key 根本没被拿出来试过。
+
+★ 没配私钥的 ssh 仓库仍然回退到宿主机的 `~/.ssh`（历史行为，部署在有
+SSH 配置的机器上是合法用法），配置页会说明容器里通常没有这份配置。
+
+#### 5.4.3 连通性探测
+
+`POST /api/v1/admin/repositories/{id}/probe` 跑一次 `git ls-remote --heads`，
+验三件事：域名通不通、凭证对不对、默认分支在不在。只读、不落盘、不建镜像。
+
+★ 存在的理由是「配错了要在配置页上知道」。没有它，验证凭证的唯一办法
+是派一个任务，然后看它以「准备工作区失败：… 401」告终 ——
+那条报错分不清是 token 过期、scope 不够，还是用户名占位不对，
+而这三种原因的下一步动作完全不同。
+
+用 `ls-remote` 不用 `clone`：要验的三件事它全能答且是秒级，
+而 clone 一个大仓库要几分钟 —— 贵到没人愿意点第二次的检查等于没有检查。
+
+#### 5.4.4 质量核验命令
+
+`checkCommand`（如 `pnpm test`）在 Agent 收工后、**提交之前**于工作区执行，
+失败也照样提交（失败的改动同样需要被人看到）。
+
+★★ 它是 reviewing 阶段唯一的**真实**测试数据源。不配的话，
+`qualityGatePassed` 这道门禁只能依据「Agent 说它跑过测试了」——
+那是一句自述，不是证据。所以未配置时配置页会把这句话直接说出来。
+
+★ 它是在服务端 shell 里执行的任意命令，配置权限就是 `repository.manage`
+（组织管理员），与登记仓库同一档 —— 能登记仓库的人本来就能让 Agent
+往里写代码，不设更高的门槛没有意义。
+
 ---
 
 ## 6. 审计日志
@@ -365,6 +634,20 @@ REVOKE UPDATE, DELETE ON events FROM apos_app;
 - 集成连接/断开、Source of Truth 变更
 - 敏感数据原文查看
 - 审计日志导出
+
+对应的事件类型见 `packages/contracts/src/events/index.ts` 的 `AUDIT_EVENTS`。
+授权变更分两类：
+
+- **谁担任什么角色**（subject 是被改的那个人 / Agent）：
+  `project.member_added` / `project.member_role_changed` /
+  `project.member_removed` / `user.org_role_changed`
+- **角色本身是什么**（subject 是角色）：
+  `role.created` / `role.updated` / `role.deleted`
+
+**为什么这两类都要有**：§7 把「权限累积」列为本产品的特有威胁，
+它的第一条缓解手段就是「权限变更全审计」。只记第一类的话，
+「谁给研发这个角色加上了放宽规则的权限」查不到 ——
+而逐个人翻授权记录也拼不出真相，每个人的记录都只会显示「他一直是研发」。
 
 ---
 

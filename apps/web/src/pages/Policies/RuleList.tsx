@@ -1,5 +1,6 @@
 import clsx from 'clsx';
-import type { PolicyRow } from '../../lib/api/types';
+import { GatedButton } from '../../components/Gated';
+import type { Permission, PolicyRow } from '../../lib/api/types';
 
 /**
  * 规则列表（页面文档 13 §5.3）。
@@ -87,14 +88,34 @@ export function RuleList({
 
               {p.editable ? (
                 <>
-                  <Action onClick={() => onEdit(p)}>编辑</Action>
-                  <Action onClick={() => onToggle(p)}>{p.enabled ? '停用' : '启用'}</Action>
-                  <Action onClick={() => onDelete(p)}>删除</Action>
+                  {/*
+                    ★ 编辑按 policy.tighten 判 —— 那是「改规则」的下限。
+                      这次改动到底算收紧还是放宽，要把新旧规则各跑一遍场景
+                      才知道，前端算不了，也不该算。所以这里只挡掉
+                      「连收紧都不够格」的人，真正的方向判定在保存时由服务端做，
+                      驳回文案会说清楚是因为放宽。
+                  */}
+                  <Action permission="policy.tighten" onClick={() => onEdit(p)}>
+                    编辑
+                  </Action>
+                  {/* ★ 停用就是把治理拿掉，与放宽同档 */}
+                  <Action
+                    permission={p.enabled ? 'policy.loosen' : 'policy.tighten'}
+                    onClick={() => onToggle(p)}
+                  >
+                    {p.enabled ? '停用' : '启用'}
+                  </Action>
+                  <Action permission="policy.loosen" onClick={() => onDelete(p)}>
+                    删除
+                  </Action>
                 </>
               ) : (
                 <span className="text-slate-400">组织级规则，项目内不可修改</span>
               )}
-              <Action onClick={() => onHistory(p)}>变更历史</Action>
+              {/* 变更历史是只读的 —— 谁都该看得到规则怎么变成今天这样 */}
+              <Action permission="policy.view" onClick={() => onHistory(p)}>
+                变更历史
+              </Action>
             </div>
           </li>
         ))}
@@ -103,14 +124,22 @@ export function RuleList({
   );
 }
 
-function Action({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function Action({
+  children,
+  onClick,
+  permission,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  permission: Permission;
+}) {
   return (
-    <button
-      type="button"
+    <GatedButton
+      permission={permission}
       onClick={onClick}
       className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50"
     >
       {children}
-    </button>
+    </GatedButton>
   );
 }

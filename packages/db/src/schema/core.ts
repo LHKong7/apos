@@ -3,7 +3,9 @@ import {
   bigint,
   bigserial,
   boolean,
+  check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -27,6 +29,7 @@ import type {
   PolicyContext,
   ResourceScope,
 } from '@apos/contracts';
+import { OrgRole } from '@apos/contracts';
 import {
   actorTypeEnum,
   autonomyLevelEnum,
@@ -44,24 +47,134 @@ import {
 
 const now = sql`now()`;
 
+/**
+ * 角色取值的库级约束（docs/tech/09-security.md §2.2）。
+ *
+ * ★ 角色是权限判定的输入。库里存进一个拼错的 `techlead`，判定会把它
+ *   当成「不是任何已知角色」——也就是**什么都做不了**，而现象是
+ *   「这个人明明是负责人却处处受限」，没有任何报错指向根因。
+ *   取值收在库里，错的写不进去。
+ *
+ * ★ 清单直接来自 contracts，与判定共用一份定义：改枚举时迁移会跟着变，
+ *   不会出现「代码认得这个角色、库不认」的错位。
+ */
+const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
+
 // ── 组织与身份 ────────────────────────────────────────────────────────────
 
+/**
+ * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace）。
+ *
+ * ★★ 这里**不**叫 workspace，是刻意的。
+ *
+ *   `workspace` 在这个代码库里已经有一个确定含义：Agent 干活的那个
+ *   git 工作区（`AGENT_WORKSPACE_ROOT`、`WorkspaceProvisioner`、
+ *   `agent_runs.workspace`）。两个都叫 workspace 的话，
+ *   「清理 workspace」「workspace 权限」这类句子会同时指向两件毫不相干的事，
+ *   而这种歧义在排障时最贵 —— 看日志的人根本不知道在说哪一个。
+ *
+ *   组织这个概念在这里已经铺满了 25 张表的 `org_id`、整套 `OrgRole`
+ *   与 `org_admin` 判定；改名是纯字面工作，收益为零，还要正面撞车。
+ *   所以：**产品层叫「组织」，`workspace` 一词永远只指 Agent 工作区。**
+ */
 export const organizations = pgTable('organizations', {
   id: uuid().primaryKey().defaultRandom(),
   name: text().notNull(),
+  /**
+   * URL 里的人类可读标识（`acme`）。
+   *
+   * ★ 全局唯一而不是「每个所有者唯一」：它要能单独出现在链接里，
+   *   同名就指不到同一个组织了。
+   */
+  slug: text().notNull(),
+  description: text(),
   settings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+  createdBy: uuid(),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
-});
+  updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+}, (t) => [
+  unique('organizations_slug_unique').on(t.slug),
+]);
 
+/**
+ * 谁在哪个组织里、以什么组织身份。
+ *
+ * ★★ 这张表取代了原来的 `users.org_id` + `users.org_role`。
+ *
+ *   那两列把「账号」和「归属」焊死成一对一：一个人要参与第二个组织，
+ *   只能再注册一个账号。而组织之间的边界正是多租户隔离的边界，
+ *   所以「同一个人的两个账号」在审计里是两个不同的人 ——
+ *   跨组织协作的顾问、外包、平台方全都描述不出来。
+ *
+ * ★ 组织角色跟着归属走，不跟着账号走：同一个人可以是 A 组织的管理员、
+ *   B 组织的普通成员。放在 users 上的话这句话就说不出来。
+ */
+export const organizationMembers = pgTable(
+  'organization_members',
+  {
+    orgId: uuid().notNull().references(() => organizations.id),
+    userId: uuid().notNull().references(() => users.id),
+    orgRole: text().notNull().default('member'),
+    addedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.orgId, t.userId] }),
+    /** 「我属于哪些组织」是每个请求都要问的（切换器、当前组织解析），主键前缀对不上 */
+    index('organization_members_user_idx').on(t.userId),
+    check('organization_members_role_check', sql`${t.orgRole} in (${sqlList(OrgRole.options)})`),
+  ],
+);
+
+/**
+ * 角色 —— 一组权限的名字（docs/tech/09-security.md §2.2）。
+ *
+ * ★★ 角色是数据不是枚举。内置的五个覆盖「项目怎么运转」，
+ *   覆盖不了「这个组织怎么分工」—— 研发、运营、测试、安全、数据，
+ *   每家的切法都不一样。写死枚举的结果是所有人都被塞进 member，
+ *   然后整套权限矩阵退化成「成员 vs 管理员」两档。
+ *
+ * ★ `applies_to` 决定这个角色能由人担任还是由 Agent 担任，或者两者。
+ *   这是 Human–Agent 混合团队的基本形状：「测试」可能是一个人，
+ *   也可能是一个跑测试的 Agent。角色与担任者分开，混合团队才描述得出来。
+ */
+export const roles = pgTable(
+  'roles',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    /** 稳定标识。Policy 的 `{kind:'project_role', role}` 引用的就是它 */
+    key: text().notNull(),
+    name: text().notNull(),
+    description: text().notNull().default(''),
+    /** 权限目录里的 key。校验在 @apos/domain 的 validateRoleDefinition */
+    permissions: text().array().notNull().default(sql`'{}'`),
+    /** 'human' / 'agent'，可以都有 */
+    appliesTo: text().array().notNull().default(sql`'{human}'`),
+    /** 内置角色不可改权限、不可删 —— 它们就是权限矩阵本身 */
+    builtin: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    /** 成员表按 (org_id, role) 外键引用过来，所以这组必须唯一 */
+    unique('roles_org_key_unique').on(t.orgId, t.key),
+  ],
+);
+
+/**
+ * 账号 —— **全局**的，不属于任何组织。
+ *
+ * ★ 归属与组织角色在 `organization_members`。这里只剩「这个人是谁」。
+ *   email 因此是全局唯一：同一个人在两个组织里必须是同一个账号，
+ *   否则审计里就成了两个人。
+ */
 export const users = pgTable(
   'users',
   {
     id: uuid().primaryKey().defaultRandom(),
-    orgId: uuid().notNull().references(() => organizations.id),
     email: text().notNull(),
     name: text().notNull(),
     avatarUrl: text(),
-    orgRole: text().notNull().default('member'),
     skills: text().array().notNull().default(sql`'{}'`),
     /** 可审批事项，支撑产品文档 8.7.5 的决策责任自动识别 */
     approvalScopes: text().array().notNull().default(sql`'{}'`),
@@ -69,7 +182,7 @@ export const users = pgTable(
     status: text().notNull().default('active'),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
-  (t) => [unique().on(t.orgId, t.email)],
+  (t) => [unique('users_email_unique').on(t.email)],
 );
 
 // ── Project ──────────────────────────────────────────────────────────────
@@ -81,6 +194,23 @@ export const projects = pgTable(
     orgId: uuid().notNull().references(() => organizations.id),
     name: text().notNull(),
     goal: text(),
+    /**
+     * 工作项编号的前缀（`ORD` → `ORD-19`）。组织内唯一。
+     *
+     * ★★ 有了它，工作项才有一个**能用嘴说出来**的名字。
+     *   在此之前只有 uuid：站会上没法念，聊天里没法提，
+     *   提交信息里写进去也没人认得。
+     */
+    identifier: text().notNull().default('TASK'),
+    /**
+     * 每项目的工作项序号游标。
+     *
+     * ★ 用列 + 原子自增，不用 Postgres sequence：每个项目一条 sequence
+     *   意味着建项目要 DDL，而 DDL 不能和业务事务放在一起回滚。
+     *   `UPDATE … SET seq = seq + n RETURNING seq` 同样是原子的，
+     *   而且并发下不会跳号。
+     */
+    workItemSeq: integer().notNull().default(0),
     type: text().notNull().default('development'),
     status: projectStatusEnum().notNull().default('active'),
     autonomyLevel: autonomyLevelEnum().notNull().default('agent_led_approval'),
@@ -127,13 +257,44 @@ export const projectMembers = pgTable(
   'project_members',
   {
     projectId: uuid().notNull().references(() => projects.id),
+    /**
+     * ★ 从 projects 冗余下来，为的是能对 roles 建外键 ——
+     *   角色是组织级的，没有 org_id 就只能靠应用层保证
+     *   「不会引用到别的组织的角色」，而那正是最容易漏的一类检查。
+     */
+    orgId: uuid().notNull().references(() => organizations.id),
     /** Agent 与人类走同一张表 —— 权限判定上「是否属于本项目」是同一个问题 */
     actorType: actorTypeEnum().notNull(),
     actorId: uuid().notNull(),
+    /** 角色 key，指向本组织的 roles */
     role: text().notNull(),
     addedAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.actorType, t.actorId] })],
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.actorType, t.actorId] }),
+    /**
+     * ★ 「这个人是哪些项目的成员」是每个请求都要问的问题（授权闸门、
+     *   决策收件箱、项目列表），而主键是 (project_id, …)，前缀对不上，
+     *   这类查询只能全表扫。加了权限判定之后它从偶发变成了每请求一次。
+     */
+    index('project_members_actor_idx').on(t.actorType, t.actorId),
+    /**
+     * ★★ 外键取代了原来的 CHECK 枚举。
+     *
+     *   角色可自定义之后，「合法角色」这份清单是行不是常量，CHECK 表达不了。
+     *   外键给的保证比 CHECK 更强：不但写不进不存在的角色，
+     *   还删不掉正在被人担任的角色 —— 后者是 CHECK 从来给不了的，
+     *   而「角色被删了，成员的权限静默归零」正是最难查的那种故障。
+     *
+     *   Agent 行同样受约束：Agent 现在也担任真正的角色（§2.2），
+     *   不再是一列自由文本。
+     */
+    foreignKey({
+      columns: [t.orgId, t.role],
+      foreignColumns: [roles.orgId, roles.key],
+      name: 'project_members_role_fk',
+    }),
+  ],
 );
 
 // ── Requirement ──────────────────────────────────────────────────────────
@@ -267,6 +428,18 @@ export const workItems = pgTable(
     requirementId: uuid().references(() => requirements.id),
     planId: uuid().references(() => plans.id),
 
+    /**
+     * 项目内的顺序编号。配合 `projects.identifier` 拼成 `ORD-19`。
+     *
+     * ★ 只存数字，不冗余整个 `ORD-19`：改了项目前缀之后，
+     *   冗余的那份要批量刷一遍，而漏刷的表现是同一个项目里
+     *   两种前缀并存 —— 那比多一次 join 贵得多。
+     *
+     * ★ 可为空：迁移之前的存量数据会在迁移里补号，
+     *   但这一列的 NOT NULL 得等所有写入路径都分配了编号之后再收紧。
+     */
+    number: integer(),
+
     type: workItemTypeEnum().notNull(),
     status: workItemStatusEnum().notNull().default('draft'),
     /** 冗余：由 status 映射，看板按列查询用 */
@@ -329,6 +502,8 @@ export const workItems = pgTable(
     index('work_items_owner_idx').on(t.ownerId),
     index('work_items_blocked_idx').on(t.projectId, t.blockedSince),
     index('work_items_path_idx').on(t.path),
+    /** 「ORD-19 是哪一条」要能直接查到，而不是全表扫 */
+    unique('work_items_project_number_unique').on(t.projectId, t.number),
   ],
 );
 
@@ -379,6 +554,33 @@ export const repositories = pgTable(
     /** ★ 同样只存引用。克隆用的凭证不进业务库 */
     credentialRef: text(),
     credentialHint: text(),
+
+    /**
+     * HTTPS token 走 Basic 认证时的用户名占位（GitHub `x-access-token` /
+     * GitLab `oauth2` / Bitbucket `x-token-auth`）。
+     *
+     * ★ 为空表示按 remoteUrl 的域名推断（见 workspace/git.ts 的
+     *   resolveAuthUsername）。留这一列而不是纯靠推断，是因为自建 GitLab
+     *   装在 git.acme.com 上推断不出来 —— 而推断错的表现是 401，
+     *   错误信息里没有任何东西指向「用户名占位不对」。
+     */
+    authUsername: text(),
+
+    /**
+     * SSH 主机公钥（known_hosts 格式）。
+     *
+     * ★★ 这不是秘密 —— 它本来就是要公开比对的那一份，
+     *   存明文是对的。
+     *
+     * ★ 为空表示还没固定：首次连接走 TOFU（accept-new），连上之后
+     *   立刻把学到的公钥写进来，此后转严格校验。不固定的话
+     *   `accept-new` 等于 `no` —— 每次都是全新的临时 known_hosts，
+     *   「未知主机」这个条件永远成立，中间人换掉主机公钥也照连不误。
+     *
+     * ★ 管理员可以预先填好（比 TOFU 强），或清空以重新学习
+     *   （服务器真的换了密钥时）。
+     */
+    sshKnownHosts: text(),
 
     /** Agent 分支命名模板，{runId} / {itemId} / {slug} 会被替换 */
     branchPrefix: text().notNull().default('apos/'),

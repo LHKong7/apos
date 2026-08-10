@@ -14,6 +14,7 @@ export * from './policy/audit';
 export * from './policy/scenarios';
 export * from './policy/templates';
 export * from './integration/sync';
+export * from './rbac';
 export * from './permissions/integration';
 export * from './planning/diff';
 export * from './notification/decide';

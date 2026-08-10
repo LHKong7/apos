@@ -16,6 +16,7 @@ import {
 } from '@apos/contracts';
 import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
 import { emitAndPublish } from '../event/bus';
+import { allocateNumbers } from '../work-item/numbering';
 import { transition } from '../flow/transition';
 import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './provider';
 
@@ -153,13 +154,20 @@ export async function generatePlan(
     .returning();
 
   // 任务先建为 draft，批准后才转 ready
+  /**
+   * ★ 一次把这批号全要过来，不是每条各要一个。
+   *   循环分配会让别人的号插进中间，同一份计划出来的任务编号不连续 ——
+   *   读起来像是丢了几条。
+   */
+  const numbers = await allocateNumbers(db, req.projectId, generated.tasks.length);
   const refToId = new Map<string, string>();
-  for (const task of generated.tasks) {
+  for (const [index, task] of generated.tasks.entries()) {
     const [row] = await db
       .insert(workItems)
       .values({
         orgId: req.orgId,
         projectId: req.projectId,
+        number: numbers[index]!,
         requirementId: req.id,
         planId: plan!.id,
         type: task.type,

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import {
   createDatabase,
+  organizationMembers,
   organizations,
   projectMembers,
   projects,
@@ -12,6 +13,8 @@ import {
   type Database,
 } from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
+import { syncBuiltinRoles } from '../http/roles';
+import { allocateNumbers } from '../modules/work-item/numbering';
 
 /**
  * ★ 默认指向 apos_test，绝不是开发库。
@@ -41,7 +44,7 @@ export async function resetDb(db: Database) {
       work_item_dependencies, work_items, plans,
       requirement_assumptions, requirement_clarifications, requirements,
       policy_versions, policies,
-      project_members, projects, users, organizations
+      project_members, roles, projects, organization_members, users, organizations
     RESTART IDENTITY CASCADE
   `);
 }
@@ -56,11 +59,41 @@ export async function seedFixture(
   db: Database,
   overrides: { autonomyLevel?: 'human_led' | 'agent_led_approval' | 'agent_autonomous' } = {},
 ): Promise<Fixture> {
-  const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Acme', slug: `acme-${randomUUID().slice(0, 8)}` })
+    .returning();
+  /**
+   * ★★ 建组织就要预置内置角色。
+   *
+   *   成员表对 roles 有外键 —— 不预置的话，插第一条成员就报约束错误，
+   *   而报错信息是「违反外键」，看不出真正的原因是「这个组织还没有角色」。
+   *   真实路径（createOrganization / 迁移）同样会做这一步，
+   *   夹具跳过它就等于测的不是真实形态。
+   */
+  await syncBuiltinRoles(db, org!.id);
+  /**
+   * ★ 夹具身份 = 项目 tech_lead + 组织管理员，与 seed-dev 里的「张伟」一致。
+   *
+   *   功能测试不该同时是权限测试：让夹具身份权限充足，
+   *   「录需求 → 批计划 → 派发」这条链路才验证的是流程本身，
+   *   而不是「这个角色能不能做第三步」。
+   *
+   * ★ 但夹具也不能因此比真实数据宽松（成员关系那条的教训见下）——
+   *   所以权限相关的断言一律用 {@link createMember} 造明确角色的人，
+   *   绝不复用这个身份。用它去测「viewer 不能改」只会永远是绿的。
+   */
   const [user] = await db
     .insert(users)
-    .values({ orgId: org!.id, email: `u-${randomUUID()}@acme.dev`, name: '张伟' })
+    .values({ email: `u-${randomUUID()}@acme.dev`, name: '张伟' })
     .returning();
+  /**
+   * ★ 归属与组织角色在 organization_members —— 账号本身不属于任何组织。
+   *   漏了这一行的表现是每个请求都 401「还不属于任何组织」。
+   */
+  await db
+    .insert(organizationMembers)
+    .values({ orgId: org!.id, userId: user!.id, orgRole: 'org_admin' });
   const [project] = await db
     .insert(projects)
     .values({
@@ -82,6 +115,7 @@ export async function seedFixture(
    *   反而会把漏洞焊死：补上检查时，先红的是测试而不是产品。
    */
   await db.insert(projectMembers).values({
+    orgId: org!.id,
     projectId: project!.id,
     actorType: 'human',
     actorId: user!.id,
@@ -93,12 +127,56 @@ export async function seedFixture(
 
 /** 造一个「不是本项目成员」的用户，用于验证越权被挡下 */
 export async function createOutsider(db: Database, fx: Fixture) {
-  const [org] = await db.insert(organizations).values({ name: 'Other Corp' }).returning();
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: 'Other Corp', slug: `other-${randomUUID().slice(0, 8)}` })
+    .returning();
   const [user] = await db
     .insert(users)
-    .values({ orgId: org!.id, email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
+    .values({ email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
     .returning();
+  await db.insert(organizationMembers).values({ orgId: org!.id, userId: user!.id });
+  await syncBuiltinRoles(db, org!.id);
   return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
+}
+
+/**
+ * 造一个角色明确的本组织用户。
+ *
+ * ★ 权限断言必须用它，不能用夹具身份 —— 夹具是组织管理员，
+ *   拿它去测「谁不能做什么」永远是绿的。
+ *
+ * `projectRole` 传 null 表示「本组织但不是这个项目的成员」，
+ * 用来区分「跨组织越权」与「同组织但没被加进项目」这两种情况。
+ */
+export async function createMember(
+  db: Database,
+  fx: Fixture,
+  opts: {
+    /** 内置角色或组织自定义角色的 key；null 表示「本组织但不是这个项目的成员」 */
+    projectRole?: string | null;
+    orgRole?: 'org_admin' | 'member';
+    name?: string;
+  } = {},
+): Promise<string> {
+  const [user] = await db
+    .insert(users)
+    .values({
+      email: `m-${randomUUID()}@acme.dev`,
+      name: opts.name ?? opts.projectRole ?? 'member',
+    })
+    .returning();
+  await db
+    .insert(organizationMembers)
+    .values({ orgId: fx.orgId, userId: user!.id, orgRole: opts.orgRole ?? 'member' });
+
+  const role = opts.projectRole === undefined ? 'member' : opts.projectRole;
+  if (role !== null) {
+    await db
+      .insert(projectMembers)
+      .values({ orgId: fx.orgId, projectId: fx.projectId, actorType: 'human', actorId: user!.id, role });
+  }
+  return user!.id;
 }
 
 export async function createWorkItem(
@@ -107,11 +185,17 @@ export async function createWorkItem(
   overrides: Partial<typeof workItems.$inferInsert> = {},
 ) {
   const status = (overrides.status ?? 'ready') as WorkItemStatus;
+  /**
+   * ★ 夹具也要分配编号 —— 真实路径（计划分解 / 手工创建）都会分配，
+   *   夹具跳过它就等于测的不是真实形态，而 `ref` 会显示成 `ORD-?`。
+   */
+  const [number] = await allocateNumbers(db, fx.projectId, 1);
   const [item] = await db
     .insert(workItems)
     .values({
       orgId: fx.orgId,
       projectId: fx.projectId,
+      number: number!,
       type: 'task',
       status,
       stage: STATUS_STAGE[status],

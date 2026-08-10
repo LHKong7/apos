@@ -71,6 +71,48 @@
       "when": 1786291497033,
       "tag": "0009_chubby_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786340155160,
+      "tag": "0010_rbac_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786346304433,
+      "tag": "0011_custom_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786353183906,
+      "tag": "0012_repo_auth_username",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786355781352,
+      "tag": "0013_repo_ssh_known_hosts",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786362547424,
+      "tag": "0014_broken_electro",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786363528109,
+      "tag": "0015_amusing_betty_ross",
+      "breakpoints": true
     }
   ]
 }

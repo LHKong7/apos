@@ -9,6 +9,7 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
+import { formatRef } from '../modules/work-item/numbering';
 import { notFound } from './errors';
 import {
   HUMAN_GATE_PRIORITY,
@@ -25,6 +26,13 @@ import {
  */
 export interface BoardCard {
   id: string;
+  /**
+   * 人类可读编号（`ORD-19`）。
+   *
+   * ★ 卡片上必须有它：站会上指一张卡、聊天里提一条任务、
+   *   提交信息里引用一条任务，用的都是这个，而不是 uuid。
+   */
+  ref: string;
   title: string;
   type: string;
   status: string;
@@ -112,7 +120,7 @@ export async function getBoard(
     .where(and(...conditions))
     .orderBy(workItems.priority, desc(workItems.updatedAt));
 
-  const enriched = await enrich(db, rows);
+  const enriched = await enrich(db, rows, project.identifier);
 
   const columns: BoardColumn[] = Stage.options.map((stage) => {
     const all = enriched.filter((c) => c.stage === stage);
@@ -158,7 +166,11 @@ type WorkItemRow = typeof workItems.$inferSelect;
  * 刻意做成一次性批查而不是逐卡片查询 —— 看板可能有上百张卡片，
  * N+1 会让首屏预算（1.5s）完全没有余地。
  */
-async function enrich(db: Database, rows: WorkItemRow[]): Promise<BoardCard[]> {
+async function enrich(
+  db: Database,
+  rows: WorkItemRow[],
+  identifier: string,
+): Promise<BoardCard[]> {
   if (rows.length === 0) return [];
 
   const ids = rows.map((r) => r.id);
@@ -216,6 +228,7 @@ async function enrich(db: Database, rows: WorkItemRow[]): Promise<BoardCard[]> {
 
     return {
       id: r.id,
+      ref: formatRef(identifier, r.number),
       title: r.title,
       type: r.type,
       status: r.status,

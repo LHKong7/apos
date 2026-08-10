@@ -6,6 +6,7 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib/format';
 import { QueryBoundary } from '../../components/states';
+import { GatedButton } from '../../components/Gated';
 import { Drawer } from '../../components/Drawer';
 import { useBoardStore } from '../../stores/board';
 import { useEditingStore } from '../../stores/editing';
@@ -306,14 +307,16 @@ function RunsTab({
           placeholder="上次失败是因为找不到 schema，这里补上表结构说明…"
           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
         />
-        <button
-          type="button"
+        {/* 重新派发要花钱、会改代码 —— 只读角色不该点得动（§2.3 执行任务） */}
+        <GatedButton
+          permission="work_item.execute"
           disabled={pending}
+          disabledReason="正在派发中"
           onClick={() => onRetry(context)}
           className="mt-1.5 w-full rounded bg-slate-900 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40"
         >
           {pending ? '派发中…' : '重试'}
-        </button>
+        </GatedButton>
         {error !== null && error !== undefined && (
           <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
             {error instanceof ApiError ? error.message : '派发失败'}

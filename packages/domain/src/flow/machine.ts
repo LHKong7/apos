@@ -9,6 +9,18 @@ import type { WorkItemStatus } from '@apos/contracts';
 
 export const WORK_ITEM_TRIGGERS = [
   'plan_approved',
+  /**
+   * 手工建的工作项被放行去执行。
+   *
+   * ★★ 它和 `plan_approved` 是**同一道 Human Gate**，只是粒度不同：
+   *   后者批的是一份计划，前者批的是一个任务。
+   *
+   *   拆成两个 trigger 而不是复用 plan_approved，是因为 plan_approved
+   *   被列进了 SYSTEM_ONLY_TRIGGERS —— 它由「计划被批准」这件事驱动，
+   *   人手动伪造它会让事件流里出现一份并不存在的计划。
+   *   而手工放行是人**当场**做的决定，必须如实记成那样。
+   */
+  'manual_activated',
   'run_dispatched',
   'assigned_to_human',
   'human_work_started',

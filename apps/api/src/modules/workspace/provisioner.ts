@@ -3,8 +3,8 @@ import { join, resolve } from 'node:path';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { agentRuns, repositories, type Database } from '@apos/db';
 import type { AgentPermissions, RunWorkspace } from '@apos/contracts';
-import { resolveSecret } from '../security/secrets';
-import { git, GitError, probeGit, type GitAuth } from './git';
+import { git, GitError, probeGit } from './git';
+import { withRepoAuth } from './credentials';
 
 export interface AcquireInput {
   runId: string;
@@ -216,20 +216,27 @@ export class WorkspaceProvisioner {
     path: string,
     branch: string,
   ): Promise<string | null> {
-    const auth = authFor(repo.credentialRef);
     const mirror = this.mirrorDir(repo.id);
 
-    const baseCommit = await this.withMirrorLock(repo.id, async () => {
-      if (await exists(mirror)) {
-        await git.updateMirror(mirror, auth);
-      } else {
-        await mkdir(join(this.root, 'mirrors'), { recursive: true });
-        await git.mirror(repo.remoteUrl, mirror, auth);
-      }
-      // 上一轮异常退出可能留下失效的工作树登记
-      await git.pruneWorktrees(mirror);
-      return git.resolveRef(mirror, repo.defaultBranch);
-    });
+    /**
+     * ★ 认证上下文包住整段镜像操作。
+     *
+     *   SSH 那条路 ssh-agent 是个进程，起点终点必须成对；把它包在这里，
+     *   clone/fetch 共用同一个 agent，也就只喂一次私钥。
+     */
+    const baseCommit = await withRepoAuth(this.db, repo, (auth) =>
+      this.withMirrorLock(repo.id, async () => {
+        if (await exists(mirror)) {
+          await git.updateMirror(mirror, auth);
+        } else {
+          await mkdir(join(this.root, 'mirrors'), { recursive: true });
+          await git.mirror(repo.remoteUrl, mirror, auth);
+        }
+        // 上一轮异常退出可能留下失效的工作树登记
+        await git.pruneWorktrees(mirror);
+        return git.resolveRef(mirror, repo.defaultBranch);
+      }),
+    );
 
     if (!baseCommit) {
       throw new GitError(
@@ -333,7 +340,9 @@ export class WorkspaceProvisioner {
 
       if (shouldPush && repo) {
         try {
-          await git.push(ws.path, repo.remoteUrl, ws.branch, authFor(repo.credentialRef));
+          await withRepoAuth(this.db, repo, (auth) =>
+            git.push(ws.path, repo.remoteUrl, ws.branch, auth),
+          );
           pushed = true;
           notes.push(`已推送分支 ${ws.branch}`);
         } catch (err) {
@@ -454,11 +463,6 @@ export class WorkspaceProvisioner {
   private diagnose(message: string, detail?: unknown) {
     this.options.onDiagnostic?.(message, detail);
   }
-}
-
-function authFor(credentialRef: string | null): GitAuth | undefined {
-  const token = resolveSecret(credentialRef);
-  return token ? { token } : undefined;
 }
 
 /** `apos/add-login-a1b2c3` —— 带任务信息，人在 PR 列表里能认出来 */

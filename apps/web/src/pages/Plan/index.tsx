@@ -6,6 +6,7 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { money, riskLabel, typeIcon } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { VersionDiff } from './VersionDiff';
 import type { PlanDetail } from '../../lib/api/types';
@@ -228,20 +229,23 @@ export function PlanPage() {
 
           {!approved && !superseded && (
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
+              <GatedButton
+                permission="plan.generate"
+                projectId={d.plan.projectId}
                 onClick={() => setRevising(true)}
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
               >
                 要求修改
-              </button>
-              <button
-                type="button"
+              </GatedButton>
+              {/* ★ 批准计划要 tech_lead（§2.3）—— 要求修改不用，那只是打回去重做 */}
+              <GatedButton
+                permission="plan.approve"
+                projectId={d.plan.projectId}
                 onClick={() => setApproving(true)}
                 className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
               >
                 批准并开始执行 →
-              </button>
+              </GatedButton>
             </div>
           )}
 

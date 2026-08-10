@@ -19,6 +19,10 @@ import type {
   DecisionInbox,
   DisconnectImpact,
   IntegrationsResponse,
+  MembersResponse,
+  ProjectPermissions,
+  RoleRow,
+  RolesResponse,
   NotificationConfigRow,
   SyncConflictRow,
   SyncSummary,
@@ -29,6 +33,7 @@ import type {
   RuntimeRow,
   AgentAdminResponse,
   RepositoriesResponse,
+  RepositoryProbe,
   ConventionsResponse,
   RequirementDetail,
   RequirementSummary,
@@ -39,6 +44,9 @@ import type {
   RunEventPage,
   User,
   WorkItemDetail,
+  OrganizationRow,
+  OrganizationsResponse,
+  OrganizationMembersResponse,
 } from './types';
 
 /**
@@ -69,12 +77,33 @@ export function getCurrentUserId(): string | null {
   return currentUserId;
 }
 
+/**
+ * 当前组织。
+ *
+ * ★★ 账号可以属于多个组织之后，「在哪个组织」不再能从账号推出来，
+ *   必须每个请求都带上 —— 否则服务端只能回落到缺省组织，
+ *   表现是切换器显示 A、数据来自 B，而两边都不报错。
+ *
+ * ★ 为 null 时**不发这个头**，让服务端给缺省值。前端瞎猜一个 id
+ *   发过去，只会把「还没选」变成一个 404。
+ */
+let currentOrgId: string | null = null;
+
+export function setCurrentOrgId(id: string | null) {
+  currentOrgId = id;
+}
+
+export function getCurrentOrgId(): string | null {
+  return currentOrgId;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   if (currentUserId) headers.set('X-User-Id', currentUserId);
+  if (currentOrgId) headers.set('X-Org-Id', currentOrgId);
   if (init.json !== undefined) headers.set('Content-Type', 'application/json');
 
   const res = await fetch(`/api/v1${path}`, {
@@ -121,10 +150,132 @@ export function boardQueryString(filters: BoardFilters): string {
 export const api = {
   users: () => request<{ users: User[] }>('/users'),
 
+  // ── 组织（顶层容器；Plane 里叫 Workspace）────────────────────────────
+  organizations: () => request<OrganizationsResponse>('/organizations'),
+
+  createOrganization: (body: { name: string; slug?: string; description?: string | null }) =>
+    request<{ organization: OrganizationRow }>('/organizations', { method: 'POST', json: body }),
+
+  updateOrganization: (
+    id: string,
+    body: { name?: string; slug?: string; description?: string | null },
+  ) =>
+    request<{ organization: OrganizationRow }>(`/organizations/${id}`, {
+      method: 'PATCH',
+      json: body,
+    }),
+
+  deleteOrganization: (id: string) =>
+    request<{ ok: true }>(`/organizations/${id}`, { method: 'DELETE' }),
+
+  organizationMembers: (id: string) =>
+    request<OrganizationMembersResponse>(`/organizations/${id}/members`),
+
+  addOrganizationMember: (id: string, body: { email: string; orgRole?: string }) =>
+    request<{ ok: true; userId: string }>(`/organizations/${id}/members`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  removeOrganizationMember: (id: string, userId: string) =>
+    request<{ ok: true }>(`/organizations/${id}/members/${userId}`, { method: 'DELETE' }),
+
   projects: () => request<{ projects: Project[] }>('/projects'),
+
+  /**
+   * 手工建任务。
+   *
+   * ★ 建出来的是**草稿**，不可派发 —— 放行去执行要 `plan.approve`。
+   *   服务端返回的 `notice` 就是这句话，界面上要原样说出来。
+   */
+  createWorkItem: (
+    projectId: string,
+    body: {
+      title: string;
+      description?: string;
+      type?: string;
+      priority?: number;
+      riskLevel?: string;
+      ownerId?: string | null;
+      parentId?: string | null;
+    },
+  ) =>
+    request<{ item: { id: string; ref: string; status: string }; notice: string }>(
+      `/projects/${projectId}/work-items`,
+      { method: 'POST', json: body },
+    ),
+
+  createProject: (body: {
+    name: string;
+    goal?: string;
+    autonomyLevel?: string;
+    budgetAmount?: string;
+  }) => request<{ project: Project }>('/projects', { method: 'POST', json: body }),
 
   project: (id: string) =>
     request<{ project: Project; metrics: Record<string, unknown> }>(`/projects/${id}`),
+
+  // ── 权限与成员（docs/tech/09-security.md §2）────────────────────────
+  permissions: (projectId: string) =>
+    request<ProjectPermissions>(`/projects/${projectId}/permissions`),
+
+  members: (projectId: string) => request<MembersResponse>(`/projects/${projectId}/members`),
+
+  /** 担任者可以是人，也可以是 Agent —— 同一条 API（09-security §2.2）*/
+  setMemberRole: (
+    projectId: string,
+    memberId: string,
+    role: string,
+    actorType: 'human' | 'agent' = 'human',
+  ) =>
+    request<{ ok: true; role: string; changed: boolean; previousRole?: string }>(
+      `/projects/${projectId}/members/${memberId}`,
+      { method: 'PUT', json: { role, actorType } },
+    ),
+
+  removeMember: (projectId: string, memberId: string, actorType: 'human' | 'agent' = 'human') =>
+    request<{ ok: true; removed: boolean }>(
+      `/projects/${projectId}/members/${memberId}?actorType=${actorType}`,
+      { method: 'DELETE' },
+    ),
+
+  // ── 角色定义（超管）──────────────────────────────────────────────
+  roles: () => request<RolesResponse>('/admin/roles'),
+
+  createRole: (body: {
+    key: string;
+    name: string;
+    description?: string;
+    permissions: string[];
+    appliesTo: ('human' | 'agent')[];
+  }) => request<{ role: RoleRow }>('/admin/roles', { method: 'POST', json: body }),
+
+  updateRole: (
+    key: string,
+    body: {
+      name: string;
+      description?: string;
+      permissions: string[];
+      appliesTo: ('human' | 'agent')[];
+    },
+  ) => request<{ role: RoleRow }>(`/admin/roles/${key}`, { method: 'PATCH', json: body }),
+
+  deleteRole: (key: string) =>
+    request<{ ok: true; deleted: boolean }>(`/admin/roles/${key}`, { method: 'DELETE' }),
+
+  orgUsers: () =>
+    request<{
+      users: (User & { orgRoleLabel: string; status: string })[];
+      /** Agent 也能被加进项目并担任角色，所以名单里要有它们 */
+      agents: { id: string; name: string; type: string; status: string }[];
+      assignableOrgRoles: { role: string; label: string }[];
+    }>('/admin/users'),
+
+  setOrgRole: (userId: string, orgRole: string) =>
+    request<{ ok: true; orgRole: string; changed: boolean }>(`/admin/users/${userId}/org-role`, {
+      method: 'PATCH',
+      json: { orgRole },
+    }),
 
   board: (projectId: string, filters: BoardFilters) =>
     request<BoardResponse>(`/projects/${projectId}/board${boardQueryString(filters)}`),
@@ -160,23 +311,37 @@ export const api = {
 
   runtimes: () => request<{ runtimes: RuntimeRow[] }>('/runtimes'),
 
-  // ── 配置：Agent 档案（内含运行时）/ 代码仓库 / 项目工程约定 ──
+  /**
+   * ── 配置：Agent 档案（内含运行时）/ 代码仓库 / 项目工程约定 ──
+   *
+   * ★ 这一组必须用 `json:` 而不是 `body: JSON.stringify(...)`。
+   *
+   *   `request()` 只在用 `json` 时才设 Content-Type；用 `body` 的话
+   *   浏览器会自作主张发 `text/plain;charset=UTF-8`，Fastify 用
+   *   text/plain 解析器把整个 JSON 当字符串交给 Zod，于是这一整页的
+   *   写操作全部 400「Expected object, received string」——
+   *   而组件测试用 app.inject（自动带 JSON 头）永远复现不出来。
+   */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
   createAgent: (body: Record<string, unknown>) =>
     request<{ agent: { id: string } }>('/admin/agents', {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateAgent: (id: string, body: Record<string, unknown>) =>
     request<{ agent: unknown; permissionsChanged: boolean }>(`/admin/agents/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      json: body,
     }),
   deleteAgent: (id: string) =>
     request<{ ok: true; retired: boolean; reason: string | null }>(`/admin/agents/${id}`, {
       method: 'DELETE',
     }),
   probeAgent: (id: string) => request<unknown>(`/admin/agents/${id}/probe`, { method: 'POST' }),
+
+  /** 仓库连通性探测 —— 凭证配错了要在这一页知道，不是等第一次派发 */
+  probeRepository: (id: string) =>
+    request<RepositoryProbe>(`/admin/repositories/${id}/probe`, { method: 'POST' }),
 
   repositories: (projectId?: string) =>
     request<RepositoriesResponse>(
@@ -185,10 +350,10 @@ export const api = {
   createRepository: (body: Record<string, unknown>) =>
     request<{ repository: { id: string } }>('/admin/repositories', {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateRepository: (id: string, body: Record<string, unknown>) =>
-    request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', json: body }),
   deleteRepository: (id: string) =>
     request<{ ok: true }>(`/admin/repositories/${id}`, { method: 'DELETE' }),
 
@@ -197,17 +362,17 @@ export const api = {
   createConvention: (projectId: string, body: Record<string, unknown>) =>
     request<{ convention: { id: string } }>(`/projects/${projectId}/conventions`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
   updateConvention: (id: string, body: Record<string, unknown>) =>
-    request<unknown>(`/conventions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    request<unknown>(`/conventions/${id}`, { method: 'PATCH', json: body }),
   deleteConvention: (id: string) =>
     request<{ ok: true }>(`/conventions/${id}`, { method: 'DELETE' }),
 
   assignWorkItem: (id: string, body: { agentId?: string; userId?: string; note?: string }) =>
     request<{ ok: true; runId?: string }>(`/work-items/${id}/assign`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      json: body,
     }),
 
   setLaborCost: (projectId: string, laborHourlyCost: number | null) =>
