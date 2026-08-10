@@ -2,7 +2,8 @@
 
 把 APOS 完整跑在一台机器上：一条命令、一个对外端口。
 
-本机开发环境见[运行指南](RUNNING.md)，两者用的是**不同的 compose 文件**，互不干扰。
+本机开发环境见[运行指南](RUNNING.md)。两者共用**同一个** `docker-compose.yml`：
+部署起全部服务，开发只起 `postgres redis` 两个依赖，其余在宿主机上跑。
 
 ---
 
@@ -13,10 +14,10 @@
                         │                                                │
   ┌──────────┐   ┌──────┴───────┐   ┌───────────────┐                     │
   │ postgres │←──│ api          │   │ worker        │                     │
-  │ (不发布)  │   │ HTTP + SSE   │   │ 调度循环       │                     │
+  │ (仅本机)  │   │ HTTP + SSE   │   │ 调度循环       │                     │
   ├──────────┤   │ + 前端静态资源 │   │ 通知投递       │                     │
   │ redis    │←──│ PROCESS_ROLE │   │ PROCESS_ROLE  │                     │
-  │ (不发布)  │   │  = api       │   │  = worker     │                     │
+  │ (仅本机)  │   │  = api       │   │  = worker     │                     │
   └──────────┘   └──────────────┘   └───────────────┘                     │
                         ↑                   ↑                             │
                         └── migrate（一次性，跑完退出）──┘                    │
@@ -24,8 +25,8 @@
 
 | 服务 | 说明 |
 | --- | --- |
-| `postgres` | 数据。命名卷持久化，**不发布端口** |
-| `redis` | 预留给后续的队列与多实例扇出，当前没有代码读它 |
+| `postgres` | 数据。命名卷持久化，端口**只绑 `127.0.0.1`**（见 [§6 安全](#6-安全)） |
+| `redis` | 预留给后续的队列与多实例扇出，当前没有代码读它。同样只绑 `127.0.0.1` |
 | `migrate` | 一次性容器，跑完迁移退出。api/worker 等它成功才启动 |
 | `api` | HTTP + SSE，**并托管前端构建产物**。唯一对外的服务 |
 | `worker` | Flow 调度与通知投递循环，不监听端口 |
@@ -59,8 +60,11 @@ api 与 worker 是**同一个镜像**，靠 `PROCESS_ROLE` 区分
 ## 3. 起
 
 ```bash
-docker compose -f compose.deploy.yml up -d --build
+docker compose up -d --build
 ```
+
+不带服务名就是全套：postgres、redis、migrate、api、worker 都会起来。
+仓库里只有这**一个** compose 文件，不需要 `-f`。
 
 首次构建要几分钟（装依赖 + 构建前端）。完成后：
 
@@ -83,7 +87,7 @@ pnpm deploy:seed
 ### 常用命令
 
 ```bash
-pnpm deploy:up        # = docker compose -f compose.deploy.yml up -d --build
+pnpm deploy:up        # = docker compose up -d --build
 pnpm deploy:logs      # 跟踪 api 与 worker 日志
 pnpm deploy:down      # 停止并删除容器（数据卷保留）
 ```
@@ -93,12 +97,14 @@ pnpm deploy:down      # 停止并删除容器（数据卷保留）
 ## 4. 配置
 
 所有配置走环境变量。Compose 会自动读项目根目录的 `.env`，也可以
-`docker compose --env-file <文件> -f compose.deploy.yml up -d`。
+`docker compose --env-file <文件> up -d`。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `APOS_PUBLIC_PORT` | `8080` | 宿主机对外端口 |
 | `APOS_PUBLIC_URL` | `http://localhost:8080` | **用户实际访问的地址**，见下 |
+| `APOS_PGPORT` | `5433` | Postgres 在宿主机上的端口，只绑 `127.0.0.1` |
+| `APOS_REDIS_PORT` | `6379` | 同上 |
 | `LOG_LEVEL` | `info` | |
 | `ANTHROPIC_API_KEY` | 空 | 平台自身用（需求结构化）。不配时用 `StubPlanningProvider`，闭环照样跑通 |
 | `APOS_AGENT_ANTHROPIC_API_KEY` | 空 | **Agent 专用凭证，与平台分开**。不配时 Claude Code 运行时拒绝派发 |
@@ -122,7 +128,7 @@ pnpm deploy:down      # 停止并删除容器（数据卷保留）
 
 ```bash
 git pull
-docker compose -f compose.deploy.yml up -d --build
+docker compose up -d --build
 ```
 
 `migrate` 会先跑并等它成功，api/worker 才会用新镜像起来。迁移是幂等的，
@@ -134,31 +140,32 @@ docker compose -f compose.deploy.yml up -d --build
 
 ```bash
 # 备份
-docker compose -f compose.deploy.yml exec -T postgres pg_dump -U apos apos > apos-$(date +%F).sql
+docker compose exec -T postgres pg_dump -U apos apos > apos-$(date +%F).sql
 
 # 恢复
-docker compose -f compose.deploy.yml exec -T postgres psql -U apos -d apos < apos-2026-08-09.sql
+docker compose exec -T postgres psql -U apos -d apos < apos-2026-08-09.sql
 ```
 
 ### 看日志
 
 ```bash
 pnpm deploy:logs                                             # api + worker
-docker compose -f compose.deploy.yml logs migrate            # 迁移这次做了什么
+docker compose logs migrate            # 迁移这次做了什么
 ```
 
 ### 连进数据库
 
-Postgres 有意不发布端口，从容器里进：
-
 ```bash
-docker compose -f compose.deploy.yml exec postgres psql -U apos -d apos
+docker compose exec postgres psql -U apos -d apos
 ```
+
+宿主机上装了 psql 的话，`psql -h 127.0.0.1 -p 5433 -U apos -d apos` 也通 ——
+端口发布在回环地址上，本机开发与 `pnpm test` 要靠它。
 
 ### 彻底清掉（含数据）
 
 ```bash
-docker compose -f compose.deploy.yml down -v
+docker compose down -v
 ```
 
 ---
@@ -167,9 +174,14 @@ docker compose -f compose.deploy.yml down -v
 
 这套配置的定位是**内网单机**，不是公网直接暴露。已经做到的：
 
-- Postgres 与 Redis 都不发布端口，只在 compose 内网可达
+- Postgres 与 Redis 的端口**只绑在 `127.0.0.1`**，网段内的其他机器连不上
 - 容器以非 root 的 `node` 用户运行
 - `.dockerignore` 排除了 `.env`，本机凭证不会被打进镜像
+
+> **为什么数据库要发布端口。** 开发与 `pnpm test` 都从宿主机直连它，
+> 一个 compose 文件要同时服务这两种用法就绕不开。代价是本机上任何进程都能
+> 免密连上（`trust` 认证）—— 所以绑的是回环地址而不是 `0.0.0.0`：
+> 写成后者等于把一个免密数据库摆给整个网段。
 
 公网暴露前**至少**还要处理：
 
@@ -178,7 +190,7 @@ docker compose -f compose.deploy.yml down -v
    任何人改一个头就能变成任何人。上公网必须先接真实身份体系。
 2. **HTTPS。** 前面放一层 Caddy / nginx / Traefik 终止 TLS，
    并给 api 设 `TRUST_PROXY=true`，否则日志里的客户端 IP 是反代的地址。
-3. Postgres 目前是 `trust` 认证（因为不发布端口）。若要改为发布，先改成密码认证。
+3. Postgres 目前是 `trust` 认证。若要把它绑到回环地址以外，先改成密码认证。
 
 ---
 
@@ -198,7 +210,7 @@ docker compose -f compose.deploy.yml down -v
 ### api 反复重启
 
 ```bash
-docker compose -f compose.deploy.yml logs api | tail -30
+docker compose logs api | tail -30
 ```
 
 先确认 `migrate` 是 `Exited (0)`。迁移没成功时 api 不会启动，
@@ -212,7 +224,7 @@ docker compose -f compose.deploy.yml logs api | tail -30
 ### 端口被占
 
 ```bash
-APOS_PUBLIC_PORT=9090 docker compose -f compose.deploy.yml up -d
+APOS_PUBLIC_PORT=9090 docker compose up -d
 ```
 
 ---

@@ -6,7 +6,7 @@
 
 ```bash
 pnpm install
-docker compose up -d          # Postgres + Redis
+docker compose up -d postgres redis   # 只起依赖；不点名会把整个产品跑起来
 cp .env.example .env
 
 pnpm db:generate              # 改了 schema 后生成迁移

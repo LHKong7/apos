@@ -1,9 +1,63 @@
+# APOS：一个 compose 文件跑起整个产品。
+#
+#   docker compose up -d --build          # 完整产品 → http://localhost:8080
+#   docker compose up -d postgres redis   # 只起依赖（本机开发，见 docs/RUNNING.md）
+#
+#   postgres ─→ migrate（一次性）─→ api（HTTP + SSE + 前端静态资源）
+#                                └→ worker（调度循环 / 通知投递）
+#
+# ★ 这里以前是两个文件：docker-compose.yml 只起 Postgres/Redis，compose.deploy.yml
+#   起全套。于是「跑起这个项目」的答案取决于你手上是哪一个文件 —— 照着 README
+#   敲 `docker compose up -d` 的人只会拿到两个空数据库，然后以为产品坏了。
+#   合成一个之后，「起哪些」由服务名决定，而不是由 -f 决定。
+
+# ★ 显式项目名：不写的话 compose 用目录名（projectOS → projectos），
+#   换个目录名就换一组容器与卷，docs/DEPLOYMENT.md 里的 apos_pgdata 备份命令
+#   也就对不上了。
+name: apos
+
+x-app-env: &app-env
+  # 容器之间用服务名互相寻址，5432 是容器内端口，与下面发布的宿主端口无关
+  DATABASE_URL: postgres://apos@postgres:5432/apos
+  REDIS_URL: redis://redis:6379
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  # ★ 通知里的链接要指向用户实际访问的地址，不是容器内部地址。
+  #   配错的表现是：飞书/Slack 收到的卡片点进去打不开
+  WEB_BASE_URL: ${APOS_PUBLIC_URL:-http://localhost:8080}
+  # 平台与 Agent 的凭证分开（产品文档 10.2）。留空时对应能力会明确
+  # 拒绝派发，而不是悄悄回退到另一个 key
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  APOS_AGENT_ANTHROPIC_API_KEY: ${APOS_AGENT_ANTHROPIC_API_KEY:-}
+  APOS_AGENT_OPENAI_API_KEY: ${APOS_AGENT_OPENAI_API_KEY:-}
+  # ★ 界面上录入的凭证用它加密后入库，钥匙留在环境里。
+  #   不设的话界面会引导用户改用 `env:变量名` 形态，而不是明文入库
+  APOS_SECRET_KEY: ${APOS_SECRET_KEY:-}
+  AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-/var/lib/apos/workspaces}
+  APOS_WORKSPACE_PUSH_ON_FAILURE: ${APOS_WORKSPACE_PUSH_ON_FAILURE:-false}
+  RUN_HEARTBEAT_TIMEOUT_MS: ${RUN_HEARTBEAT_TIMEOUT_MS:-90000}
+  INTEGRATION_MEMORY_ADAPTERS: ${INTEGRATION_MEMORY_ADAPTERS:-}
+  GITHUB_INTEGRATION_TOKEN: ${GITHUB_INTEGRATION_TOKEN:-}
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: apos:local
+  restart: unless-stopped
+  # ★ init：给容器一个真正的 1 号进程收割僵尸并转发信号。
+  #   Agent 运行时会 spawn 子进程，没有它会在容器里堆积
+  init: true
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: apos
-      POSTGRES_PASSWORD: apos
       POSTGRES_DB: apos
       # ★ 与代码里的默认连接串对齐：main.ts / seed-dev.ts / test/db.ts 用的都是
       #   `postgres://apos@localhost:5433/...`（不带密码）。容器这边如果要密码，
@@ -11,6 +65,10 @@ services:
       #   trust 只对下面 127.0.0.1 的绑定开放，不对外。带密码的连接串同样能连。
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
+      # ★ 只绑 127.0.0.1，不绑 0.0.0.0：上面是 trust 认证，暴露到宿主网卡上
+      #   等于把一个免密数据库摆给整个网段。本机开发与 `pnpm test` 需要从宿主
+      #   连进来，所以不能干脆不发布。
+      #
       # ★ 默认 5433 而不是 5432：5432 上通常已经蹲着一个系统/Homebrew 的 Postgres，
       #   而 Docker 发布端口冲突时不会报错，只会让连接落到那个不相干的实例上 ——
       #   表现为「role apos does not exist」，很难联想到是端口被占。
@@ -20,19 +78,78 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U apos']
-      interval: 2s
+      interval: 5s
       timeout: 3s
       retries: 20
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - '127.0.0.1:${APOS_REDIS_PORT:-6379}:6379'
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
-      interval: 2s
+      interval: 5s
       timeout: 3s
       retries: 20
 
+  # ── 迁移：跑完就退出，api/worker 等它成功才启动 ──────────────────────
+  # ★ 单独一个服务，而不是塞进 api 的启动流程：塞进去的话，
+  #   api 与 worker 会并发跑同一批迁移。这里让编排保证「只跑一次、且先跑完」
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: apos:local
+    restart: 'no'
+    working_dir: /app/packages/db
+    environment:
+      DATABASE_URL: postgres://apos@postgres:5432/apos
+    command: ['node_modules/.bin/drizzle-kit', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      PROCESS_ROLE: api
+    volumes:
+      # ★ 与 worker 共用同一卷：worker 里的调度器和 api 里的「重试 / 指派」
+      #   都会派发任务，各自准备工作区。两边看到的不是同一份目录的话，
+      #   api 派出去的 Run 会在 worker 侧找不到自己的工作树
+      - workspaces:/var/lib/apos/workspaces
+    ports:
+      # 只暴露这一个端口，它同时提供前端页面与 API
+      - '${APOS_PUBLIC_PORT:-8080}:3000'
+    healthcheck:
+      # alpine 里没有 curl；Node 22 自带全局 fetch，直接用它
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      PROCESS_ROLE: worker
+    volumes:
+      - workspaces:/var/lib/apos/workspaces
+    # worker 不监听端口，没有 HTTP 健康检查可做；
+    # 进程退出即由 restart: unless-stopped 拉起
+
 volumes:
   pgdata:
+  redisdata:
+  # Agent 的代码工作区：<root>/mirrors 是仓库镜像缓存（重建代价高，
+  # 必须持久化），<root>/runs 是每个 Run 的独立工作树（可随时清空）
+  workspaces:

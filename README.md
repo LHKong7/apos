@@ -17,7 +17,7 @@ bash scripts/dev-up.sh
 部署到一台机器上（一条命令、一个对外端口）：
 
 ```bash
-docker compose -f compose.deploy.yml up -d --build   # 然后打开 http://localhost:8080
+docker compose up -d --build   # 然后打开 http://localhost:8080
 ```
 
 见 **[单机部署](docs/DEPLOYMENT.md)**。

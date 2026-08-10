@@ -56,10 +56,15 @@ APOS_API_PORT=3001 bash scripts/dev-up.sh
 ### 3.1 起数据库
 
 ```bash
-docker compose up -d
+docker compose up -d postgres redis
 ```
 
 Postgres 在 **5433**，Redis 在 6379，都只绑 `127.0.0.1`。
+
+> **要点名这两个服务。** `docker-compose.yml` 里还有 api / worker / migrate ——
+> 不带服务名的 `docker compose up -d` 起的是**完整产品**（那是
+> [单机部署](DEPLOYMENT.md) 的用法）。开发时两边都跑着，会有两套调度循环
+> 抢同一个数据库里的任务。
 
 > **为什么是 5433 而不是 5432**：5432 上通常已经蹲着一个系统自带或 Homebrew 装的
 > Postgres。Docker 发布端口冲突时**不会报错**，连接会静默落到那个不相干的实例上，

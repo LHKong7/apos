@@ -36,8 +36,12 @@ fi
 if [ -n "$COMPOSE" ]; then
   # ★ 用 ${} 包起来：macOS 自带 bash 3.2 不认多字节边界，
   #   `$PGPORT）` 会把全角括号吃进变量名，配 set -u 直接报 unbound variable
+  # ★ 必须点名 postgres redis。compose 文件里还有 api / worker，
+  #   不带服务名的 `up -d` 会连它们一起起来 —— 那是完整产品，
+  #   与这个脚本随后在宿主机上跑的 API 抢同一个数据库上的调度循环
   echo "启动 Postgres / Redis（端口 ${PGPORT}）…"
-  APOS_PGPORT="$PGPORT" $COMPOSE up -d >/dev/null 2>&1 || die "docker compose up 失败"
+  APOS_PGPORT="$PGPORT" $COMPOSE up -d postgres redis >/dev/null 2>&1 ||
+    die "docker compose up 失败"
 
   # ★ 在容器里探活，不依赖宿主机装没装 psql 客户端 ——
   #   macOS 上默认是没有的，而以前这里直接调宿主的 pg_isready

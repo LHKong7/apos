@@ -15,10 +15,10 @@
     "db:generate": "pnpm --filter @apos/db generate",
     "db:migrate": "pnpm --filter @apos/db migrate",
     "dev:api": "pnpm --filter @apos/api dev",
-    "deploy:up": "docker compose -f compose.deploy.yml up -d --build",
-    "deploy:down": "docker compose -f compose.deploy.yml down",
-    "deploy:logs": "docker compose -f compose.deploy.yml logs -f api worker",
-    "deploy:seed": "docker compose -f compose.deploy.yml exec -T -w /app/apps/api api node --import tsx src/scripts/seed-dev.ts"
+    "deploy:up": "docker compose up -d --build",
+    "deploy:down": "docker compose down",
+    "deploy:logs": "docker compose logs -f api worker",
+    "deploy:seed": "docker compose exec -T -w /app/apps/api api node --import tsx src/scripts/seed-dev.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
