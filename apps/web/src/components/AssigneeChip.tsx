@@ -29,14 +29,15 @@ export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Pr
       onClick={onClick}
       title={`${isAgent ? 'Agent' : '人类'}：${actor.name}`}
       className={clsx(
-        'inline-flex max-w-full items-center gap-1 truncate align-middle',
+        'inline-flex max-w-full items-center gap-1 truncate align-middle transition',
         text,
         onClick && 'hover:bg-slate-100',
         isAgent
           ? // Agent：方形 + 虚线边框 + 等宽字体
-            'rounded border border-dashed border-agent/60 bg-agent/5 px-1.5 py-0.5 font-mono text-agent'
+            'rounded-md border border-dashed border-agent/60 bg-agent/10 px-1.5 py-0.5 font-mono text-agent'
           : // 人类：圆形头像 + 无边框 + 常规字体
             'rounded-full py-0.5 pr-1.5 text-slate-700',
+        isAgent && onClick && 'hover:border-agent hover:bg-agent/15',
       )}
     >
       {isAgent ? (
@@ -44,9 +45,11 @@ export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Pr
           ▪
         </span>
       ) : (
+        /* 头像用渐变而不是平灰：一屏几十个人名时，平灰的圆点全都长一样，
+           渐变至少让「这是个人」这件事在扫视里立得住 */
         <span
           aria-hidden
-          className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[9px] font-medium text-slate-700"
+          className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-300 to-slate-400 text-[9px] font-medium text-white"
         >
           {actor.name.slice(0, 1)}
         </span>
@@ -73,11 +76,22 @@ const DOT_LABELS: Record<ActorState, string> = {
 
 export function StatusDot({ state }: { state: ActorState }) {
   return (
+    /*
+     * ★ 「执行中」额外套一圈向外扩散的涟漪。
+     *   静止的绿点和静止的灰点在扫视里是同一个东西 ——
+     *   真的在动的那个才读得出「此刻有 Agent 在跑」。
+     *   减少动态效果的系统设置会把它停掉（见 index.css）。
+     */
     <span
       title={DOT_LABELS[state]}
       aria-label={DOT_LABELS[state]}
-      className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', DOT_STYLES[state])}
-    />
+      className="relative flex h-1.5 w-1.5 shrink-0"
+    >
+      {state === 'running' && (
+        <span aria-hidden className="absolute inset-0 rounded-full bg-emerald-500 animate-ping-soft" />
+      )}
+      <span className={clsx('relative h-1.5 w-1.5 rounded-full', DOT_STYLES[state])} />
+    </span>
   );
 }
 

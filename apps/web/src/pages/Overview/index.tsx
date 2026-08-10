@@ -62,18 +62,18 @@ export function OverviewPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
+      <div className="relative z-10 shrink-0 border-b border-slate-200/80 px-4 py-2.5 glass">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">{d.project.name}</h1>
+          <h1 className="text-sm font-semibold tracking-tight text-slate-900">{d.project.name}</h1>
           {d.project.goal && (
             <span className="truncate text-xs text-slate-500">{d.project.goal}</span>
           )}
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+          <span className="rounded-full border border-slate-200 bg-slate-100/70 px-2 py-0.5 text-[11px] text-slate-600">
             {d.project.autonomyLevel}
           </span>
         </div>
-        <nav className="mt-1.5 flex flex-wrap items-center gap-1 text-xs">
-          <span className="rounded bg-slate-900 px-2 py-0.5 text-white">总览</span>
+        <nav className="mt-2 flex flex-wrap items-center gap-0.5 text-xs">
+          <span className="rounded-md bg-slate-900 px-2 py-1 font-medium text-white">总览</span>
           <Tab to={`/projects/${projectId}/board`}>看板</Tab>
           <Tab to={`/projects/${projectId}/graph`}>执行图</Tab>
           <Tab to={`/projects/${projectId}/requirements`}>需求</Tab>
@@ -366,7 +366,10 @@ export function OverviewPage() {
 
 function Tab({ to, children }: { to: string; children: React.ReactNode }) {
   return (
-    <Link to={to} className="rounded px-2 py-0.5 text-slate-600 hover:bg-slate-100">
+    <Link
+      to={to}
+      className="rounded-md px-2 py-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+    >
       {children}
     </Link>
   );
@@ -391,19 +394,43 @@ function MetricCard({
     <button
       type="button"
       onClick={onClick}
-      className="rounded border border-slate-200 bg-white px-3 py-2 text-left hover:border-slate-300"
+      className={clsx(
+        'lift relative overflow-hidden rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm hover:shadow-md',
+        // 指标卡的色调只体现在**顶边那道线**上，不给整块上色 ——
+        // 五张卡并排时，五块彩色底会让人先看到颜色，再去找数字
+        tone === 'bad'
+          ? 'border-red-200 hover:border-red-300'
+          : tone === 'warn'
+            ? 'border-amber-200 hover:border-amber-300'
+            : 'border-slate-200 hover:border-slate-300',
+      )}
     >
+      {tone !== 'normal' && (
+        <span
+          aria-hidden
+          className={clsx(
+            'absolute inset-x-0 top-0 h-px',
+            tone === 'bad' ? 'bg-overdue' : tone === 'warn' ? 'bg-gate' : 'bg-emerald-500',
+          )}
+        />
+      )}
       <p className="text-[11px] text-slate-500">{label}</p>
       <p
         className={clsx(
-          'mt-0.5 text-lg font-semibold',
-          tone === 'bad' ? 'text-red-700' : tone === 'warn' ? 'text-amber-700' : tone === 'good' ? 'text-green-700' : 'text-slate-900',
+          'mt-0.5 text-xl font-semibold tabular-nums tracking-tight',
+          tone === 'bad'
+            ? 'text-red-700'
+            : tone === 'warn'
+              ? 'text-amber-700'
+              : tone === 'good'
+                ? 'text-green-700'
+                : 'text-slate-900',
         )}
       >
         {value}
       </p>
       {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
-      {hint && <p className="text-[11px] text-slate-300">{hint}</p>}
+      {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
     </button>
   );
 }

@@ -27,6 +27,8 @@ import { MembersPage } from './pages/Settings/Members';
 import { AccountsPage } from './pages/Settings/Accounts';
 import { RolesPage } from './pages/Settings/Roles';
 import { ConnectionBanner } from './components/ConnectionBanner';
+import { BrandMark } from './components/BrandMark';
+import { useThemeStore } from './stores/theme';
 
 /**
  * ★ 外层用 h-screen 而不是 min-h-screen。
@@ -159,17 +161,16 @@ function IdentityGate({ error }: { error: unknown }) {
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
-        <div className="max-w-md text-center">
-          <p className="text-sm text-slate-800">确认不了当前身份，页面无法加载</p>
-          <p className="mt-1 text-xs text-slate-500">
-            后端可能没起来。确认 API 可达后刷新重试。
-          </p>
+        <div className="max-w-md rounded-xl border border-red-200 bg-red-50/60 px-6 py-5 text-center">
+          <p className="text-sm font-medium text-red-800">确认不了当前身份，页面无法加载</p>
+          <p className="mt-1 text-xs text-red-600">后端可能没起来。确认 API 可达后刷新重试。</p>
         </div>
       </div>
     );
   }
   return (
-    <div className="flex flex-1 items-center justify-center p-8">
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
+      <BrandMark className="h-8 w-8 animate-breathe" />
       <p className="text-xs text-slate-400">正在确认身份…</p>
     </div>
   );
@@ -187,37 +188,84 @@ function TopNav() {
   const signOut = useAuthStore((s) => s.signOut);
 
   return (
-    <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
-      <button
-        type="button"
-        onClick={() => navigate('/')}
-        className="text-sm font-semibold tracking-tight text-slate-900"
-      >
-        Autonomous Project OS
-      </button>
-
-      <OrgSwitcher />
-
-      <DecisionBadge />
-
-      {/*
-        ★ 此前这里是一个身份下拉框，选中谁就是谁。那是 X-User-Id 时代的
-          遗物 —— 一个自助改名的界面。现在身份由登录决定，
-          换人看只能退出再登录，这也正是它本来该有的样子。
-      */}
-      <div className="ml-auto flex items-center gap-2">
-        <span className="text-xs text-slate-600" title={user?.email}>
-          {user?.name ?? '…'}
-        </span>
+    /*
+     * ★ 顶栏用玻璃面而不是实色：它盖在内容之上，半透明能让人一直
+     *   感觉到「下面那一屏还在」，滚动时也不会像被切掉一块。
+     * ★ 顶上那道品牌渐变发丝线是全站唯一的品牌出场 —— 一像素，不抢内容。
+     */
+    <header className="relative z-30 shrink-0 border-b border-slate-200/80 glass">
+      <div aria-hidden className="hairline-brand absolute inset-x-0 top-0 h-px" />
+      <div className="flex items-center gap-2.5 px-4 py-2">
         <button
           type="button"
-          onClick={signOut}
-          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+          onClick={() => navigate('/')}
+          className="group flex items-center gap-2 rounded-md py-0.5 pr-1"
+          title="回到项目列表"
         >
-          退出登录
+          <BrandMark className="h-6 w-6 transition group-hover:scale-105" />
+          <span className="text-[13px] font-semibold tracking-tight text-slate-900">APOS</span>
+          {/* 窄屏先让位给组织切换与待办数 —— 全称在这儿是说明，不是功能 */}
+          <span className="hidden text-[11px] text-slate-400 lg:inline">
+            Autonomous&nbsp;Project&nbsp;OS
+          </span>
         </button>
+
+        <OrgSwitcher />
+
+        <DecisionBadge />
+
+        {/*
+          ★ 此前这里是一个身份下拉框，选中谁就是谁。那是 X-User-Id 时代的
+            遗物 —— 一个自助改名的界面。现在身份由登录决定，
+            换人看只能退出再登录，这也正是它本来该有的样子。
+        */}
+        <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle />
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100/60 py-0.5 pl-0.5 pr-2.5"
+            title={user?.email}
+          >
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-brand-alt to-brand-far text-[10px] font-semibold text-white">
+              {user?.name?.slice(0, 1) ?? '·'}
+            </span>
+            <span className="text-xs text-slate-600">{user?.name ?? '…'}</span>
+          </span>
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800"
+          >
+            退出登录
+          </button>
+        </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * 深浅主题切换。
+ *
+ * ★ 深色是默认，但不能是唯一：白天靠窗、投屏演示、以及单纯就是不喜欢
+ *   深色的人，都需要另一套。整个调色盘接在 CSS 令牌上（见 index.css），
+ *   所以这里只是换 <html data-theme>，没有第二套样式要维护。
+ */
+function ThemeToggle() {
+  const theme = useThemeStore((s) => s.theme);
+  const toggle = useThemeStore((s) => s.toggle);
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+      title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+      className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-brand/50 hover:text-brand"
+    >
+      <span aria-hidden className="text-[13px] leading-none">
+        {theme === 'dark' ? '☾' : '☀'}
+      </span>
+    </button>
   );
 }
 
@@ -240,8 +288,8 @@ function OrgSwitcher() {
 
   return (
     <>
-      <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
-        <span className="text-[11px] text-slate-400">组织</span>
+      <div className="ml-1 flex items-center gap-1.5 border-l border-slate-200 pl-3">
+        <span className="hidden text-[11px] text-slate-400 sm:inline">组织</span>
         <select
           aria-label="切换组织"
           value={orgId ?? ''}
@@ -253,7 +301,7 @@ function OrgSwitcher() {
             switchOrg(e.target.value);
             navigate('/');
           }}
-          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+          className="rounded-md border border-slate-200 bg-slate-100/60 px-2 py-1 text-xs font-medium text-slate-700"
         >
           {organizations.map((o) => (
             <option key={o.id} value={o.id}>
@@ -263,7 +311,7 @@ function OrgSwitcher() {
           <option value="__new__">+ 新建组织…</option>
         </select>
         {org && (
-          <code className="text-[10px] text-slate-400">{org.slug}</code>
+          <code className="hidden font-mono text-[10px] text-slate-400 md:inline">{org.slug}</code>
         )}
       </div>
       {creating && <CreateOrgModal onClose={() => setCreating(false)} />}
@@ -294,18 +342,33 @@ function DecisionBadge() {
   const stats = inbox.data?.stats;
   if (!stats || stats.mine === 0) return null;
 
+  const overdue = stats.overdue > 0;
+
   return (
     <Link
       to="/decisions"
       className={clsx(
-        'rounded px-2 py-0.5 text-xs',
-        stats.overdue > 0
-          ? 'bg-red-50 text-red-700 hover:bg-red-100'
-          : 'bg-amber-50 text-amber-800 hover:bg-amber-100',
+        'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition',
+        overdue
+          ? 'border-red-300/60 bg-red-50 text-red-700 glow-overdue hover:bg-red-100'
+          : 'border-amber-300/50 bg-amber-50 text-amber-800 glow-gate hover:bg-amber-100',
       )}
     >
-      ⏰ {stats.mine} 条待你决策
-      {stats.overdue > 0 && <span className="ml-1 font-medium">（{stats.overdue} 条已超时）</span>}
+      {/* 会扩散的圆点：它替代了「⏰」那个 emoji —— 一个真的在动的东西
+          比一个画着时钟的字符更像「现在正有事等着你」 */}
+      <span aria-hidden className="relative flex h-1.5 w-1.5 shrink-0">
+        <span
+          className={clsx(
+            'absolute inset-0 rounded-full animate-ping-soft',
+            overdue ? 'bg-overdue' : 'bg-gate',
+          )}
+        />
+        <span
+          className={clsx('relative h-1.5 w-1.5 rounded-full', overdue ? 'bg-overdue' : 'bg-gate')}
+        />
+      </span>
+      <span className="tabular-nums">{stats.mine} 条待你决策</span>
+      {overdue && <span className="font-medium tabular-nums">· {stats.overdue} 条已超时</span>}
     </Link>
   );
 }

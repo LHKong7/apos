@@ -148,7 +148,7 @@ export function HitsPanel({
                           </>
                         ) : (
                           // 没有快照的历史事件，如实说而不是留空让人以为没触发条件
-                          <span className="text-slate-300">未记录上下文</span>
+                          <span className="text-slate-400">未记录上下文</span>
                         )}
                       </td>
                       <td className="py-1 pr-2 text-slate-600">{h.actionLabel}</td>

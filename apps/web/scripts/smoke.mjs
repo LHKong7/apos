@@ -309,7 +309,10 @@ if (graphNodes > 0) {
 for (const [value, label] of [['stage', '阶段泳道'], ['executor', '执行者泳道']]) {
   await page.selectOption('select[aria-label="布局"]', value);
   await page.waitForTimeout(1000);
-  const laneCount = await page.locator('svg[aria-label="执行图"] rect[stroke="#e2e8f0"]').count();
+  // 泳道底色改由 CSS 令牌给（主题化之后写死的 #e2e8f0 不再出现在属性里）
+  const laneCount = await page
+    .locator('svg[aria-label="执行图"] rect[stroke="var(--graph-lane-stroke)"]')
+    .count();
   const after = await nodeG.count();
   check(`${label}布局可用且节点数不变`, after === graphNodes && laneCount > 0, `${laneCount} 条泳道`);
   await shot(`graph-${value}`);

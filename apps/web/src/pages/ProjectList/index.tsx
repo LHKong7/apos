@@ -20,11 +20,14 @@ export function ProjectListPage() {
   const [creating, setCreating] = useState(false);
 
   return (
-    <div className="mx-auto w-full max-w-4xl p-6">
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-lg font-semibold text-slate-900">项目</h1>
+    <div className="mx-auto w-full max-w-4xl overflow-y-auto p-6">
+      <div className="mb-5 flex items-center gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">项目</h1>
+          <p className="mt-0.5 text-xs text-slate-400">进项目先看总览：现在什么情况、要不要你管</p>
+        </div>
         {org && (
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          <span className="self-start rounded-full border border-slate-200 bg-slate-100/60 px-2 py-0.5 text-[11px] text-slate-500">
             {org.name}
           </span>
         )}
@@ -36,7 +39,7 @@ export function ProjectListPage() {
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+          className="ml-auto self-start rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:brightness-110"
         >
           + 新建项目
         </button>
@@ -59,20 +62,26 @@ export function ProjectListPage() {
                 {/* 进项目先到总览 —— 「现在什么情况、要不要我管」比一屏卡片先回答 */}
                 <Link
                   to={`/projects/${p.id}`}
-                  className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 hover:border-slate-300 hover:shadow-sm"
+                  className="lift group relative flex items-center gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm hover:border-brand/40 hover:shadow-md"
                 >
+                  {/* 悬停时左侧亮起一道品牌色 —— 指明「点这里会进去」，
+                      比整块变底色更轻，不会在一屏十几行里造成闪烁感 */}
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-0.5 bg-gradient-to-b from-brand-alt to-brand-far opacity-0 transition-opacity group-hover:opacity-100"
+                  />
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-sm font-medium text-slate-900">{p.name}</h2>
-                    {p.goal && (
-                      <p className="mt-0.5 truncate text-xs text-slate-500">{p.goal}</p>
-                    )}
+                    {p.goal && <p className="mt-0.5 truncate text-xs text-slate-500">{p.goal}</p>}
                   </div>
-                  <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                  <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100/70 px-2 py-0.5 text-[11px] text-slate-600">
                     {AUTONOMY_LABELS[p.autonomyLevel] ?? p.autonomyLevel}
                   </span>
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-slate-500">
                     {money(p.costSpent)}
-                    {p.budgetAmount && ` / ${money(p.budgetAmount)}`}
+                    {p.budgetAmount && (
+                      <span className="text-slate-400"> / {money(p.budgetAmount)}</span>
+                    )}
                   </span>
                   <span className="shrink-0 text-[11px] text-slate-400">
                     {relativeTime(p.updatedAt)}

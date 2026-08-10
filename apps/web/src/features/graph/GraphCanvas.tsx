@@ -145,7 +145,7 @@ export function GraphCanvas({
               markerHeight={6}
               orient="auto-start-reverse"
             >
-              <path d="M 0 1 L 8 4 L 0 7 z" fill="#94a3b8" />
+              <path d="M 0 1 L 8 4 L 0 7 z" fill="var(--graph-edge)" />
             </marker>
             <marker
               id="arrow-critical"
@@ -156,7 +156,7 @@ export function GraphCanvas({
               markerHeight={6}
               orient="auto-start-reverse"
             >
-              <path d="M 0 1 L 8 4 L 0 7 z" fill="#0f172a" />
+              <path d="M 0 1 L 8 4 L 0 7 z" fill="var(--graph-edge-critical)" />
             </marker>
           </defs>
 
@@ -169,10 +169,10 @@ export function GraphCanvas({
                   y={lane.y}
                   width={layout.width + NODE_W + 48}
                   height={lane.height}
-                  fill="#ffffff"
-                  stroke="#e2e8f0"
+                  fill="var(--graph-lane-fill)"
+                  stroke="var(--graph-lane-stroke)"
                 />
-                <text x={-16} y={lane.y + 16} fontSize={11} fill="#64748b">
+                <text x={-16} y={lane.y + 16} fontSize={11} fill="var(--graph-sub)">
                   {lane.label}
                 </text>
               </g>
@@ -265,7 +265,7 @@ export function GraphCanvas({
                         y={detail ? NODE_H / 2 - 4 : NODE_H / 2 + 4}
                         textAnchor="middle"
                         fontSize={11}
-                        fill="#0f172a"
+                        fill="var(--graph-ink)"
                       >
                         {KIND_META[node.kind].icon} {truncate(node.title, titleBudget(node.kind))}
                       </text>
@@ -277,7 +277,7 @@ export function GraphCanvas({
                             y={NODE_H / 2 + 10}
                             textAnchor="middle"
                             fontSize={9}
-                            fill="#64748b"
+                            fill="var(--graph-sub)"
                           >
                             {truncate(node.executor?.name ?? '未分配', titleBudget(node.kind))}
                           </text>
@@ -286,7 +286,7 @@ export function GraphCanvas({
                             y={NODE_H / 2 + 22}
                             textAnchor="middle"
                             fontSize={9}
-                            fill="#94a3b8"
+                            fill="var(--graph-meta)"
                           >
                             {node.durationHours}h
                             {node.durationEstimated ? '(估)' : ''} · {money(node.cost)}
@@ -298,30 +298,37 @@ export function GraphCanvas({
                       {/* 进度条只画在矩形类节点上 —— 菱形底部太窄，画上去会溢出 */}
                       {node.progressPct !== null && isRectangular(node.kind) && (
                         <>
-                          <rect x={10} y={NODE_H - 8} width={NODE_W - 20} height={3} fill="#e2e8f0" rx={2} />
+                          <rect
+                            x={10}
+                            y={NODE_H - 8}
+                            width={NODE_W - 20}
+                            height={3}
+                            fill="var(--graph-track)"
+                            rx={2}
+                          />
                           <rect
                             x={10}
                             y={NODE_H - 8}
                             width={((NODE_W - 20) * node.progressPct) / 100}
                             height={3}
-                            fill="#6366f1"
+                            fill="var(--graph-progress)"
                             rx={2}
                           />
                         </>
                       )}
 
                       {node.blockedMinutes !== null && (
-                        <text x={NODE_W / 2} y={13} textAnchor="middle" fontSize={9} fill="#ea580c">
+                        <text x={NODE_W / 2} y={13} textAnchor="middle" fontSize={9} fill="var(--graph-warn)">
                           ⛔
                         </text>
                       )}
                       {node.decisionDueInMinutes !== null && node.decisionDueInMinutes < 0 && (
-                        <text x={NODE_W / 2} y={13} textAnchor="middle" fontSize={9} fill="#dc2626">
+                        <text x={NODE_W / 2} y={13} textAnchor="middle" fontSize={9} fill="var(--graph-danger)">
                           ⏰
                         </text>
                       )}
                       {(node.riskLevel === 'high' || node.riskLevel === 'critical') && (
-                        <circle cx={NODE_W / 2} cy={NODE_H - 6} r={3.5} fill="#dc2626" />
+                        <circle cx={NODE_W / 2} cy={NODE_H - 6} r={3.5} fill="var(--graph-danger)" />
                       )}
                     </>
                   )}

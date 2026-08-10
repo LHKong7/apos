@@ -306,6 +306,61 @@ React Flow 与 Recharts 体积较大，只在对应页面加载。核心路径�
 
 ---
 
+## 6.5 设计令牌与主题
+
+### 颜色不是色号，是语义槽位
+
+界面里散着 1500+ 处 `text-slate-500` / `bg-white` / `border-slate-200`。要给这套界面换观感，
+逐处改是几千行 diff，而且此后每加一个页面都靠自觉对齐 —— 迟早漂移成好几套灰。
+
+所以整条调色盘在 `tailwind.config.ts` 里**重新指向 CSS 变量**（令牌定义在 `src/index.css`）：
+
+```ts
+const token = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
+colors: { slate: ramp('slate'), amber: ramp('amber'), white: token('white'), ... }
+```
+
+于是类名的含义从「#64748b」变成「次要文字」，从「纯白」变成「浮起的卡面」。
+主题一换全站跟着换，已经写好的页面一个字都不用动。
+
+| 槽位 | 含义 | 深色取值 | 浅色取值 |
+| --- | --- | --- | --- |
+| `slate-50` | 页面底色 | `#070b14` | `#f5f7fb` |
+| `white` | 卡面（比页底浮起一层） | `#101829` | `#ffffff` |
+| `slate-100` | 轻微浮起：chip、hover 面 | `#111a2b` | `#eceff5` |
+| `slate-200` | 发丝描边、骨架块、进度槽 | `#1e2a41` | `#dfe4ed` |
+| `slate-300` | 较强描边、输入框边 | `#3e5274` | `#c7cfdd` |
+| `slate-400/500` | 弱化 / 次要文字 | `#7488a5` / `#8b9cb8` | `#8d99ad` / `#64748b` |
+| `slate-900` | 主文字 / 反色按钮底 | `#eef3fa` | `#0d1626` |
+
+两条硬约束：
+
+1. **令牌存 RGB 通道而不是 `#hex`。** Tailwind 的透明度修饰符（`bg-gate/15`、`bg-white/70`）
+   要靠 `rgb(var(--x) / <alpha-value>)` 才算得出来，存成 hex 那些类会**静默失效**。
+2. **深色下中性色阶整体反转**（50 最深 → 900 最浅）。这让 `text-slate-900`（标题）
+   自然变成近白、`bg-slate-50`（页底）自然变成近黑，原有语义全部成立。
+   代价是 `bg-slate-900 text-white` 这类主行动按钮在深色下是「近白底 + 深色字」——
+   这是刻意的，不是 bug。
+
+### 反转不适用的三处
+
+- **遮罩**：抽屉与弹层用 `bg-scrim/[var(--scrim-alpha)]`，不是 `bg-slate-900/20`。
+  反转之后 slate-900 是近白，照搬会在内容上蒙一层雾而不是压暗它。
+- **SVG 的 `fill` / `stroke`**：它们是属性不是 class，Tailwind 的色阶够不着。
+  执行图与图表另给一套 `--graph-*` / `--chart-*` 令牌（`features/graph/shapes.tsx`、
+  `features/analytics/palette.ts`），否则换主题时整张图会留在原地。
+- **图表数据色**：`SERIES` / `ORDINAL` 那几个蓝**不跟主题走**。它们是在白底上跑过
+  明度带、彩度、色盲 ΔE 校验的，同时在深底上也读得出（最浅的 `#86b6ef` 对比度 8.4:1）。
+  直接反过来用等于把校验结果作废。
+
+### 主题的落点
+
+深色是默认，浅色是显式选择（`stores/theme.ts`，写 `<html data-theme>` + localStorage）。
+**真正生效的那次赋值在 `index.html` 的内联脚本里** —— React 挂载至少要等 bundle 下载解析完，
+在那之前 `<html>` 上没有 `data-theme`，选了浅色的人每次刷新都会先被闪一下深色。
+
+---
+
 ## 7. 关键组件的实现要点
 
 ### 7.1 AssigneeChip（人机区分）

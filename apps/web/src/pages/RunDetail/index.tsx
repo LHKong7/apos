@@ -206,7 +206,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
                 className={clsx(
                   'px-2 py-1 text-xs',
                   tab === t.key
-                    ? 'border-b-2 border-slate-900 font-medium text-slate-900'
+                    ? 'border-b-2 border-brand font-medium text-slate-900'
                     : 'text-slate-500 hover:text-slate-700',
                   t.key === 'error' && tab !== 'error' && 'text-red-600',
                 )}
@@ -270,7 +270,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       )}
 
       {toast && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded bg-slate-900 px-3 py-1.5 text-xs text-white shadow-lg">
+        <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
           {toast}
           <button
             type="button"

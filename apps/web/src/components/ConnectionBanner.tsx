@@ -29,14 +29,20 @@ export function ConnectionBanner() {
 
   if (detail && status === 'open') {
     return (
-      <div className="bg-amber-50 px-4 py-1 text-center text-[11px] text-amber-800">
+      <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-200/50 bg-amber-50 px-4 py-1 text-[11px] text-amber-800">
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-gate" />
         {detail === 'resync' ? '离线期间更新较多，已全量刷新' : detail}
       </div>
     );
   }
 
   return (
-    <div className="bg-amber-100 px-4 py-1 text-center text-[11px] text-amber-900">
+    <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-300/40 bg-amber-100 px-4 py-1 text-[11px] text-amber-900">
+      {/* 一个真的在闪的点，比一句「正在重连」更快被余光捕捉到 */}
+      <span aria-hidden className="relative flex h-1.5 w-1.5">
+        <span className="absolute inset-0 rounded-full bg-gate animate-ping-soft" />
+        <span className="relative h-1.5 w-1.5 rounded-full bg-gate" />
+      </span>
       实时更新已断开，正在重连…（卡片显示的是最后一次同步的状态）
     </div>
   );

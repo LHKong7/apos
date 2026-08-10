@@ -2,14 +2,503 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+ * 设计令牌（design tokens）
+ *
+ * ★★ 为什么是「重新定义调色盘」而不是「逐页改样式」。
+ *
+ *   这一版之前，界面里散着 1500+ 处写死的 slate/amber/red 类名。
+ *   要给它换一套观感，逐处改是一条几千行的 diff，而且此后每加一个页面
+ *   都要靠自觉去对齐 —— 迟早漂移成好几套灰。
+ *
+ *   所以颜色不再是「类名里的那个色号」，而是**语义槽位**：
+ *   `text-slate-500` 的含义是「次要文字」，`bg-white` 的含义是「浮起的卡面」。
+ *   槽位的取值由这里的令牌给，主题一换全站跟着换 —— 已经写好的页面
+ *   一个字都不用动，新页面也没有第二套灰可选。
+ *
+ * ★★ 深色是**默认**主题，不是附加项。
+ *
+ *   这是一块要长时间盯着的作业面板（看板、执行图、Run 日志），
+ *   深底让状态色（gate 琥珀、阻塞橙、失败红、Agent 靛蓝）自己发光，
+ *   而不是在一片白里互相打架。浅色仍然完整保留，靠右上角切换。
+ *
+ * ★ 令牌存的是 **RGB 通道**而不是 #hex：Tailwind 的透明度修饰符
+ *   （`bg-gate/15`、`bg-white/70`）要靠 `rgb(var(--x) / <alpha-value>)`
+ *   才能算出来。存成 hex 的话那些类会静默失效。
+ * ========================================================================= */
+
 @layer base {
-  html {
-    font-family:
-      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-      'Microsoft YaHei', sans-serif;
+  :root {
+    color-scheme: dark;
+
+    /* --- 中性色阶：深色下**反转**（50 最深 → 900 最浅） -------------------
+     * 反转之后，`text-slate-900`（标题）自然变成近白，
+     * `bg-slate-50`（页底）自然变成近黑 —— 原有语义全部成立。 */
+    --c-slate-50: 7 11 20; /* 页面底色 */
+    --c-slate-100: 17 26 43; /* 轻微浮起：chip、hover 面 */
+    --c-slate-200: 30 42 65; /* 发丝描边、骨架块、进度槽 */
+    --c-slate-300: 62 82 116; /* 较强描边、输入框边 */
+    --c-slate-400: 116 136 165; /* 弱化文字 */
+    --c-slate-500: 139 156 184; /* 次要文字 */
+    --c-slate-600: 165 180 204;
+    --c-slate-700: 192 203 221;
+    --c-slate-800: 219 227 239;
+    --c-slate-900: 238 243 250; /* 主文字 / 反色按钮底 */
+    --c-white: 16 24 41; /* 卡面（比页底浮起一层） */
+
+    /* --- 状态色：低段是「底色」，高段是「字色」，同样反转 --------------- */
+    --c-amber-50: 42 30 5;
+    --c-amber-100: 58 41 9;
+    --c-amber-200: 79 57 13;
+    --c-amber-300: 122 87 17;
+    --c-amber-400: 194 140 28;
+    --c-amber-500: 240 169 42;
+    --c-amber-600: 247 185 63;
+    --c-amber-700: 251 200 91;
+    --c-amber-800: 252 213 126;
+    --c-amber-900: 253 232 176;
+
+    --c-red-50: 43 15 18;
+    --c-red-100: 61 20 24;
+    --c-red-200: 87 28 34;
+    --c-red-300: 125 39 47;
+    --c-red-400: 192 65 80;
+    --c-red-500: 239 74 92;
+    --c-red-600: 245 105 122;
+    --c-red-700: 251 132 148;
+    --c-red-800: 253 164 176;
+    --c-red-900: 254 205 212;
+
+    --c-rose-50: 45 14 24;
+    --c-rose-100: 64 19 33;
+    --c-rose-200: 91 27 46;
+    --c-rose-300: 130 38 65;
+    --c-rose-400: 198 63 103;
+    --c-rose-500: 244 84 128;
+    --c-rose-600: 249 116 152;
+    --c-rose-700: 251 143 173;
+    --c-rose-800: 253 172 193;
+    --c-rose-900: 254 209 221;
+
+    --c-orange-50: 44 22 8;
+    --c-orange-100: 61 30 10;
+    --c-orange-200: 85 42 13;
+    --c-orange-300: 124 61 18;
+    --c-orange-400: 194 96 31;
+    --c-orange-500: 249 115 22;
+    --c-orange-600: 251 138 60;
+    --c-orange-700: 253 160 94;
+    --c-orange-800: 253 186 140;
+    --c-orange-900: 254 215 170;
+
+    --c-emerald-50: 5 32 24;
+    --c-emerald-100: 7 48 31;
+    --c-emerald-200: 11 70 48;
+    --c-emerald-300: 16 102 71;
+    --c-emerald-400: 31 157 107;
+    --c-emerald-500: 46 207 139;
+    --c-emerald-600: 74 222 158;
+    --c-emerald-700: 110 231 176;
+    --c-emerald-800: 167 243 205;
+    --c-emerald-900: 209 250 229;
+
+    --c-green-50: 5 32 20;
+    --c-green-100: 7 48 28;
+    --c-green-200: 11 70 42;
+    --c-green-300: 16 102 62;
+    --c-green-400: 34 158 90;
+    --c-green-500: 52 205 118;
+    --c-green-600: 82 220 141;
+    --c-green-700: 118 231 165;
+    --c-green-800: 169 243 199;
+    --c-green-900: 213 250 226;
+
+    --c-sky-50: 4 32 46;
+    --c-sky-100: 6 46 66;
+    --c-sky-200: 10 66 96;
+    --c-sky-300: 15 95 136;
+    --c-sky-400: 33 150 201;
+    --c-sky-500: 56 189 248;
+    --c-sky-600: 92 200 250;
+    --c-sky-700: 125 213 251;
+    --c-sky-800: 165 226 252;
+    --c-sky-900: 205 239 254;
+
+    --c-indigo-50: 22 22 56;
+    --c-indigo-100: 30 31 76;
+    --c-indigo-200: 42 44 104;
+    --c-indigo-300: 62 65 148;
+    --c-indigo-400: 99 102 241;
+    --c-indigo-500: 129 132 246;
+    --c-indigo-600: 152 155 249;
+    --c-indigo-700: 175 178 251;
+    --c-indigo-800: 199 201 253;
+    --c-indigo-900: 224 225 254;
+
+    /* --- 语义槽位 ------------------------------------------------------- */
+    --c-gate: 245 166 35; /* Human Gate：琥珀 */
+    --c-overdue: 239 74 92; /* 超时：红 */
+    --c-blocked: 249 130 40; /* 阻塞：橙 */
+    --c-agent: 124 140 255; /* Agent：靛蓝 —— 全站唯一的「机器」色 */
+    --c-brand: 91 140 255; /* 品牌主色 */
+    --c-brand-alt: 34 211 238; /* 品牌辅色：青 */
+    --c-brand-far: 167 139 250; /* 品牌远端：紫 */
+
+    /*
+     * 遮罩。深色下换一层更黑的色（slate-900 在这里是近白，压不暗任何东西）。
+     * ★ 不透明度停在 0.5：抽屉的用处正是「不离开看板去处理一张卡」，
+     *   压到全黑就等于跳走了一页，那还不如真的跳页。剩下的层次交给模糊。
+     */
+    --c-scrim: 2 5 12;
+    --scrim-alpha: 0.5;
+
+    /* 阴影：深色里靠「更黑的投影 + 一圈微光描边」造浮起感，
+       只调不透明度是造不出层次的 —— 黑底上的黑影看不见 */
+    --shadow-color: 0 0 0;
+    --shadow-strength: 0.5;
+    --rim: 255 255 255;
+    --rim-alpha: 0.06;
+
+    /* 背景氛围：网格 + 极光。强度独立成变量，浅色下要压得更淡 */
+    --grid-line: 148 163 184;
+    --grid-alpha: 0.055;
+    --aurora-alpha: 0.16;
+
+    /* 图表框架色（SVG 里 attribute 直接引用，见 features/analytics/palette.ts） */
+    --chart-grid: #1e2a41;
+    --chart-axis: #2c3b57;
+    --chart-muted: #8b9cb8;
+    --chart-ink: #eef3fa;
+    --chart-surface: #101829;
+
+    /*
+     * 执行图。SVG 的 fill/stroke 是**属性**不是 class，Tailwind 的色阶
+     * 够不着这里，所以单独给一套 —— 否则换到深色主题时，整张图会留在
+     * 原地：一张白纸上摆着几个浅粉浅蓝的方块。
+     *
+     * 节点底色刻意压得很暗、描边给足亮度：深底上「轮廓」比「填充」
+     * 更能把节点从背景里切出来。
+     */
+    --graph-lane-fill: #0b111d;
+    --graph-lane-stroke: #1e2a41;
+    --graph-edge: #4a5b78;
+    --graph-edge-critical: #dbe3ef;
+    --graph-ink: #eef3fa;
+    --graph-sub: #8b9cb8;
+    --graph-meta: #7488a5;
+    --graph-track: #1e2a41;
+    --graph-progress: #7c8cff;
+    --graph-warn: #fb8a3c;
+    --graph-danger: #f5697a;
+
+    --graph-fill-done: #07301f;
+    --graph-fill-exec: #062e42;
+    --graph-fill-blocked: #3d1e0a;
+    --graph-fill-failed: #3d1418;
+    --graph-fill-decision: #3a2909;
+    --graph-fill-cancelled: #111a2b;
+    --graph-fill-default: #101829;
+
+    --graph-stroke-done: #4ade9e;
+    --graph-stroke-exec: #5cc8fa;
+    --graph-stroke-blocked: #fb8a3c;
+    --graph-stroke-failed: #f5697a;
+    --graph-stroke-decision: #f7b93f;
+    --graph-stroke-cancelled: #6b7d99;
+    --graph-stroke-default: #2c3b57;
+
+    /* Analytics 里「结论」那一行的字色。图上的填充色见 palette.ts 的 STATUS，
+       两者不共用：一个要满足正文对比度，一个要满足图元区分度 */
+    --flag-good: #4ade9e;
+    --flag-warning: #f7b93f;
+    --flag-serious: #fb8a3c;
+    --flag-critical: #f5697a;
   }
+
+  /* ---- 浅色主题 --------------------------------------------------------
+   * 不是深色的机械取反 —— 中性色重新在白底上取过步，
+   * 状态色回到标准 Tailwind 的取值（那套本来就是给白底调的）。 */
+  :root[data-theme='light'] {
+    color-scheme: light;
+
+    --c-slate-50: 245 247 251;
+    --c-slate-100: 236 239 245;
+    --c-slate-200: 223 228 237;
+    --c-slate-300: 199 207 221;
+    --c-slate-400: 141 153 173;
+    --c-slate-500: 100 116 139;
+    --c-slate-600: 74 85 104;
+    --c-slate-700: 55 67 87;
+    --c-slate-800: 35 48 69;
+    --c-slate-900: 13 22 38;
+    --c-white: 255 255 255;
+
+    --c-amber-50: 255 251 235;
+    --c-amber-100: 254 243 199;
+    --c-amber-200: 253 230 138;
+    --c-amber-300: 252 211 77;
+    --c-amber-400: 251 191 36;
+    --c-amber-500: 245 158 11;
+    --c-amber-600: 217 119 6;
+    --c-amber-700: 180 83 9;
+    --c-amber-800: 146 64 14;
+    --c-amber-900: 120 53 15;
+
+    --c-red-50: 254 242 242;
+    --c-red-100: 254 226 226;
+    --c-red-200: 254 202 202;
+    --c-red-300: 252 165 165;
+    --c-red-400: 248 113 113;
+    --c-red-500: 239 68 68;
+    --c-red-600: 220 38 38;
+    --c-red-700: 185 28 28;
+    --c-red-800: 153 27 27;
+    --c-red-900: 127 29 29;
+
+    --c-rose-50: 255 241 242;
+    --c-rose-100: 255 228 230;
+    --c-rose-200: 254 205 211;
+    --c-rose-300: 253 164 175;
+    --c-rose-400: 251 113 133;
+    --c-rose-500: 244 63 94;
+    --c-rose-600: 225 29 72;
+    --c-rose-700: 190 18 60;
+    --c-rose-800: 159 18 57;
+    --c-rose-900: 136 19 55;
+
+    --c-orange-50: 255 247 237;
+    --c-orange-100: 255 237 213;
+    --c-orange-200: 254 215 170;
+    --c-orange-300: 253 186 116;
+    --c-orange-400: 251 146 60;
+    --c-orange-500: 249 115 22;
+    --c-orange-600: 234 88 12;
+    --c-orange-700: 194 65 12;
+    --c-orange-800: 154 52 18;
+    --c-orange-900: 124 45 18;
+
+    --c-emerald-50: 236 253 245;
+    --c-emerald-100: 209 250 229;
+    --c-emerald-200: 167 243 208;
+    --c-emerald-300: 110 231 183;
+    --c-emerald-400: 52 211 153;
+    --c-emerald-500: 16 185 129;
+    --c-emerald-600: 5 150 105;
+    --c-emerald-700: 4 120 87;
+    --c-emerald-800: 6 95 70;
+    --c-emerald-900: 6 78 59;
+
+    --c-green-50: 240 253 244;
+    --c-green-100: 220 252 231;
+    --c-green-200: 187 247 208;
+    --c-green-300: 134 239 172;
+    --c-green-400: 74 222 128;
+    --c-green-500: 34 197 94;
+    --c-green-600: 22 163 74;
+    --c-green-700: 21 128 61;
+    --c-green-800: 22 101 52;
+    --c-green-900: 20 83 45;
+
+    --c-sky-50: 240 249 255;
+    --c-sky-100: 224 242 254;
+    --c-sky-200: 186 230 253;
+    --c-sky-300: 125 211 252;
+    --c-sky-400: 56 189 248;
+    --c-sky-500: 14 165 233;
+    --c-sky-600: 2 132 199;
+    --c-sky-700: 3 105 161;
+    --c-sky-800: 7 89 133;
+    --c-sky-900: 12 74 110;
+
+    --c-indigo-50: 238 242 255;
+    --c-indigo-100: 224 231 255;
+    --c-indigo-200: 199 210 254;
+    --c-indigo-300: 165 180 252;
+    --c-indigo-400: 129 140 248;
+    --c-indigo-500: 99 102 241;
+    --c-indigo-600: 79 70 229;
+    --c-indigo-700: 67 56 202;
+    --c-indigo-800: 55 48 163;
+    --c-indigo-900: 49 46 129;
+
+    --c-gate: 217 119 6;
+    --c-overdue: 220 38 38;
+    --c-blocked: 234 88 12;
+    --c-agent: 79 70 229;
+    --c-brand: 37 99 235;
+    --c-brand-alt: 8 145 178;
+    --c-brand-far: 124 58 237;
+
+    --c-scrim: 15 23 42;
+    --scrim-alpha: 0.28;
+
+    --shadow-color: 15 23 42;
+    --shadow-strength: 0.08;
+    --rim: 15 23 42;
+    --rim-alpha: 0.04;
+
+    --grid-line: 71 85 105;
+    --grid-alpha: 0.05;
+    --aurora-alpha: 0.07;
+
+    --chart-grid: #dfe4ed;
+    --chart-axis: #c7cfdd;
+    --chart-muted: #64748b;
+    --chart-ink: #0d1626;
+    --chart-surface: #ffffff;
+
+    --graph-lane-fill: #ffffff;
+    --graph-lane-stroke: #e2e8f0;
+    --graph-edge: #94a3b8;
+    --graph-edge-critical: #0f172a;
+    --graph-ink: #0f172a;
+    --graph-sub: #64748b;
+    --graph-meta: #94a3b8;
+    --graph-track: #e2e8f0;
+    --graph-progress: #6366f1;
+    --graph-warn: #ea580c;
+    --graph-danger: #dc2626;
+
+    --graph-fill-done: #dcfce7;
+    --graph-fill-exec: #dbeafe;
+    --graph-fill-blocked: #ffedd5;
+    --graph-fill-failed: #fee2e2;
+    --graph-fill-decision: #fef3c7;
+    --graph-fill-cancelled: #f1f5f9;
+    --graph-fill-default: #f8fafc;
+
+    --graph-stroke-done: #16a34a;
+    --graph-stroke-exec: #2563eb;
+    --graph-stroke-blocked: #ea580c;
+    --graph-stroke-failed: #dc2626;
+    --graph-stroke-decision: #d97706;
+    --graph-stroke-cancelled: #94a3b8;
+    --graph-stroke-default: #cbd5e1;
+
+    --flag-good: #166534;
+    --flag-warning: #b45309;
+    --flag-serious: #c2410c;
+    --flag-critical: #b91c1c;
+  }
+
+  html {
+    font-family: theme('fontFamily.sans');
+    /* 中文界面里，稍微收紧的字距让「项目 / 看板」这类短标签更成组 */
+    letter-spacing: -0.006em;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+    /*
+     * ★ 底噪：一层极淡的网格 + 两团品牌色极光。
+     *   纯色深底会显得「关机了」；有极缓的明度起伏才像一块**在工作的**面板。
+     *   fixed 挂在 body 上，页面内部各自滚动时它不跟着走。
+     */
+    background-image:
+      radial-gradient(
+        60rem 40rem at 8% -10%,
+        rgb(var(--c-brand) / var(--aurora-alpha)),
+        transparent 60%
+      ),
+      radial-gradient(
+        50rem 36rem at 100% 0%,
+        rgb(var(--c-brand-far) / calc(var(--aurora-alpha) * 0.8)),
+        transparent 60%
+      ),
+      linear-gradient(rgb(var(--grid-line) / var(--grid-alpha)) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--grid-line) / var(--grid-alpha)) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      100% 100%,
+      44px 44px,
+      44px 44px;
+    background-attachment: fixed;
+  }
+
+  /*
+   * ★ 表单控件统一在这里给底，而不是逐个页面写 class。
+   *   全站的 input/select 都是 `border border-slate-300 px-2 py-1.5`，
+   *   一个背景色都没写 —— 浅色下靠白底蒙混过去了，深色下会变成
+   *   「一个没有内部的框」。放在 base 层，页面上写死的 `bg-white`
+   *   之类仍然压得过它。
+   */
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    @apply rounded-md border-slate-300 bg-slate-100/70 text-slate-800;
+    transition:
+      border-color 140ms ease,
+      box-shadow 140ms ease,
+      background-color 140ms ease;
+  }
+
+  input:not([type='checkbox']):not([type='radio']):focus,
+  select:focus,
+  textarea:focus {
+    @apply border-brand/70 bg-slate-100 outline-none;
+    box-shadow: 0 0 0 3px rgb(var(--c-brand) / 0.18);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-slate-400;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: rgb(var(--c-brand));
+  }
+
+  /* 全站按钮都过渡一下。写在 base 层是因为「按钮变色要有过渡」
+     不该是每个页面各自记得写的东西 —— 漏写的那几个会显得比别处生硬 */
+  button {
+    transition:
+      background-color 140ms ease,
+      border-color 140ms ease,
+      color 140ms ease,
+      box-shadow 140ms ease,
+      opacity 140ms ease;
+  }
+
+  /* 键盘导航的落点必须看得见。全站统一一个焦点环，
+     免得每个可点元素各自决定「要不要有焦点态」*/
+  :where(a, button, [role='button'], summary):focus-visible {
+    outline: 2px solid rgb(var(--c-brand) / 0.85);
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+
+  ::selection {
+    background: rgb(var(--c-brand) / 0.3);
+  }
+
+  /* 滚动条也是界面的一部分：默认那条亮灰在深底上像一道裂缝 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--c-slate-300)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--c-slate-300));
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--c-slate-400));
+  }
+
+  code,
+  pre {
+    font-family: theme('fontFamily.mono');
+    font-variant-ligatures: none;
   }
 }
 
@@ -19,9 +508,124 @@
     scrollbar-width: thin;
   }
   .board-scroll::-webkit-scrollbar {
-    height: 8px;
+    height: 10px;
   }
-  .board-scroll::-webkit-scrollbar-thumb {
-    @apply rounded bg-slate-300;
+
+  /*
+   * 玻璃面。用于顶栏、抽屉、弹层、浮动提示 —— 这些东西盖在内容之上，
+   * 半透明 + 模糊能让人知道「下面还有东西」，而不是被整块切走。
+   */
+  .glass {
+    background-color: rgb(var(--c-white) / 0.72);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+  }
+  .glass-strong {
+    background-color: rgb(var(--c-white) / 0.9);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+  }
+
+  /* 顶部一条品牌渐变发丝线 —— 全站唯一的「品牌出场」，不抢内容 */
+  .hairline-brand {
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--c-brand-alt) / 0.65),
+      rgb(var(--c-brand) / 0.8),
+      rgb(var(--c-brand-far) / 0.65),
+      transparent
+    );
+  }
+
+  .text-gradient-brand {
+    background-image: linear-gradient(
+      100deg,
+      rgb(var(--c-slate-900)),
+      rgb(var(--c-brand-alt)) 55%,
+      rgb(var(--c-brand))
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 卡片的悬停反馈：抬 1px + 描边变亮。位移只给 1px ——
+     再多就会在密集列表里造成整列跟着抖 */
+  .lift {
+    transition:
+      transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      background-color 160ms ease;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+
+  /* 发光。给「正在发生的事」用：执行中的 Agent、待你决策的徽标 */
+  .glow-brand {
+    box-shadow: 0 0 0 1px rgb(var(--c-brand) / 0.35), 0 0 20px -4px rgb(var(--c-brand) / 0.55);
+  }
+  .glow-gate {
+    box-shadow: 0 0 0 1px rgb(var(--c-gate) / 0.35), 0 0 18px -4px rgb(var(--c-gate) / 0.5);
+  }
+  .glow-overdue {
+    box-shadow: 0 0 0 1px rgb(var(--c-overdue) / 0.4), 0 0 18px -4px rgb(var(--c-overdue) / 0.55);
+  }
+
+  /*
+   * 骨架屏。用扫光而不是整体明暗呼吸：
+   * 呼吸只说明「有东西在动」，扫光的方向感更接近「正在填进来」。
+   */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: rgb(var(--c-slate-200) / 0.7);
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--c-slate-400) / 0.18),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* 网格底纹，局部使用（登录页、空态） */
+  .grid-fade {
+    background-image:
+      linear-gradient(rgb(var(--grid-line) / calc(var(--grid-alpha) * 2)) 1px, transparent 1px),
+      linear-gradient(
+        90deg,
+        rgb(var(--grid-line) / calc(var(--grid-alpha) * 2)) 1px,
+        transparent 1px
+      );
+    background-size: 32px 32px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000, transparent 75%);
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000, transparent 75%);
+  }
+}
+
+/*
+ * ★ 尊重系统的「减少动态效果」。落位动画、扫光、呼吸点对前庭敏感的用户
+ *   是实打实的不适，而它们传达的信息（卡片动了、在加载、在执行中）
+ *   在界面上都另有静态的说法。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .lift:hover {
+    transform: none;
   }
 }

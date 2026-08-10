@@ -58,73 +58,79 @@ export function TopBar({
     (filters.risk?.length ?? 0) > 0;
 
   return (
-    <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
+    <div className="relative z-20 shrink-0 border-b border-slate-200/80 px-4 py-2 glass">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-sm font-semibold text-slate-900">{projectName} / 看板</h1>
+        <h1 className="text-sm font-semibold tracking-tight text-slate-900">
+          {projectName}
+          <span className="mx-1.5 font-normal text-slate-300">/</span>
+          <span className="font-medium text-slate-500">看板</span>
+        </h1>
 
-        <div className="ml-2 flex rounded border border-slate-300 p-0.5">
+        {/*
+          ★ 视图切换和「去别的页」在此之前挤在同一个框里，看起来像六个平级的
+            标签，其实前四个换的是这一页的呈现，后四个是跳走。分成两组之后
+            不用读文字也知道哪些是「在这儿看」，哪些是「离开这儿」。
+        */}
+        <div className="ml-1 flex rounded-lg border border-slate-200 bg-slate-100/60 p-0.5">
           {VIEWS.map((v) => (
             <button
               key={v.key}
               type="button"
               onClick={() => onView(v.key)}
+              aria-pressed={view === v.key}
               className={clsx(
-                'rounded px-2 py-0.5 text-xs',
-                view === v.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
+                'rounded-md px-2.5 py-1 text-xs',
+                view === v.key
+                  ? 'bg-white font-medium text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800',
               )}
             >
               {v.label}
             </button>
           ))}
-          {/* 执行图与 Analytics 是独立页面而不是看板的视图 —— 它们回答的是另外的问题 */}
-          <button
-            type="button"
-            onClick={onOpenGraph}
-            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
-          >
-            执行图 ↗
-          </button>
-          <button
-            type="button"
-            onClick={onOpenAnalytics}
-            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
-          >
-            Analytics ↗
-          </button>
-          <button
-            type="button"
-            onClick={onOpenRequirements}
-            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
-          >
-            需求 ↗
-          </button>
-          <button
-            type="button"
-            onClick={onOpenPolicies}
-            className="rounded px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
-          >
-            Policy ↗
-          </button>
-          {/*
-            ★★ 在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解）。
-              那条链是产品的核心，但它同时让「随手记一个 bug」在系统里做不到 ——
-              而那是任何任务系统最高频的一个动作。
-            ★ 建出来的是**草稿**，还不能派发；放行去执行仍然要 tech_lead，
-              两道 Human Gate 一个都没被绕开（见 http/work-items.ts）。
-          */}
-          <GatedButton
-            permission="work_item.create"
-            onClick={onNewWorkItem}
-            className="ml-1 rounded bg-slate-900 px-2 py-0.5 text-xs font-medium text-white hover:bg-slate-700"
-          >
-            + 新建任务
-          </GatedButton>
         </div>
+
+        {/* 执行图与 Analytics 是独立页面而不是看板的视图 —— 它们回答的是另外的问题 */}
+        <div className="flex items-center gap-0.5">
+          {[
+            { label: '执行图', onClick: onOpenGraph },
+            { label: 'Analytics', onClick: onOpenAnalytics },
+            { label: '需求', onClick: onOpenRequirements },
+            { label: 'Policy', onClick: onOpenPolicies },
+          ].map((link) => (
+            <button
+              key={link.label}
+              type="button"
+              onClick={link.onClick}
+              className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            >
+              {link.label}
+              <span aria-hidden className="ml-0.5 text-[10px] text-slate-400">
+                ↗
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/*
+          ★★ 在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解）。
+            那条链是产品的核心，但它同时让「随手记一个 bug」在系统里做不到 ——
+            而那是任何任务系统最高频的一个动作。
+          ★ 建出来的是**草稿**，还不能派发；放行去执行仍然要 tech_lead，
+            两道 Human Gate 一个都没被绕开（见 http/work-items.ts）。
+        */}
+        <GatedButton
+          permission="work_item.create"
+          onClick={onNewWorkItem}
+          className="rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:brightness-110"
+        >
+          + 新建任务
+        </GatedButton>
 
         <select
           value={filters.executorType ?? ''}
           onChange={(e) => onFilters({ executorType: e.target.value || undefined })}
-          className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+          className="rounded-md border border-slate-200 px-1.5 py-1 text-xs"
           aria-label="执行者"
         >
           <option value="">全部执行者</option>
@@ -135,7 +141,7 @@ export function TopBar({
         <select
           value={filters.risk?.[0] ?? ''}
           onChange={(e) => onFilters({ risk: e.target.value ? [e.target.value] : [] })}
-          className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+          className="rounded-md border border-slate-200 px-1.5 py-1 text-xs"
           aria-label="风险"
         >
           <option value="">全部风险</option>
@@ -160,7 +166,7 @@ export function TopBar({
             type="checkbox"
             checked={Boolean(filters.onlyMine)}
             onChange={(e) => onFilters({ onlyMine: e.target.checked })}
-            className="h-3.5 w-3.5 accent-slate-900"
+            className="h-3.5 w-3.5 accent-brand"
           />
           只看需我处理
         </label>
@@ -240,16 +246,21 @@ function SummaryStat({
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition',
-        active ? 'bg-slate-900 text-white' : 'hover:bg-slate-100',
-        !active && tone === 'danger' && 'text-red-700',
-        !active && tone === 'warn' && count > 0 && 'text-amber-700',
+        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5',
+        active
+          ? 'border-slate-900 bg-slate-900 text-white'
+          : 'border-slate-200 bg-slate-100/50 hover:border-slate-300 hover:bg-slate-100',
+        !active && tone === 'danger' && count > 0 && 'border-red-300/50 bg-red-50 text-red-700',
+        !active && tone === 'warn' && count > 0 && 'border-amber-300/40 bg-amber-50 text-amber-700',
         !active && tone === 'neutral' && 'text-slate-600',
+        !active && count === 0 && tone !== 'neutral' && 'text-slate-500',
       )}
     >
-      <span aria-hidden>{icon}</span>
-      <span className="font-medium tabular-nums">{count}</span>
-      <span>{label}</span>
+      <span aria-hidden className="text-[11px] leading-none">
+        {icon}
+      </span>
+      <span className="font-semibold tabular-nums">{count}</span>
+      <span className="opacity-80">{label}</span>
     </button>
   );
 }

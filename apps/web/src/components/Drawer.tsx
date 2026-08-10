@@ -28,19 +28,30 @@ export function Drawer({
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-label={title}>
+      {/*
+        ★ 遮罩用专门的 scrim 令牌，不是 slate-900/20。
+          深色主题下 slate-900 是**近白**（色阶整体反转，见 index.css），
+          照搬过来会在内容上蒙一层雾，而不是压暗它。
+        ★ 背后再糊一点：抽屉是「暂时盖住看板」，不是「切走看板」，
+          模糊比压黑更能保住那种「原地展开」的感觉。
+      */}
       <button
         type="button"
         aria-label="关闭"
         onClick={onClose}
-        className="flex-1 cursor-default bg-slate-900/20"
+        className="flex-1 cursor-default bg-scrim/[var(--scrim-alpha)] backdrop-blur-[2px] animate-fade-in"
       />
-      <aside className={`${width} flex flex-col border-l border-slate-200 bg-white shadow-xl`}>
-        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-2">
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+      <aside
+        className={`${width} flex animate-slide-in-right flex-col border-l border-slate-200 bg-white shadow-xl`}
+      >
+        <header className="relative flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-2.5">
+          <div aria-hidden className="hairline-brand absolute inset-x-0 top-0 h-px opacity-70" />
+          <h2 className="text-sm font-semibold tracking-tight text-slate-900">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="关闭"
+            className="-mr-1 flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             ✕
           </button>

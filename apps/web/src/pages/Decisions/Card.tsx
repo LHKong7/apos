@@ -73,7 +73,7 @@ export function DecisionCardView({
               />
             ) : (
               <span
-                className="cursor-help text-[11px] text-slate-300"
+                className="cursor-help text-[11px] text-slate-400"
                 title="不可逆或高风险，必须逐条确认"
                 aria-hidden
               >

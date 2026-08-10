@@ -2,16 +2,54 @@ import clsx from 'clsx';
 import type { HumanGate, RiskLevel } from '@apos/contracts';
 import { duration, riskLabel } from '../lib/format';
 
-/** Human Gate 八种状态（页面文档通用组件 §5.1） */
+/**
+ * Human Gate 八种状态（页面文档通用组件 §5.1）。
+ *
+ * ★ 每种都是「淡色底 + 同色描边 + 亮色字」的三件套。
+ *   只给底色的话，深色主题下这些徽标会糊成一片色块 ——
+ *   描边是把它们从卡面上「切」出来的那条线。
+ */
 const GATE_META: Record<HumanGate, { label: string; icon: string; className: string }> = {
-  approval_required: { label: '待审批', icon: '⚠', className: 'bg-gate/15 text-amber-700' },
-  waiting_for_decision: { label: '待决策', icon: '⚡', className: 'bg-gate/15 text-amber-700' },
-  human_reviewing: { label: '人工审核中', icon: '👁', className: 'bg-sky-100 text-sky-700' },
-  human_took_over: { label: '人工接管', icon: '👤', className: 'bg-sky-100 text-sky-700' },
-  approved: { label: '已批准', icon: '✓', className: 'bg-emerald-100 text-emerald-700' },
-  rejected: { label: '已驳回', icon: '✕', className: 'bg-slate-200 text-slate-600' },
-  escalated: { label: '已升级', icon: '↑', className: 'bg-orange-100 text-orange-700' },
-  decision_overdue: { label: '决策超时', icon: '🔴', className: 'bg-overdue/15 text-red-700' },
+  approval_required: {
+    label: '待审批',
+    icon: '⚠',
+    className: 'border-gate/30 bg-gate/10 text-amber-700',
+  },
+  waiting_for_decision: {
+    label: '待决策',
+    icon: '⚡',
+    className: 'border-gate/30 bg-gate/10 text-amber-700',
+  },
+  human_reviewing: {
+    label: '人工审核中',
+    icon: '👁',
+    className: 'border-sky-300/40 bg-sky-100/60 text-sky-700',
+  },
+  human_took_over: {
+    label: '人工接管',
+    icon: '👤',
+    className: 'border-sky-300/40 bg-sky-100/60 text-sky-700',
+  },
+  approved: {
+    label: '已批准',
+    icon: '✓',
+    className: 'border-emerald-300/40 bg-emerald-100/60 text-emerald-700',
+  },
+  rejected: {
+    label: '已驳回',
+    icon: '✕',
+    className: 'border-slate-300/60 bg-slate-200/60 text-slate-600',
+  },
+  escalated: {
+    label: '已升级',
+    icon: '↑',
+    className: 'border-orange-300/40 bg-orange-100/60 text-orange-700',
+  },
+  decision_overdue: {
+    label: '决策超时',
+    icon: '🔴',
+    className: 'border-overdue/40 bg-overdue/10 text-red-700',
+  },
 };
 
 export function HumanGateBadge({
@@ -31,7 +69,7 @@ export function HumanGateBadge({
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium',
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium',
         meta.className,
       )}
     >
@@ -69,8 +107,10 @@ export function PriorityBadge({ priority }: { priority: number }) {
   return (
     <span
       className={clsx(
-        'rounded px-1 text-[10px] font-semibold',
-        priority === 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
+        'rounded-sm border px-1 font-mono text-[10px] font-semibold leading-4',
+        priority === 0
+          ? 'border-red-300/40 bg-red-100/70 text-red-700'
+          : 'border-amber-300/40 bg-amber-100/70 text-amber-700',
       )}
     >
       P{priority}
@@ -105,7 +145,10 @@ export function CostMeter({
     <span className="inline-flex items-center gap-1 text-[11px] tabular-nums text-slate-500">
       <span className="h-1 w-8 overflow-hidden rounded-full bg-slate-200">
         <span
-          className={clsx('block h-full', over ? 'bg-overdue' : 'bg-emerald-500')}
+          className={clsx(
+            'block h-full rounded-full transition-all',
+            over ? 'bg-overdue' : 'bg-gradient-to-r from-emerald-500 to-emerald-400',
+          )}
           style={{ width: `${Math.min(pct, 100)}%` }}
         />
       </span>
