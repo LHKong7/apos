@@ -1,13 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { agentRuns, agents, projectMembers, projects, users, type Database } from '@apos/db';
+import { agentRuns, agents, projectMembers, projects, roles, users, type Database } from '@apos/db';
+import { isOrgAdmin, type ActorType, type OrgRole } from '@apos/contracts';
 import {
-  isOrgAdmin,
-  type ActorType,
-  type OrgRole,
-  type ProjectRole,
-} from '@apos/contracts';
-import {
+  PERMISSIONS,
   check,
   denyReasonsOf,
   permissionsOf,
@@ -35,6 +31,9 @@ import { ApiError } from './errors';
  *   而不是等某天有人发现 viewer 能改自治等级。
  */
 
+/** 目录里认识的权限名。角色是数据，写进去的东西未必还认识 —— 见 roles.ts */
+const KNOWN_PERMISSIONS = new Set<string>(PERMISSIONS);
+
 /**
  * ★ UUID 的形状单独拿出来拼，不能用别处那个带 `^$` 锚点的
  *   `UUID_RE.source` —— 锚点嵌进来会变成永不匹配的正则，
@@ -46,7 +45,8 @@ export interface RequestActor extends RbacActor {
   userId: string;
   orgId: string;
   orgRole: OrgRole;
-  projectRole: ProjectRole | null;
+  /** 角色 key —— 可能是内置的六个，也可能是组织自定义的（研发 / 运营…）*/
+  projectRole: string | null;
   actorType: ActorType;
   /** 目标项目；组织级路由为 null */
   projectId: string | null;
@@ -114,8 +114,8 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/projects/:id/autonomy': 'project.autonomy.change',
   'POST /api/v1/projects/:id/schedule': 'project.schedule',
   'GET /api/v1/projects/:id/members': 'project.view',
-  'PUT /api/v1/projects/:id/members/:userId': 'project.members.manage',
-  'DELETE /api/v1/projects/:id/members/:userId': 'project.members.manage',
+  'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
+  'DELETE /api/v1/projects/:id/members/:memberId': 'project.members.manage',
 
   // ── 需求 ──────────────────────────────────────────────────────────
   'POST /api/v1/projects/:id/requirements': 'requirement.create',
@@ -200,6 +200,9 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
   'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
   'PATCH /api/v1/admin/users/:id/org-role': 'org.members.manage',
+  'POST /api/v1/admin/roles': 'org.roles.manage',
+  'PATCH /api/v1/admin/roles/:key': 'org.roles.manage',
+  'DELETE /api/v1/admin/roles/:key': 'org.roles.manage',
   'POST /api/v1/projects/:id/conventions': 'convention.manage',
   'PATCH /api/v1/conventions/:id': 'convention.manage',
   'DELETE /api/v1/conventions/:id': 'convention.manage',
@@ -236,12 +239,13 @@ export type ContextResolver = (
 ) => Promise<Partial<RbacActor>>;
 
 /** 角色强弱序。跨项目取最强的那个 —— 见 highestRoleOverAgent 的说明 */
-const ROLE_RANK: Record<ProjectRole, number> = {
+const ROLE_RANK: Record<string, number> = {
   viewer: 0,
-  member: 1,
-  sponsor: 2,
-  pm: 3,
-  tech_lead: 4,
+  executor: 1,
+  member: 2,
+  sponsor: 3,
+  pm: 4,
+  tech_lead: 5,
 };
 
 const ROUTE_CONTEXT: Record<string, ContextResolver> = {
@@ -301,7 +305,7 @@ async function highestRoleOverAgent(
   db: Database,
   userId: string,
   agentId: string,
-): Promise<ProjectRole | null> {
+): Promise<string | null> {
   /**
    * ★ 「这个 Agent 属于哪些项目」有两个来源，缺一不可：
    *   - 显式登记（project_members 里 actor_type='agent' 的行）；
@@ -337,11 +341,19 @@ async function highestRoleOverAgent(
       ),
     );
 
-  let best: ProjectRole | null = null;
+  /**
+   * ★ 自定义角色（研发 / 运营…）不在这张强弱表里，直接跳过。
+   *
+   *   这条路径只服务于「Agent 这类组织级资源，URL 上看不出项目」的场景，
+   *   而 §2.3 在那里点名的是 tech_lead / pm / agent_owner —— 都是内置角色。
+   *   拿自定义角色去比强弱没有意义：它们的权限集合各不相同，排不出序。
+   *   真正的判定走的是权限集合那一步（check 的④），不受这里影响。
+   */
+  let best: string | null = null;
   for (const row of mine) {
-    const role = row.role as ProjectRole;
-    if (ROLE_RANK[role] === undefined) continue;
-    if (best === null || ROLE_RANK[role] > ROLE_RANK[best]) best = role;
+    const rank = ROLE_RANK[row.role];
+    if (rank === undefined) continue;
+    if (best === null || rank > (ROLE_RANK[best] ?? -1)) best = row.role;
   }
   return best;
 }
@@ -382,11 +394,23 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
       .where(eq(users.id, userId));
     if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
 
-    let projectRole: ProjectRole | null = null;
+    /**
+     * ★ 角色与它的权限一起查出来（一次 join）。
+     *
+     *   角色是数据（组织可自定义研发 / 运营 / 测试…），所以「这个角色能做什么」
+     *   不再是代码里的常量，必须读库。内置角色也走同一条路 ——
+     *   两条路会分叉，而分叉的表现是「自定义角色和内置角色行为不一致」。
+     */
+    let projectRole: string | null = null;
+    let grantedPermissions: Permission[] | undefined;
     if (projectId) {
       const [membership] = await db
-        .select({ role: projectMembers.role })
+        .select({ role: projectMembers.role, permissions: roles.permissions })
         .from(projectMembers)
+        .leftJoin(
+          roles,
+          and(eq(roles.orgId, projectMembers.orgId), eq(roles.key, projectMembers.role)),
+        )
         .where(
           and(
             eq(projectMembers.projectId, projectId),
@@ -394,7 +418,12 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
             eq(projectMembers.actorId, userId),
           ),
         );
-      projectRole = (membership?.role as ProjectRole | undefined) ?? null;
+      projectRole = membership?.role ?? null;
+      grantedPermissions = membership?.permissions
+        ? (membership.permissions as string[]).filter((p): p is Permission =>
+            KNOWN_PERMISSIONS.has(p),
+          )
+        : undefined;
     }
 
     const actor: RequestActor = {
@@ -402,6 +431,7 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
       orgId: user.orgId,
       orgRole: (user.orgRole as OrgRole) ?? 'member',
       projectRole,
+      grantedPermissions,
       /** MVP 只有人类身份走到这里；Agent 回调是另一条鉴权路径（§1.2）*/
       actorType: 'human',
       projectId,

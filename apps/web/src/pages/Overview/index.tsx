@@ -84,6 +84,7 @@ export function OverviewPage() {
           <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
           <Tab to={`/projects/${projectId}/settings/agents`}>Agent 配置</Tab>
           <Tab to={`/projects/${projectId}/settings/members`}>成员与角色</Tab>
+          <Tab to={`/projects/${projectId}/settings/roles`}>角色定义</Tab>
           {/* 当前身份在本项目的角色 —— 「为什么这个按钮是灰的」的第一手线索 */}
           <RoleBadge projectId={projectId} />
         </nav>

@@ -12,6 +12,7 @@ import {
   type Database,
 } from '@apos/db';
 import { STATUS_STAGE, type WorkItemStatus } from '@apos/contracts';
+import { syncBuiltinRoles } from '../http/roles';
 
 /**
  * ★ 默认指向 apos_test，绝不是开发库。
@@ -41,7 +42,7 @@ export async function resetDb(db: Database) {
       work_item_dependencies, work_items, plans,
       requirement_assumptions, requirement_clarifications, requirements,
       policy_versions, policies,
-      project_members, projects, users, organizations
+      project_members, roles, projects, users, organizations
     RESTART IDENTITY CASCADE
   `);
 }
@@ -57,6 +58,15 @@ export async function seedFixture(
   overrides: { autonomyLevel?: 'human_led' | 'agent_led_approval' | 'agent_autonomous' } = {},
 ): Promise<Fixture> {
   const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
+  /**
+   * ★★ 建组织就要预置内置角色。
+   *
+   *   成员表对 roles 有外键 —— 不预置的话，插第一条成员就报约束错误，
+   *   而报错信息是「违反外键」，看不出真正的原因是「这个组织还没有角色」。
+   *   真实路径（createOrganization / 迁移）同样会做这一步，
+   *   夹具跳过它就等于测的不是真实形态。
+   */
+  await syncBuiltinRoles(db, org!.id);
   /**
    * ★ 夹具身份 = 项目 tech_lead + 组织管理员，与 seed-dev 里的「张伟」一致。
    *
@@ -98,6 +108,7 @@ export async function seedFixture(
    *   反而会把漏洞焊死：补上检查时，先红的是测试而不是产品。
    */
   await db.insert(projectMembers).values({
+    orgId: org!.id,
     projectId: project!.id,
     actorType: 'human',
     actorId: user!.id,
@@ -114,6 +125,7 @@ export async function createOutsider(db: Database, fx: Fixture) {
     .insert(users)
     .values({ orgId: org!.id, email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
     .returning();
+  await syncBuiltinRoles(db, org!.id);
   return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
 }
 
@@ -130,7 +142,8 @@ export async function createMember(
   db: Database,
   fx: Fixture,
   opts: {
-    projectRole?: 'sponsor' | 'tech_lead' | 'pm' | 'member' | 'viewer' | null;
+    /** 内置角色或组织自定义角色的 key；null 表示「本组织但不是这个项目的成员」 */
+    projectRole?: string | null;
     orgRole?: 'org_admin' | 'member';
     name?: string;
   } = {},
@@ -149,7 +162,7 @@ export async function createMember(
   if (role !== null) {
     await db
       .insert(projectMembers)
-      .values({ projectId: fx.projectId, actorType: 'human', actorId: user!.id, role });
+      .values({ orgId: fx.orgId, projectId: fx.projectId, actorType: 'human', actorId: user!.id, role });
   }
   return user!.id;
 }

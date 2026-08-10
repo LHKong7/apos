@@ -99,15 +99,54 @@ export interface ProjectMemberRow {
   actorType: 'human' | 'agent' | 'service' | 'external' | 'system';
   role: string;
   roleLabel: string;
+  permissionCount: number;
   addedAt: string;
   name: string | null;
   email: string | null;
+  /** Agent 用：类型与状态 */
+  detail: string | null;
   orgRole: string | null;
+}
+
+export interface AssignableRole {
+  role: string;
+  label: string;
+  description: string;
+  /** 这个角色能由谁担任 —— 人的下拉框和 Agent 的下拉框内容不同 */
+  appliesTo: ('human' | 'agent')[];
+  builtin: boolean;
+  permissions: Permission[];
 }
 
 export interface MembersResponse {
   members: ProjectMemberRow[];
-  assignableRoles: { role: ProjectRole; label: string }[];
+  assignableRoles: AssignableRole[];
+}
+
+/** 角色定义（docs/tech/09-security.md §2.2）—— 超管在角色页里维护 */
+export interface RoleRow {
+  key: string;
+  name: string;
+  description: string;
+  permissions: Permission[];
+  appliesTo: ('human' | 'agent')[];
+  builtin: boolean;
+  /** 有多少人 / 多少 Agent 正在担任 —— 删除前要知道会影响谁 */
+  memberCount: { human: number; agent: number };
+}
+
+export interface AvailablePermission {
+  key: Permission;
+  label: string;
+  scope: string;
+  /** 带这个标记的权限进不了 Agent 角色 */
+  humanOnly: boolean;
+  group: string;
+}
+
+export interface RolesResponse {
+  roles: RoleRow[];
+  availablePermissions: AvailablePermission[];
 }
 
 export interface Project {

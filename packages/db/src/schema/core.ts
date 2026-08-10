@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -28,7 +29,7 @@ import type {
   PolicyContext,
   ResourceScope,
 } from '@apos/contracts';
-import { OrgRole, ProjectRole } from '@apos/contracts';
+import { OrgRole } from '@apos/contracts';
 import {
   actorTypeEnum,
   autonomyLevelEnum,
@@ -67,6 +68,42 @@ export const organizations = pgTable('organizations', {
   settings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
 });
+
+/**
+ * 角色 —— 一组权限的名字（docs/tech/09-security.md §2.2）。
+ *
+ * ★★ 角色是数据不是枚举。内置的五个覆盖「项目怎么运转」，
+ *   覆盖不了「这个组织怎么分工」—— 研发、运营、测试、安全、数据，
+ *   每家的切法都不一样。写死枚举的结果是所有人都被塞进 member，
+ *   然后整套权限矩阵退化成「成员 vs 管理员」两档。
+ *
+ * ★ `applies_to` 决定这个角色能由人担任还是由 Agent 担任，或者两者。
+ *   这是 Human–Agent 混合团队的基本形状：「测试」可能是一个人，
+ *   也可能是一个跑测试的 Agent。角色与担任者分开，混合团队才描述得出来。
+ */
+export const roles = pgTable(
+  'roles',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    /** 稳定标识。Policy 的 `{kind:'project_role', role}` 引用的就是它 */
+    key: text().notNull(),
+    name: text().notNull(),
+    description: text().notNull().default(''),
+    /** 权限目录里的 key。校验在 @apos/domain 的 validateRoleDefinition */
+    permissions: text().array().notNull().default(sql`'{}'`),
+    /** 'human' / 'agent'，可以都有 */
+    appliesTo: text().array().notNull().default(sql`'{human}'`),
+    /** 内置角色不可改权限、不可删 —— 它们就是权限矩阵本身 */
+    builtin: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    /** 成员表按 (org_id, role) 外键引用过来，所以这组必须唯一 */
+    unique('roles_org_key_unique').on(t.orgId, t.key),
+  ],
+);
 
 export const users = pgTable(
   'users',
@@ -145,9 +182,16 @@ export const projectMembers = pgTable(
   'project_members',
   {
     projectId: uuid().notNull().references(() => projects.id),
+    /**
+     * ★ 从 projects 冗余下来，为的是能对 roles 建外键 ——
+     *   角色是组织级的，没有 org_id 就只能靠应用层保证
+     *   「不会引用到别的组织的角色」，而那正是最容易漏的一类检查。
+     */
+    orgId: uuid().notNull().references(() => organizations.id),
     /** Agent 与人类走同一张表 —— 权限判定上「是否属于本项目」是同一个问题 */
     actorType: actorTypeEnum().notNull(),
     actorId: uuid().notNull(),
+    /** 角色 key，指向本组织的 roles */
     role: text().notNull(),
     addedAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
@@ -160,14 +204,21 @@ export const projectMembers = pgTable(
      */
     index('project_members_actor_idx').on(t.actorType, t.actorId),
     /**
-     * ★ 角色只约束人类行：Agent 走同一张表，但它的 role 是执行角色
-     *   （「这个 Agent 在本项目里干什么」），不是 09-security §2.2 的权限角色。
-     *   一刀切地约束会把 Agent 的行也一并卡住。
+     * ★★ 外键取代了原来的 CHECK 枚举。
+     *
+     *   角色可自定义之后，「合法角色」这份清单是行不是常量，CHECK 表达不了。
+     *   外键给的保证比 CHECK 更强：不但写不进不存在的角色，
+     *   还删不掉正在被人担任的角色 —— 后者是 CHECK 从来给不了的，
+     *   而「角色被删了，成员的权限静默归零」正是最难查的那种故障。
+     *
+     *   Agent 行同样受约束：Agent 现在也担任真正的角色（§2.2），
+     *   不再是一列自由文本。
      */
-    check(
-      'project_members_role_check',
-      sql`${t.actorType} <> 'human' or ${t.role} in (${sqlList(ProjectRole.options)})`,
-    ),
+    foreignKey({
+      columns: [t.orgId, t.role],
+      foreignColumns: [roles.orgId, roles.key],
+      name: 'project_members_role_fk',
+    }),
   ],
 );
 

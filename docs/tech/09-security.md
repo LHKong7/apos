@@ -134,15 +134,65 @@ preHandler → 解析身份（X-User-Id）
 
 ### 2.2 角色定义
 
-| 角色 | 层级 | 关键权限 |
-| --- | --- | --- |
-| `org_admin` | 组织 | 全部；身份管理、组织级 Policy、模型接入、审计查看 |
-| `sponsor` | 项目 | 需求确认、预算超限审批、业务验收、结项 |
-| `tech_lead` | 项目 | 计划批准、架构决策、Agent 权限调整、Policy 配置、强制放行 |
-| `pm` | 项目 | 项目设置、计划批准、调度调整、WIP 配置 |
-| `member` | 项目 | 执行任务、接管 Agent、发起决策、重试 |
-| `agent_owner` | 资源 | 所属 Agent 的配置（跨项目） |
-| `viewer` | 项目 | 只读 |
+**角色是数据，不是枚举。** 下面这几个是每个组织建立时预置的**内置角色**，
+组织可以在它们之外自定义（研发、运营、测试、安全、数据…），见 §2.2.1。
+
+| 角色 | 层级 | 关键权限 | 谁能担任 |
+| --- | --- | --- | --- |
+| `org_admin` | 组织 | 全部；身份管理、定义角色、组织级 Policy、模型接入、审计查看 | 人 |
+| `sponsor` | 项目 | 需求确认、预算超限审批、业务验收、结项 | 人 |
+| `tech_lead` | 项目 | 计划批准、架构决策、Agent 权限调整、Policy 配置、强制放行 | 人 |
+| `pm` | 项目 | 项目设置、收紧 Policy、调度调整、成员管理 | 人 |
+| `member` | 项目 | 执行任务、接管 Agent、处理决策、重试 | 人 |
+| `executor` | 项目 | **只执行任务，不参与任何决策与审批** | 人 / **Agent** |
+| `agent_owner` | 资源 | 所属 Agent 的配置（跨项目） | 人 |
+| `viewer` | 项目 | 只读 | 人 / Agent |
+
+内置角色的权限集合由**权限目录反推**（`packages/domain/src/rbac/roles.ts` 的
+`BUILTIN_ROLE_PERMISSIONS`），不手写第二份 —— 手写反向表意味着改矩阵时要记得同步，
+而漏同步的表现是「矩阵里写着 pm 能做，实际 pm 做不了」，没有任何报错。
+服务启动时把库里的内置角色对齐到当前代码（`syncBuiltinRoles`），
+库里那几行退化成一份缓存。
+
+内置角色**不可修改也不可删除** —— 它们就是 §2.3 的权限矩阵本身。
+每个组织都能改的话，「tech_lead 能批准计划」这句话在文档、审计、支持里
+就失去了共同语义。要不一样，就自定义一个新角色。
+
+#### 2.2.1 自定义角色
+
+`org_admin` 可以定义组织自己的角色（`/api/v1/admin/roles`，
+实现在 `apps/api/src/http/roles.ts`）。一个角色 = 一个名字 + 一组权限 +
+**谁能担任**。三条限制，每一条都堵一条提权路径：
+
+| 限制 | 堵掉的路径 |
+| --- | --- |
+| 不认识的权限名当场拒 | 「我明明给了他权限」的幽灵故障 —— 那条权限永远不生效 |
+| **组织级权限不能下放** | 造一个「能创建角色的角色」发出去，拿到的人再造一个更宽的，一步走到组织管理员 |
+| **`humanOnly` 权限不能进 Agent 角色** | 自定义一个叫「研发」的角色，把「改 Policy」塞进去，再指派给 Agent（§7.2 的绕法） |
+
+#### 2.2.2 角色由人担任还是由 Agent 担任
+
+这是本产品的基本形状：「测试」这个岗位上可能坐着一个人，也可能是
+`test-agent-1`，还可能两者都有。所以 `project_members` 里人与 Agent 同表，
+担任**同一套角色**，走同一个指派接口（`PUT /projects/{id}/members/{memberId}`
+带 `actorType`）。
+
+但 Agent 能担任的角色有硬边界：**带 `humanOnly` 权限的角色永远给不了 Agent**。
+这些权限是「人类始终掌握目标、风险与最终决策权」这句话的全部落点：
+
+- `requirement.approve` —— 产品的第一个 Human Gate
+- `plan.approve` —— 批准计划 = 批准一批自动化行为
+- `decision.act` —— 决策**就是**被升级给人的那些事；Agent 拿到它，Human Gate 会变成自问自答的环
+- `policy.*` / `agent.permissions.*` / 成员与角色管理 —— §7.2
+
+`appliesTo` 由这条规则算出下限（`assignableBy`），管理员可以在范围内再收窄
+（「研发我们只给人」），但放不宽。指派时还会再判一次 ——
+「把决策塞进研发角色」和「把研发角色指派给 Agent」是两次独立操作，
+任何一次都可能是最后一步。
+
+★ Agent 担任角色**不等于** Agent 继承人类权限（§1.2）。角色管的是
+「能调哪些产品操作」，Agent 的工具与资源权限（§3.1 的 allowedTools /
+deniedTools / resourceScopes）另在 Agent 档案里独立配置，两者不互相推导。
 
 ### 2.3 权限矩阵（关键操作）
 
@@ -186,19 +236,24 @@ preHandler → 解析身份（X-User-Id）
 
 #### 2.3.2 角色怎么改
 
-`GET/PUT/DELETE /api/v1/projects/{id}/members/...`（`pm` / `tech_lead`）与
-`PATCH /api/v1/admin/users/{id}/org-role`（`org_admin`），实现在
-`apps/api/src/http/members.ts`，全部记审计（§6.3）。
+- 定义角色：`/api/v1/admin/roles`（`org_admin`），见 §2.2.1
+- 指派角色：`/api/v1/projects/{id}/members/{memberId}`（带 `project.members.manage` 的角色）
+- 组织身份：`PATCH /api/v1/admin/users/{id}/org-role`（`org_admin`）
 
-一套改不了的权限体系，实践中的结局是「所有人共用一个账号」——
-因为换角色比换个人麻烦。两条防自伤的约束：
+全部记审计（§6.3）。一套改不了的权限体系，实践中的结局是
+「所有人共用一个账号」—— 因为换角色比换个人麻烦。三条防自伤的约束：
 
-- 项目里至少留一个 `pm` / `tech_lead`，否则这个项目的权限只有组织管理员能修；
-- 组织里至少留一个 `org_admin`，否则再没有人能管身份、改组织级 Policy、看审计。
+- 项目里至少留一个**带 `project.members.manage` 的人**，否则这个项目的权限
+  只有组织管理员能修。★ 判据是权限不是角色名 —— 角色可自定义之后，
+  「负责人」可能叫「运营主管」，按名字判会让这条保护静默失效；
+- 组织里至少留一个 `org_admin`，否则再没有人能管身份、定义角色、看审计；
+- 有人（或 Agent）正在担任的角色删不掉，也不能把 `appliesTo` 改窄到
+  把他们排除在外 —— 否则会留下一批权限说不清算不算数的成员。
 
-角色取值另有库级 CHECK 约束（迁移 `0010_rbac_roles`）：拼错的角色写不进去。
-存进一个 `techlead` 不会报错，只会让这个人**什么都做不了**——
-而现象是「他明明是负责人却处处受限」，没有任何报错指向根因。
+角色取值由**外键**保证（`project_members(org_id, role) → roles(org_id, key)`，
+迁移 `0011_custom_roles`）。外键比 CHECK 强的地方不在写入侧而在删除侧：
+它让「正在被人担任的角色」删不掉，而「角色被删了、成员权限静默归零」
+正是最难查的那种故障。`users.org_role` 仍是 CHECK（组织角色不可自定义）。
 
 ### 2.4 决策责任不可代行
 
@@ -434,14 +489,18 @@ REVOKE UPDATE, DELETE ON events FROM apos_app;
 - 审计日志导出
 
 对应的事件类型见 `packages/contracts/src/events/index.ts` 的 `AUDIT_EVENTS`。
-其中人类授权变更是四条以「被改的那个人」为 subject 的事件：
-`project.member_added` / `project.member_role_changed` / `project.member_removed` /
-`user.org_role_changed`。
+授权变更分两类：
 
-**为什么这四条必须有**：§7 把「权限累积」列为本产品的特有威胁，
-它的第一条缓解手段就是「权限变更全审计」。没有这几条事件，
-「谁在什么时候把谁提成了 `tech_lead`」查不到——
-而那恰恰是提权路径上最关键的一步。
+- **谁担任什么角色**（subject 是被改的那个人 / Agent）：
+  `project.member_added` / `project.member_role_changed` /
+  `project.member_removed` / `user.org_role_changed`
+- **角色本身是什么**（subject 是角色）：
+  `role.created` / `role.updated` / `role.deleted`
+
+**为什么这两类都要有**：§7 把「权限累积」列为本产品的特有威胁，
+它的第一条缓解手段就是「权限变更全审计」。只记第一类的话，
+「谁给研发这个角色加上了放宽规则的权限」查不到 ——
+而逐个人翻授权记录也拼不出真相，每个人的记录都只会显示「他一直是研发」。
 
 ---
 

@@ -107,9 +107,17 @@ export const Recipient = z.union([
   /** 按组织角色，如 dba / security_lead —— 人员变动时规则不用改 */
   z.object({ kind: z.literal('role'), role: z.string() }),
   z.object({ kind: z.literal('user'), userId: z.string().uuid() }),
+  /**
+   * 按项目角色。
+   *
+   * ★ 取值是**角色 key**，不限于内置的几个 —— 组织自定义的角色
+   *   （研发 / 运营 / 测试…）同样可以是审批人和通知目标。
+   *   写死枚举的话，一个组织新建了「安全」角色，却没法把
+   *   「安全策略变更找安全」这条规则写出来，自定义角色就只是个标签。
+   */
   z.object({
     kind: z.literal('project_role'),
-    role: z.enum(['pm', 'tech_lead', 'sponsor']),
+    role: z.string().min(1),
   }),
   z.object({ kind: z.literal('owner_of'), subject: z.enum(['work_item', 'agent']) }),
 ]);

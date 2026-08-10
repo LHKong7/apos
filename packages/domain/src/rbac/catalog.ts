@@ -1,5 +1,6 @@
 import {
   ACTING_PROJECT_ROLES,
+  EXECUTING_PROJECT_ROLES,
   LEAD_PROJECT_ROLES,
   type OrgRole,
   type ProjectRole,
@@ -72,6 +73,7 @@ export const PERMISSIONS = [
   'repository.manage',
   'convention.manage',
   'org.members.manage',
+  'org.roles.manage',
   'audit.export',
 
   // ── 集成（页面文档 14 §8）──────────────────────────────────────────
@@ -127,8 +129,10 @@ export interface PermissionSpec {
 }
 
 const ACTING = ACTING_PROJECT_ROLES;
+/** 干活的那一档：比 ACTING 多一个只执行不决策的 executor（Agent 的默认角色）*/
+const EXECUTING = EXECUTING_PROJECT_ROLES;
 const LEADS = LEAD_PROJECT_ROLES;
-const ALL_MEMBERS: readonly ProjectRole[] = [...ACTING, 'viewer'] as const;
+const ALL_MEMBERS: readonly ProjectRole[] = [...EXECUTING, 'viewer'] as const;
 
 export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
   // ── 项目 ──────────────────────────────────────────────────────────
@@ -193,11 +197,19 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     projectRoles: ACTING,
     requires: '需要项目成员权限',
   },
-  /** §2.3：批准需求 = sponsor / pm。驳回同一道闸门 —— 驳回也是结论 */
+  /**
+   * §2.3：批准需求 = sponsor / pm。驳回同一道闸门 —— 驳回也是结论。
+   *
+   * ★★ humanOnly：这是产品的第一个 Human Gate。
+   *   「让项目自主向前流动，同时确保人类始终掌握目标、风险与最终决策权」——
+   *   如果一个 Agent 能确认需求，前半句还在，后半句就没了。
+   *   这条不靠角色配置保证：自定义一个角色把它塞给 Agent 也不行。
+   */
   'requirement.approve': {
     scope: 'project',
     label: '确认或驳回需求',
     projectRoles: ['sponsor', 'pm'],
+    humanOnly: true,
     requires: '确认需求需要 sponsor 或 pm —— 需求是否成立是业务判断',
   },
   'clarification.answer': {
@@ -214,20 +226,28 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     projectRoles: ACTING,
     requires: '需要项目成员权限',
   },
-  /** §2.3：批准计划 = tech_lead；高风险项目需 + sponsor 双签 */
+  /**
+   * §2.3：批准计划 = tech_lead；高风险项目需 + sponsor 双签。
+   *
+   * ★ humanOnly，同 requirement.approve：批准计划 = 批准一批自动化行为
+   *   （页面文档 04 的核心）。让 Agent 批准「Agent 接下来自动做什么」，
+   *   这个闸门就不是闸门了。
+   */
   'plan.approve': {
     scope: 'project',
     label: '批准计划',
     projectRoles: ['tech_lead'],
+    humanOnly: true,
     governance: { dualSign: true },
     requires: '批准计划需要 tech_lead',
   },
 
   // ── 任务 ──────────────────────────────────────────────────────────
+  /** ★ 这一条给 EXECUTING：干活是 executor 存在的理由，也是 Agent 唯一要的 */
   'work_item.execute': {
     scope: 'project',
     label: '执行任务',
-    projectRoles: ACTING,
+    projectRoles: EXECUTING,
     requires: '需要项目成员权限（只读角色不能改动任务）',
   },
   'work_item.takeover': {
@@ -272,11 +292,16 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
    * ★ 这一条只判「有没有资格参与决策」。
    *   「是不是这条决策的责任人」是另一回事，且不可代行（§2.4）——
    *   org_admin 在这里通过，仍然批不动别人名下的决策。
+   *
+   * ★★ humanOnly：决策**就是**被升级给人的那些事。
+   *   Agent 拿到这一条，等于让它批准自己升上来的东西 ——
+   *   Human Gate 会变成一个自问自答的环。
    */
   'decision.act': {
     scope: 'project',
     label: '处理决策',
     projectRoles: ACTING,
+    humanOnly: true,
     requires: '需要项目成员权限（只读角色不能处理决策）',
   },
   'decision.remind': {
@@ -405,6 +430,21 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     humanOnly: true,
     governance: { audit: true },
     requires: '身份管理需要组织管理员',
+  },
+  /**
+   * ★★ 定义角色 = 定义权限本身，是这套体系里权力最大的一条。
+   *
+   *   所以它必须留在 org 作用域：自定义角色只能授予项目内的权限
+   *   （见 roles.ts 的 validateRoleDefinition），拿不到这一条 ——
+   *   否则超管可以造一个「能创建角色的角色」发出去，
+   *   拿到它的人再造一个更宽的，一步就走到组织管理员。
+   */
+  'org.roles.manage': {
+    scope: 'org',
+    label: '定义角色',
+    humanOnly: true,
+    governance: { audit: true },
+    requires: '创建与修改角色需要组织管理员 —— 定义角色就是定义权限本身',
   },
   'audit.export': {
     scope: 'org',

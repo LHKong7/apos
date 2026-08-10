@@ -35,6 +35,7 @@ import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { dispatchRun } from '../modules/agent/dispatch';
 import { transition } from '../modules/flow/transition';
+import { createRole, syncBuiltinRoles } from '../http/roles';
 import { seedHistory } from './seed-history';
 
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
@@ -48,17 +49,21 @@ async function main() {
       TRUNCATE TABLE
         events, run_events, artifacts,
         decision_approvals, decision_evidence, decision_options, decisions,
-        agent_runs, agent_permission_changes, agents, agent_runtimes,
+        agent_runs, agent_permission_changes, agents,
+        repositories, project_conventions,
         work_item_dependencies, work_items, plans,
         requirement_assumptions, requirement_clarifications, requirements,
         policy_versions, policies,
-        project_members, projects, users, organizations
+        project_members, roles, projects, users, organizations
       RESTART IDENTITY CASCADE
     `);
   }
 
   const [org] = await db.insert(organizations).values({ name: 'Acme' }).returning();
   const orgId = org!.id;
+
+  // 建组织就要预置内置角色 —— 成员表对 roles 有外键（§2.2）
+  await syncBuiltinRoles(db, orgId);
 
   /**
    * ★ 角色要凑齐，演示数据才验证得了权限（09-security §2.2）。
@@ -97,13 +102,13 @@ async function main() {
   const projectId = project!.id;
 
   await db.insert(projectMembers).values([
-    { projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
-    { projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
-    { projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
+    { orgId, projectId, actorType: 'human', actorId: lead!.id, role: 'tech_lead' },
+    { orgId, projectId, actorType: 'human', actorId: dba!.id, role: 'member' },
+    { orgId, projectId, actorType: 'human', actorId: pm!.id, role: 'pm' },
     // 需求确认是业务判断，归 sponsor / pm —— tech_lead 也批不了（§2.3）
-    { projectId, actorType: 'human', actorId: sponsor!.id, role: 'sponsor' },
+    { orgId, projectId, actorType: 'human', actorId: sponsor!.id, role: 'sponsor' },
     // 切到赵敏能看出「只读」是真的只读：整页没有一个可点的写操作
-    { projectId, actorType: 'human', actorId: viewer!.id, role: 'viewer' },
+    { orgId, projectId, actorType: 'human', actorId: viewer!.id, role: 'viewer' },
   ]);
 
   // ── Agent ────────────────────────────────────────────────────────────
@@ -182,6 +187,63 @@ async function main() {
   // ★ 每个 Agent 一个适配器实例：注册表按 agentId 键控，
   //   因为 Agent 各自带一套运行时参数
   for (const a of agentRows) registry.register(a.id, runtime);
+
+  /**
+   * ── 自定义角色（09-security §2.2）────────────────────────────────────
+   *
+   * ★★ 这几行是整套角色机制的演示入口：内置的六个覆盖「项目怎么运转」，
+   *   覆盖不了「这个组织怎么分工」。研发、测试、运营各自是什么权限，
+   *   由超管在这里定义。
+   *
+   * ★ 「研发」「测试」允许 Agent 担任，「运营」只给人 —— 差别不是随便定的：
+   *   前两个只含执行类权限，后一个含处理决策（humanOnly），
+   *   服务端会按这条规则校验，塞不进去。
+   */
+  const roleCtx = { orgId, actorId: lead!.id, correlationId: randomUUID() };
+  await createRole(db, roleCtx, {
+    key: 'dev',
+    name: '研发',
+    description: '写代码、跑测试、接管任务；不参与需求与计划审批',
+    permissions: [
+      'project.view',
+      'policy.view',
+      'work_item.execute',
+      'work_item.takeover',
+      'plan.generate',
+      'clarification.answer',
+      'integration.view',
+    ],
+    appliesTo: ['human', 'agent'],
+  });
+  await createRole(db, roleCtx, {
+    key: 'qa',
+    name: '测试',
+    description: '执行测试任务、看规则与集成状态；不能改任何配置',
+    permissions: ['project.view', 'policy.view', 'work_item.execute', 'integration.view'],
+    appliesTo: ['human', 'agent'],
+  });
+  await createRole(db, roleCtx, {
+    key: 'ops',
+    name: '运营',
+    description: '处理决策、催办、看数据；不碰代码与计划',
+    permissions: ['project.view', 'policy.view', 'decision.act', 'decision.remind'],
+    // ★ 含 decision.act（humanOnly），所以只能给人 —— 这不是选择，是校验结果
+    appliesTo: ['human'],
+  });
+
+  /**
+   * ★★ 让 Agent 真正担任角色。
+   *
+   *   在此之前 Agent 只是「被派发任务的对象」，不在成员表里。
+   *   现在它和人一样是项目成员、担任同一套角色里的一个 ——
+   *   这才是「Human–Agent 混合团队」在数据上的样子：
+   *   「测试」这个岗位上，可能坐着一个人，也可能是 test-agent-1。
+   */
+  const [codeAgent, testAgent] = agentRows;
+  await db.insert(projectMembers).values([
+    { orgId, projectId, actorType: 'agent', actorId: codeAgent!.id, role: 'dev' },
+    { orgId, projectId, actorType: 'agent', actorId: testAgent!.id, role: 'qa' },
+  ]);
 
   // ── 走真实链路：需求 → 计划 → 执行 ────────────────────────────────
   const provider = new StubPlanningProvider();

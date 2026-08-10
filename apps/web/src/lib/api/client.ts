@@ -21,7 +21,8 @@ import type {
   IntegrationsResponse,
   MembersResponse,
   ProjectPermissions,
-  ProjectRole,
+  RoleRow,
+  RolesResponse,
   NotificationConfigRow,
   SyncConflictRow,
   SyncSummary,
@@ -135,20 +136,53 @@ export const api = {
 
   members: (projectId: string) => request<MembersResponse>(`/projects/${projectId}/members`),
 
-  setMemberRole: (projectId: string, userId: string, role: ProjectRole) =>
+  /** 担任者可以是人，也可以是 Agent —— 同一条 API（09-security §2.2）*/
+  setMemberRole: (
+    projectId: string,
+    memberId: string,
+    role: string,
+    actorType: 'human' | 'agent' = 'human',
+  ) =>
     request<{ ok: true; role: string; changed: boolean; previousRole?: string }>(
-      `/projects/${projectId}/members/${userId}`,
-      { method: 'PUT', json: { role } },
+      `/projects/${projectId}/members/${memberId}`,
+      { method: 'PUT', json: { role, actorType } },
     ),
 
-  removeMember: (projectId: string, userId: string) =>
-    request<{ ok: true; removed: boolean }>(`/projects/${projectId}/members/${userId}`, {
-      method: 'DELETE',
-    }),
+  removeMember: (projectId: string, memberId: string, actorType: 'human' | 'agent' = 'human') =>
+    request<{ ok: true; removed: boolean }>(
+      `/projects/${projectId}/members/${memberId}?actorType=${actorType}`,
+      { method: 'DELETE' },
+    ),
+
+  // ── 角色定义（超管）──────────────────────────────────────────────
+  roles: () => request<RolesResponse>('/admin/roles'),
+
+  createRole: (body: {
+    key: string;
+    name: string;
+    description?: string;
+    permissions: string[];
+    appliesTo: ('human' | 'agent')[];
+  }) => request<{ role: RoleRow }>('/admin/roles', { method: 'POST', json: body }),
+
+  updateRole: (
+    key: string,
+    body: {
+      name: string;
+      description?: string;
+      permissions: string[];
+      appliesTo: ('human' | 'agent')[];
+    },
+  ) => request<{ role: RoleRow }>(`/admin/roles/${key}`, { method: 'PATCH', json: body }),
+
+  deleteRole: (key: string) =>
+    request<{ ok: true; deleted: boolean }>(`/admin/roles/${key}`, { method: 'DELETE' }),
 
   orgUsers: () =>
     request<{
       users: (User & { orgRoleLabel: string; status: string })[];
+      /** Agent 也能被加进项目并担任角色，所以名单里要有它们 */
+      agents: { id: string; name: string; type: string; status: string }[];
       assignableOrgRoles: { role: string; label: string }[];
     }>('/admin/users'),
 

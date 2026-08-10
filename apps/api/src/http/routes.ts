@@ -70,6 +70,7 @@ import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
 import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
+import { createRole, deleteRole, listRoles, updateRole } from './roles';
 import { createRbac, guardRouteCoverage } from './rbac';
 import { handleSse } from './sse';
 import { getBoard } from './board';
@@ -187,6 +188,19 @@ function optionalUserId(req: { headers: Record<string, unknown> }): string | nul
     throw new ApiError('UNAUTHENTICATED', 'X-User-Id 不是合法的用户 ID', { received: id });
   }
   return id;
+}
+
+/**
+ * 角色 key → 内置角色，认不出就是 null。
+ *
+ * ★ 集成设置那个窄接口（canIntegration）只按内置角色判。自定义角色
+ *   在那里退化成「非内置」，但这不会放宽任何东西 —— preHandler 已经
+ *   按权限集合判过一次，这里是第二道，只会更严不会更松。
+ */
+function asBuiltinRole(role: string | null): ProjectRole | null {
+  return role !== null && (ProjectRole.options as readonly string[]).includes(role)
+    ? (role as ProjectRole)
+    : null;
 }
 
 function corr(req: { headers: Record<string, unknown> }): string {
@@ -465,6 +479,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
      *   只有在权限真的生效之后才暴露得出来。
      */
     await db.insert(projectMembers).values({
+      orgId: actor.orgId,
       projectId: project!.id,
       actorType: 'human',
       actorId: userId,
@@ -509,26 +524,53 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.get('/api/v1/projects/:id/members', async (req) => {
+    const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
-    return listMembers(db, id);
+    const actor = await rbac.resolveActor(req, userId, id);
+    return listMembers(db, id, actor.orgId);
   });
 
-  app.put('/api/v1/projects/:id/members/:userId', async (req) => {
+  /**
+   * 指派角色。
+   *
+   * ★ 路径上的 `:memberId` 既可以是用户 id，也可以是 Agent id ——
+   *   由 `actorType` 区分。一个岗位由人还是由 Agent 担任，
+   *   在这个产品里是同一个问题的两个答案，不该是两条 API。
+   */
+  const MemberRoleBody = z.object({
+    role: z.string().min(1),
+    actorType: z.enum(['human', 'agent']).default('human'),
+  });
+
+  app.put('/api/v1/projects/:id/members/:memberId', async (req) => {
     const { userId: actorId } = actorFrom(req);
-    const { id, userId: targetUserId } = req.params as { id: string; userId: string };
-    const body = z.object({ role: ProjectRole }).parse(req.body);
+    const { id, memberId } = req.params as { id: string; memberId: string };
+    const body = MemberRoleBody.parse(req.body);
 
     return setMemberRole(
       db,
-      { projectId: id, targetUserId, actorId, correlationId: corr(req) },
+      {
+        projectId: id,
+        actorType: body.actorType,
+        targetId: memberId,
+        actorId,
+        correlationId: corr(req),
+      },
       body.role,
     );
   });
 
-  app.delete('/api/v1/projects/:id/members/:userId', async (req) => {
+  app.delete('/api/v1/projects/:id/members/:memberId', async (req) => {
     const { userId: actorId } = actorFrom(req);
-    const { id, userId: targetUserId } = req.params as { id: string; userId: string };
-    return removeMember(db, { projectId: id, targetUserId, actorId, correlationId: corr(req) });
+    const { id, memberId } = req.params as { id: string; memberId: string };
+    const q = req.query as { actorType?: string };
+    return removeMember(db, {
+      projectId: id,
+      actorType: q.actorType === 'agent' ? 'agent' : 'human',
+      targetId: memberId,
+      actorId,
+      correlationId: corr(req),
+    });
   });
 
   /** 组织通讯录与身份管理（§2.2「org_admin：身份管理」）*/
@@ -542,6 +584,36 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const body = z.object({ orgRole: OrgRole }).parse(req.body);
     return setOrgRole(db, { targetUserId: id, actorId, correlationId: corr(req) }, body.orgRole);
+  });
+
+  // ── 角色定义（§2.2）─────────────────────────────────────────────────
+  /**
+   * ★★ 超管在这里造出「研发」「运营」「测试」这些角色。
+   *
+   *   内置的六个是预置数据，不是全集 —— 它们覆盖「项目怎么运转」，
+   *   覆盖不了「这个组织怎么分工」。
+   */
+  app.get('/api/v1/admin/roles', async (req) => {
+    const { orgId } = await callerOrg(req);
+    return listRoles(db, orgId);
+  });
+
+  app.post('/api/v1/admin/roles', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const result = await createRole(db, { orgId, actorId: userId, correlationId: corr(req) }, req.body);
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/api/v1/admin/roles/:key', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    return updateRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key, req.body);
+  });
+
+  app.delete('/api/v1/admin/roles/:key', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    return deleteRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key);
   });
 
   // ── 需求 ────────────────────────────────────────────────────────────
@@ -1304,7 +1376,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     req: FastifyRequest,
   ): Promise<Actor> {
     const actor = await rbac.resolveActor(req, userId, projectId);
-    return { projectRole: actor.projectRole, orgRole: actor.orgRole };
+    /**
+     * ★ 集成设置那个窄接口只认内置角色。自定义角色在这里退化成
+     *   「不是内置角色」（null）—— 但它们的权限判定并不受影响：
+     *   assertIntegration 之外，preHandler 已经按权限集合判过一次了。
+     */
+    return { projectRole: asBuiltinRole(actor.projectRole), orgRole: actor.orgRole };
   }
 
   async function assertIntegration(

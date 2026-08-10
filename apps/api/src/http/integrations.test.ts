@@ -27,7 +27,7 @@ let ints: IntegrationRegistry;
 async function asRole(role: string, userId = fx.userId) {
   await db
     .insert(projectMembers)
-    .values({ projectId: fx.projectId, actorType: 'human', actorId: userId, role })
+    .values({ orgId: fx.orgId, projectId: fx.projectId, actorType: 'human', actorId: userId, role })
     .onConflictDoUpdate({
       target: [projectMembers.projectId, projectMembers.actorType, projectMembers.actorId],
       set: { role },

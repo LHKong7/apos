@@ -15,6 +15,8 @@ export const SubjectType = z.enum([
   'integration',
   /** 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）*/
   'user',
+  /** 角色定义的变更 —— 定义角色就是定义权限本身 */
+  'role',
 ]);
 export type SubjectType = z.infer<typeof SubjectType>;
 
@@ -129,8 +131,11 @@ export const DOMAIN_EVENT_TYPES = [
   'agent.permissions_changed',
   'agent.permission_violation',
   'agent.paused',
-  // 身份
+  // 身份与角色
   'user.org_role_changed',
+  'role.created',
+  'role.updated',
+  'role.deleted',
   // artifact & integration
   'artifact.produced',
   'integration.connected',
@@ -176,6 +181,14 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'project.member_role_changed',
   'project.member_removed',
   'user.org_role_changed',
+  /**
+   * ★ 角色定义的变更比成员变更更要紧：改一次角色，所有担任它的人的权限
+   *   一起变。「谁给研发这个角色加上了放宽规则的权限」查不到的话，
+   *   逐个人查授权记录也拼不出真相 —— 每个人的记录都会显示「他一直是研发」。
+   */
+  'role.created',
+  'role.updated',
+  'role.deleted',
 ] as const;
 
 export const EventInput = z.object({

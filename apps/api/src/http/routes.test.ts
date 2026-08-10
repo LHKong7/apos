@@ -842,6 +842,7 @@ describe('★ Idempotency-Key', () => {
       .values({ orgId: fx.orgId, email: `x-${randomUUID()}@acme.dev`, name: '另一个人' })
       .returning();
     await db.insert(projectMembers).values({
+      orgId: fx.orgId,
       projectId: fx.projectId,
       actorType: 'human',
       actorId: other!.id,

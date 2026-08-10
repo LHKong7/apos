@@ -20,14 +20,24 @@ import { PERMISSIONS, PERMISSION_SPECS, type Permission } from './catalog';
 
 export interface RbacActor {
   /**
-   * 身份类型（§1）。缺省当人类处理 —— MVP 只有人类身份能到这一层，
-   * 但 humanOnly 的口子必须现在就关上，而不是等 Agent 令牌接进来再补。
+   * 身份类型（§1）。缺省当人类处理 —— humanOnly 的口子必须一直关着，
+   * 不管调用方是人、是 Agent，还是一个自定义角色下的 Agent。
    */
   actorType?: ActorType;
   /** 组织角色。跨组织的调用方不该走到这里，由成员关系闸门先挡掉 */
   orgRole: OrgRole;
-  /** 在**目标项目**里的角色；不是成员则为 null */
-  projectRole: ProjectRole | null;
+  /**
+   * 在**目标项目**里的角色 key；不是成员则为 null。
+   *
+   * ★ 类型是 string 不是内置枚举：角色是数据，组织可以自定义
+   *   （研发 / 运营 / 测试…）。内置的五个只是预置数据，不是全集。
+   */
+  projectRole: ProjectRole | string | null;
+  /**
+   * 这个角色授予的权限。自定义角色靠它判定 —— 内置角色不传也行，
+   * 目录里的 `projectRoles` 会兜住（见 {@link check} 的④⑤两步）。
+   */
+  grantedPermissions?: readonly Permission[];
   /**
    * 目标资源是否归调用者所有（`agent_owner`）。
    *
@@ -75,12 +85,31 @@ export function check(actor: RbacActor, permission: Permission): PermissionCheck
   // ③ 资源归属（agent_owner）
   if (spec.resourceOwner && actor.resourceOwner) return ALLOWED;
 
-  // ④ 项目角色
-  if (spec.projectRoles && actor.projectRole && spec.projectRoles.includes(actor.projectRole)) {
+  /**
+   * ④ 角色授予的权限。
+   *
+   * ★ 自定义角色（研发 / 运营 / 测试…）走的是这一步：它们不在目录的
+   *   `projectRoles` 里，能不能做完全由这份权限集合决定。
+   */
+  if (actor.grantedPermissions?.includes(permission)) return ALLOWED;
+
+  /**
+   * ⑤ 内置角色。
+   *
+   * ★ 保留这一步是为了让只知道角色名的调用方也能判
+   *   （前端夹具、集成设置那个窄接口）。内置角色的权限集合本身
+   *   就是从这张表反推的（roles.ts 的 BUILTIN_ROLE_PERMISSIONS），
+   *   所以④⑤两步对内置角色永远给出同一个答案。
+   */
+  if (
+    spec.projectRoles &&
+    actor.projectRole &&
+    (spec.projectRoles as readonly string[]).includes(actor.projectRole)
+  ) {
     return ALLOWED;
   }
 
-  // ⑤ 组织角色（org 级操作里「组织成员即可」的那些）
+  // ⑥ 组织角色（org 级操作里「组织成员即可」的那些）
   if (spec.orgRoles && spec.orgRoles.includes(actor.orgRole)) return ALLOWED;
 
   return { allowed: false, reason: permissionDenyReason(actor, permission) };

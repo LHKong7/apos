@@ -11,6 +11,7 @@ import {
 } from '@apos/integrations';
 import { DevExternalStore } from './modules/integration/dev-store';
 import { buildApp } from './app';
+import { syncBuiltinRoles } from './http/roles';
 import { syncAgents } from './modules/agent/runtime-factory';
 import { WorkspaceProvisioner } from './modules/workspace/provisioner';
 import { probeGit } from './modules/workspace/git';
@@ -26,6 +27,19 @@ async function main() {
   const db = createDatabase({
     url: process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos',
   });
+
+  /**
+   * ★★ 内置角色对齐到当前代码（09-security §2.2）。
+   *
+   *   内置角色的真相来源是权限目录，库里那几行只是缓存。目录里给 pm
+   *   加一条权限而库不跟着变，就会出现「矩阵里写着 pm 能做、实际做不了」——
+   *   没有任何报错，只有一个用户说「我这边点不动」。
+   *   放在启动而不是每次请求：角色不常变，而每请求一次对齐是白花的开销。
+   *
+   *   自定义角色（研发 / 运营 / 测试…）一个字都不碰。
+   */
+  const syncedRoles = await syncBuiltinRoles(db);
+  if (syncedRoles > 0) console.log(`[rbac] 内置角色已对齐（${syncedRoles} 条）`);
 
   const registry = new RuntimeRegistry();
 

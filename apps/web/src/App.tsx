@@ -21,6 +21,7 @@ import { DecisionsPage } from './pages/Decisions';
 import { IntegrationsPage } from './pages/Settings/Integrations';
 import { AgentConfigPage } from './pages/Settings/AgentConfig';
 import { MembersPage } from './pages/Settings/Members';
+import { RolesPage } from './pages/Settings/Roles';
 import { ConnectionBanner } from './components/ConnectionBanner';
 
 /**
@@ -70,6 +71,7 @@ export function App() {
           <Route path="/projects/:projectId/settings/integrations" element={<IntegrationsPage />} />
           <Route path="/projects/:projectId/settings/agents" element={<AgentConfigPage />} />
           <Route path="/projects/:projectId/settings/members" element={<MembersPage />} />
+          <Route path="/projects/:projectId/settings/roles" element={<RolesPage />} />
           {/* 运行时曾经是单独一页；页面文档 14 把它归为集成的一类，旧链接直接转过去 */}
           <Route
             path="/projects/:projectId/settings/runtimes"

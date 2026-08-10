@@ -78,6 +78,13 @@
       "when": 1786340155160,
       "tag": "0010_rbac_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786346304433,
+      "tag": "0011_custom_roles",
+      "breakpoints": true
     }
   ]
 }
