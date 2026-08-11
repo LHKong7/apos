@@ -19,6 +19,7 @@
 | 08 | [前端架构](08-frontend-architecture.md) | React 分层、实时数据、性能 | ✅ |
 | 09 | [身份、权限与安全](09-security.md) | Identity 模型、RBAC/ABAC、审计、密钥 | ❌ |
 | 10 | [MVP 实施计划](10-mvp-plan.md) | 分阶段交付、里程碑、风险 | ❌ |
+| 11 | [工作区抽象](11-workspace-abstraction.md) | Agent 工作目录的铺料 / 交货分离、基线与变更集 | ❌ |
 
 ---
 
@@ -176,6 +177,6 @@ MVP 阶段的服务边界还没被验证过。产品文档里 Flow Engine、Poli
 
 **要开始写代码**：[02 领域模型](02-domain-model.md) → [07 API](07-api-design.md) → [10 实施计划](10-mvp-plan.md)
 
-**要接入 Agent**：[06 Agent Protocol](06-agent-protocol.md) → [09 安全](09-security.md)
+**要接入 Agent**：[06 Agent Protocol](06-agent-protocol.md) → [11 工作区抽象](11-workspace-abstraction.md) → [09 安全](09-security.md)
 
 **要做前端**：[08 前端架构](08-frontend-architecture.md) → [07 API](07-api-design.md) → 对应[页面文档](../product/pages/README.md)
