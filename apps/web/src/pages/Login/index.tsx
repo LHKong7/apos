@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api, ApiError } from '../../lib/api/client';
 import { useAuthStore } from '../../stores/auth';
@@ -24,6 +24,26 @@ export function LoginPage() {
   const signIn = useAuthStore((s) => s.signIn);
   const [mode, setMode] = useState<Mode>('login');
 
+  /**
+   * ★ 注册开不开由服务端说了算（APOS_ALLOW_SIGNUP）。
+   *   拿不到配置时按**关**渲染：给一个点了必然失败的入口，
+   *   比没有入口更糟 —— 用户会以为是自己填错了。
+   */
+  const config = useQuery({
+    queryKey: ['authConfig'],
+    queryFn: api.authConfig,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const allowSignup = config.data?.allowSignup === true;
+
+  /**
+   * ★ 关掉注册之后，生效的模式只能是登录。
+   *   直接用 mode 的话，配置刷新一次就可能留下一个填了一半、
+   *   提交必然 403 的注册表单 —— 而用户完全不知道发生了什么。
+   */
+  const active: Mode = allowSignup ? mode : 'login';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -31,7 +51,7 @@ export function LoginPage() {
 
   const submit = useMutation({
     mutationFn: () =>
-      mode === 'login'
+      active === 'login'
         ? api.login({ email, password })
         : api.register({
             email,
@@ -46,7 +66,7 @@ export function LoginPage() {
     submit.error instanceof ApiError
       ? submit.error.message
       : submit.error
-        ? `${mode === 'login' ? '登录' : '注册'}失败，请确认后端是否可达`
+        ? `${active === 'login' ? '登录' : '注册'}失败，请确认后端是否可达`
         : null;
 
   /** ★ 换模式要清掉上一次的报错：「邮箱或口令不正确」留在注册表单上纯属误导 */
@@ -57,7 +77,7 @@ export function LoginPage() {
   };
 
   const canSubmit =
-    Boolean(email.trim()) && Boolean(password) && (mode === 'login' || Boolean(name.trim()));
+    Boolean(email.trim()) && Boolean(password) && (active === 'login' || Boolean(name.trim()));
 
   return (
     <div className="relative flex min-h-screen flex-1 items-center justify-center overflow-hidden p-6">
@@ -126,39 +146,52 @@ export function LoginPage() {
             </span>
           </div>
 
-          {/* 分段控件而不是「还没有账号？去注册」那种小字链接 ——
-              注册和登录在这里是平级的两条路，不是主次 */}
-          <div className="mt-4 flex rounded-lg border border-slate-200 bg-slate-100/60 p-0.5 md:mt-0">
-            {(
-              [
-                { key: 'login', label: '登录' },
-                { key: 'register', label: '注册' },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => switchTo(t.key)}
-                aria-pressed={mode === t.key}
-                className={clsx(
-                  'flex-1 rounded-md py-1.5 text-xs transition',
-                  mode === t.key
-                    ? 'bg-white font-medium text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800',
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          {/*
+            分段控件而不是「还没有账号？去注册」那种小字链接 ——
+            开着注册的实例里，两者是平级的两条路，不是主次。
+
+            ★ 配置还没回来时占住同样的高度：等它回来再插进去的话，
+              整张卡片会往下跳一截，而用户那时可能正在输邮箱。
+          */}
+          {config.isPending ? (
+            <div aria-hidden className="mt-4 h-[2.125rem] md:mt-0" />
+          ) : allowSignup ? (
+            <div className="mt-4 flex rounded-lg border border-slate-200 bg-slate-100/60 p-0.5 md:mt-0">
+              {(
+                [
+                  { key: 'login', label: '登录' },
+                  { key: 'register', label: '注册' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => switchTo(t.key)}
+                  aria-pressed={active === t.key}
+                  className={clsx(
+                    'flex-1 rounded-md py-1.5 text-xs transition',
+                    active === t.key
+                      ? 'bg-white font-medium text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800',
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <h2 className="mt-4 text-base font-semibold tracking-tight text-slate-900 md:mt-0">
+              登录
+            </h2>
+          )}
 
           <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-            {mode === 'login'
+            {active === 'login'
               ? '用你的账号进入'
               : '注册会为你创建一个属于你的新组织，你是它的管理员'}
           </p>
 
-          {mode === 'register' && (
+          {active === 'register' && (
             <>
               <label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
                 姓名
@@ -194,7 +227,7 @@ export function LoginPage() {
           <input
             id="login-password"
             type="password"
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            autoComplete={active === 'login' ? 'current-password' : 'new-password'}
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -202,11 +235,11 @@ export function LoginPage() {
           />
           {/* ★ 把长度要求写在前面，而不是等服务端把表单打回来才说
               —— 服务端那条规则见 modules/auth/password.ts */}
-          {mode === 'register' && (
+          {active === 'register' && (
             <p className="mt-1 text-[11px] text-slate-400">至少 8 位</p>
           )}
 
-          {mode === 'register' && (
+          {active === 'register' && (
             <>
               <label className="mt-3.5 block text-xs text-slate-600" htmlFor="register-org">
                 组织名
@@ -242,22 +275,33 @@ export function LoginPage() {
             className="mt-5 w-full rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-2 text-sm font-medium text-white shadow-sm hover:brightness-110 disabled:opacity-50"
           >
             {submit.isPending
-              ? mode === 'login'
+              ? active === 'login'
                 ? '登录中…'
                 : '创建中…'
-              : mode === 'login'
+              : active === 'login'
                 ? '登录'
                 : '创建账号与组织'}
           </button>
 
           <p className="mt-4 border-t border-slate-200/70 pt-3 text-[11px] leading-relaxed text-slate-500">
-            {mode === 'login' ? (
+            {active === 'login' ? (
               <>
+                {/* ★ 关着注册的实例要明说，否则用户会一直在找那个不存在的注册入口 */}
+                {!allowSignup && !config.isPending && (
+                  <>
+                    这个实例没有开放自助注册，账号由管理员开通。
+                    <br />
+                  </>
+                )}
                 首次部署时，超级管理员来自 <code className="text-slate-600">.env</code> 里的{' '}
                 <code className="text-slate-600">APOS_SUPERADMIN_EMAIL</code> 与{' '}
                 <code className="text-slate-600">APOS_SUPERADMIN_PASSWORD</code>。
-                <br />
-                要加入同事已有的组织，请找那个组织的管理员把你加进去 —— 注册只会新开一个组织。
+                {allowSignup && (
+                  <>
+                    <br />
+                    要加入同事已有的组织，请找那个组织的管理员把你加进去 —— 注册只会新开一个组织。
+                  </>
+                )}
               </>
             ) : (
               <>

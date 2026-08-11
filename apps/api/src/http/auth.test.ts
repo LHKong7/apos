@@ -6,7 +6,13 @@ import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
-import { assertSignupAllowed, hashPassword, resetSignupThrottle } from '../modules/auth';
+import {
+  assertSignupAllowed,
+  hashPassword,
+  resetSignupThrottle,
+  signupEnabled,
+  signupSwitch,
+} from '../modules/auth';
 import {
   auth,
   createMember,
@@ -429,6 +435,79 @@ describe('自助注册', () => {
     expect(types).toContain('organization.created');
     expect(types).toContain('user.created');
     expect(types).toContain('organization.member_added');
+  });
+});
+
+/**
+ * 注册总开关（`APOS_ALLOW_SIGNUP`）。
+ *
+ * ★ 默认开着 —— 上面那组「自助注册」用例一行环境变量都没设就能跑通，
+ *   本身就是这条默认值的断言。
+ */
+describe('注册开关', () => {
+  const KEY = 'APOS_ALLOW_SIGNUP';
+  const before = process.env[KEY];
+
+  beforeEach(() => resetSignupThrottle());
+  afterEach(() => {
+    if (before === undefined) delete process.env[KEY];
+    else process.env[KEY] = before;
+  });
+
+  const register = () =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: 'gated@x.dev', name: '被开关挡住的', password: 'gated-password' },
+    });
+
+  it('关掉之后注册被拒，且不留下账号', async () => {
+    process.env[KEY] = 'false';
+    const res = await register();
+    expect(res.statusCode).toBe(403);
+
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, 'gated@x.dev'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('/auth/config 如实回答，且无需身份', async () => {
+    const on = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().allowSignup).toBe(true);
+
+    process.env[KEY] = 'off';
+    const off = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
+    expect(off.json().allowSignup).toBe(false);
+  });
+
+  it('几种写法都认', () => {
+    for (const v of ['1', 'true', 'YES', 'on', 'enabled']) {
+      process.env[KEY] = v;
+      expect(signupEnabled(), v).toBe(true);
+    }
+    for (const v of ['0', 'false', 'NO', 'off', 'disabled']) {
+      process.env[KEY] = v;
+      expect(signupEnabled(), v).toBe(false);
+    }
+  });
+
+  /**
+   * ★★ 认不出来的取值按**关**处理。
+   *
+   *   这是安全开关，两种失败方式代价差得很远：写成 `flase` 却当成开，
+   *   是运维明明想关、结果一直开着且毫无迹象；写成 `ture` 却当成关，
+   *   表现是「注册按钮不见了」，有人会当场报上来。宁可错在关上。
+   */
+  it('★ 拼错的取值按关闭处理，而不是按开启', () => {
+    process.env[KEY] = 'flase';
+    const s = signupSwitch();
+    expect(s.enabled).toBe(false);
+    expect(s.reason).toContain('认不出来');
+  });
+
+  it('没配置时默认开启', () => {
+    delete process.env[KEY];
+    expect(signupEnabled()).toBe(true);
   });
 });
 

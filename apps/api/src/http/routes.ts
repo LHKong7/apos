@@ -76,10 +76,12 @@ import {
   RegisterInput,
   TokenError,
   assertSignupAllowed,
+  assertSignupEnabled,
   changeOwnPassword,
   createAccount,
   login,
   registerAccount,
+  signupEnabled,
   tokenFrom,
   verifyToken,
 } from '../modules/auth';
@@ -331,11 +333,28 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *
    * ★ 未鉴权 + 每次都跑 scrypt + 写四张表，所以先过一道限流
    *   （modules/auth/throttle.ts）。那是进程内的粗闸，不替代入口层限流。
+   *
+   * ★ 两道闸的次序是刻意的：先看总开关，再记限流。反过来的话，
+   *   一个关着注册的实例仍然会为每次尝试消耗限流额度 ——
+   *   而那些请求本来一个都不该被受理。
    */
   app.post('/api/v1/auth/register', async (req) => {
+    assertSignupEnabled();
     assertSignupAllowed(req.ip);
     return registerAccount(db, { correlationId: corr(req) }, RegisterInput.parse(req.body));
   });
+
+  /**
+   * 登录页要知道的那点服务端配置。
+   *
+   * ★★ 注册开不开是**服务端**的事，前端必须来问，不能靠构建期变量。
+   *   同一份前端产物会被不同实例托管（web-app.ts 把它挂在 API 进程里），
+   *   烤进构建里的话，一个开着注册、一个关着注册的两套部署就得出两份产物。
+   *
+   * ★ 无需身份 —— 它就是给还没登录的人看的。回的东西也只有这一个布尔，
+   *   没有任何可以拿来做侦察的信息。
+   */
+  app.get('/api/v1/auth/config', async () => ({ allowSignup: signupEnabled() }));
 
   /** 当前登录者。前端拿它确认令牌还有效，以及显示"我是谁" */
   app.get('/api/v1/auth/me', async (req) => {

@@ -13,3 +13,4 @@ export {
   registerAccount,
 } from './service';
 export { assertSignupAllowed, resetSignupThrottle } from './throttle';
+export { assertSignupEnabled, signupEnabled, signupSwitch } from './signup';
