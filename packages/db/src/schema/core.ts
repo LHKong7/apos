@@ -771,6 +771,22 @@ export const agentRuns = pgTable(
       baseBranch: string;
       baseCommit: string | null;
       path: string;
+      /**
+       * 本次 Run 的**全部**挂载点，收尾时逐个回收。
+       *
+       * ★ 在此之前只落了主工作树的 path，参考仓库的工作树因此只能被
+       *   `rm -rf` 掉 —— 镜像里的 worktree 登记会残留到下一次
+       *   `worktree prune`，而如果这个仓库再没有新 Run，就永远残留。
+       *
+       * ★ 可选：升级瞬间还在跑的 Run 落的是旧结构。读的时候一律走
+       *   normalizeMounts() 回退到主路径，等 in-flight 的 Run 排空
+       *   （约一个发布周期）后可以改成必填。
+       */
+      mounts?: Array<{
+        path: string;
+        repoId: string;
+        role: 'primary' | 'reference';
+      }>;
       /** 结束时回填 */
       headCommit?: string | null;
       pushed?: boolean;

@@ -15,6 +15,30 @@ export interface AcquireInput {
   permissions: AgentPermissions;
 }
 
+/** 一个挂载点。primary 是 Agent 的主战场，reference 是只读参考 */
+export interface WorkspaceMount {
+  path: string;
+  repoId: string;
+  role: 'primary' | 'reference';
+}
+
+type StoredWorkspace = NonNullable<(typeof agentRuns.$inferSelect)['workspace']>;
+
+/**
+ * 读旧结构的工作区记录时补出 mounts。
+ *
+ * ★ 升级瞬间还在跑的 Run 落的是没有 mounts 的旧结构，直接读会得到 undefined，
+ *   于是它们的工作树一个都回收不掉。回退到主路径至少保证主工作树被正常回收 ——
+ *   这些 Run 的参考挂载仍然只能靠 rm -rf，但它们数量有限且会自然排空。
+ *
+ * ★ 所有 in-flight 的 Run 排空后（约一个发布周期）可以删掉这个函数，
+ *   把 schema 里的 mounts 改成必填。
+ */
+export function normalizeMounts(ws: StoredWorkspace): WorkspaceMount[] {
+  if (ws.mounts?.length) return ws.mounts;
+  return [{ path: ws.path, repoId: ws.repoId, role: 'primary' }];
+}
+
 export type AcquireResult =
   | { ok: true; workspace: RunWorkspace | null; note: string }
   | { ok: false; reason: string };
@@ -156,7 +180,8 @@ export class WorkspaceProvisioner {
     const path = join(this.runDir(input.runId), primary.ref);
 
     try {
-      const baseCommit = await this.prepareWorktree(primary, path, branch);
+      const baseCommit = await this.prepareWorktree(primary, path, { branch });
+      const mounts: WorkspaceMount[] = [{ path, repoId: primary.id, role: 'primary' }];
 
       // 其余可读仓库各挂一棵只读工作树，供 Agent 查阅
       const additionalPaths: string[] = [];
@@ -166,8 +191,10 @@ export class WorkspaceProvisioner {
         if (!repo) continue;
         const extraPath = join(this.runDir(input.runId), repo.ref);
         try {
-          await this.prepareWorktree(repo, extraPath, `${branch}-ref-${repo.ref}`);
+          // ★ detached，不建分支 —— 参考挂载的内容与基线相同，分支纯属垃圾
+          await this.prepareWorktree(repo, extraPath, { detached: true });
           additionalPaths.push(extraPath);
+          mounts.push({ path: extraPath, repoId: repo.id, role: 'reference' });
         } catch (err) {
           // 附属仓库挂不上不该拖垮整个 Run，但要留痕
           this.diagnose(`附属仓库 ${repo.ref} 准备失败`, err);
@@ -194,6 +221,7 @@ export class WorkspaceProvisioner {
             baseBranch: primary.defaultBranch,
             baseCommit,
             path,
+            mounts,
           },
         })
         .where(eq(agentRuns.id, input.runId));
@@ -214,7 +242,7 @@ export class WorkspaceProvisioner {
   private async prepareWorktree(
     repo: typeof repositories.$inferSelect,
     path: string,
-    branch: string,
+    mode: { branch: string; detached?: false } | { detached: true; branch?: undefined },
   ): Promise<string | null> {
     const mirror = this.mirrorDir(repo.id);
 
@@ -248,7 +276,11 @@ export class WorkspaceProvisioner {
 
     await mkdir(this.runDir(''), { recursive: true }).catch(() => undefined);
     await mkdir(join(this.root, 'runs'), { recursive: true });
-    await this.withMirrorLock(repo.id, () => git.addWorktree(mirror, path, branch, baseCommit));
+    await this.withMirrorLock(repo.id, () =>
+      mode.detached
+        ? git.addDetachedWorktree(mirror, path, baseCommit)
+        : git.addWorktree(mirror, path, mode.branch, baseCommit),
+    );
 
     return baseCommit;
   }
@@ -358,12 +390,32 @@ export class WorkspaceProvisioner {
       this.diagnose('工作区收尾出错', err);
     }
 
-    // 无论成败都回收工作树，否则磁盘会被慢慢吃光
-    try {
-      await git.removeWorktree(this.mirrorDir(ws.repoId), ws.path);
-    } catch {
-      await rm(ws.path, { recursive: true, force: true }).catch(() => undefined);
+    /**
+     * 无论成败都回收工作树，否则磁盘会被慢慢吃光。
+     *
+     * ★ 逐个挂载回收，不只回收主工作树 —— 参考仓库的工作树挂在**它自己的**
+     *   镜像上，用主仓库的镜像目录去 remove 是找不到的，只会掉进 rm -rf 分支，
+     *   把 worktree 登记留在参考仓库的镜像里。
+     */
+    for (const mount of normalizeMounts(ws)) {
+      try {
+        await git.removeWorktree(this.mirrorDir(mount.repoId), mount.path);
+      } catch {
+        await rm(mount.path, { recursive: true, force: true }).catch(() => undefined);
+      }
     }
+
+    /**
+     * ★ 推送成功之后删掉镜像里的本地分支：远端已有一份，本地这份没有留存价值，
+     *   而不删就是按 Run 的速度无上限堆积。未推送的**不删** —— 那是失败改动
+     *   唯一的载体（见上面的 push 逻辑）。想全留可设 APOS_WORKSPACE_KEEP_LOCAL_BRANCHES=true。
+     */
+    if (pushed && process.env['APOS_WORKSPACE_KEEP_LOCAL_BRANCHES'] !== 'true') {
+      await git.deleteBranch(this.mirrorDir(ws.repoId), ws.branch).catch((err) => {
+        this.diagnose(`镜像分支 ${ws.branch} 未能清理`, err);
+      });
+    }
+
     await this.cleanupRunDir(input.runId).catch(() => undefined);
 
     await this.finishWorkspace(input.runId, ws, { headCommit, pushed, changedFiles });
@@ -393,6 +445,16 @@ export class WorkspaceProvisioner {
       const child = spawn(command, {
         cwd,
         shell: true,
+        /**
+         * ★★ detached 让子进程自成一个进程组，这样超时才**杀得干净**。
+         *
+         *   `shell: true` 起的是一个 shell，测试框架（vitest/jest/pytest）
+         *   还会在它下面再起一批 worker。不 detached 的话，超时时
+         *   `child.kill()` 只杀得掉那个 shell —— worker 变成孤儿，
+         *   继续跑到它们自己的上限。表现是「任务超时了，但机器负载居高不下」，
+         *   而没有任何地方看得到那些进程属于哪次执行。
+         */
+        detached: true,
         env: { PATH: process.env['PATH'], HOME: process.env['HOME'], CI: 'true' },
       });
 
@@ -405,12 +467,26 @@ export class WorkspaceProvisioner {
       child.stdout.on('data', collect);
       child.stderr.on('data', collect);
 
+      /** 负 pid = 整个进程组。组不在了（已自然退出）会抛 ESRCH，忽略即可 */
+      const killTree = (signal: NodeJS.Signals) => {
+        try {
+          if (child.pid) process.kill(-child.pid, signal);
+        } catch {
+          child.kill(signal);
+        }
+      };
+
+      let hardTimer: NodeJS.Timeout | null = null;
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        // ★ 先 TERM 给测试框架一个写覆盖率/关连接的机会，5s 后再 KILL
+        killTree('SIGTERM');
+        hardTimer = setTimeout(() => killTree('SIGKILL'), 5_000);
+        hardTimer.unref?.();
       }, timeoutSeconds * 1000);
 
       const done = (passed: boolean, extra = '') => {
         clearTimeout(timer);
+        if (hardTimer) clearTimeout(hardTimer);
         resolve({
           ran: true,
           passed,

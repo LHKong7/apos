@@ -331,6 +331,116 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     await expect(stat(dead.result.workspace!.path)).rejects.toThrow();
   });
 
+  /**
+   * ★ 不 detached 的话这条会失败：`shell: true` 起的 shell 被杀掉之后，
+   *   它后台起的那个 sleep 会活下来，3 秒后照样把文件写出来。
+   */
+  it('核验超时时连同后台子进程一起杀掉，不留孤儿', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    const marker = join(root, 'orphan-alive.txt');
+    await registerRepo({
+      checkCommand: `(sleep 3 && touch ${marker}) & wait`,
+      checkTimeoutSeconds: 1,
+    });
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'x.ts'), 'x\n');
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(release.check.ran).toBe(true);
+    expect(release.check.passed).toBe(false);
+
+    // 超过 sleep 3 还剩余量：孤儿活着的话这时候文件一定已经写出来了
+    await new Promise((r) => setTimeout(r, 4000));
+    await expect(stat(marker)).rejects.toThrow();
+  }, 20_000);
+
+  /**
+   * ★ 参考挂载建分支的话，镜像里会按「Run 数 × 参考仓库数」永久堆积 ——
+   *   而这些分支的内容与基线完全相同，没有任何留存价值。
+   */
+  it('只读参考仓库挂 detached 工作树，不在镜像里留分支', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    const primary = await registerRepo();
+    const reference = await registerRepo({ ref: 'shared-lib', name: 'Shared Lib' });
+
+    const { result } = await acquireFor(p, {
+      allowedTools: ['Read'],
+      deniedTools: [],
+      resourceScopes: [
+        { kind: 'repo', ref: 'order-service', access: 'write' },
+        { kind: 'repo', ref: 'shared-lib', access: 'read' },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.workspace!.additionalPaths).toHaveLength(1);
+    // 参考仓库的工作树能读到文件（detached 不影响读）
+    expect(
+      await readFile(join(result.workspace!.additionalPaths[0]!, 'README.md'), 'utf8'),
+    ).toContain('# demo');
+
+    // 参考仓库的镜像里一条分支都没多出来
+    const refBranches = await git.run(['branch', '--list'], {
+      cwd: join(root, 'mirrors', `${reference.id}.git`),
+    });
+    expect(refBranches).not.toContain('-ref-');
+    // 主仓库该有的工作分支还在
+    const mainBranches = await git.run(['branch', '--list'], {
+      cwd: join(root, 'mirrors', `${primary.id}.git`),
+    });
+    expect(mainBranches).toContain(result.workspace!.branch);
+  });
+
+  it('收尾时逐个回收挂载，参考仓库的工作树登记不残留', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    await registerRepo();
+    const reference = await registerRepo({ ref: 'shared-lib', name: 'Shared Lib' });
+
+    const { runId, result } = await acquireFor(p, {
+      allowedTools: ['Read'],
+      deniedTools: [],
+      resourceScopes: [
+        { kind: 'repo', ref: 'order-service', access: 'write' },
+        { kind: 'repo', ref: 'shared-lib', access: 'read' },
+      ],
+    });
+    if (!result.ok) throw new Error('acquire failed');
+    const refPath = result.workspace!.additionalPaths[0]!;
+
+    await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+
+    // ★ 走的是 worktree remove，所以登记表里干干净净 —— 而不是 rm -rf 之后
+    //   留一条 prunable 的记录等着下次 acquire 才被清掉
+    const list = await git.run(['worktree', 'list', '--porcelain'], {
+      cwd: join(root, 'mirrors', `${reference.id}.git`),
+    });
+    expect(list).not.toContain(refPath);
+    await expect(stat(refPath)).rejects.toThrow();
+  });
+
+  it('推送成功后删掉镜像里的本地分支，失败的留着可事后捞', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    const repo = await registerRepo();
+    const mirror = join(root, 'mirrors', `${repo.id}.git`);
+
+    const ok = await acquireFor(p, scopes('write'));
+    if (!ok.result.ok) throw new Error('acquire failed');
+    await writeFile(join(ok.result.workspace!.path, 'a.ts'), 'a\n');
+    await p.release({ runId: ok.runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(await git.run(['branch', '--list', ok.result.workspace!.branch], { cwd: mirror })).toBe('');
+
+    const bad = await acquireFor(p, scopes('write'));
+    if (!bad.result.ok) throw new Error('acquire failed');
+    await writeFile(join(bad.result.workspace!.path, 'b.ts'), 'b\n');
+    await p.release({ runId: bad.runId, outcome: 'failed', summary: 's', agentName: 'a' });
+    // ★ 没推送的必须留着 —— 这是失败改动唯一的载体
+    expect(await git.run(['branch', '--list', bad.result.workspace!.branch], { cwd: mirror })).toContain(
+      bad.result.workspace!.branch,
+    );
+  });
+
   it('派发链路端到端：Run 拿到真实工作目录', async () => {
     const p = new WorkspaceProvisioner(db, { root });
     await registerRepo();

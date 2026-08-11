@@ -246,12 +246,34 @@ export const git = {
     await run(['worktree', 'add', '-b', branch, path, startPoint], { cwd: mirrorDir });
   },
 
+  /**
+   * 挂一棵 detached HEAD 的工作树 —— 给只读参考仓库用。
+   *
+   * ★ 只读挂载不该建分支。建了的话，因为 `worktree remove` 不删分支，
+   *   镜像里会按「每个 Run × 每个参考仓库」的速度永久堆积分支，
+   *   而这些分支上的内容与基线**一模一样** —— 纯粹是垃圾。
+   *   detached 状态下 Agent 照样能读全部文件，少的只是那个没人要的分支名。
+   */
+  async addDetachedWorktree(mirrorDir: string, path: string, commit: string): Promise<void> {
+    await run(['worktree', 'add', '--detach', path, commit], { cwd: mirrorDir });
+  },
+
   async removeWorktree(mirrorDir: string, path: string): Promise<void> {
     await run(['worktree', 'remove', '--force', path], { cwd: mirrorDir });
   },
 
   async pruneWorktrees(mirrorDir: string): Promise<void> {
     await run(['worktree', 'prune'], { cwd: mirrorDir });
+  },
+
+  /**
+   * 删镜像里的本地分支。
+   *
+   * ★ 只在**推送成功之后**调用：远端已经有一份了，本地这份没有留存价值。
+   *   推送失败或执行失败的分支必须留着 —— 那是「事后捞」唯一的载体。
+   */
+  async deleteBranch(mirrorDir: string, branch: string): Promise<void> {
+    await run(['branch', '-D', branch], { cwd: mirrorDir });
   },
 
   /** 改动的文件数。0 表示 Agent 什么都没改 */
