@@ -14,7 +14,7 @@ import { buildApp } from './app';
 import { syncBuiltinRoles } from './http/roles';
 import { bootstrapSuperadmin, signupSwitch } from './modules/auth';
 import { syncAgents } from './modules/agent/runtime-factory';
-import { WorkspaceProvisioner } from './modules/workspace/provisioner';
+import { WorkspaceService } from './modules/workspace';
 import { probeGit } from './modules/workspace/git';
 import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
@@ -151,7 +151,7 @@ async function main() {
    * ★ git 不可用要在**启动时**就喊出来，而不是等第一次派发才炸 ——
    *   那时错误会表现为「某个任务失败了」，没人会想到是部署环境没装 git。
    */
-  const workspaces = new WorkspaceProvisioner(db, {
+  const workspaces = new WorkspaceService(db, {
     root: process.env['AGENT_WORKSPACE_ROOT'],
     onDiagnostic: (message, detail) => console.warn('[workspace]', message, detail ?? ''),
   });

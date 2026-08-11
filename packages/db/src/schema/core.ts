@@ -68,7 +68,7 @@ const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'
  * ★★ 这里**不**叫 workspace，是刻意的。
  *
  *   `workspace` 在这个代码库里已经有一个确定含义：Agent 干活的那个
- *   git 工作区（`AGENT_WORKSPACE_ROOT`、`WorkspaceProvisioner`、
+ *   git 工作区（`AGENT_WORKSPACE_ROOT`、`WorkspaceService`、
  *   `agent_runs.workspace`）。两个都叫 workspace 的话，
  *   「清理 workspace」「workspace 权限」这类句子会同时指向两件毫不相干的事，
  *   而这种歧义在排障时最贵 —— 看日志的人根本不知道在说哪一个。

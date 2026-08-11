@@ -66,7 +66,7 @@ import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { transition } from '../modules/flow/transition';
 import { dispatchRun } from '../modules/agent/dispatch';
-import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
+import type { WorkspaceService } from '../modules/workspace';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
 import {
@@ -172,7 +172,7 @@ export interface AppDeps {
   integrations: IntegrationRegistry;
   provider: PlanningProvider;
   /** 工作区供给；不传则不为 Run 准备代码目录（仅测试用） */
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -4,14 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, repositories } from '@apos/db';
+import { agentRuns, artifacts, repositories } from '@apos/db';
 import type { AgentPermissions } from '@apos/contracts';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent } from '../../test/agent-fixtures';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { dispatchRun } from '../agent/dispatch';
+import { ingestRunEvent } from '../agent/ingest';
 import { git, probeGit } from './git';
-import { buildBranchName, WorkspaceProvisioner } from './provisioner';
+import { buildBranchName, WorkspaceService } from './index';
 
 const db = testDb();
 let fx: Fixture;
@@ -73,7 +74,7 @@ function scopes(access: 'read' | 'write' = 'write', ref = 'order-service'): Agen
 }
 
 async function acquireFor(
-  provisioner: WorkspaceProvisioner,
+  provisioner: WorkspaceService,
   permissions: AgentPermissions,
   runId = randomUUID(),
 ) {
@@ -119,7 +120,7 @@ describe('分支命名', () => {
 
 describe('未授予仓库范围时', () => {
   it('不供给工作区，但这不是错误 —— 调研/文档类任务本来就不需要', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     const { result } = await acquireFor(p, {
       allowedTools: ['WebSearch'],
       deniedTools: [],
@@ -133,7 +134,7 @@ describe('未授予仓库范围时', () => {
 
 describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   it('挂出独立工作树，切到新分支，基线是默认分支', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
 
     const { result } = await acquireFor(p, scopes('write'));
@@ -154,7 +155,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   就在同一份工作树上互相覆盖。
    */
   it('并发的两个 Run 拿到互不相干的目录与分支', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
 
     const [a, b] = await Promise.all([
@@ -176,7 +177,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('授权了仓库但没登记时硬失败，不让 Agent 在空目录里开工', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     // 故意不 registerRepo
 
     const { result } = await acquireFor(p, scopes('write'));
@@ -185,7 +186,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('工作区信息落库，进程重启后还能知道改动在哪个分支', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     expect(result.ok).toBe(true);
@@ -196,7 +197,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('成功收尾时提交并推送，工作树被回收', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -228,7 +229,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   「测试没过所以我把代码扔了」是最糟的处置。
    */
   it('失败时本地提交但不推送，改动留在分支上可事后捞', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -253,7 +254,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('Agent 什么都没改时不产生空提交', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId } = await acquireFor(p, scopes('write'));
 
@@ -271,7 +272,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
   /** ★ supervisor 判超时与事件流报 run_ended 可能同时到达 */
   it('重复收尾是幂等的，不会重复提交也不抛异常', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -285,7 +286,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('配置了核验命令时在提交前执行，结果如实回报', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo({ checkCommand: 'exit 1', checkTimeoutSeconds: 30 });
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -300,7 +301,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('核验通过时如实标记', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo({ checkCommand: 'exit 0', checkTimeoutSeconds: 30 });
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -311,7 +312,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('只读授权拿到的工作区标为不可写', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { result } = await acquireFor(p, scopes('read'));
     expect(result.ok).toBe(true);
@@ -319,7 +320,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('清理孤儿目录时保留活跃 Run 的工作区', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const alive = await acquireFor(p, scopes('write'));
     const dead = await acquireFor(p, scopes('write'));
@@ -336,7 +337,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   它后台起的那个 sleep 会活下来，3 秒后照样把文件写出来。
    */
   it('核验超时时连同后台子进程一起杀掉，不留孤儿', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     const marker = join(root, 'orphan-alive.txt');
     await registerRepo({
       checkCommand: `(sleep 3 && touch ${marker}) & wait`,
@@ -360,7 +361,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   而这些分支的内容与基线完全相同，没有任何留存价值。
    */
   it('只读参考仓库挂 detached 工作树，不在镜像里留分支', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     const primary = await registerRepo();
     const reference = await registerRepo({ ref: 'shared-lib', name: 'Shared Lib' });
 
@@ -394,7 +395,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('收尾时逐个回收挂载，参考仓库的工作树登记不残留', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const reference = await registerRepo({ ref: 'shared-lib', name: 'Shared Lib' });
 
@@ -421,7 +422,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('推送成功后删掉镜像里的本地分支，失败的留着可事后捞', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     const repo = await registerRepo();
     const mirror = join(root, 'mirrors', `${repo.id}.git`);
 
@@ -447,7 +448,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   只能去翻分支。
    */
   it('变更集分出增/改/删三类，带文件名', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -468,7 +469,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('删除的文件进 deleted，不被当成修改', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -485,7 +486,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   而虚高的改动数会进提交信息和产物标题。用 -z 就没这个问题。
    */
   it('文件名里带换行时不会被算成两个文件', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -498,7 +499,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('交货结果按后端收窄，git 那支带分支与 commit', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
     const { runId, result } = await acquireFor(p, scopes('write'));
     if (!result.ok) throw new Error('acquire failed');
@@ -513,8 +514,85 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(release.published.pushed).toBe(true);
   });
 
+  /**
+   * ★ 产物落库走 published 的可辨识联合，不再假设一定是 Git。
+   *   此前它直接读 result.branch / result.headCommit —— 换个后端全是 null。
+   */
+  it('run_ended 收尾后把变更集落成产物，metadata 里带文件名', async () => {
+    const p = new WorkspaceService(db, { root });
+    await registerRepo();
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+
+    await writeFile(join(result.workspace!.path, 'fix.ts'), 'export const a = 1;\n');
+    await writeFile(join(result.workspace!.path, 'README.md'), '# demo\n改了\n');
+
+    await ingestRunEvent(
+      db,
+      {
+        runId,
+        event: {
+          runId,
+          seq: 1,
+          ts: new Date().toISOString(),
+          type: 'run_ended',
+          outcome: 'completed',
+          summary: '做完了',
+        } as never,
+        correlationId: randomUUID(),
+      },
+      { workspaces: p },
+    );
+
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.runId, runId));
+    expect(artifact).toBeTruthy();
+
+    const meta = artifact!.metadata as Record<string, never>;
+    expect(meta['source']).toMatchObject({ kind: 'git', repoRef: 'order-service' });
+    expect(meta['pushed']).toBe(true);
+    expect(meta['changedFiles']).toBe(2);
+
+    const changes = meta['changes'] as unknown as {
+      added: string[];
+      modified: string[];
+      listTruncated: boolean;
+      incomplete: boolean;
+    };
+    expect(changes.added).toContain('fix.ts');
+    expect(changes.modified).toContain('README.md');
+    // 两个文件远没到 200 的上限，也没有不完整
+    expect(changes.listTruncated).toBe(false);
+    expect(changes.incomplete).toBe(false);
+  });
+
+  it('Agent 什么都没改时不落产物 —— 一条「0 个文件」只会污染评审视图', async () => {
+    const p = new WorkspaceService(db, { root });
+    await registerRepo();
+    const { runId } = await acquireFor(p, scopes('write'));
+
+    await ingestRunEvent(
+      db,
+      {
+        runId,
+        event: {
+          runId,
+          seq: 1,
+          ts: new Date().toISOString(),
+          type: 'run_ended',
+          outcome: 'completed',
+          summary: '无需改动',
+        } as never,
+        correlationId: randomUUID(),
+      },
+      { workspaces: p },
+    );
+
+    const rows = await db.select().from(artifacts).where(eq(artifacts.runId, runId));
+    expect(rows).toHaveLength(0);
+  });
+
   it('派发链路端到端：Run 拿到真实工作目录', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo();
 
     const runtime = new MockRuntime({}, { steps: ['一步'], stepDelayMs: 0 });
@@ -546,7 +624,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
   });
 
   it('git 不可用时给出可行动的报错，而不是留下半个工作区', async () => {
-    const p = new WorkspaceProvisioner(db, { root });
+    const p = new WorkspaceService(db, { root });
     await registerRepo({ ref: 'ghost', remoteUrl: join(root, 'does-not-exist.git') });
 
     const { runId, result } = await acquireFor(p, scopes('write', 'ghost'));

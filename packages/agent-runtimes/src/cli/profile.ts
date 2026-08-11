@@ -191,7 +191,7 @@ export const GEMINI_PROFILE: CliProfile = {
  * ★ `--no-stream` 是有意的：流式输出会把 token 一个个打出来，
  *   在我们这里只会变成几百条毫无信息量的 note。
  *
- * ★★ Aider 自带 git 提交。而平台侧的 WorkspaceProvisioner 也管提交
+ * ★★ Aider 自带 git 提交。而平台侧的 WorkspaceService 也管提交
  *   （provisioner.ts 的 release 流程）—— 两边都提交会让 Run 的产物
  *   多出一堆 aider 风格的提交。这里加 `--no-auto-commits` 把提交权
  *   留给平台，保证「一个 Run 一次提交」这条不变量。

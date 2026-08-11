@@ -189,7 +189,7 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
      *
      *   在此之前 cwd 来自一个全局的 workspaceRoot，所有 Agent、所有并发 Run
      *   共用同一个目录 —— 两个任务同时跑就在同一份工作树上互相覆盖。
-     *   现在由 WorkspaceProvisioner 按 runId 挂独立工作树，这里只负责认路径。
+     *   现在由 WorkspaceService 按 runId 挂独立工作树，这里只负责认路径。
      */
     const mapped: MappedPermissions = task.workspace
       ? {

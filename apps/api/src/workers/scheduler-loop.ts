@@ -3,14 +3,14 @@ import { eq } from 'drizzle-orm';
 import { projects, type Database } from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { scheduleRound } from '../modules/flow/scheduler';
-import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
+import type { WorkspaceService } from '../modules/workspace';
 
 export interface SchedulerLoopOptions {
   intervalMs?: number;
   onError?: (err: unknown) => void;
   onRound?: (report: { projectId: string; dispatched: number }) => void;
   /** 工作区供给；不传则 Run 不会拿到代码目录 */
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
 }
 
 export interface SchedulerLoopHandle {

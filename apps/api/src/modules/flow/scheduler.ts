@@ -7,7 +7,7 @@ import { emitAndPublish } from '../event/bus';
 import { loadDependencies } from './context';
 import { dispatchRun } from '../agent/dispatch';
 import { resolveExecutor } from '../agent/matching';
-import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import type { WorkspaceService } from '../workspace';
 
 export interface ScheduleOutcome {
   workItemId: string;
@@ -38,7 +38,7 @@ export async function scheduleRound(
     projectId?: string;
     limit?: number;
     correlationId: string;
-    workspaces?: WorkspaceProvisioner;
+    workspaces?: WorkspaceService;
   },
 ): Promise<ScheduleReport> {
   const candidates = await findSchedulable(db, opts.projectId, opts.limit ?? 50);
@@ -93,7 +93,7 @@ async function scheduleOne(
   registry: RuntimeRegistry,
   item: WorkItemRow,
   correlationId: string,
-  workspaces: WorkspaceProvisioner | undefined,
+  workspaces: WorkspaceService | undefined,
 ): Promise<ScheduleOutcome> {
   const base = { workItemId: item.id, title: item.title };
 

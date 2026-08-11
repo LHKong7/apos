@@ -190,18 +190,6 @@ export const RunWorkspace = z.object({
     })
     .nullable()
     .default(null),
-
-  /**
-   * @deprecated 用 `vcs.*`。保留一个发布周期让外部适配器跟上，之后删。
-   *   过渡期内与 vcs 同时填写。
-   */
-  repoRef: z.string().optional(),
-  /** @deprecated 用 `vcs.branch` */
-  branch: z.string().optional(),
-  /** @deprecated 用 `vcs.baseBranch` */
-  baseBranch: z.string().optional(),
-  /** @deprecated 用 `vcs.baseCommit` */
-  baseCommit: z.string().nullable().optional(),
 });
 export type RunWorkspace = z.infer<typeof RunWorkspace>;
 

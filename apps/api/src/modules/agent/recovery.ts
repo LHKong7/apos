@@ -4,12 +4,12 @@ import { agentActor, SYSTEM_ACTOR } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
-import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import type { WorkspaceService } from '../workspace';
 import { dispatchRun } from './dispatch';
 
 export interface RecoveryOptions {
   correlationId: string;
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
   limit?: number;
 }
 
