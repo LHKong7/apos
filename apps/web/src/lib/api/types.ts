@@ -567,6 +567,8 @@ export interface RequirementDetail {
     acceptanceCriteria: { id?: string; text?: string; description?: string }[];
     completeness: Record<string, number>;
     fieldProvenance: Record<string, unknown>;
+    /** 上一次是谁分析的。回退到规则占位时会带上原因 —— 界面必须如实显示 */
+    analysisModel: string | null;
     priority: string;
     rejectReason: string | null;
     approvedAt: string | null;

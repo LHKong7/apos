@@ -161,7 +161,10 @@ export function RequirementPage() {
 
             {/* ── AI 结构化结果 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
-              <h2 className="text-xs font-medium text-slate-700">🤖 AI 结构化结果</h2>
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h2 className="text-xs font-medium text-slate-700">🤖 AI 结构化结果</h2>
+                {analyzed && <AnalysisSource model={r.analysisModel} />}
+              </div>
 
               {!analyzed ? (
                 <div className="py-6 text-center">
@@ -321,6 +324,37 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: '已驳回',
   on_hold: '暂缓',
 };
+
+/**
+ * 这份结果到底是谁产出的。
+ *
+ * ★★ 没有这一行的时候，界面上写着「🤖 AI 结构化结果」，而底下可能跑的是
+ *   关键词规则占位（没配规划 Agent、凭证缺失、Agent 超时都会回退）。
+ *   用户拿回自己的原话换了三个标签，只会觉得「这 AI 真差」——
+ *   没有任何线索指向「根本没接模型」。
+ *
+ * ★ 回退时不只说「占位」，把原因一起摆出来：那句话正是解决问题所需的
+ *   全部信息（比如「组织内没有可用的规划 Agent」）。藏起来只会变成一张工单。
+ */
+function AnalysisSource({ model }: { model: string | null }) {
+  if (!model) return null;
+
+  // 回退时 model 形如 `stub（规则占位，未走 Agent：原因）`，见 agent-provider.ts
+  const degraded = model.startsWith('stub');
+  if (!degraded) {
+    return <span className="text-[11px] text-slate-400">由 {model} 生成</span>;
+  }
+
+  const reason = model.match(/未走 Agent：(.+?)）\s*$/)?.[1] ?? null;
+  return (
+    <span
+      className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800"
+      title={reason ?? undefined}
+    >
+      ⚠ 规则占位，未接入模型{reason ? ` —— ${reason}` : ''}
+    </span>
+  );
+}
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (

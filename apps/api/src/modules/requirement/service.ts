@@ -80,6 +80,8 @@ export async function analyzeRequirement(
     rawInput: req.rawInput,
     projectType: 'development',
     context: [],
+    // 走真实 Agent 的 provider 靠它挑执行者（组织内 applicableTypes 含 requirement 的 Agent）
+    scope: { orgId: req.orgId, projectId: req.projectId },
   });
 
   // 清掉上一轮的澄清问题，避免重复分析时堆积
@@ -145,6 +147,8 @@ export async function analyzeRequirement(
       acceptanceCriteria: structured.acceptanceCriteria,
       fieldProvenance: structured.provenance,
       completeness: completeness as unknown as Record<string, unknown>,
+      // ★ 记下这一轮到底是谁分析的。回退到规则占位时它会带上原因（见 agent-provider.ts）
+      analysisModel: structured.model,
       updatedAt: new Date(),
     })
     .where(eq(requirements.id, req.id));

@@ -127,6 +127,13 @@
       "when": 1786432396117,
       "tag": "0017_supabase_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786438557234,
+      "tag": "0018_requirement_analysis_model",
+      "breakpoints": true
     }
   ]
 }

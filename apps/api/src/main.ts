@@ -19,6 +19,7 @@ import { probeGit } from './modules/workspace/git';
 import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
 import { StubPlanningProvider } from './modules/planning/stub-provider';
+import { AgentPlanningProvider } from './modules/planning/agent-provider';
 import { startSchedulerLoop } from './workers/scheduler-loop';
 import { startNotificationLoop } from './workers/notification-loop';
 
@@ -213,7 +214,23 @@ async function main() {
     bus: defaultBus,
     registry,
     integrations: integrationRegistry,
-    provider: new StubPlanningProvider(),
+    /**
+     * ★★ 规划走真实 Agent，跑不通时回退规则占位。
+     *
+     *   回退**不是静默的**：AgentPlanningProvider 会把原因编进 model 字段，
+     *   一路显示到需求页与计划页上。在此之前界面写着「🤖 AI 结构化结果」
+     *   而底下是关键词正则，用户拿回自己的原话换了三个标签，
+     *   只会觉得「这 AI 真差」——没人会想到根本没接模型。
+     *
+     * ★ 用哪个运行时由组织里的 Agent 配置决定（applicableTypes 含
+     *   requirement 的那个），claude-code / codex / 将来的 pi / kimi
+     *   都走 AgentRuntimeAdapter 这一个接口，这里不用区分。
+     */
+    provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider(), {
+      root: process.env['AGENT_WORKSPACE_ROOT'],
+      timeoutMs: Number(process.env['PLANNING_TIMEOUT_MS'] ?? 600_000),
+      onDiagnostic: (message, detail) => console.log(message, detail ?? ''),
+    }),
     workspaces,
   };
 
