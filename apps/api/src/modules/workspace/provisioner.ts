@@ -202,13 +202,15 @@ export class WorkspaceProvisioner {
       }
 
       const workspace: RunWorkspace = {
-        repoRef: primary.ref,
         path,
+        writable,
+        additionalPaths,
+        vcs: { repoRef: primary.ref, branch, baseBranch: primary.defaultBranch, baseCommit },
+        // 过渡期：deprecated 字段与 vcs 同时填，让还没跟上的适配器继续工作
+        repoRef: primary.ref,
         branch,
         baseBranch: primary.defaultBranch,
         baseCommit,
-        writable,
-        additionalPaths,
       };
 
       await this.db

@@ -273,18 +273,15 @@ export class AgentPlanningProvider implements PlanningProvider {
         skills: agent.skills,
       },
       /**
-       * ★ 这不是一个 git 工作树，是一个空目录 —— repoRef 用 `planning` 占位。
+       * ★ 这不是一个 git 工作树，是一个空目录。
        *   规划不需要仓库：它读的是需求原文，写的是一份 JSON。
        *   真去 clone 一个仓库只会让规划多等几十秒。
        */
       workspace: {
-        repoRef: 'planning',
         path: dir,
-        branch: 'planning',
-        baseBranch: 'planning',
-        baseCommit: null,
         writable: true,
         additionalPaths: [],
+        vcs: null,
       },
       goal: {
         title: '需求规划',

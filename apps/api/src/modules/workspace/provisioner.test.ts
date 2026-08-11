@@ -141,11 +141,11 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     if (!result.ok) return;
 
     const ws = result.workspace!;
-    expect(ws.repoRef).toBe('order-service');
+    expect(ws.vcs!.repoRef).toBe('order-service');
     expect(ws.writable).toBe(true);
-    expect(ws.branch.startsWith('apos/')).toBe(true);
+    expect(ws.vcs!.branch.startsWith('apos/')).toBe(true);
     expect(await readFile(join(ws.path, 'README.md'), 'utf8')).toContain('# demo');
-    expect(await git.run(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: ws.path })).toBe(ws.branch);
+    expect(await git.run(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: ws.path })).toBe(ws.vcs!.branch);
   });
 
   /**
@@ -168,7 +168,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     const wa = a.result.workspace!;
     const wb = b.result.workspace!;
     expect(wa.path).not.toBe(wb.path);
-    expect(wa.branch).not.toBe(wb.branch);
+    expect(wa.vcs!.branch).not.toBe(wb.vcs!.branch);
 
     // 一个 Run 写文件，另一个看不见
     await writeFile(join(wa.path, 'only-in-a.txt'), 'x');
@@ -216,8 +216,8 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(release.changedFiles).toBe(1);
 
     // 远端真的有这个分支了
-    const remoteBranches = await git.run(['branch', '--list', ws.branch], { cwd: remote });
-    expect(remoteBranches).toContain(ws.branch);
+    const remoteBranches = await git.run(['branch', '--list', ws.vcs!.branch], { cwd: remote });
+    expect(remoteBranches).toContain(ws.vcs!.branch);
 
     // 工作树回收，不占磁盘
     await expect(stat(ws.path)).rejects.toThrow();
@@ -246,7 +246,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(release.pushed).toBe(false);
     expect(release.note).toContain('未推送');
 
-    const remoteBranches = await git.run(['branch', '--list', result.workspace!.branch], {
+    const remoteBranches = await git.run(['branch', '--list', result.workspace!.vcs!.branch], {
       cwd: remote,
     });
     expect(remoteBranches).toBe('');
@@ -390,7 +390,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     const mainBranches = await git.run(['branch', '--list'], {
       cwd: join(root, 'mirrors', `${primary.id}.git`),
     });
-    expect(mainBranches).toContain(result.workspace!.branch);
+    expect(mainBranches).toContain(result.workspace!.vcs!.branch);
   });
 
   it('收尾时逐个回收挂载，参考仓库的工作树登记不残留', async () => {
@@ -429,15 +429,15 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     if (!ok.result.ok) throw new Error('acquire failed');
     await writeFile(join(ok.result.workspace!.path, 'a.ts'), 'a\n');
     await p.release({ runId: ok.runId, outcome: 'completed', summary: 's', agentName: 'a' });
-    expect(await git.run(['branch', '--list', ok.result.workspace!.branch], { cwd: mirror })).toBe('');
+    expect(await git.run(['branch', '--list', ok.result.workspace!.vcs!.branch], { cwd: mirror })).toBe('');
 
     const bad = await acquireFor(p, scopes('write'));
     if (!bad.result.ok) throw new Error('acquire failed');
     await writeFile(join(bad.result.workspace!.path, 'b.ts'), 'b\n');
     await p.release({ runId: bad.runId, outcome: 'failed', summary: 's', agentName: 'a' });
     // ★ 没推送的必须留着 —— 这是失败改动唯一的载体
-    expect(await git.run(['branch', '--list', bad.result.workspace!.branch], { cwd: mirror })).toContain(
-      bad.result.workspace!.branch,
+    expect(await git.run(['branch', '--list', bad.result.workspace!.vcs!.branch], { cwd: mirror })).toContain(
+      bad.result.workspace!.vcs!.branch,
     );
   });
 
@@ -470,7 +470,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
     const dispatched = runtime.dispatchedTask(res.runId);
     expect(dispatched?.workspace?.path).toContain(res.runId);
-    expect(dispatched?.workspace?.repoRef).toBe('order-service');
+    expect(dispatched?.workspace?.vcs?.repoRef).toBe('order-service');
   });
 
   it('git 不可用时给出可行动的报错，而不是留下半个工作区', async () => {

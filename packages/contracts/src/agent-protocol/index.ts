@@ -164,17 +164,44 @@ export type AgentPermissions = z.infer<typeof AgentPermissions>;
  *   适配器只需要认一个已经准备好的 `path`。
  */
 export const RunWorkspace = z.object({
-  repoRef: z.string(),
-  /** 已 clone/checkout 完毕的本地绝对路径，可直接作为 cwd */
+  /** 已准备完毕的本地绝对路径，可直接作为 cwd */
   path: z.string(),
-  /** Agent 的工作分支，已切换 */
-  branch: z.string(),
-  baseBranch: z.string(),
-  baseCommit: z.string().nullable(),
   /** 只读授权时为 false —— 适配器据此再收一道写工具 */
   writable: z.boolean(),
-  /** 额外只读挂载的仓库路径 */
+  /** 额外只读挂载的路径 */
   additionalPaths: z.array(z.string()).default([]),
+
+  /**
+   * 版本控制信息。**只有 Git 类工作区才有**，规划/纯本地任务为 null。
+   *
+   * ★★ 在此之前这几个字段是必填的，于是不涉及仓库的任务只能填占位符。
+   *   规划 Run 就是这么干的（repoRef:'planning', branch:'planning'），
+   *   而 prompt 会照着生成「你在分支 planning 上工作，它基于 planning」
+   *   下发给 Agent —— 一句纯粹的胡话，Agent 读到只会困惑。
+   *   可空之后，「有没有版本控制」这件事在类型上就是显式的。
+   */
+  vcs: z
+    .object({
+      repoRef: z.string(),
+      /** Agent 的工作分支，已切换 */
+      branch: z.string(),
+      baseBranch: z.string(),
+      baseCommit: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
+
+  /**
+   * @deprecated 用 `vcs.*`。保留一个发布周期让外部适配器跟上，之后删。
+   *   过渡期内与 vcs 同时填写。
+   */
+  repoRef: z.string().optional(),
+  /** @deprecated 用 `vcs.branch` */
+  branch: z.string().optional(),
+  /** @deprecated 用 `vcs.baseBranch` */
+  baseBranch: z.string().optional(),
+  /** @deprecated 用 `vcs.baseCommit` */
+  baseCommit: z.string().nullable().optional(),
 });
 export type RunWorkspace = z.infer<typeof RunWorkspace>;
 
