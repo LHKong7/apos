@@ -65,6 +65,176 @@ const PASSTHROUGH_ENV: ConfigField = {
     '就等于把它交给 Agent —— 不要把数据库口令、其他服务的 token 放进来。',
 };
 
+/**
+ * 通用 headless CLI 都有的两个字段。
+ *
+ * ★ 可执行文件路径必须能覆盖：这些 CLI 有 npm / brew / curl 好几种装法，
+ *   落点各不相同，写死「必须在 PATH 里」会让一部分部署环境用不了。
+ *
+ * ★ 额外参数是逃生口。这六个 CLI 的 flag 各自演进得很快，
+ *   平台的 spec 一定会滞后 —— 有这个口子，用户不用等我们发版
+ *   就能用上新加的开关。代价是填错了 CLI 会启动失败，所以标为高级项。
+ */
+const CLI_COMMON_FIELDS = (binary: string): ConfigField[] => [
+  {
+    key: 'binary',
+    label: '可执行文件',
+    type: 'string',
+    default: binary,
+    advanced: true,
+    help: '不在 PATH 里时填绝对路径。',
+  },
+  {
+    key: 'extraArgs',
+    label: '额外命令行参数',
+    type: 'string_list',
+    default: [],
+    advanced: true,
+    impact: 'safety',
+    help:
+      '原样追加到命令行末尾。平台不校验内容 —— 填错会让 CLI 直接启动失败，' +
+      '也可能绕开上面的安全设置（例如手工加上放开审批的开关）。',
+  },
+  PASSTHROUGH_ENV,
+];
+
+/**
+ * 六个通用 headless CLI。
+ *
+ * ★★ 它们共用一个适配器（GenericCliRuntime）+ 一张声明式 profile 表，
+ *   而不是各写一个 —— 理由见 agent-runtimes/src/cli/profile.ts 顶部。
+ *
+ * ★★ 每条 description 都如实写出该运行时**做不到什么**。
+ *
+ *   这不是谦虚，是这个页面唯一有用的信息：用户要在这里决定
+ *   「哪个 Agent 干哪类活」。把「只能跑完才有输出」藏起来，
+ *   他会给一个需要盯着看进度的长任务配上 Gemini CLI，
+ *   然后对着一个一直不动的执行流以为系统挂了。
+ *
+ * ★ 权限对这六个**一律是沙箱级**：表达不了「Bash 可用但 rm 不可用」。
+ *   映射时统一收紧，表达不了的规则会在 Run 详情里列出来。
+ */
+const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
+  {
+    kind: 'pi',
+    label: 'Pi Coding Agent',
+    description:
+      '极简 harness（Earendil / MIT）。纯文本输出 —— 看得到它在动，但没有结构化的工具调用与用量统计。',
+    credential: { label: 'API Key', help: '推荐填 `env:变量名`。留空则沿用进程环境里的凭证。' },
+    endpoint: null,
+    prerequisite: '需要 pi 已安装：npm i -g --ignore-scripts @earendil-works/pi-coding-agent',
+    fields: [
+      { key: 'model', label: '模型', type: 'string', default: '', impact: 'cost', help: '留空用 pi 自己的默认模型。' },
+      ...CLI_COMMON_FIELDS('pi'),
+    ],
+  },
+
+  {
+    kind: 'gemini_cli',
+    label: 'Gemini CLI',
+    description:
+      'Google 官方 CLI。★ 输出是**一个** JSON 对象而不是事件流 —— 执行过程中界面上不会有任何中间事件，要跑完才一次性出结果。适合短任务，不适合需要盯进度的长任务。',
+    credential: { label: 'Gemini API Key', help: '推荐填 `env:变量名`。' },
+    endpoint: null,
+    prerequisite: '需要 gemini 已安装：npm i -g @google/gemini-cli',
+    fields: [
+      {
+        key: 'model',
+        label: '模型',
+        type: 'string',
+        default: 'gemini-2.5-pro',
+        impact: 'cost',
+        help: '如 gemini-2.5-pro / gemini-2.5-flash。',
+      },
+      ...CLI_COMMON_FIELDS('gemini'),
+    ],
+  },
+
+  {
+    kind: 'aider',
+    label: 'Aider',
+    description:
+      '成熟的结对编程 CLI（Python）。纯文本输出，没有结构化通道。★ 平台会加 --no-auto-commits：提交由工作区供给统一负责，两边都提交会让一个 Run 产生一堆零碎提交。',
+    credential: { label: 'API Key', help: '按所选模型对应的供应商填；推荐 `env:变量名`。' },
+    endpoint: { label: '接入地址', help: '自建网关才填（注入 OPENAI_API_BASE）。' },
+    prerequisite: '需要 aider 已安装：python -m pip install aider-install && aider-install',
+    fields: [
+      {
+        key: 'model',
+        label: '模型',
+        type: 'string',
+        default: '',
+        impact: 'cost',
+        help: 'Aider 的模型名，如 sonnet / gpt-4o / deepseek。留空用它自己的默认。',
+      },
+      ...CLI_COMMON_FIELDS('aider'),
+    ],
+  },
+
+  {
+    kind: 'goose',
+    label: 'Goose',
+    description:
+      'Block 开源的 on-machine agent。支持 stream-json，能边跑边出事件与工具调用。★ 非交互下只能是 Auto 模式，审批档位不开放（其余档位会被 CLI 显式拒绝）。',
+    credential: { label: 'API Key', help: '按 goose 配置的 provider 填；推荐 `env:变量名`。' },
+    endpoint: null,
+    prerequisite:
+      '需要 goose 已安装并配置好 provider：curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
+    fields: [
+      {
+        key: 'model',
+        label: '模型',
+        type: 'string',
+        default: '',
+        impact: 'cost',
+        help: '留空用 goose 自身配置里的模型。',
+      },
+      ...CLI_COMMON_FIELDS('goose'),
+    ],
+  },
+
+  {
+    kind: 'opencode',
+    label: 'OpenCode',
+    description: '终端原生编码 agent（sst）。纯文本输出。★ 模型要写成 provider/model 的形式。',
+    credential: { label: 'API Key', help: '按所选 provider 填；推荐 `env:变量名`。' },
+    endpoint: null,
+    prerequisite: '需要 opencode 已安装：curl -fsSL https://opencode.ai/install | bash',
+    fields: [
+      {
+        key: 'model',
+        label: '模型',
+        type: 'string',
+        default: '',
+        impact: 'cost',
+        help: '★ 必须是 provider/model 形式，如 anthropic/claude-sonnet-4。只填模型名会被 CLI 拒绝。',
+      },
+      ...CLI_COMMON_FIELDS('opencode'),
+    ],
+  },
+
+  {
+    kind: 'qwen_code',
+    label: 'Qwen Code',
+    description:
+      '阿里开源的编码 CLI（gemini-cli 的 fork，但多了 stream-json）。能边跑边出事件与工具调用。',
+    credential: { label: 'API Key', help: '推荐填 `env:变量名`。' },
+    endpoint: { label: '接入地址', help: '自建网关或兼容端点才填（注入 OPENAI_BASE_URL）。' },
+    prerequisite: '需要 qwen 已安装：npm i -g @qwen-code/qwen-code',
+    fields: [
+      {
+        key: 'model',
+        label: '模型',
+        type: 'string',
+        default: 'qwen3-coder-plus',
+        impact: 'cost',
+        help: '如 qwen3-coder-plus。',
+      },
+      ...CLI_COMMON_FIELDS('qwen'),
+    ],
+  },
+];
+
 export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
   {
     kind: 'claude_code',
@@ -190,6 +360,8 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       PASSTHROUGH_ENV,
     ],
   },
+
+  ...HEADLESS_CLI_SPECS,
 
   {
     kind: 'mock',

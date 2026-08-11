@@ -8,7 +8,9 @@ import {
 import {
   ClaudeCodeRuntime,
   CodexRuntime,
+  GenericCliRuntime,
   MockRuntime,
+  cliProfile,
   type AgentRuntimeAdapter,
   type RuntimeRegistry,
 } from '@apos/agent-runtimes';
@@ -89,8 +91,28 @@ export function createAgentAdapter(
         onDiagnostic: (message, detail) => diagnose(`${tag} ${message}`, detail),
       });
 
-    default:
-      return null;
+    /**
+     * ★★ 六个通用 headless CLI（pi / gemini_cli / aider / goose / opencode /
+     *   qwen_code）走同一条分支：差异全在 profile 那张声明式的表里，
+     *   这里只负责把 Agent 行上的配置搬过去。
+     *
+     *   加第七个 CLI = 加一条 profile + 加一条 spec，这个文件一个字不用改。
+     */
+    default: {
+      const profile = cliProfile(agent.runtimeKind);
+      if (!profile) return null;
+      return new GenericCliRuntime(profile, {
+        apiKey,
+        // 没登记凭证时才允许沿用进程环境（单机部署的常见形态）
+        allowInheritedCredentials: agent.credentialRef === null,
+        ...(agent.endpoint ? { baseUrl: agent.endpoint } : {}),
+        ...(str('model') ? { model: str('model')! } : {}),
+        ...(str('binary') ? { binary: str('binary')! } : {}),
+        ...(list('extraArgs') ? { extraArgs: list('extraArgs')! } : {}),
+        ...(list('passthroughEnv') ? { passthroughEnv: list('passthroughEnv')! } : {}),
+        onDiagnostic: (message, detail) => diagnose(`${tag} ${message}`, detail),
+      });
+    }
   }
 }
 

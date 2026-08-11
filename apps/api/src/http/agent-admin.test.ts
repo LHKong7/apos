@@ -202,8 +202,13 @@ describe('Agent 自带运行时配置', () => {
     expect(cfg.approvalPolicy).toBe('never');
   });
 
+  /**
+   * ★ 例子要挑一个**永远不会被支持**的名字。
+   *   这里原本用的是 `gemini_cli` —— 后来它真的接进来了，
+   *   于是这条测试开始红，而红的原因和它想验证的东西毫无关系。
+   */
   it('未知运行时类型被拒绝，并列出支持的类型', async () => {
-    const res = await createAgent({ runtimeKind: 'gemini_cli' });
+    const res = await createAgent({ runtimeKind: 'definitely-not-a-runtime' });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.details.supported).toContain('claude_code');
   });
