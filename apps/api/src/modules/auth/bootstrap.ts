@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { count, eq, isNotNull } from 'drizzle-orm';
 import { organizationMembers, users, type Database } from '@apos/db';
 import { createOrganization } from '../../http/organizations';
@@ -139,10 +140,21 @@ export async function ensureSuperadminOrg(
    * ★ 走 createOrganization 而不是直接 INSERT：它在同一个事务里
    *   建组织、把创建者设成 org_admin、预置内置角色。少了最后一件，
    *   这个组织里一个成员都加不进任何项目，报错是一句外键冲突。
+   *
+   * ★★ correlationId 必须是 uuid —— `events.correlation_id` 就是 uuid 列。
+   *
+   *   这里曾经写的是 `bootstrap-${userId}`，想让这条链路在事件表里一眼可辨。
+   *   意图是好的，但那个值进不了 uuid 列：建组织连带写事件时 Postgres 抛
+   *   22P02，自举整个失败 —— 于是**第一次部署的人拿不到超管的组织**，
+   *   登录进去每个请求都是 401「还不属于任何组织」。
+   *
+   *   ★ 编译期抓不到：TS 那侧 correlationId 的类型就是 string，拼什么都合法，
+   *     只有真的插库那一刻才炸。所以别再"顺手"写成描述性字符串 ——
+   *     要溯源看 actorId 与事件类型，它们已经够了。
    */
   const { organization } = await createOrganization(
     db,
-    { actorId: userId, correlationId: `bootstrap-${userId}` },
+    { actorId: userId, correlationId: randomUUID() },
     { name },
   );
   log(`[auth] 已为超管创建组织「${organization.name}」`);

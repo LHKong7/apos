@@ -8,6 +8,7 @@ import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
   assertSignupAllowed,
+  bootstrapSuperadmin,
   hashPassword,
   resetSignupThrottle,
   signupEnabled,
@@ -545,5 +546,85 @@ describe('SSE', () => {
       url: `/api/v1/stream?channels=project:${fx.projectId}:board`,
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+/**
+ * 超管自举（09-security §1.3）。
+ *
+ * ★★ 这一整块此前一条测试都没有 —— 而它是第一次部署时**唯一**跑到的路径。
+ *   于是 `ensureSuperadminOrg` 里那个进不了 uuid 列的 correlationId
+ *   一直活着：`pnpm test` 全绿，`docker compose up` 起来的实例却建不出
+ *   超管的组织，登录后每个请求都是 401「还不属于任何组织」。
+ *
+ *   ★ 只有真的走一遍自举才测得出来。这也是它当初能溜过去的原因：
+ *     所有别的用例都用 seedFixture 直插数据，绕开了这条路。
+ */
+describe('超管自举', () => {
+  const KEYS = ['APOS_SUPERADMIN_EMAIL', 'APOS_SUPERADMIN_PASSWORD', 'APOS_SUPERADMIN_ORG'] as const;
+  const before = KEYS.map((k) => [k, process.env[k]] as const);
+
+  afterEach(() => {
+    for (const [k, v] of before) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('★ 从 .env 长出超管，并且真的把组织建出来', async () => {
+    process.env['APOS_SUPERADMIN_EMAIL'] = 'boot@example.com';
+    process.env['APOS_SUPERADMIN_PASSWORD'] = 'bootstrap-password-1';
+    process.env['APOS_SUPERADMIN_ORG'] = '自举出来的组织';
+
+    const result = await bootstrapSuperadmin(db, () => {});
+
+    expect(result.created).toBe(true);
+    /**
+     * ★ 这一条是关键。账号建出来但组织没建成的话，人能登录、
+     *   但站点整个是空的 —— 而 created:true 会让人以为自举成功了。
+     */
+    expect(result.orgCreated).toBe(true);
+
+    const [membership] = await db
+      .select({ orgId: organizationMembers.orgId, role: organizationMembers.orgRole })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.userId, result.userId!));
+    expect(membership?.role).toBe('org_admin');
+
+    // 建组织连带写的事件要真的落库 —— correlationId 进不了 uuid 列的话就是这里炸
+    const [row] = await db
+      .select({ correlationId: events.correlationId })
+      .from(events)
+      .where(eq(events.orgId, membership!.orgId));
+    expect(row?.correlationId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  /**
+   * ★ 幂等，而且**不覆盖已改过的口令** —— 否则 .env 里那个初始口令
+   *   就成了一个改不掉的后门（见 bootstrap.ts 顶部）。
+   */
+  it('重复自举不再建号建组织，也不重置口令', async () => {
+    process.env['APOS_SUPERADMIN_EMAIL'] = 'boot@example.com';
+    process.env['APOS_SUPERADMIN_PASSWORD'] = 'bootstrap-password-1';
+
+    const first = await bootstrapSuperadmin(db, () => {});
+    expect(first.created).toBe(true);
+
+    // 用户改了口令
+    const changed = await hashPassword('user-changed-password-9');
+    await db.update(users).set({ passwordHash: changed }).where(eq(users.id, first.userId!));
+
+    const second = await bootstrapSuperadmin(db, () => {});
+    expect(second.created).toBe(false);
+    expect(second.orgCreated).toBe(false);
+    expect(second.userId).toBe(first.userId);
+
+    const [row] = await db
+      .select({ hash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, first.userId!));
+    expect(row?.hash).toBe(changed);
   });
 });

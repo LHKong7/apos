@@ -246,9 +246,29 @@ function asBuiltinRole(role: string | null): ProjectRole | null {
     : null;
 }
 
+/** RFC 4122 的 8-4-4-4-12。大小写都收，Postgres 的 uuid 输入也不区分 */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 调用方可以用 `X-Correlation-Id` 把自己的追踪 ID 带进来，这样一次跨系统的
+ * 操作在两边的日志里能对上。
+ *
+ * ★★ 但只认 uuid 形态 —— `events.correlation_id` 是 uuid 列。
+ *
+ *   之前这里是原样透传：客户端送一个 `trace-abc-123`（W3C traceparent、
+ *   Jaeger 的 span id…… 没有一个是 uuid），请求会一路走到 INSERT 才被
+ *   Postgres 以 22P02 顶回来，出口翻译成 400「路径或查询参数的格式不合法」。
+ *
+ *   ★ 三重误导：问题既不在路径也不在查询参数（在请求头），报错里不提
+ *     correlation id 半个字，而调用方那边的现象是「注册接口对我永远返回
+ *     400，换个客户端就好了」。
+ *
+ * ★ 认不出来就换一个新的，而不是报错：correlation id 是诊断辅助，
+ *   不是业务契约。为了一个追踪头把真正的写入挡掉，代价不对等。
+ */
 function corr(req: { headers: Record<string, unknown> }): string {
   const header = req.headers['x-correlation-id'];
-  return typeof header === 'string' ? header : randomUUID();
+  return typeof header === 'string' && UUID_PATTERN.test(header) ? header : randomUUID();
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
