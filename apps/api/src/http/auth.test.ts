@@ -1,12 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { events, users } from '@apos/db';
+import { events, organizationMembers, users } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
-import { hashPassword } from '../modules/auth';
+import { assertSignupAllowed, hashPassword, resetSignupThrottle } from '../modules/auth';
 import {
   auth,
   createMember,
@@ -24,9 +24,10 @@ import {
  *   写上谁的 uuid 就是谁。整套 RBAC 建在它之上，因而也全是摆设 ——
  *   而接口清单上完全看不出这件事。
  *
- * ★ 账号只有两个来源：超管来自 .env（bootstrap），其余由组织管理员创建。
- *   **没有自助注册** —— 组织边界就是多租户边界，能自助注册等于
- *   任何人都能把自己放进那条边界里。
+ * ★ 账号有三个来源：超管来自 .env（bootstrap）、组织管理员开的号、
+ *   以及自助注册。三条路都不会把人放进**别人的**组织 ——
+ *   注册开的是一个空的新组织，要进别人的组织仍然只有「被管理员加进去」。
+ *   组织边界就是多租户边界，这条线由下面「自助注册」那组用例守着。
  */
 
 const db = testDb();
@@ -291,6 +292,165 @@ describe('改口令', () => {
 
     expect((await login({ email, password: 'brand-new-password' })).statusCode).toBe(200);
     expect((await login({ email, password: PASSWORD })).statusCode).toBe(401);
+  });
+});
+
+/**
+ * 自助注册（docs/tech/09-security.md §1）。
+ *
+ * ★★ 这里要守住的那条线：注册长出的是一个**新的空组织**，
+ *   不是「把自己放进某个已有组织」。后者才是「组织边界就是多租户边界」
+ *   要防的东西，而且这几条用例就是防止有人日后把它「优化」成后者。
+ */
+describe('自助注册', () => {
+  const register = (payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: '/api/v1/auth/register', payload });
+
+  beforeEach(() => resetSignupThrottle());
+
+  it('注册即建号 + 建自己的组织，并直接拿到能用的令牌', async () => {
+    const res = await register({
+      email: 'newcomer@acme.dev',
+      name: '新来的',
+      password: 'a-fresh-password',
+    });
+    expect(res.statusCode).toBe(200);
+
+    const { token, user, organization } = res.json();
+    expect(user.email).toBe('newcomer@acme.dev');
+    expect(organization.id).toBeTruthy();
+
+    // 令牌当场可用，且当前组织就是刚建的那个
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().currentOrgId).toBe(organization.id);
+    // ★ 在自己的组织里是 org_admin —— 「新的超管账号」在这套模型里就是这一句
+    expect(me.json().orgRole).toBe('org_admin');
+  });
+
+  /**
+   * ★★ 注册**不能**让人看见别人的组织。
+   *
+   *   这条线一旦破了，「自助注册」就真的变成了多租户边界的缺口 ——
+   *   而那正是 09-security 当初拒绝它的理由。
+   */
+  it('★ 新注册的人看不到别人的组织与项目', async () => {
+    const res = await register({
+      email: 'stranger@elsewhere.dev',
+      name: '陌生人',
+      password: 'another-password',
+    });
+    const { token, organization } = res.json();
+    const headers = { authorization: `Bearer ${token}` };
+
+    const orgs = await app.inject({ method: 'GET', url: '/api/v1/organizations', headers });
+    expect(orgs.statusCode).toBe(200);
+    const ids = orgs.json().organizations.map((o: { id: string }) => o.id);
+    expect(ids).toEqual([organization.id]);
+    expect(ids).not.toContain(fx.orgId);
+
+    // 夹具那个项目属于别人的组织，够不着
+    const board = await app.inject({
+      method: 'GET',
+      url: `/api/v1/projects/${fx.projectId}/board`,
+      headers,
+    });
+    expect([401, 403, 404]).toContain(board.statusCode);
+  });
+
+  it('组织名留空时按姓名推，且两个同名的人不会撞 slug', async () => {
+    const a = await register({ email: 'a@x.dev', name: '张三', password: 'password-one' });
+    const b = await register({ email: 'b@x.dev', name: '张三', password: 'password-two' });
+    expect(a.statusCode).toBe(200);
+    expect(b.statusCode).toBe(200);
+    expect(a.json().organization.slug).not.toBe(b.json().organization.slug);
+  });
+
+  it('可以自己指定组织名', async () => {
+    const res = await register({
+      email: 'founder@startup.dev',
+      name: '创始人',
+      password: 'startup-password',
+      orgName: 'Startup 科技',
+    });
+    expect(res.json().organization.name).toBe('Startup 科技');
+  });
+
+  /**
+   * ★ 和登录接口不同，注册**必须**说清楚邮箱被占用了 ——
+   *   不说的话用户没有任何办法完成注册。这是这类接口固有的取舍，
+   *   缓解手段是限流而不是把话说糊。
+   */
+  it('邮箱已存在时明确拒绝，且不会重复建号', async () => {
+    const email = await emailOf(fx.userId);
+    const res = await register({ email, name: '冒名者', password: 'yet-another-password' });
+    expect(res.statusCode).toBe(409);
+
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('弱口令被挡下，且没有留下半个账号', async () => {
+    const res = await register({ email: 'weak@x.dev', name: '短口令', password: 'abc' });
+    expect(res.statusCode).toBe(400);
+
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, 'weak@x.dev'));
+    expect(rows).toHaveLength(0);
+  });
+
+  /**
+   * ★★ 建号与建组织必须同生同死。
+   *
+   *   分成两个事务的话，第二步失败会留下一个「能登录但不属于任何组织」的
+   *   账号 —— 他之后每个请求都是 401，而注册页显示的是「注册失败」。
+   */
+  it('★ 注册成功的人一定属于某个组织', async () => {
+    const res = await register({ email: 'paired@x.dev', name: '成对的', password: 'paired-password' });
+    const userId = res.json().user.id;
+
+    const memberships = await db
+      .select({ orgId: organizationMembers.orgId, orgRole: organizationMembers.orgRole })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.userId, userId));
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]!.orgRole).toBe('org_admin');
+  });
+
+  it('注册会留下审计事件', async () => {
+    const res = await register({ email: 'audited@x.dev', name: '被审计的', password: 'audit-password' });
+    const orgId = res.json().organization.id;
+
+    const rows = await db.select({ type: events.type }).from(events).where(eq(events.orgId, orgId));
+    const types = rows.map((r) => r.type);
+    expect(types).toContain('organization.created');
+    expect(types).toContain('user.created');
+    expect(types).toContain('organization.member_added');
+  });
+});
+
+describe('注册限流', () => {
+  beforeEach(() => resetSignupThrottle());
+
+  /**
+   * ★ 未鉴权 + 每次跑一遍 scrypt + 写四张表。没有闸的话，
+   *   一个写错的脚本就能把 CPU 打满 —— 不需要有人恶意。
+   */
+  it('★ 同一来源短时间内反复注册会被挡下', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) assertSignupAllowed('203.0.113.7', now + i);
+    expect(() => assertSignupAllowed('203.0.113.7', now + 10)).toThrow(/注册太频繁/);
+  });
+
+  it('换一个来源不受影响，窗口过后自动恢复', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) assertSignupAllowed('203.0.113.7', now + i);
+
+    expect(() => assertSignupAllowed('198.51.100.4', now)).not.toThrow();
+    expect(() => assertSignupAllowed('203.0.113.7', now + 11 * 60 * 1000)).not.toThrow();
   });
 });
 

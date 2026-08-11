@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { organizationMembers, users, type Database } from '@apos/db';
 import { humanActor, OrgRole } from '@apos/contracts';
 import { ApiError } from '../../http/errors';
+import { freeOrganizationSlug, insertOrganizationTx } from '../../http/organizations';
 import { emitAndPublish } from '../event/bus';
 import { assertPasswordAcceptable, hashPassword, verifyPassword, WeakPasswordError } from './password';
 import { signToken } from './jwt';
@@ -42,6 +43,14 @@ export const CreateAccountInput = z.object({
 export const ChangePasswordInput = z.object({
   currentPassword: z.string().min(1, '请输入当前口令'),
   newPassword: z.string().min(1, '请输入新口令'),
+});
+
+export const RegisterInput = z.object({
+  email: Email,
+  name: z.string().trim().min(1, '姓名不能为空').max(80),
+  password: z.string().min(1, '请设置口令'),
+  /** 留空按姓名推。这是**新建**的组织，不是加入某个已有组织 */
+  orgName: z.string().trim().min(1).max(80).optional(),
 });
 
 /**
@@ -96,6 +105,126 @@ export async function login(db: Database, input: z.infer<typeof LoginInput>) {
   return {
     token: signToken(user!.id),
     user: { id: user!.id, name: user!.name, email: user!.email },
+  };
+}
+
+/**
+ * 自助注册 —— 每次注册长出一个**自己的新组织**，注册者是那个组织的 org_admin。
+ *
+ * ★★ 「新的超管账号」在这套模型里的准确含义就是这一句。
+ *
+ *   这个代码库里**没有跨租户的全局超管**：`users` 表上没有任何全局角色列，
+ *   一切权限都来自 organization_members / project_members。启动时那个
+ *   「超级管理员」（bootstrap.ts）之所以叫超管，只是因为他是第一个人、
+ *   并且自动拥有了一个属于自己的组织 —— 他看不到别人的组织。
+ *   所以注册干的事和 bootstrap 完全一样，只是触发方式从 .env 变成了表单。
+ *
+ * ★★ 这不违反「组织边界就是多租户边界」。
+ *
+ *   09-security 里那句「刻意没有自助注册」，针对的是**自助进入已有组织**。
+ *   这里每次注册都开一个空的新组织，谁也进不去别人的边界 ——
+ *   要进别人的组织，仍然只有一条路：被那个组织的管理员加进去。
+ *
+ * ★ 建账号与建组织必须在同一个事务里。分开的话，第二步失败会留下一个
+ *   「存在但不属于任何组织」的账号：他能登录，但之后每个请求都是 401，
+ *   而注册页显示的是「注册失败」——于是他换个邮箱再注册一次，
+ *   库里就多一个永远登不进去的号。
+ *
+ * ★ 邮箱已存在时**明说**。登录接口刻意不区分「邮箱不存在」和「口令错」
+ *   （那是枚举探针），但注册接口做不到同样的克制：不告诉用户邮箱被占用，
+ *   他就没有任何办法完成注册。这是这类接口固有的取舍，业界一致 ——
+ *   真正的缓解手段是限流（见 throttle.ts），不是把话说糊。
+ */
+export async function registerAccount(
+  db: Database,
+  ctx: { correlationId: string },
+  input: z.infer<typeof RegisterInput>,
+) {
+  const email = normalizeEmail(input.email);
+  const name = input.name.trim();
+  const orgName = input.orgName?.trim() || `${name} 的组织`;
+
+  /**
+   * ★ 先算散列再查库。反过来的话，「邮箱是否存在」的判断会在昂贵的 scrypt
+   *   之前返回 —— 响应耗时就把「这个邮箱注册过没有」泄漏出去了，
+   *   而这正是登录接口花了大力气堵掉的那条信道。
+   */
+  let passwordHash: string;
+  try {
+    passwordHash = await hashPassword(input.password);
+  } catch (err) {
+    if (err instanceof WeakPasswordError) {
+      throw new ApiError('VALIDATION_FAILED', err.message);
+    }
+    throw err;
+  }
+
+  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+  if (existing) {
+    throw new ApiError('VERSION_CONFLICT', '这个邮箱已经注册过了，直接登录即可', { email });
+  }
+
+  // slug 是读操作，放在事务外算 —— 塞进去只会白白拉长事务持有时间
+  const slug = await freeOrganizationSlug(db, orgName);
+
+  const created = await db.transaction(async (tx) => {
+    const [user] = await tx
+      .insert(users)
+      .values({ email, name, passwordHash })
+      .returning({ id: users.id, name: users.name, email: users.email });
+
+    const organization = await insertOrganizationTx(tx, {
+      name: orgName,
+      slug,
+      actorId: user!.id,
+    });
+
+    return { user: user!, organization };
+  });
+
+  /**
+   * ★ 三条事件分开记，口径和管理员开号那条路完全一致
+   *   （user.created / organization.created / organization.member_added）。
+   *   合成一条「注册」事件的话，既有的审计查询就要同时认两套类型。
+   * ★ actor 是注册者自己 —— 自助注册就是本人干的，写成系统会让审计失真。
+   */
+  const actor = humanActor(created.user.id);
+  await emitAndPublish(db, {
+    orgId: created.organization.id,
+    projectId: null,
+    type: 'organization.created',
+    actor,
+    subjectType: 'organization',
+    subjectId: created.organization.id,
+    payload: { name: created.organization.name, slug: created.organization.slug, viaSignup: true },
+    correlationId: ctx.correlationId,
+  });
+  await emitAndPublish(db, {
+    orgId: created.organization.id,
+    projectId: null,
+    type: 'user.created',
+    actor,
+    subjectType: 'user',
+    subjectId: created.user.id,
+    payload: { email: created.user.email, name: created.user.name, orgRole: 'org_admin', viaSignup: true },
+    correlationId: ctx.correlationId,
+  });
+  await emitAndPublish(db, {
+    orgId: created.organization.id,
+    projectId: null,
+    type: 'organization.member_added',
+    actor,
+    subjectType: 'user',
+    subjectId: created.user.id,
+    payload: { orgRole: 'org_admin', name: created.user.name, viaSignup: true },
+    correlationId: ctx.correlationId,
+  });
+
+  /** ★ 直接发令牌：注册完还要用户自己再登录一次，是白白多一道门 */
+  return {
+    token: signToken(created.user.id),
+    user: { id: created.user.id, name: created.user.name, email: created.user.email },
+    organization: created.organization,
   };
 }
 

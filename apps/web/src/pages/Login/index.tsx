@@ -1,31 +1,44 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import clsx from 'clsx';
 import { api, ApiError } from '../../lib/api/client';
 import { useAuthStore } from '../../stores/auth';
 import { BrandMark } from '../../components/BrandMark';
 
+type Mode = 'login' | 'register';
+
 /**
- * 登录页。
+ * 登录 / 注册页。
  *
- * ★★ 在此之前这里是一个下拉框：/users 拿回全库用户，选中谁就是谁。
- *   现在账号由超管创建（.env 里那个超管除外），登录要口令。
+ * ★★ 注册开的是一个**自己的新组织**，不是加入某个已有组织。
  *
- * ★ 不提供「注册」入口，也不该提供：组织边界就是多租户边界，
- *   能自助注册等于任何人都能把自己放进某个租户里。
- *   拿不到账号的人该去找管理员，所以这句话直接写在页面上 ——
- *   否则他会一直在找那个不存在的注册按钮。
+ *   这两件事在多租户里差得很远：后者等于「任何人都能把自己放进别人的
+ *   边界里」，那正是这套系统当初拒绝自助注册的理由；而前者只是多了一个
+ *   空租户，谁也看不见谁。所以注册表单上那句「会为你创建一个新组织」
+ *   不是宣传语，是这条设计线本身 —— 用户要能预期到他注册完看到的是空的。
  *
  * ★ 这是整个产品的第一屏，也是唯一一屏「没有数据可看」的页面 ——
- *   所以它是**唯一**适合把产品那一句话讲出来的地方。左侧那段字
- *   不是装饰：它解释了为什么这个系统的登录页上没有注册按钮。
+ *   所以它是唯一适合把产品那一句话讲出来的地方。
  */
 export function LoginPage() {
   const signIn = useAuthStore((s) => s.signIn);
+  const [mode, setMode] = useState<Mode>('login');
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [orgName, setOrgName] = useState('');
 
   const submit = useMutation({
-    mutationFn: () => api.login({ email, password }),
+    mutationFn: () =>
+      mode === 'login'
+        ? api.login({ email, password })
+        : api.register({
+            email,
+            name: name.trim(),
+            password,
+            ...(orgName.trim() ? { orgName: orgName.trim() } : {}),
+          }),
     onSuccess: (data) => signIn(data.token, data.user),
   });
 
@@ -33,12 +46,22 @@ export function LoginPage() {
     submit.error instanceof ApiError
       ? submit.error.message
       : submit.error
-        ? '登录失败，请确认后端是否可达'
+        ? `${mode === 'login' ? '登录' : '注册'}失败，请确认后端是否可达`
         : null;
+
+  /** ★ 换模式要清掉上一次的报错：「邮箱或口令不正确」留在注册表单上纯属误导 */
+  const switchTo = (next: Mode) => {
+    if (next === mode) return;
+    submit.reset();
+    setMode(next);
+  };
+
+  const canSubmit =
+    Boolean(email.trim()) && Boolean(password) && (mode === 'login' || Boolean(name.trim()));
 
   return (
     <div className="relative flex min-h-screen flex-1 items-center justify-center overflow-hidden p-6">
-      {/* 底纹：网格向四周淡出 + 两团极光。只在登录页给到这个强度 ——
+      {/* 底纹：网格向四周淡出 + 两团极光。只在这一屏给到这个强度 ——
           进了系统之后，会发光的应该是数据而不是背景 */}
       <div aria-hidden className="grid-fade pointer-events-none absolute inset-0" />
       <div
@@ -50,7 +73,7 @@ export function LoginPage() {
         className="pointer-events-none absolute -bottom-48 -right-32 h-[34rem] w-[34rem] rounded-full bg-brand-far/20 blur-[120px]"
       />
 
-      <div className="relative grid w-full max-w-4xl items-center gap-10 md:grid-cols-[1fr_22rem]">
+      <div className="relative grid w-full max-w-4xl items-center gap-10 md:grid-cols-[1fr_23rem]">
         {/* 左：产品是什么。窄屏收起 —— 手机上登录的人要的是输入框 */}
         <div className="hidden md:block">
           <div className="flex items-center gap-2.5">
@@ -88,7 +111,7 @@ export function LoginPage() {
           </ul>
         </div>
 
-        {/* 右：登录表单 */}
+        {/* 右：表单 */}
         <form
           className="w-full rounded-xl border border-slate-200 p-6 shadow-lg glass-strong"
           onSubmit={(e) => {
@@ -103,12 +126,56 @@ export function LoginPage() {
             </span>
           </div>
 
-          <h2 className="mt-4 text-base font-semibold tracking-tight text-slate-900 md:mt-0">
-            登录
-          </h2>
-          <p className="mt-1 text-[11px] text-slate-400">用组织管理员开通的账号进入</p>
+          {/* 分段控件而不是「还没有账号？去注册」那种小字链接 ——
+              注册和登录在这里是平级的两条路，不是主次 */}
+          <div className="mt-4 flex rounded-lg border border-slate-200 bg-slate-100/60 p-0.5 md:mt-0">
+            {(
+              [
+                { key: 'login', label: '登录' },
+                { key: 'register', label: '注册' },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => switchTo(t.key)}
+                aria-pressed={mode === t.key}
+                className={clsx(
+                  'flex-1 rounded-md py-1.5 text-xs transition',
+                  mode === t.key
+                    ? 'bg-white font-medium text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-          <label className="mt-5 block text-xs text-slate-600" htmlFor="login-email">
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+            {mode === 'login'
+              ? '用你的账号进入'
+              : '注册会为你创建一个属于你的新组织，你是它的管理员'}
+          </p>
+
+          {mode === 'register' && (
+            <>
+              <label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
+                姓名
+              </label>
+              <input
+                id="register-name"
+                autoComplete="name"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="李娜"
+                className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
+              />
+            </>
+          )}
+
+          <label className="mt-4 block text-xs text-slate-600" htmlFor="login-email">
             邮箱
           </label>
           <input
@@ -127,17 +194,38 @@ export function LoginPage() {
           <input
             id="login-password"
             type="password"
-            autoComplete="current-password"
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
           />
+          {/* ★ 把长度要求写在前面，而不是等服务端把表单打回来才说
+              —— 服务端那条规则见 modules/auth/password.ts */}
+          {mode === 'register' && (
+            <p className="mt-1 text-[11px] text-slate-400">至少 8 位</p>
+          )}
+
+          {mode === 'register' && (
+            <>
+              <label className="mt-3.5 block text-xs text-slate-600" htmlFor="register-org">
+                组织名
+                <span className="ml-1 text-slate-400">选填</span>
+              </label>
+              <input
+                id="register-org"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder={name.trim() ? `${name.trim()} 的组织` : '留空按姓名生成'}
+                className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
+              />
+            </>
+          )}
 
           {/*
-            ★ 错误如实照搬服务端那句话。服务端刻意让「邮箱不存在」和
-              「口令不对」说同一句（否则登录接口就成了通讯录枚举探针），
-              前端再加工一次只会把那份克制毁掉。
+            ★ 错误如实照搬服务端那句话。登录那条路上，服务端刻意让
+              「邮箱不存在」和「口令不对」说同一句（否则登录接口就成了
+              通讯录枚举探针），前端再加工一次只会把那份克制毁掉。
           */}
           {message && (
             <p
@@ -150,18 +238,37 @@ export function LoginPage() {
 
           <button
             type="submit"
-            disabled={submit.isPending}
+            disabled={submit.isPending || !canSubmit}
             className="mt-5 w-full rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-2 text-sm font-medium text-white shadow-sm hover:brightness-110 disabled:opacity-50"
           >
-            {submit.isPending ? '登录中…' : '登录'}
+            {submit.isPending
+              ? mode === 'login'
+                ? '登录中…'
+                : '创建中…'
+              : mode === 'login'
+                ? '登录'
+                : '创建账号与组织'}
           </button>
 
           <p className="mt-4 border-t border-slate-200/70 pt-3 text-[11px] leading-relaxed text-slate-500">
-            没有账号请找组织管理员开通 —— 这个系统不开放自助注册。
-            <br />
-            首次部署时，超级管理员来自 <code className="text-slate-600">.env</code> 里的{' '}
-            <code className="text-slate-600">APOS_SUPERADMIN_EMAIL</code> 与{' '}
-            <code className="text-slate-600">APOS_SUPERADMIN_PASSWORD</code>。
+            {mode === 'login' ? (
+              <>
+                首次部署时，超级管理员来自 <code className="text-slate-600">.env</code> 里的{' '}
+                <code className="text-slate-600">APOS_SUPERADMIN_EMAIL</code> 与{' '}
+                <code className="text-slate-600">APOS_SUPERADMIN_PASSWORD</code>。
+                <br />
+                要加入同事已有的组织，请找那个组织的管理员把你加进去 —— 注册只会新开一个组织。
+              </>
+            ) : (
+              <>
+                新组织是空的：项目、成员、Agent 都要你自己建。
+                <br />
+                <strong className="font-medium text-slate-600">
+                  想加入同事已有的组织，不要注册
+                </strong>
+                —— 找那个组织的管理员把你加进去，注册只会给你另开一个互相看不见的组织。
+              </>
+            )}
           </p>
         </form>
       </div>

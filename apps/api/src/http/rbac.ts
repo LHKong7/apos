@@ -188,6 +188,11 @@ const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
   },
   {
     method: 'POST',
+    pattern: /^\/api\/v1\/auth\/register$/,
+    why: '自助注册：调用时还不存在任何身份。它开的是一个**空的新组织**，进不到别人的边界里；门槛是限流 + 邮箱唯一，在 handler 里判',
+  },
+  {
+    method: 'POST',
     pattern: /^\/api\/v1\/auth\/password$/,
     why: '改自己的口令，作用域是调用者自己，与组织角色无关；当前口令在 handler 里验',
   },

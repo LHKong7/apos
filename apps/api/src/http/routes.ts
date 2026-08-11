@@ -73,10 +73,13 @@ import {
   ChangePasswordInput,
   CreateAccountInput,
   LoginInput,
+  RegisterInput,
   TokenError,
+  assertSignupAllowed,
   changeOwnPassword,
   createAccount,
   login,
+  registerAccount,
   tokenFrom,
   verifyToken,
 } from '../modules/auth';
@@ -308,13 +311,30 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★★ 这是唯一一条不需要身份的写路由，所以它在 rbac 的豁免清单里 ——
    *   要求「先登录才能登录」显然不成立。它自己就是身份的来源。
    *
-   * ★ 账号从哪来：第一个（超管）来自 .env，启动时自举
-   *   （modules/auth/bootstrap.ts）；其余由组织管理员创建
-   *   （POST /api/v1/admin/users）。**没有自助注册** ——
-   *   一个能自助注册的实例，等于任何人都能进到某个组织的边界里。
+   * ★ 账号有三个来源：第一个（超管）来自 .env，启动时自举
+   *   （modules/auth/bootstrap.ts）；组织管理员开的号
+   *   （POST /api/v1/admin/users）；以及自助注册（下面那条）。
    */
   app.post('/api/v1/auth/login', async (req) => {
     return login(db, LoginInput.parse(req.body));
+  });
+
+  /**
+   * 自助注册 —— 每次注册长出一个**自己的新组织**，注册者是它的 org_admin。
+   *
+   * ★★ 这不是「把自己放进某个已有组织」。
+   *
+   *   09-security 里那句「刻意没有自助注册」防的是后者：组织边界就是
+   *   多租户边界，能自助进入已有组织等于边界不存在。而这里每次注册开的是
+   *   一个**空的新组织**，谁也进不到别人的边界里 —— 要进别人的组织，
+   *   仍然只有「被那个组织的管理员加进去」一条路。
+   *
+   * ★ 未鉴权 + 每次都跑 scrypt + 写四张表，所以先过一道限流
+   *   （modules/auth/throttle.ts）。那是进程内的粗闸，不替代入口层限流。
+   */
+  app.post('/api/v1/auth/register', async (req) => {
+    assertSignupAllowed(req.ip);
+    return registerAccount(db, { correlationId: corr(req) }, RegisterInput.parse(req.body));
   });
 
   /** 当前登录者。前端拿它确认令牌还有效，以及显示"我是谁" */

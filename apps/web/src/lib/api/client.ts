@@ -157,6 +157,18 @@ export const api = {
   login: (body: { email: string; password: string }) =>
     request<{ token: string; user: User }>('/auth/login', { method: 'POST', json: body }),
 
+  /**
+   * 自助注册。每次注册长出一个**自己的新组织**，注册者是它的 org_admin ——
+   * 不是加入某个已有组织（见 apps/api/src/modules/auth/service.ts）。
+   * 回来直接带令牌，注册完不用再登录一次。
+   */
+  register: (body: { email: string; name: string; password: string; orgName?: string }) =>
+    request<{
+      token: string;
+      user: User;
+      organization: { id: string; name: string; slug: string };
+    }>('/auth/register', { method: 'POST', json: body }),
+
   me: () => request<{ user: User; currentOrgId: string; orgRole: string }>('/auth/me'),
 
   changePassword: (body: { currentPassword: string; newPassword: string }) =>

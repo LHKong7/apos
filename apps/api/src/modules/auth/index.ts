@@ -5,8 +5,11 @@ export {
   ChangePasswordInput,
   CreateAccountInput,
   LoginInput,
+  RegisterInput,
   changeOwnPassword,
   createAccount,
   login,
   normalizeEmail,
+  registerAccount,
 } from './service';
+export { assertSignupAllowed, resetSignupThrottle } from './throttle';
