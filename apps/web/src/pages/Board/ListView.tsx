@@ -48,13 +48,13 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3">
       {selected.size > 0 && (
-        <div className="mb-2 flex items-center gap-3 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs">
-          <span className="text-slate-600">已选 {selected.size} 项</span>
+        <div className="sticky top-0 z-20 mb-2 flex items-center gap-3 rounded-lg border border-brand/30 px-3 py-2 text-xs shadow-md glass-strong">
+          <span className="font-medium text-slate-800">已选 {selected.size} 项</span>
           <button
             type="button"
             disabled={retriable.length === 0}
             onClick={() => onBulkRetry(retriable)}
-            className="rounded bg-slate-900 px-2 py-0.5 text-white disabled:opacity-40"
+            className="rounded-md bg-slate-900 px-2.5 py-1 font-medium text-white disabled:opacity-40"
           >
             批量重试 {retriable.length} 个失败任务
           </button>
@@ -65,31 +65,37 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-slate-500 underline"
+            className="ml-auto text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
           >
             取消选择
           </button>
         </div>
       )}
 
+      {/*
+        ★ 行高从 py-1.5 放到 py-2.5，并把除任务名之外的列全部 whitespace-nowrap。
+          此前每一行都贴着上下两行，扫到第五行就串行了 —— 而这个视图存在的
+          理由恰恰是「一次看很多行、挑出要批量处理的那几行」。
+      */}
       <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_0_rgb(var(--c-slate-200))]">
           <tr>
-            <th className="w-8 px-2 py-1.5">
+            <th className="w-9 px-3 py-2">
               <input
                 type="checkbox"
+                aria-label="全选"
                 checked={selected.size > 0 && selected.size === rows.length}
                 onChange={(e) =>
                   setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
                 }
-                className="accent-slate-900"
+                className="h-3.5 w-3.5 accent-brand"
               />
             </th>
             <SortHeader label="任务" sortKey="title" sort={sort} onSort={setSort} />
             <SortHeader label="状态" sortKey="status" sort={sort} onSort={setSort} />
-            <th className="px-2 py-1.5 font-medium">执行者</th>
+            <th className="px-3 py-2 font-medium">执行者</th>
             <SortHeader label="风险" sortKey="risk" sort={sort} onSort={setSort} />
-            <SortHeader label="成本" sortKey="cost" sort={sort} onSort={setSort} />
+            <SortHeader label="成本" sortKey="cost" sort={sort} onSort={setSort} align="right" />
             <SortHeader label="更新" sortKey="updatedAt" sort={sort} onSort={setSort} />
           </tr>
         </thead>
@@ -98,33 +104,43 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
             <tr
               key={card.id}
               onClick={() => actions.onOpen(card)}
-              className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
+              className={clsx(
+                'cursor-pointer border-t border-slate-200/60 transition-colors hover:bg-slate-100/60',
+                selected.has(card.id) && 'bg-brand/5',
+              )}
             >
-              <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+              <td className="px-3 py-2.5 align-middle" onClick={(e) => e.stopPropagation()}>
                 <input
                   type="checkbox"
+                  aria-label={`选择 ${card.title}`}
                   checked={selected.has(card.id)}
                   onChange={() => toggle(card.id)}
-                  className="accent-slate-900"
+                  className="h-3.5 w-3.5 accent-brand"
                 />
               </td>
-              <td className="max-w-xs px-2 py-1.5">
-                <span aria-hidden className="mr-1">
-                  {typeIcon(card.type)}
-                </span>
-                <span className="truncate">{card.title}</span>
+              {/*
+                ★ w-full + max-w-0：表格里让某一列「吃掉剩余宽度并省略号截断」
+                  只有这一种写法。此前是 max-w-xs 加一个 inline 的 truncate ——
+                  truncate 的 overflow 对 inline 元素不生效，长标题照样把整张表撑宽。
+              */}
+              <td className="w-full max-w-0 px-3 py-2.5 align-middle">
+                <div className="flex items-center gap-1.5">
+                  <span aria-hidden className="shrink-0">
+                    {typeIcon(card.type)}
+                  </span>
+                  <span className="truncate text-slate-800" title={card.title}>
+                    {card.title}
+                  </span>
+                </div>
               </td>
-              <td className="px-2 py-1.5">
+              <td className="whitespace-nowrap px-3 py-2.5 align-middle">
                 {card.humanGate && card.humanGateRef ? (
-                  <HumanGateBadge
-                    gate={card.humanGate}
-                    dueInMinutes={card.decisionDueInMinutes}
-                  />
+                  <HumanGateBadge gate={card.humanGate} dueInMinutes={card.decisionDueInMinutes} />
                 ) : (
                   <span className="text-slate-600">{statusLabel(card.status)}</span>
                 )}
               </td>
-              <td className="px-2 py-1.5">
+              <td className="whitespace-nowrap px-3 py-2.5 align-middle">
                 {card.executor ? (
                   <AssigneeChip
                     actor={card.executor}
@@ -135,9 +151,15 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                   <span className="text-slate-400">未分配</span>
                 )}
               </td>
-              <td className="px-2 py-1.5 text-slate-600">{riskLabel(card.riskLevel)}</td>
-              <td className="px-2 py-1.5 tabular-nums text-slate-600">{money(card.cost)}</td>
-              <td className="px-2 py-1.5 text-slate-500">{relativeTime(card.updatedAt)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-600">
+                {riskLabel(card.riskLevel)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-right align-middle font-mono tabular-nums text-slate-600">
+                {money(card.cost)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-500">
+                {relativeTime(card.updatedAt)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -151,22 +173,35 @@ function SortHeader({
   sortKey,
   sort,
   onSort,
+  align = 'left',
 }: {
   label: string;
   sortKey: SortKey;
   sort: { key: SortKey; desc: boolean };
   onSort: (s: { key: SortKey; desc: boolean }) => void;
+  align?: 'left' | 'right';
 }) {
   const active = sort.key === sortKey;
   return (
-    <th className="px-2 py-1.5 font-medium">
+    <th
+      className={clsx(
+        'whitespace-nowrap px-3 py-2 font-medium',
+        align === 'right' && 'text-right',
+      )}
+    >
       <button
         type="button"
         onClick={() => onSort({ key: sortKey, desc: active ? !sort.desc : true })}
-        className={clsx('inline-flex items-center gap-0.5', active && 'text-slate-900')}
+        className={clsx(
+          'inline-flex items-center gap-0.5 rounded px-0.5 hover:text-slate-900',
+          active && 'text-slate-900',
+        )}
       >
         {label}
-        {active && <span aria-hidden>{sort.desc ? '↓' : '↑'}</span>}
+        {/* 箭头位置固定占宽，否则每次换排序列整排表头都会横向抖一下 */}
+        <span aria-hidden className={clsx('w-2 text-[10px]', !active && 'opacity-0')}>
+          {sort.desc ? '↓' : '↑'}
+        </span>
       </button>
     </th>
   );
