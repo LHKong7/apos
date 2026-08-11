@@ -19,8 +19,19 @@ export interface MountSpec {
   repo?: RepoRow;
   /** git 后端：可写挂载要开的分支；不给则挂 detached */
   branch?: string;
-  /** empty 后端：基线快照存哪（工作区 id） */
+  /** empty 后端：基线快照按它命名 */
   workspaceId?: string;
+
+  /**
+   * 铺料完成、**记录基线之前**执行的回调，用来放平台自己的输入文件。
+   *
+   * ★★ 时序是关键：平台写进去的东西（任务书 BRIEF.md 之类）必须算进基线，
+   *   否则它们会出现在变更集的 added 里 —— 平台自己写的文件被当成
+   *   「Agent 的产出」记进产物，而真正的产出反倒淹没在里面。
+   *   Git 那边天然没有这个问题（基线就是 baseCommit），空目录后端必须
+   *   显式地把这个时序表达出来。
+   */
+  seed?: (path: string) => Promise<void>;
 }
 
 /**

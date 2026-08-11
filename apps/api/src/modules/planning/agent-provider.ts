@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { agents, type Database } from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
-import type { AgentPermissions, RunEvent, TaskDispatch } from '@apos/contracts';
+import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
+import { WorkspaceService } from '../workspace';
 import { AgentPlanOutput, AgentStructuredOutput, validatePlanGraph } from './agent-output';
 import { buildPlanBrief, buildStructureBrief, OUTPUT_FILE } from './agent-brief';
 import type {
@@ -21,6 +22,12 @@ export interface AgentPlanningOptions {
   root?: string;
   /** 单次规划的墙钟上限。★ 没有 supervisor 兜底，这里必须自己管 */
   timeoutMs?: number;
+  /**
+   * 复用进程里那一个 WorkspaceService。不给就自己建一个 ——
+   * 空目录后端没有镜像锁之类的跨实例状态，建第二个不会出问题，
+   * 但共用一个能让诊断输出汇到一处。
+   */
+  workspaces?: WorkspaceService;
   onDiagnostic?: (message: string, detail?: unknown) => void;
 }
 
@@ -55,6 +62,18 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
  */
 export class AgentPlanningProvider implements PlanningProvider {
   readonly name = 'agent';
+
+  private workspaceService: WorkspaceService | null = null;
+
+  private get workspaces(): WorkspaceService {
+    this.workspaceService ??=
+      this.options.workspaces ??
+      new WorkspaceService(this.db, {
+        ...(this.options.root === undefined ? {} : { root: this.options.root }),
+        ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
+      });
+    return this.workspaceService;
+  }
 
   constructor(
     private readonly db: Database,
@@ -189,18 +208,38 @@ export class AgentPlanningProvider implements PlanningProvider {
     const dir = join(this.root(), 'planning', runId);
     const model = `${agent.runtimeKind}:${agent.model ?? 'default'}`;
 
+    let acquired: Awaited<ReturnType<WorkspaceService['acquireLocal']>> | null = null;
+
     try {
-      await mkdir(dir, { recursive: true });
       /**
-       * ★ 把任务书落成文件，而不是只塞进 prompt。
-       *   这些 CLI 的强项就是读写文件 —— 给它一个能反复回看的 BRIEF.md，
-       *   比把几千字塞进一次性的 prompt 更贴合它的工作方式，
-       *   也让这次规划事后可复查（目录留着不删）。
+       * ★ 走统一的工作区通道，而不是自己 mkdir 再手工捏一个 workspace 对象。
+       *
+       *   此前这里造的是 { repoRef:'planning', branch:'planning' } —— 一个
+       *   假的 Git 工作区，于是 prompt 会对 Agent 说「你在分支 planning 上
+       *   工作，它基于 planning」。现在它是一个如实的空目录工作区，
+       *   vcs 为 null，prompt 换一套说法。
+       *
+       * ★ BRIEF.md 通过 seed 写入 —— 它必须算进**基线**。放在 acquire 之后
+       *   写的话，平台自己的输入文件会出现在变更集的 added 里，被当成
+       *   Agent 的产出。
        */
-      await writeFile(join(dir, 'BRIEF.md'), input.brief, 'utf8');
+      acquired = await this.workspaces.acquireLocal({
+        id: runId,
+        runId,
+        path: dir,
+        /**
+         * ★ 把任务书落成文件，而不是只塞进 prompt。
+         *   这些 CLI 的强项就是读写文件 —— 给它一个能反复回看的 BRIEF.md，
+         *   比把几千字塞进一次性的 prompt 更贴合它的工作方式，
+         *   也让这次规划事后可复查（目录留着不删）。
+         */
+        seed: async (path) => {
+          await writeFile(join(path, 'BRIEF.md'), input.brief, 'utf8');
+        },
+      });
 
       const adapter = this.registry.get(agent.id);
-      const task = this.buildDispatch(runId, agent, dir, input.brief);
+      const task = this.buildDispatch(runId, agent, acquired.dispatch, input.brief);
 
       const ack = await adapter.dispatch(task);
       if (!ack.accepted) return fail(`运行时拒绝任务：${ack.rejectReason ?? '未说明原因'}`);
@@ -225,6 +264,31 @@ export class AgentPlanningProvider implements PlanningProvider {
       return { ok: true, value: parsed, model, costUsd: outcome.costUsd };
     } catch (err) {
       return fail(describe(err));
+    } finally {
+      /**
+       * ★ keep: true —— 目录留着供人事后复查（这是现有行为，规划失败时
+       *   BRIEF.md 和 Agent 写了一半的东西是唯一的排查材料）。
+       *   收尾要做的是清掉基线快照并把变更集记进诊断，不是删目录。
+       */
+      if (acquired) {
+        const released = await this.workspaces
+          .releaseLocal(
+            acquired.workspace,
+            {
+              runId,
+              outcome: 'completed',
+              summary: `规划 ${input.kind}`,
+              agentName: agent.name,
+              goal: '需求规划',
+            },
+            { keep: true },
+          )
+          .catch((err) => {
+            this.diag('[planning] 工作区收尾失败', err);
+            return null;
+          });
+        if (released) this.diag(`[planning] ${runId} 产出：${released.published.note}`);
+      }
     }
   }
 
@@ -254,7 +318,7 @@ export class AgentPlanningProvider implements PlanningProvider {
   private buildDispatch(
     runId: string,
     agent: typeof agents.$inferSelect,
-    dir: string,
+    workspace: RunWorkspace,
     brief: string,
   ): TaskDispatch {
     const permissions: AgentPermissions = {
@@ -273,16 +337,11 @@ export class AgentPlanningProvider implements PlanningProvider {
         skills: agent.skills,
       },
       /**
-       * ★ 这不是一个 git 工作树，是一个空目录。
+       * ★ 一个空目录工作区，不是 git 工作树。
        *   规划不需要仓库：它读的是需求原文，写的是一份 JSON。
        *   真去 clone 一个仓库只会让规划多等几十秒。
        */
-      workspace: {
-        path: dir,
-        writable: true,
-        additionalPaths: [],
-        vcs: null,
-      },
+      workspace,
       goal: {
         title: '需求规划',
         description: brief,

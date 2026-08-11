@@ -229,6 +229,8 @@ async function main() {
     provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider(), {
       root: process.env['AGENT_WORKSPACE_ROOT'],
       timeoutMs: Number(process.env['PLANNING_TIMEOUT_MS'] ?? 600_000),
+      // 与执行 Run 共用同一个工作区服务，诊断输出汇到一处
+      workspaces,
       onDiagnostic: (message, detail) => console.log(message, detail ?? ''),
     }),
     workspaces,

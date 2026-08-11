@@ -16,10 +16,12 @@ import {
 import { GitError } from './git';
 import { mirrorDir, runDir, workspaceRoot } from './paths';
 import { GitMaterializer } from './sources/git';
+import { EmptyMaterializer } from './sources/empty';
 import { GitPublisher } from './publishers/git';
-import { runReleasePipeline } from './pipeline';
+import { NonePublisher } from './publishers/none';
+import { runReleasePipeline, type ReleaseOutcome } from './pipeline';
 import type { SourceMaterializer } from './sources/types';
-import type { Publisher } from './publishers/types';
+import type { Publisher, ReleaseContext } from './publishers/types';
 
 export interface AcquireInput {
   runId: string;
@@ -109,10 +111,12 @@ export class WorkspaceService {
     const root = this.root;
     this.gitSource = new GitMaterializer(db, { root, onDiagnostic: options.onDiagnostic });
     this.sources.set('git', this.gitSource);
+    this.sources.set('empty', new EmptyMaterializer({ root, onDiagnostic: options.onDiagnostic }));
     this.publishers.set(
       'git',
       new GitPublisher(db, this.gitSource, { onDiagnostic: options.onDiagnostic }),
     );
+    this.publishers.set('none', new NonePublisher());
   }
 
   private get root(): string {
@@ -336,6 +340,68 @@ export class WorkspaceService {
     };
   }
 
+  /**
+   * 不落库的本地工作区。
+   *
+   * ★★ 为什么需要这条通道：规划 Run **刻意不在 agent_runs 里**
+   *   （理由见 planning/agent-provider.ts 顶部那段 —— agent_runs.work_item_id
+   *   是 NOT NULL 且带外键，而规划发生在工作项存在之前）。而上面的
+   *   acquire/release 把状态写进 agent_runs.workspace，对它没有一行可写。
+   *
+   *   这是抽象里唯一一处真实的耦合点，所以显式开一条路，而不是让调用方
+   *   自己 mkdir 然后手工捏一个 workspace 对象 —— 后者正是此前的做法，
+   *   代价是规划任务拿到一个 branch:'planning' 的假 Git 工作区。
+   */
+  async acquireLocal(input: {
+    /** 工作区标识，快照按它命名 */
+    id: string;
+    runId: string;
+    /** 目标目录，调用方决定放哪 */
+    path: string;
+    /** 记基线之前放平台自己的输入文件（任务书之类） */
+    seed?: (path: string) => Promise<void>;
+  }): Promise<{ workspace: Workspace; dispatch: RunWorkspace }> {
+    const source = this.sources.get('empty')!;
+    const mount = await source.materialize({
+      role: 'primary',
+      writable: true,
+      path: input.path,
+      workspaceId: input.id,
+      ...(input.seed ? { seed: input.seed } : {}),
+    });
+
+    return {
+      workspace: {
+        id: input.id,
+        runId: input.runId,
+        root: input.path,
+        mounts: [mount],
+        writable: true,
+      },
+      // ★ vcs 为 null —— 这次执行真的不在版本控制下，prompt 会据此换一套说法
+      dispatch: { path: input.path, writable: true, additionalPaths: [], vcs: null },
+    };
+  }
+
+  /** 与 acquireLocal 配对。keep=true 保留目录供人事后复查 */
+  async releaseLocal(
+    workspace: Workspace,
+    ctx: ReleaseContext,
+    opts: { keep?: boolean } = {},
+  ): Promise<ReleaseOutcome> {
+    return runReleasePipeline(
+      { sources: this.sources, publishers: this.publishers, onDiagnostic: this.options.onDiagnostic },
+      workspace,
+      ctx,
+      {
+        publisher: 'none',
+        checkCommand: null,
+        checkTimeoutSeconds: 0,
+        ...(opts.keep === undefined ? {} : { keepMounts: opts.keep }),
+      },
+    );
+  }
+
   private async finishWorkspace(
     runId: string,
     ws: StoredWorkspace,
@@ -432,8 +498,11 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export { GitMaterializer } from './sources/git';
+export { EmptyMaterializer } from './sources/empty';
 export { GitPublisher, branchUrl } from './publishers/git';
+export { NonePublisher } from './publishers/none';
 export { runCheck } from './check';
 export { runReleasePipeline } from './pipeline';
+export type { ReleaseOutcome } from './pipeline';
 export type { SourceMaterializer, MountSpec } from './sources/types';
 export type { Publisher, ReleaseContext } from './publishers/types';
