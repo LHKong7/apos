@@ -4,7 +4,7 @@ import {
   hostOf,
   isHttpRemote,
   resolveAuthUsername,
-} from './git';
+} from './cli';
 
 /**
  * 凭证的 Basic 用户名占位（docs/tech/09-security.md）。

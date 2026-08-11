@@ -26,6 +26,10 @@ export default defineConfig({
       '@apos/db': new URL('./packages/db/src/index.ts', import.meta.url).pathname,
       '@apos/agent-runtimes': new URL('./packages/agent-runtimes/src/index.ts', import.meta.url)
         .pathname,
+      '@apos/workspace-providers': new URL(
+        './packages/workspace-providers/src/index.ts',
+        import.meta.url,
+      ).pathname,
     },
   },
 });

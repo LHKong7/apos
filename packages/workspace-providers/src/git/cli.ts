@@ -160,7 +160,7 @@ export function isHttpRemote(remoteUrl: string): boolean {
  */
 async function run(
   args: string[],
-  opts: { cwd?: string; auth?: GitAuth; timeoutMs?: number } = {},
+  opts: { cwd?: string; auth?: GitAuth; timeoutMs?: number; raw?: boolean } = {},
 ): Promise<string> {
   const env: NodeJS.ProcessEnv = {
     PATH: process.env['PATH'],
@@ -194,7 +194,11 @@ async function run(
       timeout: opts.timeoutMs ?? 300_000,
       maxBuffer: 32 * 1024 * 1024,
     });
-    return stdout.trim();
+    /**
+     * ★ raw 用于 `--porcelain -z`：那里的状态码带前导空格（" M file"），
+     *   trim 掉第一条记录的空格就会把「工作区已修改」错读成「暂存区已修改」。
+     */
+    return opts.raw ? stdout : stdout.trim();
   } catch (err) {
     const e = err as { stderr?: string; message?: string };
     const stderr = (e.stderr ?? '').trim();
@@ -246,6 +250,18 @@ export const git = {
     await run(['worktree', 'add', '-b', branch, path, startPoint], { cwd: mirrorDir });
   },
 
+  /**
+   * 挂一棵 detached HEAD 的工作树 —— 给只读参考仓库用。
+   *
+   * ★ 只读挂载不该建分支。建了的话，因为 `worktree remove` 不删分支，
+   *   镜像里会按「每个 Run × 每个参考仓库」的速度永久堆积分支，
+   *   而这些分支上的内容与基线**一模一样** —— 纯粹是垃圾。
+   *   detached 状态下 Agent 照样能读全部文件，少的只是那个没人要的分支名。
+   */
+  async addDetachedWorktree(mirrorDir: string, path: string, commit: string): Promise<void> {
+    await run(['worktree', 'add', '--detach', path, commit], { cwd: mirrorDir });
+  },
+
   async removeWorktree(mirrorDir: string, path: string): Promise<void> {
     await run(['worktree', 'remove', '--force', path], { cwd: mirrorDir });
   },
@@ -254,10 +270,52 @@ export const git = {
     await run(['worktree', 'prune'], { cwd: mirrorDir });
   },
 
+  /**
+   * 删镜像里的本地分支。
+   *
+   * ★ 只在**推送成功之后**调用：远端已经有一份了，本地这份没有留存价值。
+   *   推送失败或执行失败的分支必须留着 —— 那是「事后捞」唯一的载体。
+   */
+  async deleteBranch(mirrorDir: string, branch: string): Promise<void> {
+    await run(['branch', '-D', branch], { cwd: mirrorDir });
+  },
+
   /** 改动的文件数。0 表示 Agent 什么都没改 */
   async changedFileCount(dir: string): Promise<number> {
     const out = await run(['status', '--porcelain'], { cwd: dir });
     return out === '' ? 0 : out.split('\n').length;
+  },
+
+  /**
+   * 变更集的原始输出（NUL 分隔）。
+   *
+   * ★ 用 `-z` 而不是按换行切：文件名里**允许**有换行，按 \n 切会把一个
+   *   文件算成两个。这不是理论问题 —— 一个 Agent 生成的、名字里带换行的
+   *   临时文件就能让改动数虚高，而虚高的改动数会进提交信息和产物标题。
+   */
+  async statusEntries(dir: string): Promise<{ code: string; file: string }[]> {
+    const out = await run(['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+      cwd: dir,
+      raw: true,
+    });
+    const entries: { code: string; file: string }[] = [];
+    const parts = out.split('\0');
+    for (let i = 0; i < parts.length; i++) {
+      const entry = parts[i]!;
+      if (!entry) continue;
+      const code = entry.slice(0, 2);
+      const file = entry.slice(3);
+      // 重命名/复制的记录后面紧跟一条「原路径」，要一起消费掉
+      if (code[0] === 'R' || code[0] === 'C') i++;
+      entries.push({ code, file });
+    }
+    return entries;
+  },
+
+  /** 工作树当前所在分支；detached 时为 null */
+  async currentBranch(dir: string): Promise<string | null> {
+    const out = await run(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir }).catch(() => 'HEAD');
+    return out === 'HEAD' ? null : out;
   },
 
   async commitAll(dir: string, message: string, author: { name: string; email: string }): Promise<string | null> {

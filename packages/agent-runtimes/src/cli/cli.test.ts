@@ -21,13 +21,15 @@ function task(overrides: Partial<TaskDispatch> = {}): TaskDispatch {
     idempotencyKey: 'wi-9:1',
     agent: { name: 'cli-1', type: 'code', description: null, skills: [] },
     workspace: {
-      repoRef: 'order-service',
       path: '/tmp/ws/order-service',
-      branch: 'apos/fix-a1b2c3d4',
-      baseBranch: 'main',
-      baseCommit: 'abc123',
       writable: true,
       additionalPaths: [],
+      vcs: {
+        repoRef: 'order-service',
+        branch: 'apos/fix-a1b2c3d4',
+        baseBranch: 'main',
+        baseCommit: 'abc123',
+      },
     },
     goal: {
       title: '修复登录超时',

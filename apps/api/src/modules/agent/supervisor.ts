@@ -2,14 +2,14 @@ import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import { agentRuns, agents, runEvents, type Database } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, type RunEvent } from '@apos/contracts';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
-import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import type { WorkspaceService } from '../workspace';
 import { ingestRunEvent } from './ingest';
 
 export interface SuperviseOptions {
   /** 无心跳多久算失联。协议规定 3×心跳间隔且不少于 90s */
   heartbeatTimeoutMs?: number;
   correlationId: string;
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
 }
 
 export interface SuperviseReport {
@@ -195,7 +195,7 @@ async function finishRun(
     message: string;
     selfReport: string;
     correlationId: string;
-    workspaces?: WorkspaceProvisioner;
+    workspaces?: WorkspaceService;
   },
 ) {
   const [row] = await db

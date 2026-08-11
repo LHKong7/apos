@@ -20,7 +20,7 @@ import {
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
-import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import type { WorkspaceService } from '../workspace';
 import { ingestRunEvent } from './ingest';
 
 export interface DispatchInput {
@@ -35,7 +35,7 @@ export interface DispatchInput {
 
 export interface DispatchDeps {
   /** 不传则退化为「不供给工作区」，仅用于不涉及代码仓库的测试 */
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
 }
 
 export type DispatchResult =

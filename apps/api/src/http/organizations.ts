@@ -18,7 +18,7 @@ import { syncBuiltinRoles } from './roles';
  * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace）。
  *
  * ★★ 不叫 workspace 是刻意的：这个代码库里 `workspace` 已经指 Agent 的
- *   git 工作区（`AGENT_WORKSPACE_ROOT` / `WorkspaceProvisioner`）。
+ *   git 工作区（`AGENT_WORKSPACE_ROOT` / `WorkspaceService`）。
  *   两个都叫这个名字，「清理 workspace」会同时指向两件毫不相干的事。
  *   见 packages/db/src/schema/core.ts 上 organizations 的注释。
  *

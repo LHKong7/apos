@@ -53,6 +53,9 @@ importers:
       '@apos/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@apos/workspace-providers':
+        specifier: workspace:*
+        version: link:../../packages/workspace-providers
       '@fastify/static':
         specifier: ^10.1.3
         version: 10.1.3
@@ -233,6 +236,12 @@ importers:
       undici:
         specifier: ^8.10.0
         version: 8.10.0
+
+  packages/workspace-providers:
+    dependencies:
+      '@apos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
 packages:
 

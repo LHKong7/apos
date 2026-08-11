@@ -6,7 +6,6 @@ import {
   decisionOptions,
   decisions,
   projects,
-  repositories,
   runEvents,
   workItems,
   type Database,
@@ -21,11 +20,11 @@ import { decideRecovery } from '@apos/domain';
 import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
-import type { WorkspaceProvisioner } from '../workspace/provisioner';
+import type { ReleaseResult, WorkspaceService } from '../workspace';
 import { findAlternativeAgent } from './matching';
 
 export interface IngestDeps {
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
 }
 
 export interface IngestInput {
@@ -181,52 +180,141 @@ async function settleWorkspace(
       .onConflictDoNothing();
   }
 
-  if (!result.committed || !result.headCommit) return;
+  await recordWorkspaceArtifact(db, run, result);
+}
 
-  const [repo] = await db
-    .select()
-    .from(repositories)
-    .where(eq(repositories.id, run.workspace.repoId));
+/** 变更集里最多记多少个文件名进 metadata */
+const CHANGE_LIST_CAP = 200;
 
-  /**
-   * ★ 代码产物是「分支 + commit」，不是从回复文本里正则抓来的 PR 链接。
-   *   前者是执行的事实，后者是模型的自述 —— 模型说它开了 PR 而实际没开，
-   *   这种事会发生，而评审者看到的是一个 404。
-   */
-  await db.insert(artifacts).values({
+/**
+ * 把收尾结果记成产物。
+ *
+ * ★ 代码产物是「分支 + commit」，不是从回复文本里正则抓来的 PR 链接。
+ *   前者是执行的事实，后者是模型的自述 —— 模型说它开了 PR 而实际没开，
+ *   这种事会发生，而评审者看到的是一个 404。
+ *
+ * ★ 按 published.kind 分派，而不是假设一定是 Git。分支 URL 的拼法已经
+ *   搬进 GitPublisher —— 那是 Git 专属知识，不该待在这个后端无关的步骤里。
+ */
+async function recordWorkspaceArtifact(
+  db: Database,
+  run: RunRow,
+  result: ReleaseResult,
+): Promise<void> {
+  const { published, changes } = result;
+
+  // 什么都没产出就不记 —— 一条「0 个文件」的产物只会污染评审视图
+  if (changes.total === 0 && published.kind !== 'git') return;
+  if (published.kind === 'git' && !published.headCommit) return;
+
+  const base = {
     orgId: run.orgId,
     projectId: run.projectId,
     workItemId: run.workItemId,
     runId: run.id,
-    kind: 'code',
-    title: `${result.branch}（${result.changedFiles} 个文件）`,
-    storage: 'external',
-    externalUrl: repo ? branchUrl(repo.remoteUrl, result.branch!) : null,
+    kind: 'code' as const,
     content: null,
-    metadata: {
-      repoRef: run.workspace.repoRef,
-      branch: result.branch,
-      baseBranch: run.workspace.baseBranch,
-      baseCommit: run.workspace.baseCommit,
-      headCommit: result.headCommit,
-      changedFiles: result.changedFiles,
-      pushed: result.pushed,
-      // 没推送时明确说明改动在哪 —— 否则「有产物但打不开」会被当成 bug
-      note: result.pushed ? null : '改动已提交到本地分支但未推送，可由运维补推',
-    },
-    producedByType: 'agent',
+    producedByType: 'agent' as const,
     producedById: run.agentId,
-  });
-}
+  };
 
-/** git remote → 可点开的分支页面。认不出来的 host 就不给链接，不编 */
-function branchUrl(remoteUrl: string, branch: string): string | null {
-  const m = remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
-  if (!m) return null;
-  const [, host, owner, repo] = m;
-  if (host?.includes('github')) return `https://${host}/${owner}/${repo}/tree/${branch}`;
-  if (host?.includes('gitlab')) return `https://${host}/${owner}/${repo}/-/tree/${branch}`;
-  return null;
+  /**
+   * ★ 记的是变更集而不是只记一个计数。评审时「改了哪些文件」比「改了 3 个
+   *   文件」有用得多，而这个信息在算 diff 的那一刻本来就在手上。
+   *   截断了必须说出来 —— 否则前端会把这 200 个当成全部。
+   */
+  const changeSet = {
+    total: changes.total,
+    added: changes.added.slice(0, CHANGE_LIST_CAP),
+    modified: changes.modified.slice(0, CHANGE_LIST_CAP),
+    deleted: changes.deleted.slice(0, CHANGE_LIST_CAP),
+    listTruncated:
+      changes.added.length > CHANGE_LIST_CAP ||
+      changes.modified.length > CHANGE_LIST_CAP ||
+      changes.deleted.length > CHANGE_LIST_CAP,
+    /** 变更集本身就不完整（目录过大或基线丢失），比列表截断严重 */
+    incomplete: changes.truncated,
+  };
+
+  if (published.kind === 'git') {
+    await db.insert(artifacts).values({
+      ...base,
+      title: `${published.branch}（${changes.total} 个文件）`,
+      storage: 'external',
+      externalUrl: published.url,
+      metadata: {
+        source: { kind: 'git', repoRef: run.workspace?.repoRef ?? null },
+        branch: published.branch,
+        baseBranch: run.workspace?.baseBranch ?? null,
+        baseCommit: run.workspace?.baseCommit ?? null,
+        headCommit: published.headCommit,
+        pushed: published.pushed,
+        changedFiles: changes.total,
+        changes: changeSet,
+        // 没推送时明确说明改动在哪 —— 否则「有产物但打不开」会被当成 bug
+        note: published.pushed ? null : '改动已提交到本地分支但未推送，可由运维补推',
+      },
+    });
+    return;
+  }
+
+  if (published.kind === 'object_storage') {
+    await db.insert(artifacts).values({
+      ...base,
+      title: `${published.bucket}/${published.prefix}（${published.uploaded} 个对象）`,
+      // ★ 认得出控制台地址才算 external；认不出就没有可点开的东西
+      storage: published.url ? 'external' : 'inline',
+      externalUrl: published.url,
+      storageKey: `${published.bucket}/${published.prefix}`,
+      metadata: {
+        source: { kind: 'object_storage', bucket: published.bucket, prefix: published.prefix },
+        uploaded: published.uploaded,
+        removed: published.removed,
+        changedFiles: changes.total,
+        changes: changeSet,
+        persisted: published.persisted,
+        note: published.note,
+      },
+    });
+    return;
+  }
+
+  if (published.kind === 'local') {
+    await db.insert(artifacts).values({
+      ...base,
+      title: `工作区产出（${published.files} 个文件）`,
+      storage: 'inline',
+      externalUrl: null,
+      storageKey: published.archivePath,
+      metadata: {
+        source: { kind: 'local', archivePath: published.archivePath },
+        changedFiles: changes.total,
+        changes: changeSet,
+        persisted: published.persisted,
+        note: published.note,
+      },
+    });
+    return;
+  }
+
+  /**
+   * ★ 没有交货后端：产出只在一个临时工作目录里，没有可点开的链接，
+   *   而且工作区收尾就会被回收。如实写明「未持久化」，
+   *   而不是给一个假的 externalUrl —— 点开 404 比没有链接更糟。
+   */
+  await db.insert(artifacts).values({
+    ...base,
+    title: `工作区产出（${changes.total} 个文件）`,
+    storage: 'inline',
+    externalUrl: null,
+    metadata: {
+      source: { kind: published.kind },
+      changedFiles: changes.total,
+      changes: changeSet,
+      persisted: published.persisted,
+      note: published.note,
+    },
+  });
 }
 
 /** 事件对 agent_runs 行的增量更新 */

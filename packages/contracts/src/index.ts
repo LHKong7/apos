@@ -5,5 +5,6 @@ export * from './work-item/index';
 export * from './policy/index';
 export * from './agent-protocol/index';
 export * from './agent-protocol/runtime-config';
+export * from './workspace/index';
 export * from './events/index';
 export * from './integration/index';

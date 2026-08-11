@@ -15,19 +15,20 @@ import {
   isHttpRemote,
   probeGit,
   resolveAuthUsername,
-} from '../modules/workspace/git';
-import { authKindOf, withRepoAuth } from '../modules/workspace/credentials';
-import {
+  authKindOf,
+  withRemoteAuth,
   inspectKnownHosts,
   inspectPrivateKey,
   probeSsh,
   SshError,
-} from '../modules/workspace/ssh';
+  type GitAuth,
+} from '@apos/workspace-providers';
 import {
   describeRef,
   encodeSecret,
   hasMasterKey,
   hintOf,
+  resolveSecret,
   SecretConfigError,
 } from '../modules/security/secrets';
 import { ApiError, notFound } from './errors';
@@ -399,8 +400,28 @@ export async function probeRepository(db: Database, repoId: string) {
      *   这是有意的：在配置页上点一下就把 TOFU 那一次窗口用掉，比留到
      *   第一次派发时在无人看着的情况下用掉要好。
      */
-    const branches = await withRepoAuth(db, repo, (auth) =>
-      git.lsRemoteHeads(repo.remoteUrl, auth),
+    const branches = await withRemoteAuth(
+      {
+        secrets: { resolve: resolveSecret },
+        hostKeys: {
+          pin: async (id, knownHosts) => {
+            await db
+              .update(repositories)
+              .set({ sshKnownHosts: knownHosts, updatedAt: new Date() })
+              .where(eq(repositories.id, id));
+          },
+        },
+      },
+      {
+        id: repo.id,
+        ref: repo.ref,
+        remoteUrl: repo.remoteUrl,
+        defaultBranch: repo.defaultBranch,
+        credentialRef: repo.credentialRef,
+        authUsername: repo.authUsername,
+        sshKnownHosts: repo.sshKnownHosts,
+      },
+      (auth: GitAuth | undefined) => git.lsRemoteHeads(repo.remoteUrl, auth),
     );
     const hasDefault = branches.includes(repo.defaultBranch);
     const pinnedNow = kind === 'ssh_key' && !pinnedBefore && Boolean(repo.credentialRef);

@@ -6,7 +6,7 @@ import { reclaimOnBoot, superviseRuns } from '../modules/agent/supervisor';
 import { runRecoveryRound } from '../modules/agent/recovery';
 import { refreshAgentStats } from '../modules/agent/stats';
 import { reviewRound } from '../modules/flow/review';
-import type { WorkspaceProvisioner } from '../modules/workspace/provisioner';
+import type { WorkspaceService } from '../modules/workspace';
 
 export interface LoopHandle {
   stop: () => void;
@@ -50,7 +50,7 @@ function loop(name: string, intervalMs: number, body: () => Promise<void>, onErr
 
 export interface FlowLoopsOptions {
   registry: RuntimeRegistry;
-  workspaces?: WorkspaceProvisioner;
+  workspaces?: WorkspaceService;
   superviseIntervalMs?: number;
   recoveryIntervalMs?: number;
   reviewIntervalMs?: number;

@@ -40,11 +40,20 @@ export function buildGovernanceRules(
   }
 
   if (task.workspace) {
+    const ws = task.workspace;
+    /**
+     * ★ 按有没有版本控制分叉。合并成一段的代价是：不涉及仓库的任务
+     *   （规划、纯文档产出）会被告知「你在分支 planning 上工作，
+     *   它基于 planning」—— Agent 读到这句只会去找一个不存在的分支。
+     */
     lines.push(
       '',
-      `工作区：${task.workspace.path}（仓库 ${task.workspace.repoRef}）。` +
-        `你在分支 ${task.workspace.branch} 上工作，它基于 ${task.workspace.baseBranch}。` +
-        '不要切换分支、不要 commit、不要 push —— 提交与推送由平台在你结束后统一处理。',
+      ws.vcs
+        ? `工作区：${ws.path}（仓库 ${ws.vcs.repoRef}）。` +
+            `你在分支 ${ws.vcs.branch} 上工作，它基于 ${ws.vcs.baseBranch}。` +
+            '不要切换分支、不要 commit、不要 push —— 提交与推送由平台在你结束后统一处理。'
+        : `工作区：${ws.path}。这是一个普通工作目录，不在版本控制下 —— ` +
+            '你的产出就是留在这个目录里的文件，平台会在你结束后收集它们。',
     );
   }
 
