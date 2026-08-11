@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -439,6 +439,78 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(await git.run(['branch', '--list', bad.result.workspace!.vcs!.branch], { cwd: mirror })).toContain(
       bad.result.workspace!.vcs!.branch,
     );
+  });
+
+  /**
+   * ★ 「改了哪些文件」比「改了几个文件」有用得多，而这个信息在算 diff 的
+   *   那一刻本来就在手上。此前只留下一个计数，评审时想知道动了什么
+   *   只能去翻分支。
+   */
+  it('变更集分出增/改/删三类，带文件名', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    await registerRepo();
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    const dir = result.workspace!.path;
+
+    await writeFile(join(dir, 'brand-new.ts'), 'export const x = 1;\n');
+    await writeFile(join(dir, 'README.md'), '# demo\n\n改过了\n');
+    await rm(join(dir, '.gitignore'), { force: true }).catch(() => undefined);
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+
+    expect(release.changes.added).toContain('brand-new.ts');
+    expect(release.changes.modified).toContain('README.md');
+    expect(release.changes.total).toBe(2);
+    expect(release.changes.truncated).toBe(false);
+    // 旧字段仍然是同一个数，消费方不用一次全改
+    expect(release.changedFiles).toBe(release.changes.total);
+  });
+
+  it('删除的文件进 deleted，不被当成修改', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    await registerRepo();
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+
+    await rm(join(result.workspace!.path, 'README.md'));
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(release.changes.deleted).toEqual(['README.md']);
+    expect(release.changes.modified).toEqual([]);
+  });
+
+  /**
+   * ★ 文件名里**允许**有换行。按 \n 切 porcelain 输出会把一个文件算成两个，
+   *   而虚高的改动数会进提交信息和产物标题。用 -z 就没这个问题。
+   */
+  it('文件名里带换行时不会被算成两个文件', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    await registerRepo();
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+
+    await writeFile(join(result.workspace!.path, 'weird\nname.txt'), 'x\n');
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(release.changes.total).toBe(1);
+    expect(release.changes.added).toHaveLength(1);
+  });
+
+  it('交货结果按后端收窄，git 那支带分支与 commit', async () => {
+    const p = new WorkspaceProvisioner(db, { root });
+    await registerRepo();
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'x.ts'), 'x\n');
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+
+    expect(release.published.kind).toBe('git');
+    if (release.published.kind !== 'git') return;
+    expect(release.published.branch).toBe(result.workspace!.vcs!.branch);
+    expect(release.published.headCommit).toBe(release.headCommit);
+    expect(release.published.pushed).toBe(true);
   });
 
   it('派发链路端到端：Run 拿到真实工作目录', async () => {

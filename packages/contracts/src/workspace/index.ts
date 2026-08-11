@@ -39,8 +39,16 @@ export type SourceKind = z.infer<typeof SourceKind>;
  */
 export const SourceRef = z.object({
   kind: SourceKind,
-  /** 稳定标识：仓库的 ref / bucket 名 / 'planning' 这类逻辑名 */
+  /**
+   * 后端自己的寻址键：仓库 id（镜像目录按它命名）/ bucket 名 / 目录路径。
+   *
+   * ★ 与 label 分开，是因为「机器拿它去找东西」和「人拿它认东西」是两个需求：
+   *   仓库的 ref（order-service）可以被管理员改名，而镜像目录不能跟着改，
+   *   否则改一次名就等于丢掉整个本地对象库。
+   */
   identifier: z.string(),
+  /** 给人看的名字：仓库 ref / bucket/prefix / 'planning' */
+  label: z.string(),
   baseVersion: z.string().nullable(),
 });
 export type SourceRef = z.infer<typeof SourceRef>;
