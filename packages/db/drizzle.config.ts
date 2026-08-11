@@ -14,9 +14,20 @@ import { inspectConnection, toConnectionUrl } from './src/connection';
  *   友好），迁移这一条走直连或 Session Pooler。不设就沿用 DATABASE_URL，
  *   本机与 docker-compose 下两者本来就是同一个。
  */
+/**
+ * ★ 空字符串要当成「没设置」。
+ *
+ *   `.env.example` 里 `DATABASE_DIRECT_URL=` 是**留空**的（注释写明本机
+ *   与 docker-compose 下留空即可），source 过去就是空字符串 —— 而 `??`
+ *   只挡 undefined/null。于是迁移拿到 `url: ''`，报错是
+ *   「Please provide required params for Postgres driver: [x] url: ''」，
+ *   完全不指向 DATABASE_DIRECT_URL，而 DATABASE_URL 明明是好的。
+ */
+const env = (name: string) => process.env[name]?.trim() || undefined;
+
 const raw =
-  process.env['DATABASE_DIRECT_URL'] ??
-  process.env['DATABASE_URL'] ??
+  env('DATABASE_DIRECT_URL') ??
+  env('DATABASE_URL') ??
   // 5433 —— 与 main.ts / seed-dev.ts / test/db.ts 及 docker-compose 一致。
   // 这里曾经是 5432，于是不带 DATABASE_URL 直接跑 `pnpm db:migrate`
   // 会连到宿主机上那个不相干的 Postgres 去
