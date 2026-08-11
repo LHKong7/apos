@@ -2,6 +2,7 @@ import type { Analytics } from '@apos/domain';
 import { BarChart, NotWired, StatTile, TrendChart } from '../../features/analytics/charts';
 import { money } from '../../lib/format';
 import { Card } from './Card';
+import { Button } from '@/components/ui/button';
 
 /**
  * 成本（页面文档 12 §5.6）。
@@ -96,13 +97,11 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
                 <span className="shrink-0 tabular-nums font-medium text-orange-700">
                   {money(String(a.cost))}（{a.times}×常态）
                 </span>
-                <button
-                  type="button"
+                <Button variant="outline" size="xs"
                   onClick={() => onOpenRun(a.runId)}
-                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
-                >
+                  className="shrink-0">
                   看执行记录 →
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

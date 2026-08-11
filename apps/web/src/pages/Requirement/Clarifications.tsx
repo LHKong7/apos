@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Clarification } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 澄清问题（页面文档 03 §5.5）—— 本页最重要的设计。
@@ -160,14 +162,11 @@ function Question({
       {!readOnly && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {c.agentSuggestion && (
-            <button
-              type="button"
+            <Button variant="neutral" size="xs"
               disabled={pending}
-              onClick={() => onAnswer(c.id, c.agentSuggestion!, true)}
-              className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:opacity-50"
-            >
+              onClick={() => onAnswer(c.id, c.agentSuggestion!, true)}>
               {c.level === 'default_applicable' ? '接受默认' : '采纳倾向'}
-            </button>
+            </Button>
           )}
           {options.map((o, i) => {
             const text = o.label ?? o.value ?? String(o);
@@ -183,15 +182,14 @@ function Question({
               </button>
             );
           })}
-          <input
+          <Input
             value={custom}
             onChange={(e) => setCustom(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && custom.trim()) onAnswer(c.id, custom.trim(), false);
             }}
             placeholder="或者自己写…"
-            className="w-40 rounded border border-slate-300 px-1.5 py-0.5 text-[11px]"
-          />
+            className="w-40" />
           {custom.trim() && (
             <button
               type="button"

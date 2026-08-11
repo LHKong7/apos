@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Modal } from '../work-item/ManualMoveDialog';
 import type { RunControlAction } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 interface Props {
   action: Extract<RunControlAction, 'terminate' | 'add_constraint'>;
@@ -34,7 +36,7 @@ export function RunControlDialog({
   const canSubmit = text.trim().length > 0 && !pending;
 
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="Run 控制">
       <h2 className="text-sm font-semibold text-slate-900">
         {isTerminate ? '终止这次执行' : '向执行中的 Agent 追加约束'}
       </h2>
@@ -49,14 +51,13 @@ export function RunControlDialog({
         <span className="mb-0.5 block text-[11px] text-slate-500">
           {isTerminate ? '终止原因（必填，会记入事件）' : '约束内容'}
         </span>
-        <textarea
+        <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
           placeholder={
             isTerminate ? '需求已作废，不必继续' : '例如：仅修改 order-service，不要动 shared-lib'
           }
-          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
         />
       </label>
 
@@ -69,13 +70,10 @@ export function RunControlDialog({
       )}
 
       <div className="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50"
-        >
+        <Button variant="outline" size="sm"
+          onClick={onCancel}>
           取消
-        </button>
+        </Button>
         <button
           type="button"
           disabled={!canSubmit}

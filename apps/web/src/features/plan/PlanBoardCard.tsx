@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
 import { duration } from '../../lib/format';
 import type { PlanCard } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /** 等太久要能在余光里看出来。阈值与 BlockedDuration 对齐，全站一个尺度 */
 function waitingTone(minutes: number): string {
@@ -96,16 +97,14 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
           ) : (
             <span className="text-[11px] text-slate-400">无技术负责人</span>
           )}
-          <button
-            type="button"
+          <Button variant="gate" size="xs"
             onClick={(e) => {
               e.stopPropagation();
               onOpen(plan);
             }}
-            className="shrink-0 rounded-md bg-gate px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:brightness-110"
-          >
+            className="shrink-0 hover:brightness-110">
             处理 →
-          </button>
+          </Button>
         </div>
       </div>
     </article>

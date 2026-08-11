@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { stageLabel, statusLabel } from '../../lib/format';
 import type { BoardCard } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /** 原因分类进 Analytics 的「人工覆盖率」，自由文本没法聚合 */
 const REASONS = [
@@ -48,7 +51,7 @@ export function ManualMoveDialog({
   const hasRunningRun = card.runStatus === 'running' || card.status === 'executing';
 
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="手动调整任务状态">
       <h2 className="text-sm font-semibold text-slate-900">
         将「{card.title}」从 {stageLabel(card.stage)} 移到 {stageLabel(toStage)}
       </h2>
@@ -70,7 +73,7 @@ export function ManualMoveDialog({
             />
             {r.label}
             {r.value === 'other' && (
-              <input
+              <Input
                 type="text"
                 value={other}
                 onChange={(e) => {
@@ -78,8 +81,7 @@ export function ManualMoveDialog({
                   setCategory('other');
                 }}
                 placeholder="请说明"
-                className="ml-1 flex-1 rounded border border-slate-300 px-2 py-0.5 text-xs"
-              />
+                className="ml-1 flex-1" />
             )}
           </label>
         ))}
@@ -102,51 +104,59 @@ export function ManualMoveDialog({
       )}
 
       <div className="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50"
-        >
+        <Button variant="outline" size="sm"
+          onClick={onCancel}>
           取消
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button variant="neutral" size="sm"
           disabled={!canSubmit}
-          onClick={() => onConfirm({ reason, reasonCategory: category, terminateRun })}
-          className="rounded bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40"
-        >
+          onClick={() => onConfirm({ reason, reasonCategory: category, terminateRun })}>
           {pending ? '提交中…' : '确认'}
-        </button>
+        </Button>
       </div>
     </Modal>
   );
 }
 
 
+/**
+ * 居中弹层。全站五处共用（新建组织 / 新建任务 / Run 控制 / 批准计划 / 要求修改）。
+ *
+ * ★★ 底层换成了 shadcn Dialog（Radix），签名只多了一个可选的 `title` ——
+ *   五个调用点原样能跑。
+ *
+ *   手写版本缺的东西一条都不会报错，只是键盘和读屏用户用不了：
+ *   - 焦点没有移进弹层，Tab 会跑到背后的页面上
+ *   - 关闭后焦点不归位，键盘用户得从头 Tab 一遍
+ *   - 没有 Esc 关闭（原来连这条都没有，只能点遮罩）
+ *   - 背景内容没有 aria-hidden，读屏器会把整页念一遍
+ *   - body 没有锁滚动，弹层开着还能滚背后的看板
+ *
+ * ★ `title` 是给读屏器的。Radix 强制要求 DialogTitle —— 没有它，
+ *   读屏用户听到的是「对话框」三个字，不知道弹出来的是什么。
+ *   调用方自己画的那个 <h2> 只是视觉上的标题，读屏器不认。
+ */
 export function Modal({
   children,
   onClose,
+  title = '对话框',
 }: {
   children: React.ReactNode;
   onClose: () => void;
+  /** 读屏器播报用。调用方通常自己画了可见标题，所以这里默认隐藏 */
+  title?: string;
 }) {
   return (
-    /*
-     * ★ 遮罩走 scrim 令牌而不是 slate-900/30：深色主题下整条 slate 色阶
-     *   是反转的（slate-900 是近白），照搬会变成在内容上蒙一层雾。
-     */
-    <div
-      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-scrim/[var(--scrim-alpha)] p-4 backdrop-blur-[3px]"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md animate-fade-in-up rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        hideClose
+        className="max-w-md p-5"
+        // 这些弹层的说明文字形态各异，交给调用方自己写，不套 DialogDescription
+        aria-describedby={undefined}
       >
+        <DialogTitle className="sr-only">{title}</DialogTitle>
         {children}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

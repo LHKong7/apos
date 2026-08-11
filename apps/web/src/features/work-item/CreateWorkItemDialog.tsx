@@ -3,6 +3,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { Modal } from './ManualMoveDialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * 手工建任务。
@@ -69,18 +72,17 @@ export function CreateWorkItemDialog({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="新建任务">
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">新建任务</h2>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">标题</span>
-          <input
+          <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="订单导出接口偶发超时"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         <div className="grid grid-cols-3 gap-2">
@@ -132,11 +134,11 @@ export function CreateWorkItemDialog({
             描述
             <span className="ml-1 font-normal text-slate-400">选填</span>
           </span>
-          <textarea
+          <Textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1"
           />
         </label>
 
@@ -157,21 +159,15 @@ export function CreateWorkItemDialog({
         )}
 
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-slate-300 px-3 py-1.5 text-xs"
-          >
+          <Button variant="outline" size="sm"
+            onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!title.trim() || create.isPending}
-            onClick={() => create.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => create.mutate()}>
             {create.isPending ? '创建中…' : '创建草稿'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

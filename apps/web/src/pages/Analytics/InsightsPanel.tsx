@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Insight, InsightAction } from '@apos/domain';
+import { Button } from '@/components/ui/button';
 
 const SEVERITY = {
   critical: { icon: '🔴', className: 'text-red-800', bg: 'bg-red-50' },
@@ -59,14 +60,11 @@ export function InsightsPanel({
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                   {insight.actions.map((action) => (
-                    <button
+                    <Button variant="outline" size="xs"
                       key={`${action.kind}-${action.label}`}
-                      type="button"
-                      onClick={() => onAction(action, insight)}
-                      className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
-                    >
+                      onClick={() => onAction(action, insight)}>
                       {action.label} →
-                    </button>
+                    </Button>
                   ))}
                   {/*
                     ★ 判据可展开。

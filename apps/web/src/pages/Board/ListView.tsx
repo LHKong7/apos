@@ -5,6 +5,7 @@ import { HumanGateBadge } from '../../components/badges';
 import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib/format';
 import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard, BoardColumn } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 type SortKey = 'title' | 'status' | 'risk' | 'cost' | 'updatedAt';
 
@@ -50,14 +51,11 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
       {selected.size > 0 && (
         <div className="sticky top-0 z-20 mb-2 flex items-center gap-3 rounded-lg border border-brand/30 px-3 py-2 text-xs shadow-md glass-strong">
           <span className="font-medium text-slate-800">已选 {selected.size} 项</span>
-          <button
-            type="button"
+          <Button variant="neutral"
             disabled={retriable.length === 0}
-            onClick={() => onBulkRetry(retriable)}
-            className="rounded-md bg-slate-900 px-2.5 py-1 font-medium text-white disabled:opacity-40"
-          >
+            onClick={() => onBulkRetry(retriable)}>
             批量重试 {retriable.length} 个失败任务
-          </button>
+          </Button>
           {/* 批量操作前给出影响预估（页面文档 05 §5.8） */}
           {retriable.length > 0 && (
             <span className="text-slate-500">预计消耗 ~{money(estimatedRetryCost)}</span>

@@ -3,6 +3,7 @@ import { formatHours, type Analytics, type RepeatedDecision } from '@apos/domain
 import { BarChart, StatTile } from '../../features/analytics/charts';
 import { stageLabel } from '../../lib/format';
 import { Card } from './Card';
+import { Button } from '@/components/ui/button';
 
 const POTENTIAL = {
   high: { icon: '🟢', label: '高', className: 'text-green-700' },
@@ -105,13 +106,11 @@ export function HitlTab({
                       结果有分歧
                     </span>
                   ) : (
-                    <button
-                      type="button"
+                    <Button variant="outline" size="xs"
                       onClick={() => onCreatePolicy(r)}
-                      className="w-24 shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
-                    >
+                      className="w-24 shrink-0">
                       创建规则 →
-                    </button>
+                    </Button>
                   )}
                 </li>
               );

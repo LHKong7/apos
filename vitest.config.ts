@@ -18,6 +18,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // ★ 与 apps/web/vite.config.ts 和 tsconfig 保持一致 —— shadcn 组件
+      //   之间用 `@/lib/utils` 互相引用，三处缺一处测试就跑不起来
+      '@': new URL('./apps/web/src', import.meta.url).pathname,
       '@apos/contracts': new URL('./packages/contracts/src/index.ts', import.meta.url).pathname,
       '@apos/domain': new URL('./packages/domain/src/index.ts', import.meta.url).pathname,
       '@apos/db': new URL('./packages/db/src/index.ts', import.meta.url).pathname,

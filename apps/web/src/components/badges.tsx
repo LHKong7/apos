@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import type { HumanGate, RiskLevel } from '@apos/contracts';
+import { Badge } from '@/components/ui/badge';
 import { duration, riskLabel } from '../lib/format';
 
 /**
@@ -67,12 +68,14 @@ export function HumanGateBadge({
   const meta = GATE_META[effective];
 
   return (
-    <span
-      className={clsx(
-        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium',
-        meta.className,
-      )}
-    >
+    /**
+     * ★ 底座换成 shadcn Badge，只把「哪种状态什么配色」留在 GATE_META 里。
+     *   圆角、内距、字号这些以前在每个徽标里各写一遍，改一次要找八处；
+     *   现在它们只存在于 Badge 的基础类里。
+     *   variant 用 outline 是因为这八种状态各有各的描边色，
+     *   由 meta.className 覆盖 —— 这正是 cn() 里 twMerge 的用武之地。
+     */
+    <Badge variant="outline" className={meta.className}>
       <span aria-hidden>{meta.icon}</span>
       {meta.label}
       {dueInMinutes !== null && dueInMinutes !== undefined && (
@@ -80,7 +83,7 @@ export function HumanGateBadge({
           {dueInMinutes < 0 ? `超时 ${duration(dueInMinutes)}` : `${duration(dueInMinutes)} 内`}
         </span>
       )}
-    </span>
+    </Badge>
   );
 }
 
@@ -105,16 +108,17 @@ export function PriorityBadge({ priority }: { priority: number }) {
   // 只显示 P0/P1（页面文档 05 §5.3）
   if (priority > 1) return null;
   return (
-    <span
+    <Badge
+      variant="outline"
       className={clsx(
-        'rounded-sm border px-1 font-mono text-[10px] font-semibold leading-4',
+        'rounded-sm px-1 font-mono text-[10px] font-semibold leading-4',
         priority === 0
           ? 'border-red-300/40 bg-red-100/70 text-red-700'
           : 'border-amber-300/40 bg-amber-100/70 text-amber-700',
       )}
     >
       P{priority}
-    </span>
+    </Badge>
   );
 }
 

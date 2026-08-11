@@ -10,6 +10,8 @@ import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { VersionDiff } from './VersionDiff';
 import type { PlanDetail } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * 项目计划确认（页面文档 04）。
@@ -408,7 +410,7 @@ function ApproveDialog({
   const needsAck = d.metrics.overBudget;
 
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="批准这份计划">
       <div className="w-[28rem] max-w-full">
         <h2 className="text-sm font-semibold text-slate-900">批准这份计划</h2>
         <div className="mt-2 space-y-1 text-xs text-slate-700">
@@ -436,14 +438,11 @@ function ApproveDialog({
           <button type="button" onClick={onCancel} className="text-xs text-slate-500">
             返回
           </button>
-          <button
-            type="button"
+          <Button variant="neutral" size="sm"
             onClick={onConfirm}
-            disabled={pending || (needsAck && !acknowledged)}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            disabled={pending || (needsAck && !acknowledged)}>
             {pending ? '批准中…' : '批准并开始执行'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
@@ -461,30 +460,27 @@ function ReviseDialog({
 }) {
   const [feedback, setFeedback] = useState('');
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="要求修改计划">
       <h2 className="text-sm font-semibold text-slate-900">要求修改</h2>
       <p className="mt-1 text-xs text-slate-500">
         说清楚要改什么，Agent 会据此重新规划成新的一版。旧版会保留，方便对照
       </p>
-      <textarea
+      <Textarea
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         rows={3}
         placeholder="例如：前端可以并行开工，不用等后端完成"
-        className="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+        className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           取消
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => onConfirm(feedback.trim())}
-          disabled={!feedback.trim() || pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={!feedback.trim() || pending}>
           {pending ? '重新规划中…' : '重新规划'}
-        </button>
+        </Button>
       </div>
     </Modal>
   );

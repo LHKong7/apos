@@ -5,6 +5,8 @@ import type { FactKey } from '@apos/contracts';
 import { ENV_LABELS, FACT_LABELS, OPERATION_LABELS } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import type { ScenarioTestResponse } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const RISKS = [
   { value: 'low', label: '低' },
@@ -97,23 +99,19 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
           </Field>
 
           <Field label="本次成本（USD）">
-            <input
+            <Input
               type="number"
               value={Number(ctx.runCost)}
-              onChange={(e) => set('runCost', Number(e.target.value))}
-              className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
-            />
+              onChange={(e) => set('runCost', Number(e.target.value))} />
           </Field>
         </div>
 
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => test.mutate()}
           disabled={test.isPending}
-          className="mt-2 rounded bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+          className="mt-2">
           {test.isPending ? '判定中…' : '运行测试'}
-        </button>
+        </Button>
         {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
       </section>
 

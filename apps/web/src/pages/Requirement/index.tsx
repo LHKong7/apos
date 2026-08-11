@@ -9,6 +9,8 @@ import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
 import { Clarifications } from './Clarifications';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * 需求录入与 AI 澄清（页面文档 03）。
@@ -169,14 +171,12 @@ export function RequirementPage() {
               {!analyzed ? (
                 <div className="py-6 text-center">
                   <p className="text-xs text-slate-500">还没有分析过这条需求</p>
-                  <button
-                    type="button"
+                  <Button variant="neutral" size="sm"
                     onClick={() => analyze.mutate()}
                     disabled={analyze.isPending}
-                    className="mt-2 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-                  >
+                    className="mt-2">
                     {analyze.isPending ? '分析中…' : '开始 AI 分析'}
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <dl className="mt-1 space-y-1.5 text-xs">
@@ -388,7 +388,7 @@ function ConfirmDialog({
   onConfirm: () => void;
 }) {
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="确认这条需求">
       <h2 className="text-sm font-semibold text-slate-900">确认这条需求</h2>
       <div className="mt-2 space-y-1 text-xs text-slate-700">
         <p>确认后，Project Agent 将：</p>
@@ -412,14 +412,11 @@ function ConfirmDialog({
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           返回修改
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={onConfirm}
-          disabled={pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={pending}>
           {pending ? '生成计划中…' : '确认'}
-        </button>
+        </Button>
       </div>
     </Modal>
   );
@@ -436,28 +433,25 @@ function RejectDialog({
 }) {
   const [reason, setReason] = useState('');
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="驳回需求">
       <h2 className="text-sm font-semibold text-slate-900">驳回需求</h2>
       {/* ★ 必填原因：提出人要知道为什么，否则只会原样再提一遍 */}
       <p className="mt-1 text-xs text-slate-500">原因会通知提出人，请写清楚问题在哪</p>
-      <textarea
+      <Textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={3}
-        className="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+        className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           取消
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
-          disabled={!reason.trim() || pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={!reason.trim() || pending}>
           确认驳回
-        </button>
+        </Button>
       </div>
     </Modal>
   );

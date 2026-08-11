@@ -6,6 +6,7 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { relativeTime } from '../../lib/format';
 import type { SyncConflictRow } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /**
  * 同步冲突处理（页面文档 14 §5.3 的冲突界面）。
@@ -122,22 +123,16 @@ function ConflictRow({
       {canResolve ? (
         <>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <button
-              type="button"
+            <Button variant="neutral" size="xs"
               disabled={resolve.isPending}
-              onClick={() => resolve.mutate('apos')}
-              className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:opacity-40"
-            >
+              onClick={() => resolve.mutate('apos')}>
               以 APOS 为准（回写外部）
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button variant="outline" size="xs"
               disabled={resolve.isPending}
-              onClick={() => resolve.mutate('external')}
-              className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
+              onClick={() => resolve.mutate('external')}>
               以外部为准（本次例外）
-            </button>
+            </Button>
           </div>
           {/* ★ 记的是字段级规则，不是这一条对象 —— 用户勾它时想表达的是
               「这个字段以后别再问我」 */}

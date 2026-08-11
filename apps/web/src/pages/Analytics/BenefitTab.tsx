@@ -4,6 +4,8 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { Card } from './Card';
 import type { AnalyticsResponse } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 成本效益（页面文档 12 §12.3）。
@@ -62,7 +64,7 @@ export function BenefitTab({
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1 text-[11px] text-slate-600">
             {b.currency}
-            <input
+            <Input
               type="number"
               min={0}
               step={1}
@@ -70,18 +72,14 @@ export function BenefitTab({
               onChange={(e) => setDraft(e.target.value)}
               placeholder="未填"
               aria-label="人力小时成本"
-              className="w-24 rounded border border-slate-300 px-1.5 py-0.5 text-xs"
-            />
+              className="w-24" />
             / 小时
           </label>
-          <button
-            type="button"
+          <Button variant="neutral" size="xs"
             disabled={save.isPending}
-            onClick={() => save.mutate()}
-            className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:opacity-40"
-          >
+            onClick={() => save.mutate()}>
             {save.isPending ? '保存中…' : '保存'}
-          </button>
+          </Button>
           {draft.trim() !== '' && (
             <button
               type="button"

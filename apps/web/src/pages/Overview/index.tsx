@@ -11,6 +11,7 @@ import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
+import { Button } from '@/components/ui/button';
 
 const DELAY_LABELS = { low: '低', medium: '中', high: '高' } as const;
 
@@ -175,17 +176,14 @@ export function OverviewPage() {
                     )}
                     <span className="min-w-0 flex-1 truncate text-slate-800">{a.title}</span>
                     <span className="text-slate-500">{riskLabel(a.riskLevel)}</span>
-                    <button
-                      type="button"
+                    <Button variant="neutral" size="xs"
                       onClick={() =>
                         a.kind === 'plan'
                           ? navigate(`/projects/${projectId}/plans/${a.id}`)
                           : setOpenDecision(a.id)
-                      }
-                      className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700"
-                    >
+                      }>
                       处理 →
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>

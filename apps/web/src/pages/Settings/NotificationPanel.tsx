@@ -8,6 +8,8 @@ import type {
   IntegrationsResponse,
   NotificationConfigRow,
 } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const ESCALATE_LABELS: Record<string, string> = {
   assignee: '提醒责任人',
@@ -102,17 +104,15 @@ export function NotificationPanel({
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
         <label className="flex items-center gap-1">
           每日摘要
-          <input
+          <Input
             type="time"
             disabled={!canEdit}
             value={config.dailyDigestAt ?? ''}
-            onChange={(e) => setDraft({ ...config, dailyDigestAt: e.target.value || null })}
-            className="rounded border border-slate-300 px-1 py-0.5 text-[11px]"
-          />
+            onChange={(e) => setDraft({ ...config, dailyDigestAt: e.target.value || null })} />
         </label>
         <label className="flex items-center gap-1">
           免打扰
-          <input
+          <Input
             type="time"
             disabled={!canEdit}
             value={config.quietHours?.from ?? ''}
@@ -121,11 +121,9 @@ export function NotificationPanel({
                 ...config,
                 quietHours: { from: e.target.value, to: config.quietHours?.to ?? '08:00' },
               })
-            }
-            className="rounded border border-slate-300 px-1 py-0.5 text-[11px]"
-          />
+            } />
           –
-          <input
+          <Input
             type="time"
             disabled={!canEdit}
             value={config.quietHours?.to ?? ''}
@@ -134,9 +132,7 @@ export function NotificationPanel({
                 ...config,
                 quietHours: { from: config.quietHours?.from ?? '22:00', to: e.target.value },
               })
-            }
-            className="rounded border border-slate-300 px-1 py-0.5 text-[11px]"
-          />
+            } />
         </label>
         {/* ★ 免打扰保护的是注意力，不是责任 —— 高风险决策必须能穿透 */}
         <label className="flex items-center gap-1">
@@ -182,14 +178,11 @@ export function NotificationPanel({
       {canEdit ? (
         dirty && (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button variant="neutral" size="xs"
               disabled={save.isPending}
-              onClick={() => save.mutate()}
-              className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:opacity-40"
-            >
+              onClick={() => save.mutate()}>
               {save.isPending ? '保存中…' : '保存通知配置'}
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => setDraft(null)}

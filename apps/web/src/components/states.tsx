@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { ApiError } from '../lib/api/client';
 
 /**
@@ -29,14 +31,19 @@ export function EmptyState({ icon, message, hint, action }: EmptyStateProps) {
       </div>
       <p className="relative text-sm font-medium text-slate-700">{message}</p>
       {hint && <p className="relative max-w-sm text-xs leading-relaxed text-slate-400">{hint}</p>}
+      {/*
+        ★ 渐变底保留：空态的主行动是全站唯一用三色渐变的按钮，它要在一片
+          「什么都没有」里把视线拉过去。变体系统里没有这一档，所以走
+          className 覆盖 —— twMerge 会把 Button 自带的 bg-primary 干掉，只留渐变。
+      */}
       {action && (
-        <button
-          type="button"
+        <Button
+          size="sm"
           onClick={action.onClick}
-          className="relative mt-1.5 rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:brightness-110"
+          className="relative mt-1.5 bg-gradient-to-r from-brand-alt via-brand to-brand-far text-white hover:brightness-110"
         >
           {action.label}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -45,30 +52,30 @@ export function EmptyState({ icon, message, hint, action }: EmptyStateProps) {
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const isApi = error instanceof ApiError;
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50/70 px-4 py-6 text-center">
+    /* ★ role="alert" 由 Alert 提供 —— 加载失败要能被读屏器立刻播报，
+         而原来那个纯 div 是静默的：视障用户只会觉得页面一直在转圈 */
+    <Alert variant="destructive" className="px-4 py-6 text-center">
       <div
         aria-hidden
-        className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-100/60 text-sm text-red-700"
+        className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full border border-destructive/30 bg-destructive/10 text-sm"
       >
         !
       </div>
-      <p className="text-sm font-medium text-red-800">{isApi ? error.message : '加载失败'}</p>
-      {isApi && <p className="mt-1 font-mono text-[11px] text-red-600">错误码 {error.code}</p>}
-      {isApi && Boolean(error.details) && (
-        <pre className="mx-auto mt-2 max-w-lg overflow-x-auto rounded-md border border-red-200/60 bg-slate-50/70 p-2 text-left text-[11px] text-red-700">
-          {JSON.stringify(error.details, null, 2)}
-        </pre>
-      )}
-      {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-3 rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-100"
-        >
-          重试
-        </button>
-      )}
-    </div>
+      <AlertTitle className="text-sm">{isApi ? error.message : '加载失败'}</AlertTitle>
+      <AlertDescription>
+        {isApi && <p className="mt-1 font-mono text-[11px] opacity-80">错误码 {error.code}</p>}
+        {isApi && Boolean(error.details) && (
+          <pre className="mx-auto mt-2 max-w-lg overflow-x-auto rounded-md border border-destructive/20 bg-muted/60 p-2 text-left text-[11px]">
+            {JSON.stringify(error.details, null, 2)}
+          </pre>
+        )}
+        {onRetry && (
+          <Button variant="outline" size="sm" onClick={onRetry} className="mt-3 border-destructive/40 text-destructive hover:bg-destructive/10">
+            重试
+          </Button>
+        )}
+      </AlertDescription>
+    </Alert>
   );
 }
 

@@ -14,6 +14,8 @@ import { RuleList } from './RuleList';
 import { RuleEditor } from './RuleEditor';
 import { ScenarioTester } from './ScenarioTester';
 import { HitsPanel } from './HitsPanel';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 const AUTONOMY: { value: AutonomyLevel; label: string; desc: string }[] = [
   { value: 'human_led', label: 'Human-led', desc: '大部分操作默认需要人审批' },
@@ -421,7 +423,7 @@ function ToggleDialog({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="启用/停用规则">
       <h2 className="text-sm font-semibold text-slate-900">
         {policy.enabled ? '停用' : '启用'}规则「{policy.name}」
       </h2>
@@ -433,11 +435,11 @@ function ToggleDialog({
 
       <label className="mt-3 block text-xs text-slate-600">
         原因
-        <textarea
+        <Textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           rows={3}
-          className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+          className="mt-0.5"
           placeholder={policy.enabled ? '例如：发现回归未拦截，先关掉再补条件' : ''}
         />
       </label>
@@ -448,14 +450,11 @@ function ToggleDialog({
         <button type="button" onClick={onClose} className="text-xs text-slate-500">
           取消
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => mut.mutate()}
-          disabled={!reason.trim() || mut.isPending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={!reason.trim() || mut.isPending}>
           确认
-        </button>
+        </Button>
       </div>
     </Modal>
   );
@@ -494,7 +493,7 @@ function AutonomyDialog({
   const toMeta = AUTONOMY.find((a) => a.value === to);
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="调整自治等级">
       <div className="w-[28rem] max-w-full">
         <h2 className="text-sm font-semibold text-slate-900">
           把自治等级从 {fromLabel} 改成 {toMeta?.label}
@@ -539,14 +538,11 @@ function AutonomyDialog({
           <button type="button" onClick={onClose} className="text-xs text-slate-500">
             取消
           </button>
-          <button
-            type="button"
+          <Button variant="neutral" size="sm"
             onClick={() => apply.mutate()}
-            disabled={apply.isPending}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            disabled={apply.isPending}>
             确认切换
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
@@ -561,7 +557,7 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="策略详情">
       <div className="w-[28rem] max-w-full">
         <h2 className="text-sm font-semibold text-slate-900">「{policy.name}」的变更历史</h2>
 

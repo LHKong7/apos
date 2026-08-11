@@ -7,6 +7,7 @@ import { BoardCard, type CardActions } from '../../features/work-item/BoardCard'
 import { PlanBoardCard } from '../../features/plan/PlanBoardCard';
 import { MOVE_STAGGER_MS, useBoardStore } from '../../stores/board';
 import type { BoardCard as Card, BoardColumn, PlanCard } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /** 列名。★ 拒绝提示里不能甩英文 key 给用户，与后端 STAGE_NAMES 对齐 */
 const STAGE_LABELS: Record<Stage, string> = {
@@ -205,14 +206,12 @@ function Column({
         )}
 
         {column.hasMore && !doneExpanded && (
-          <button
-            type="button"
+          <Button variant="outline" size="xs"
             onClick={onExpandDone}
-            className="w-full rounded-md border border-dashed border-slate-300 py-1 text-[11px] text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700"
-          >
+            className="w-full border-dashed text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700">
             {/* count 含计划卡，折叠数只该算任务 */}
             ⋯ 展开其余 {column.count - column.plans.length - column.items.length} 项
-          </button>
+          </Button>
         )}
       </div>
     </section>

@@ -5,6 +5,8 @@ import { FACT_LABELS } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import type { PolicyRow, PolicyTemplateRow, SimulationResponse } from '../../lib/api/types';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 规则编辑（页面文档 13 §4.2 / §5.7）。
@@ -103,7 +105,7 @@ export function RuleEditor({
   const params = template?.params ?? [];
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="规则编辑">
       <div className="max-h-[80vh] w-[34rem] max-w-full overflow-y-auto">
         <h2 className="text-sm font-semibold text-slate-900">
           {editing ? `编辑规则「${editing.name}」` : `新建规则 · ${template?.name}`}
@@ -112,21 +114,19 @@ export function RuleEditor({
 
         <label className="mt-3 block text-xs text-slate-600">
           规则名称
-          <input
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
-          />
+            className="mt-0.5" />
         </label>
 
         <label className="mt-2 block text-xs text-slate-600">
           优先级
-          <input
+          <Input
             type="number"
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
-            className="mt-0.5 w-24 rounded border border-slate-300 px-2 py-1 text-xs"
-          />
+            className="mt-0.5 w-24" />
           <span className="ml-2 text-[11px] text-slate-400">
             数字越小越先匹配，命中后停止。组织规则占 1–20
           </span>
@@ -142,12 +142,11 @@ export function RuleEditor({
                   {p.hint && <span className="ml-1 text-[11px] text-slate-400">{p.hint}</span>}
                   {p.type === 'number' ? (
                     <span className="mt-0.5 flex items-center gap-1">
-                      <input
+                      <Input
                         type="number"
                         value={values[p.key] ?? p.default}
                         onChange={(e) => setValues((v) => ({ ...v, [p.key]: Number(e.target.value) }))}
-                        className="w-28 rounded border border-slate-300 px-2 py-1 text-xs"
-                      />
+                        className="w-28" />
                       {p.suffix && <span className="text-[11px] text-slate-400">{p.suffix}</span>}
                     </span>
                   ) : (
@@ -191,14 +190,11 @@ export function RuleEditor({
         <div className="mt-3 rounded border border-slate-200 p-2">
           <div className="flex items-center gap-2">
             <h3 className="text-xs font-medium text-slate-700">🧪 用历史数据验证</h3>
-            <button
-              type="button"
+            <Button variant="outline" size="xs"
               onClick={() => simulateMut.mutate()}
-              disabled={simulateMut.isPending || !draft}
-              className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
+              disabled={simulateMut.isPending || !draft}>
               {simulateMut.isPending ? '模拟中…' : '运行模拟'}
-            </button>
+            </Button>
           </div>
 
           {simulation ? (
@@ -219,14 +215,11 @@ export function RuleEditor({
           <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-800">
             取消
           </button>
-          <button
-            type="button"
+          <Button variant="neutral" size="sm"
             onClick={() => save.mutate(needsAck)}
-            disabled={!name || save.isPending || !draft}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
+            disabled={!name || save.isPending || !draft}>
             {needsAck ? '我知道风险，仍然启用' : save.isPending ? '保存中…' : '启用规则'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
