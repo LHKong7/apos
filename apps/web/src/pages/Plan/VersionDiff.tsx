@@ -262,5 +262,5 @@ const MARK_TONE: Record<TaskDiff['kind'], string> = {
   added: 'text-green-700',
   removed: 'text-red-700',
   changed: 'text-amber-700',
-  unchanged: 'text-slate-300',
+  unchanged: 'text-slate-400',
 };

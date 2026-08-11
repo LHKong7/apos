@@ -76,11 +76,14 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
       onDragEnd={onDragEnd}
       onClick={() => actions.onOpen(card)}
       className={clsx(
-        'relative cursor-pointer rounded-lg border bg-white p-2.5 text-left shadow-sm transition',
-        'hover:border-slate-300 hover:shadow',
+        'lift relative cursor-pointer overflow-hidden rounded-lg border bg-white p-2.5 text-left shadow-sm',
+        'hover:border-slate-300 hover:shadow-md',
         animating && 'animate-card-land',
         overdue && !quiet && 'animate-pulse-once',
         card.status === 'failed' ? 'border-red-200' : 'border-slate-200',
+        // 超时的卡片自己发一点光。一屏三十张卡时，只靠左边那条竖线
+        // 是找不到它的 —— 发光是在余光里也成立的那一层
+        overdue && 'glow-overdue',
       )}
     >
       {/* Human Gate 卡片左侧竖条（页面文档 05 §5.4） */}
@@ -88,8 +91,10 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
         <span
           aria-hidden
           className={clsx(
-            'absolute inset-y-0 left-0 w-1 rounded-l-lg',
-            overdue ? 'bg-overdue' : 'bg-gate',
+            'absolute inset-y-0 left-0 w-[3px]',
+            overdue
+              ? 'bg-gradient-to-b from-overdue to-overdue/50'
+              : 'bg-gradient-to-b from-gate to-gate/50',
           )}
         />
       )}
@@ -98,7 +103,7 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
       {move && !suppressed && animating && (
         <span
           title={sourceLabel(move.source)}
-          className="absolute -right-1 -top-1 rounded-full bg-white px-1 text-[10px] shadow ring-1 ring-slate-200"
+          className="absolute right-1 top-1 rounded-full bg-slate-100 px-1 text-[10px] shadow ring-1 ring-slate-200"
         >
           {sourceIcon(move.source)}
         </span>
@@ -171,7 +176,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
               e.stopPropagation();
               actions.onHandleGate(card);
             }}
-            className="shrink-0 rounded bg-gate px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-95"
+            className="shrink-0 rounded-md bg-gate px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:brightness-110"
           >
             处理 →
           </button>
@@ -238,7 +243,11 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
         {pct !== null && (
           <div className="flex items-center gap-1.5">
             <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
-              <span className="block h-full bg-agent transition-all" style={{ width: `${pct}%` }} />
+              {/* 进度条用 Agent 色渐变 —— 全站「机器在做事」只有这一个色 */}
+              <span
+                className="block h-full rounded-full bg-gradient-to-r from-agent/70 to-agent transition-all"
+                style={{ width: `${pct}%` }}
+              />
             </span>
             <span className="text-[11px] tabular-nums text-slate-500">{pct}%</span>
           </div>
@@ -318,7 +327,7 @@ function CardButton({ children, onClick }: { children: React.ReactNode; onClick:
         e.stopPropagation();
         onClick();
       }}
-      className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+      className="rounded-md border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-800"
     >
       {children}
     </button>

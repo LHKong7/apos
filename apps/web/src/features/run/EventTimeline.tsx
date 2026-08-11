@@ -75,7 +75,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
         <button
           type="button"
           onClick={scrollToBottom}
-          className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-slate-900 px-3 py-1 text-[11px] text-white shadow-lg"
+          className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-fade-in-up rounded-full border border-brand/40 px-3 py-1 text-[11px] font-medium text-brand shadow-lg glass-strong hover:border-brand"
         >
           ↓ {unseen} 条新事件
         </button>

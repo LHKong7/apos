@@ -157,6 +157,27 @@ export const api = {
   login: (body: { email: string; password: string }) =>
     request<{ token: string; user: User }>('/auth/login', { method: 'POST', json: body }),
 
+  /**
+   * 登录页要知道的那点服务端配置。无需身份。
+   *
+   * ★ 注册开不开是**服务端**的事，必须来问，不能烤进构建里 ——
+   *   同一份前端产物会被不同实例托管，一个开着注册、一个关着的两套部署
+   *   会因此需要两份产物。
+   */
+  authConfig: () => request<{ allowSignup: boolean }>('/auth/config'),
+
+  /**
+   * 自助注册。每次注册长出一个**自己的新组织**，注册者是它的 org_admin ——
+   * 不是加入某个已有组织（见 apps/api/src/modules/auth/service.ts）。
+   * 回来直接带令牌，注册完不用再登录一次。
+   */
+  register: (body: { email: string; name: string; password: string; orgName?: string }) =>
+    request<{
+      token: string;
+      user: User;
+      organization: { id: string; name: string; slug: string };
+    }>('/auth/register', { method: 'POST', json: body }),
+
   me: () => request<{ user: User; currentOrgId: string; orgRole: string }>('/auth/me'),
 
   changePassword: (body: { currentPassword: string; newPassword: string }) =>

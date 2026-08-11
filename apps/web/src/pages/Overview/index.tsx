@@ -7,7 +7,6 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { duration, eventLabel, money, relativeTime, riskLabel } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
-import { RoleBadge } from '../../components/Gated';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
@@ -62,32 +61,19 @@ export function OverviewPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
+      {/*
+        ★ 这里原本还有一条十二个标签的横排导航（以及角色徽标）。
+          它整条搬去了项目侧栏 —— 那十二页里只有这一页看得到导航，
+          等于「能去哪」这件事只在总览成立。搬走之后这个头只交代
+          「这是哪个项目、目标是什么」。
+      */}
+      <div className="relative z-10 shrink-0 border-b border-slate-200/80 px-4 py-3 glass">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">{d.project.name}</h1>
+          <h1 className="text-sm font-semibold tracking-tight text-slate-900">总览</h1>
           {d.project.goal && (
             <span className="truncate text-xs text-slate-500">{d.project.goal}</span>
           )}
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-            {d.project.autonomyLevel}
-          </span>
         </div>
-        <nav className="mt-1.5 flex flex-wrap items-center gap-1 text-xs">
-          <span className="rounded bg-slate-900 px-2 py-0.5 text-white">总览</span>
-          <Tab to={`/projects/${projectId}/board`}>看板</Tab>
-          <Tab to={`/projects/${projectId}/graph`}>执行图</Tab>
-          <Tab to={`/projects/${projectId}/requirements`}>需求</Tab>
-          <Tab to={`/projects/${projectId}/decisions`}>决策</Tab>
-          <Tab to={`/projects/${projectId}/agents`}>Agent 团队</Tab>
-          <Tab to={`/projects/${projectId}/analytics`}>Analytics</Tab>
-          <Tab to={`/projects/${projectId}/settings/policies`}>Policy</Tab>
-          <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
-          <Tab to={`/projects/${projectId}/settings/agents`}>Agent 配置</Tab>
-          <Tab to={`/projects/${projectId}/settings/members`}>成员与角色</Tab>
-          <Tab to={`/projects/${projectId}/settings/roles`}>角色定义</Tab>
-          {/* 当前身份在本项目的角色 —— 「为什么这个按钮是灰的」的第一手线索 */}
-          <RoleBadge projectId={projectId} />
-        </nav>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
@@ -364,14 +350,6 @@ export function OverviewPage() {
   );
 }
 
-function Tab({ to, children }: { to: string; children: React.ReactNode }) {
-  return (
-    <Link to={to} className="rounded px-2 py-0.5 text-slate-600 hover:bg-slate-100">
-      {children}
-    </Link>
-  );
-}
-
 function MetricCard({
   label,
   value,
@@ -391,19 +369,43 @@ function MetricCard({
     <button
       type="button"
       onClick={onClick}
-      className="rounded border border-slate-200 bg-white px-3 py-2 text-left hover:border-slate-300"
+      className={clsx(
+        'lift relative overflow-hidden rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm hover:shadow-md',
+        // 指标卡的色调只体现在**顶边那道线**上，不给整块上色 ——
+        // 五张卡并排时，五块彩色底会让人先看到颜色，再去找数字
+        tone === 'bad'
+          ? 'border-red-200 hover:border-red-300'
+          : tone === 'warn'
+            ? 'border-amber-200 hover:border-amber-300'
+            : 'border-slate-200 hover:border-slate-300',
+      )}
     >
+      {tone !== 'normal' && (
+        <span
+          aria-hidden
+          className={clsx(
+            'absolute inset-x-0 top-0 h-px',
+            tone === 'bad' ? 'bg-overdue' : tone === 'warn' ? 'bg-gate' : 'bg-emerald-500',
+          )}
+        />
+      )}
       <p className="text-[11px] text-slate-500">{label}</p>
       <p
         className={clsx(
-          'mt-0.5 text-lg font-semibold',
-          tone === 'bad' ? 'text-red-700' : tone === 'warn' ? 'text-amber-700' : tone === 'good' ? 'text-green-700' : 'text-slate-900',
+          'mt-0.5 text-xl font-semibold tabular-nums tracking-tight',
+          tone === 'bad'
+            ? 'text-red-700'
+            : tone === 'warn'
+              ? 'text-amber-700'
+              : tone === 'good'
+                ? 'text-green-700'
+                : 'text-slate-900',
         )}
       >
         {value}
       </p>
       {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
-      {hint && <p className="text-[11px] text-slate-300">{hint}</p>}
+      {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
     </button>
   );
 }

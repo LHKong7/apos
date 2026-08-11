@@ -33,7 +33,7 @@ export function MovedToast() {
   const last = unseen[unseen.length - 1]!;
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-40 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs text-white shadow-lg">
+    <div className="pointer-events-none fixed bottom-4 right-4 z-40 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
       {unseen.length === 1
         ? `↑ 1 张卡片已移动到 ${last.to}`
         : `↑ ${unseen.length} 张卡片状态已更新`}

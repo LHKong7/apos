@@ -163,12 +163,8 @@ export function BoardPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* 项目名与跨页跳转都归项目侧栏（components/ProjectSidebar.tsx）*/}
       <TopBar
-        projectName={project.data?.project.name ?? '加载中'}
-        onOpenGraph={() => navigate(`/projects/${projectId}/graph`)}
-        onOpenAnalytics={() => navigate(`/projects/${projectId}/analytics`)}
-        onOpenPolicies={() => navigate(`/projects/${projectId}/settings/policies`)}
-        onOpenRequirements={() => navigate(`/projects/${projectId}/requirements`)}
         onNewWorkItem={() => setCreating(true)}
         summary={board.data?.summary}
         view={view}

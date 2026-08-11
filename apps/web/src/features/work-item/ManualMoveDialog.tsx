@@ -131,15 +131,19 @@ export function Modal({
   onClose: () => void;
 }) {
   return (
+    /*
+     * ★ 遮罩走 scrim 令牌而不是 slate-900/30：深色主题下整条 slate 色阶
+     *   是反转的（slate-900 是近白），照搬会变成在内容上蒙一层雾。
+     */
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-scrim/[var(--scrim-alpha)] p-4 backdrop-blur-[3px]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl"
+        className="w-full max-w-md animate-fade-in-up rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
       >
         {children}
       </div>

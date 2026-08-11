@@ -30,7 +30,14 @@ export function KanbanView({
   const setDraggingId = useBoardStore((s) => s.setDragging);
 
   return (
-    <div className="board-scroll flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+    /*
+     * ★ 列间距 12px → 8px。这不是审美调整，是拿回横向预算：
+     *   加了项目侧栏之后，看板的可用宽度少了图标栏那 56px，
+     *   六列不横滚的门槛从 1332px 抬到了 1388px —— 1366 的笔记本因此
+     *   全都开始横滚。缩间距 + 缩列的下限把门槛压回 1272px。
+     *   宽屏上没有损失：列是 flex-1，省下来的间距全给了列本身。
+     */
+    <div className="board-scroll flex min-h-0 flex-1 gap-2 overflow-x-auto p-3">
       {columns.map((col) => (
         <Column
           key={col.key}
@@ -102,15 +109,17 @@ function Column({
         if (dragging && drop?.allowed) onDrop(dragging, column.key);
       }}
       className={clsx(
-        // 六列在 1440 宽度内不横滚；更窄时按 min-w 收缩后再横滚
-        'flex min-w-[13rem] max-w-[20rem] flex-1 shrink-0 flex-col rounded-lg bg-slate-100/70 transition',
-        over && drop?.allowed && 'ring-2 ring-emerald-400',
-        over && drop && !drop.allowed && 'ring-2 ring-red-400',
+        // 六列在 1280 宽度内不横滚（含 56px 图标栏）；更窄时按 min-w 收缩后再横滚
+        'flex min-w-[12rem] max-w-[20rem] flex-1 shrink-0 flex-col rounded-xl border border-slate-200/60 bg-slate-100/50 transition',
+        over && drop?.allowed && 'border-emerald-400/60 ring-2 ring-emerald-400',
+        over && drop && !drop.allowed && 'border-red-400/60 ring-2 ring-red-400',
       )}
     >
-      <header className="flex items-baseline gap-1.5 px-2.5 py-2">
-        <h2 className="text-xs font-semibold text-slate-700">{column.name}</h2>
-        <span className="text-xs tabular-nums text-slate-500">{column.count}</span>
+      <header className="flex items-baseline gap-1.5 border-b border-slate-200/50 px-2.5 py-2">
+        <h2 className="text-xs font-semibold tracking-tight text-slate-700">{column.name}</h2>
+        <span className="rounded-full bg-slate-200/70 px-1.5 text-[11px] tabular-nums text-slate-500">
+          {column.count}
+        </span>
         {column.wipLimit !== null && (
           <span
             className={clsx(
@@ -135,7 +144,7 @@ function Column({
         </p>
       )}
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2 pt-2">
         {column.items.map((card, i) => (
           <BoardCard
             key={card.id}
@@ -169,7 +178,7 @@ function Column({
           <button
             type="button"
             onClick={onExpandDone}
-            className="w-full rounded border border-dashed border-slate-300 py-1 text-[11px] text-slate-500 hover:bg-white"
+            className="w-full rounded-md border border-dashed border-slate-300 py-1 text-[11px] text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700"
           >
             ⋯ 展开其余 {column.count - column.items.length} 项
           </button>

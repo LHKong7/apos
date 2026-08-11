@@ -18,26 +18,33 @@ export const KIND_META: Record<NodeKind, { icon: string; label: string }> = {
   release: { icon: '🚀', label: '发布' },
 };
 
+/**
+ * ★ 走 CSS 变量而不是写死的 hex。
+ *
+ *   SVG 的 fill/stroke 是属性不是 class，Tailwind 的色阶够不到这里 ——
+ *   写死的话，换到深色主题时整张执行图会留在原地：
+ *   一张白纸上摆着几个浅粉浅蓝的方块。令牌定义见 src/index.css 的 --graph-*。
+ */
 export const STATUS_FILL: Record<string, string> = {
-  done: '#dcfce7',
-  released: '#dcfce7',
-  acceptance: '#dcfce7',
-  executing: '#dbeafe',
-  blocked: '#ffedd5',
-  failed: '#fee2e2',
-  awaiting_decision: '#fef3c7',
-  cancelled: '#f1f5f9',
+  done: 'var(--graph-fill-done)',
+  released: 'var(--graph-fill-done)',
+  acceptance: 'var(--graph-fill-done)',
+  executing: 'var(--graph-fill-exec)',
+  blocked: 'var(--graph-fill-blocked)',
+  failed: 'var(--graph-fill-failed)',
+  awaiting_decision: 'var(--graph-fill-decision)',
+  cancelled: 'var(--graph-fill-cancelled)',
 };
 
 export const STATUS_STROKE: Record<string, string> = {
-  done: '#16a34a',
-  released: '#16a34a',
-  acceptance: '#16a34a',
-  executing: '#2563eb',
-  blocked: '#ea580c',
-  failed: '#dc2626',
-  awaiting_decision: '#d97706',
-  cancelled: '#94a3b8',
+  done: 'var(--graph-stroke-done)',
+  released: 'var(--graph-stroke-done)',
+  acceptance: 'var(--graph-stroke-done)',
+  executing: 'var(--graph-stroke-exec)',
+  blocked: 'var(--graph-stroke-blocked)',
+  failed: 'var(--graph-stroke-failed)',
+  awaiting_decision: 'var(--graph-stroke-decision)',
+  cancelled: 'var(--graph-stroke-cancelled)',
 };
 
 interface ShapeProps {
@@ -55,8 +62,10 @@ interface ShapeProps {
  * 缩小到「只剩图标」的层级时，轮廓是唯一还能分辨类型的东西。
  */
 export function NodeShape({ kind, status, emphasized, onCritical, inBlockedChain }: ShapeProps) {
-  const fill = STATUS_FILL[status] ?? '#f8fafc';
-  const stroke = inBlockedChain ? '#dc2626' : (STATUS_STROKE[status] ?? '#cbd5e1');
+  const fill = STATUS_FILL[status] ?? 'var(--graph-fill-default)';
+  const stroke = inBlockedChain
+    ? 'var(--graph-danger)'
+    : (STATUS_STROKE[status] ?? 'var(--graph-stroke-default)');
   const strokeWidth = onCritical ? 3 : emphasized ? 2 : 1.25;
 
   const common = {
@@ -146,13 +155,13 @@ export function Legend() {
       )}
       <span className="inline-flex items-center gap-1">
         <svg width={20} height={6} aria-hidden>
-          <line x1={0} y1={3} x2={20} y2={3} stroke="#0f172a" strokeWidth={3} />
+          <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge-critical)" strokeWidth={3} />
         </svg>
         关键路径
       </span>
       <span className={clsx('inline-flex items-center gap-1')}>
         <svg width={20} height={6} aria-hidden>
-          <line x1={0} y1={3} x2={20} y2={3} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 2" />
+          <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge)" strokeWidth={1.5} strokeDasharray="4 2" />
         </svg>
         数据依赖
       </span>

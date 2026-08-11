@@ -323,7 +323,7 @@ export function GraphPage() {
       )}
 
       {toast && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded bg-slate-900 px-3 py-1.5 text-xs text-white shadow-lg">
+        <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
           {toast}
           <button
             type="button"

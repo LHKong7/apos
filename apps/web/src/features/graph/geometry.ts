@@ -37,8 +37,10 @@ export interface EdgeStyle {
 
 /** 边的六种样式（页面文档 07 §5.2） */
 export function edgeStyle(type: DependencyType, critical: boolean, dim: boolean): EdgeStyle {
+  // ★ 走 CSS 变量：写死 hex 的话，深色主题下这些线会留在浅色值上
+  //   （关键路径那条近黑的线在深底上等于消失）。令牌见 src/index.css
   const base: EdgeStyle = {
-    stroke: critical ? '#0f172a' : '#94a3b8',
+    stroke: critical ? 'var(--graph-edge-critical)' : 'var(--graph-edge)',
     strokeWidth: critical ? 2.5 : 1.25,
     double: false,
     label: '前置依赖',
@@ -63,7 +65,7 @@ export function edgeStyle(type: DependencyType, critical: boolean, dim: boolean)
     }
   })();
 
-  return dim ? { ...styled, stroke: '#e2e8f0', strokeWidth: 1 } : styled;
+  return dim ? { ...styled, stroke: 'var(--graph-lane-stroke)', strokeWidth: 1 } : styled;
 }
 
 /** 视口自适应：把整张图缩放到容器内并留白 */

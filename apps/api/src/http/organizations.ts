@@ -7,6 +7,7 @@ import {
   roles,
   users,
   type Database,
+  type DbTransaction,
 } from '@apos/db';
 import { humanActor, isOrgAdmin, ORG_ROLE_LABEL, OrgRole } from '@apos/contracts';
 import { emitAndPublish } from '../modules/event/bus';
@@ -110,27 +111,14 @@ export async function createOrganization(
     throw new ApiError('VERSION_CONFLICT', `slug ${slug} 已被占用`, { slug });
   }
 
-  const org = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(organizations)
-      .values({
-        name: input.name.trim(),
-        slug,
-        description: input.description?.trim() || null,
-        createdBy: ctx.actorId,
-      })
-      .returning({ id: organizations.id, name: organizations.name, slug: organizations.slug });
-
-    await tx
-      .insert(organizationMembers)
-      .values({ orgId: row!.id, userId: ctx.actorId, orgRole: 'org_admin' });
-
-    // ★ 复用启动时那套对齐逻辑，不在这里抄一份内置角色 ——
-    //   抄一份的下场是新组织和老组织的内置角色慢慢长得不一样
-    await syncBuiltinRoles(tx, row!.id);
-
-    return row!;
-  });
+  const org = await db.transaction((tx) =>
+    insertOrganizationTx(tx, {
+      name: input.name,
+      slug,
+      description: input.description ?? null,
+      actorId: ctx.actorId,
+    }),
+  );
 
   await emitAndPublish(db, {
     orgId: org.id,
@@ -144,6 +132,50 @@ export async function createOrganization(
   });
 
   return { organization: org };
+}
+
+/**
+ * 建组织的事务体：建组织 + 把创建者设成 org_admin + 预置内置角色。
+ *
+ * ★★ 单独拆出来，是为了让**自助注册**能把「建账号」和「建组织」放进
+ *   同一个事务（`modules/auth/service.ts` 的 `registerAccount`）。
+ *   分成两个事务的话，第二步失败会留下一个「存在但不属于任何组织」的账号：
+ *   他能登录，但登录后每个请求都是 401 —— 而注册页那边显示的是「注册失败」，
+ *   于是他会换个邮箱再注册一次，库里就多一个永远登不进去的号。
+ *
+ * ★ 抄一份而不是拆出来的下场，是新组织和老组织的内置角色慢慢长得不一样。
+ */
+export async function insertOrganizationTx(
+  tx: DbTransaction,
+  input: { name: string; slug: string; description?: string | null; actorId: string },
+) {
+  const [row] = await tx
+    .insert(organizations)
+    .values({
+      name: input.name.trim(),
+      slug: input.slug,
+      description: input.description?.trim() || null,
+      createdBy: input.actorId,
+    })
+    .returning({ id: organizations.id, name: organizations.name, slug: organizations.slug });
+
+  await tx
+    .insert(organizationMembers)
+    .values({ orgId: row!.id, userId: input.actorId, orgRole: 'org_admin' });
+
+  await syncBuiltinRoles(tx, row!.id);
+
+  return row!;
+}
+
+/**
+ * 给定名字挑一个没被占用的 slug。
+ *
+ * ★ 导出是给自助注册用的：它要在开事务**之前**把 slug 定下来
+ *   （这一步是读，放进事务里只会白白拉长事务持有时间）。
+ */
+export async function freeOrganizationSlug(db: Database, name: string): Promise<string> {
+  return freeSlug(db, name);
 }
 
 export async function updateOrganization(
@@ -306,7 +338,9 @@ export async function addOrganizationMember(
   if (!user) {
     throw new ApiError(
       'NOT_FOUND',
-      `没有邮箱为 ${input.email} 的账号。目前只能把**已存在的账号**加进组织（自助注册还没有做）`,
+      `没有邮箱为 ${input.email} 的账号。这里只能把**已存在的账号**加进组织 —— ` +
+        '要么让他先自己注册（他会先有一个自己的组织，不影响加进来），' +
+        '要么用「账号管理」直接给他开一个号',
       { email: input.email },
     );
   }

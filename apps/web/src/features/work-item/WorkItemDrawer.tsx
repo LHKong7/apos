@@ -90,7 +90,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                   className={clsx(
                     'px-2 py-1 text-xs',
                     tab === t
-                      ? 'border-b-2 border-slate-900 font-medium text-slate-900'
+                      ? 'border-b-2 border-brand font-medium text-slate-900'
                       : 'text-slate-500',
                   )}
                 >

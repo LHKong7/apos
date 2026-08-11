@@ -16,7 +16,7 @@ const RISKS = [
 const STATE_META = {
   matched: { icon: '✓', label: '命中', className: 'text-green-800 font-medium' },
   missed: { icon: '·', label: '未命中', className: 'text-slate-500' },
-  not_evaluated: { icon: '⊘', label: '未评估', className: 'text-slate-300' },
+  not_evaluated: { icon: '⊘', label: '未评估', className: 'text-slate-400' },
 } as const;
 
 /**

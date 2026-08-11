@@ -93,11 +93,18 @@ export function BarChart({
   );
 }
 
+/**
+ * 结论标记的字色。
+ *
+ * ★ 和 palette.ts 的 STATUS 是两套值：那套是**图上的填充**（在数据色里取），
+ *   这套是**页面上的文字**，要满足正文对比度。所以走 CSS 变量跟主题走 ——
+ *   浅色下的深绿深红搬到深底上就是读不出来的一行字。
+ */
 const FLAG_COLORS = {
-  good: '#166534',
-  warning: '#b45309',
-  serious: '#c2410c',
-  critical: '#b91c1c',
+  good: 'var(--flag-good)',
+  warning: 'var(--flag-warning)',
+  serious: 'var(--flag-serious)',
+  critical: 'var(--flag-critical)',
 } as const;
 
 function Legend({ items }: { items: { label: string; tone: 'primary' | 'waiting' }[] }) {
@@ -238,7 +245,7 @@ export function TrendChart({
         </div>
 
         {active !== null && (
-          <div className="pointer-events-none absolute -top-1 left-1/2 -translate-x-1/2 rounded bg-slate-900 px-1.5 py-0.5 text-[11px] text-white">
+          <div className="pointer-events-none absolute -top-1 left-1/2 -translate-x-1/2 rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-800 shadow-md glass-strong">
             {points[active]!.day.slice(5)} · {format(points[active]!.value)}
           </div>
         )}

@@ -1,12 +1,35 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 没有这一行浏览器会去要 /favicon.ico，每次加载都在控制台留一条 404，
          把真正该看的报错淹掉 -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#070b14" />
+    <meta name="description" content="Autonomous Project OS —— 面向 Human–Agent 混合团队的自主项目操作系统" />
     <title>Autonomous Project OS</title>
+    <!--
+      ★★ 主题必须在**首帧之前**定下来。
+
+        等 React 挂载再设 data-theme，中间会有一整帧按 CSS 默认值（深色）
+        画出来 —— 选了浅色的人每次刷新都被闪一下白→黑→白。
+        所以这段同步内联脚本必须留在这里，且必须在 <body> 之前跑完。
+        判据和 src/stores/theme.ts 的 readTheme 保持一致。
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('apos.theme') === 'light' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = t;
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute('content', t === 'light' ? '#f5f7fb' : '#070b14');
+        } catch (e) {
+          /* 隐私模式下读不到 localStorage：按默认的深色走，不该让页面起不来 */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

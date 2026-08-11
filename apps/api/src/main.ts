@@ -12,7 +12,7 @@ import {
 import { DevExternalStore } from './modules/integration/dev-store';
 import { buildApp } from './app';
 import { syncBuiltinRoles } from './http/roles';
-import { bootstrapSuperadmin } from './modules/auth';
+import { bootstrapSuperadmin, signupSwitch } from './modules/auth';
 import { syncAgents } from './modules/agent/runtime-factory';
 import { WorkspaceProvisioner } from './modules/workspace/provisioner';
 import { probeGit } from './modules/workspace/git';
@@ -53,6 +53,17 @@ async function main() {
    *   而建组织依赖内置角色目录（成员表对 roles 有外键）。
    */
   await bootstrapSuperadmin(db, (m) => console.log(m));
+
+  /**
+   * ★ 注册开关的实际状态必须在启动时说一次。
+   *   它认不出来的取值会按「关」处理（见 modules/auth/signup.ts）——
+   *   把 `APOS_ALLOW_SIGNUP=flase` 写错了却毫无迹象的话，
+   *   运维只会在用户报「注册不了」时才发现，而那时没人会想到是拼写。
+   */
+  {
+    const signup = signupSwitch();
+    console.log(`[auth] 自助注册：${signup.enabled ? '开启' : '关闭'}（${signup.reason}）`);
+  }
 
   const registry = new RuntimeRegistry();
 
