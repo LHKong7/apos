@@ -111,6 +111,8 @@ pnpm deploy:down      # 停止并删除容器（数据卷保留）
 | `AGENT_WORKSPACE_ROOT` | 空 | Agent 可写的目录根。不配时 `claude_code` 运行时拒绝派发 |
 | `GITHUB_INTEGRATION_TOKEN` | 空 | 不配时 GitHub 集成显示未连接 |
 | `INTEGRATION_MEMORY_ADAPTERS` | 空 | 设 `all` 则所有集成走进程内适配器，不发任何外部请求 |
+| `DATABASE_URL` | 容器内的 `postgres` | 指到外部托管 Postgres 就能去掉 `postgres` 服务，见 [接 Supabase](SUPABASE.md) |
+| `APOS_DB_POOL_MAX` | `10` | 单进程连接池大小。`api` 与 `worker` 各占一个，托管库连接数吃紧时往下调 |
 
 > **`APOS_PUBLIC_URL` 配错的表现很隐蔽**：产品跑得好好的，但飞书/Slack 通知里的
 > 链接点进去打不开 —— 因为通知链接是按这个变量拼的。部署到别的机器或加了域名，
