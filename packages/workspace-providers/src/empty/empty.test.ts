@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Mount } from '@apos/contracts';
-import { EmptyMaterializer } from './sources/empty';
-import { NonePublisher } from './publishers/none';
+import { EmptyMaterializer } from './source';
+import { NonePublisher } from './none-publisher';
 
 let root: string;
 let dir: string;

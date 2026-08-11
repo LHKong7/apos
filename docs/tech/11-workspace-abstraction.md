@@ -3,7 +3,8 @@
 Agent 干活的地方叫「工作区」。本文档说明它为什么不是「可替换的存储后端」，
 而是「一个本地目录 + 两头可换」，以及这个形状带来的约束与收益。
 
-代码位置：`apps/api/src/modules/workspace/`，契约在 `packages/contracts/src/workspace/`。
+代码位置：后端在 `packages/workspace-providers/`，数据库适配在
+`apps/api/src/modules/workspace/`，契约在 `packages/contracts/src/workspace/`。
 
 > 术语提醒：`workspace` 在本代码库里**只指 Agent 的工作区**。产品层的顶层
 > 容器叫「组织」（`organizations`），不叫 workspace。两个都叫 workspace 的话，
@@ -57,9 +58,9 @@ opencode / qwen…）。它们无一例外要 `cd` 进一个目录再 `open()` �
  ──────────────────▶│  Agent 在这里 cd / open()   │──────────────────▶
                     │                             │
   git worktree      │   mounts: 主可写 + 若干只读  │   git commit + push
-  空目录            │                             │   不交货（NonePublisher）
-  对象存储同步      └─────────────────────────────┘   对象存储上传
-  （未实现）                                            （未实现）
+  空目录            │                             │   本地归档
+  本地目录复制      │                             │   对象存储上传
+  对象存储同步      └─────────────────────────────┘   不交货（NonePublisher）
 ```
 
 两头**独立可选**。这是本设计与「一个 `WorkspaceProvider` 管到底」那类方案的
@@ -72,7 +73,7 @@ opencode / qwen…）。它们无一例外要 `cd` 进一个目录再 `open()` �
 
 | 类型 | 作用 |
 | --- | --- |
-| `SourceKind` | `'git' \| 'empty' \| 'object_storage'` |
+| `SourceKind` | `'git' \| 'empty' \| 'local' \| 'object_storage'` |
 | `SourceRef` | 内容从哪来：`{ kind, identifier, label, baseVersion }` |
 | `Mount` | 一个挂载点：`{ path, role, writable, source }` |
 | `Workspace` | `{ id, runId, root, mounts, writable }` |
@@ -128,15 +129,17 @@ Git 版本之所以干净，正是因为它一直有基线：`status --porcelain
 于是 `SourceRef.baseVersion` 是必填（可为 null，但语义是「这个后端明确没有基线」，
 不是「忘了填」），每个后端各自负责怎么算：
 
-| 后端 | baseVersion | diff 怎么算 |
-| --- | --- | --- |
-| `git` | commit sha | `git status --porcelain=v1 -z` |
-| `empty` | 文件清单快照的 hash | 重新扫描，与快照逐项对比 |
-| `object_storage`（未实现） | ETag 清单的 hash | 重新扫本地目录，与 ETag 清单对比 |
+| 后端 | 内容从哪来 | baseVersion | diff 怎么算 |
+| --- | --- | --- | --- |
+| `git` | 镜像 + worktree | commit sha | `git status --porcelain=v1 -z` |
+| `empty` | 建一个空目录 | 文件清单快照的 hash | 重新扫描，与快照逐项对比 |
+| `local` | 复制宿主机上一个已登记的目录 | 文件清单快照的 hash | 同上 |
+| `object_storage` | 从 S3 兼容端点同步下来 | 本地清单 hash（另存一份 ETag 清单） | 重新扫本地目录，与快照对比 |
 
-### 3.1 空目录后端的快照
+### 3.1 文件系统类后端的快照
 
-`sources/empty.ts`。快照只记 `path → size:mtimeMs`，**不算内容 hash**：
+`snapshot.ts`（`empty` / `local` / `object_storage` 三个后端共用）。
+快照只记 `path → size:mtimeMs`，**不算内容 hash**：
 一个几百 MB 的产出目录逐文件 sha256 会给每次收尾加上几十秒，而它买到的只是
 「size 和 mtime 都没变但内容变了」这种情况下的准确性 —— 而 Agent 改文件必然
 改 mtime。这笔账不划算。
@@ -208,62 +211,176 @@ Git 交货成功后要删掉镜像里的本地分支（远端已有一份，不�
 | 产物 metadata 记文件名列表 | 只记一个计数 | 评审时「改了哪些文件」比「改了 3 个文件」有用得多，而这个信息在算 diff 那一刻就在手上 |
 | 认不出 host 就不给分支链接 | 编一个 URL | 点开 404 比没有链接更糟 |
 | 变更集为 0 时不落产物 | 记一条「0 个文件」 | 只会污染评审视图 |
+| 对象存储部分失败不报 `persisted` | 传了几个算几个 | 半传上去的一批对象比完全没传更危险：远端处于既不是旧也不是新的中间态，而调用方看到已持久化就不会再管它 |
+| 变更集不完整时拒绝归档 / 上传 | 照着不完整的清单搬 | 产出一个看起来成功、实际缺文件的结果，而缺了什么没有任何地方说得出来 |
+| 认不出的对象存储端点不给控制台链接 | 猜一个路径 | 自建 MinIO / Ceph 的控制台路径千奇百怪，与 git 那边「认不出 host 就不给链接」同一条纪律 |
 
 ---
 
-## 6. 对象存储：接口位置已留，实现待真实需求
+## 6. 四个后端
 
-`SourceKind` 和 `PublishResult` 里都有 `object_storage` 这一支，但**没有实现**。
+### 6.1 `git`
 
-这是刻意的：目前零 caller。零 caller 的接口实现是猜测性代码 —— 要不要版本化？
-要不要预签名 URL？对象多大？这些问题在第一个真实需求出现之前都没有答案，
-而猜错的代价是一份没人用、也没人敢删的代码。
+镜像 + worktree。为什么不是「每个 Run 各 clone 一次」：clone 一个中等仓库要
+几十秒到几分钟，而调度器可能一分钟派发十几个 Run。镜像只在第一次建立，
+之后每个 Run 从共享对象库挂一棵独立工作树，耗时是毫秒级。
 
-真要接的时候，形状是清楚的：
+只读参考仓库挂 **detached**：内容与基线完全相同，而 `worktree remove` 不删分支
+—— 建了就是按「Run 数 × 参考仓库数」在镜像里永久堆积垃圾。
 
-| 组件 | 做法 |
-| --- | --- |
-| `ObjectStorageMaterializer.materialize` | `ListObjects` 拉 prefix 下全部对象 → 下载到本地目录 → 基线 = `{key → ETag}` 清单的 hash |
-| `.diff` | 重新扫**本地目录**，与 ETag 清单对比。不调 API —— Agent 改的是本地文件 |
-| `.dispose` | 删本地目录；远端不动 |
-| `ObjectStoragePublisher.publish` | 只上传 `changes.added ∪ changes.modified`，删 `changes.deleted` |
-| 凭证 | 复用 `resolveSecret(credentialRef)`，与仓库凭证同一套 |
+### 6.2 `empty`
 
-**只上传变更的那部分**就是保留 ChangeSet 概念的直接回报：不必全量重传。
+建一个空目录。规划、调研、纯文档产出走这条。它照样有基线（见 §3）。
 
-同理，`packages/workspace-providers` 这个独立包**没有建**。`credentials.ts` 的
-`withRepoAuth` 直接依赖 `Database` + `repositories` 表 + `resolveSecret`，
-搬出去要先把凭证解析抽成注入接口 —— 那是另一笔账，等真出现第二个消费方
-（比如 worker 独立进程）再还。
+### 6.3 `local`
+
+从宿主机上一个**已登记**的目录（`storage_targets.kind = 'local'`）复制内容进来。
+数据集、素材库、外部工具产出的目录都是这一类。
+
+**复制而不是让 Agent 直接在源目录里干活**：两个并发 Run 会互相覆盖，而失败的
+Run 会把源目录改坏且没有东西能还原它。代价是大目录复制要时间。
+
+`dereference: false` —— 不跟进符号链接。跟进的话一条指向 `/etc` 的链接就会把
+宿主机配置复制进 Agent 的工作区，而白名单挡的是挂载点，不是挂载点里的链接目标。
+
+**两道闸**：
+
+| 闸 | 在哪 | 挡什么 |
+| --- | --- | --- |
+| `storage_targets` 登记 | 库里 | 管理员的意图：哪些目录允许被任务引用 |
+| `APOS_LOCAL_MOUNT_ROOTS` | 环境变量 | 部署方的底线：一条填成 `/` 的登记等于把整台机器交给 Agent |
+
+白名单比的是**解析后**的绝对路径且要求边界对齐，否则 `/data/public` 会连
+`/data/public-secrets` 一起放行。
+
+交货走 `LocalPublisher`：把变更集复制到 `APOS_ARCHIVE_ROOT/{runId}/`。
+不配归档根就退回「不交货」并如实说明 —— LocalPublisher 的全部价值就是把东西
+搬到工作区之外，没有归档目录它搬不到任何地方。
+
+> ★ 归档根必须与 `AGENT_WORKSPACE_ROOT` **不同**，而且在一个真正持久的卷上。
+> 落在工作区根下面的话，`pruneOrphans` 会连同工作树一起把它删掉 ——
+> 而那时用户已经在产物页上看到「已归档」了。
+
+### 6.4 `object_storage`（S3 兼容）
+
+同步 `bucket/prefix` 下的对象到本地目录。**Agent 拿到的仍然是一个本地目录** ——
+headless CLI 不会说 S3 协议，所以这里干的是「同步下来」，不是「让 Agent 直接读 bucket」。
+
+交货只上传 `changes.added ∪ changes.modified`、删除 `changes.deleted`。
+**这是保留 ChangeSet 概念最直接的回报**：一个 20GB 的数据集挂进来、Agent 改了
+3 个文件 —— 传那 3 个。退化成「全量上传」的话每次收尾都是一次 20GB 的出网流量。
+
+#### 为什么手写 SigV4 而不是引 `@aws-sdk/client-s3`
+
+只用到四个操作（List / Get / Put / Delete），而 SDK 会带进来几十个传递依赖。
+更实际的一条：**SDK 在这里也没法被集成测试**（环境里没有真的 S3），所以
+「用成熟 SDK 换正确性」这笔账并不成立。
+
+手写版的正确性靠两层测试锚定：
+
+| 层 | 测什么 | 凭什么 |
+| --- | --- | --- |
+| `sigv4.test.ts` | 派生密钥 → 规范请求 → 待签串 → 最终签名 | AWS 公布的签名文档与通用测试套件的公布值 |
+| `s3.test.ts` | 请求怎么发、响应怎么解 | 进程内假 S3，逐条断言 URL / 方法 / 头 / 体 |
+
+几处容易错、且错了极难诊断的地方：
+
+- **`encodeURIComponent` 不能用**：它保留 `!'()*`，而 AWS 要求把它们也编码。
+  差一个字符签名就对不上，表现是「某些文件名的对象传不上去」。
+- **寻址风格是显式配置**：MinIO / Ceph / 自建网关基本只支持 path-style。
+  默认成 virtual-host 的话，自建端点的表现是 DNS 解析失败 ——
+  完全不指向「寻址风格」这件事。
+- **列举要翻页到底**：只取第一页的话超过 1000 个对象的 bucket 会静默少算，
+  而少算的表现是「基线里没有这些对象」，收尾时它们全都成了新增。
+- **XML 实体要还原**：对象键里合法地出现 `&` 与 `<`，不还原的话这些键会被当成
+  「与本地不同」，每次收尾都报成修改。
+- **部分失败不算已持久化**：半传上去的一批对象比完全没传更危险 —— 远端处于
+  既不是旧状态也不是新状态的中间态，而调用方看到 `persisted: true` 就不会再管它。
 
 ---
 
-## 7. 目录结构
+## 7. 包与目录结构
 
 ```
-apps/api/src/modules/workspace/
-├── index.ts              WorkspaceService —— 对外唯一入口
+packages/workspace-providers/          ← 后端，不认识数据库
+├── ports.ts              注入口：SecretResolver / RemoteResolver / HostKeyStore
+├── types.ts              SourceMaterializer / MountSpec
+├── publisher-types.ts    Publisher / ReleaseContext
 ├── pipeline.ts           后端无关的收尾流水线
 ├── check.ts              质量核验（与后端正交）
+├── snapshot.ts           文件清单快照（empty / local / object_storage 共用）
 ├── paths.ts              根目录布局
-├── sources/
-│   ├── types.ts          SourceMaterializer / MountSpec
-│   ├── git.ts            镜像 + worktree + 变更集 + 回收
-│   └── empty.ts          清单快照 + 变更集
-├── publishers/
-│   ├── types.ts          Publisher / ReleaseContext
-│   ├── git.ts            提交 + 推送 + 分支 URL
-│   └── none.ts           不交货，如实说明位置
-├── git.ts                git 命令封装（凭证注入）
-├── ssh.ts                ssh-agent 生命周期
-└── credentials.ts        凭证解析
+├── git/                  cli · ssh · auth · source · publisher
+├── empty/                source · none-publisher
+├── local/                source · publisher
+└── object-storage/       sigv4 · s3 · source · publisher
+
+apps/api/src/modules/workspace/
+├── index.ts              WorkspaceService —— 只做数据库适配
+└── workspace.test.ts
 
 {AGENT_WORKSPACE_ROOT}/
 ├── mirrors/{repoId}.git        裸镜像，仓库级共享的对象库
-├── runs/{runId}/{repoRef}/     每次执行一棵独立工作树
+├── runs/{runId}/{ref}/         每次执行一棵独立工作树 / 一份同步下来的副本
 ├── planning/{runId}/           规划任务的空目录（留存供复查）
-└── state/{key}.json            空目录后端的基线快照
+└── state/{key}.json            文件系统类后端的基线快照
+
+{APOS_ARCHIVE_ROOT}/{runId}/    本地归档（必须是另一个持久卷）
 ```
+
+### 7.1 为什么后端要独立成包
+
+`git/auth.ts` 原先叫 `credentials.ts`，签名是 `withRepoAuth(db, repoRow, fn)` ——
+直接吃一个 drizzle `Database` 和一行 `repositories`。也就是说这段逻辑要跑起来，
+就得先有一个 Postgres、一套业务表、以及那套表里恰好有这一行。
+
+它真正需要的只有三件事，写成 `ports.ts` 里的三个接口：
+
+| 注入口 | 干什么 | 宿主怎么实现 |
+| --- | --- | --- |
+| `SecretResolver` | `secret://…` → 明文 | `resolveSecret`（`modules/security/secrets.ts`） |
+| `RemoteResolver` | 按 id 回查远端描述 | 查 `repositories` |
+| `HostKeyStore` | 存 TOFU 学到的主机公钥 | 写 `repositories.sshKnownHosts` |
+
+**第二个消费方就是这些新后端**：对象存储与本地目录同样要解凭证，而它们和
+`repositories` 表毫无关系 —— 继续走老路的话，一个 S3 bucket 得先伪装成一个
+git 仓库才能拿到自己的 access key。
+
+### 7.2 登记表：`storage_targets`
+
+非 Git 的来源登记在这张表里，而不是塞进 `repositories`。那张表的每一列都是
+git 概念（`remoteUrl` / `defaultBranch` / `branchPrefix` / `sshKnownHosts`），
+一个 S3 bucket 塞进去要给这些列填占位符，而占位符会一路流到界面上
+（「默认分支：main」）—— 这正是规划任务曾经用 `branch:'planning'` 假装自己是
+git 仓库时踩过的坑（§1）。
+
+库级约束卡住两类各自的必填列：少一个 `bucket` 的对象存储登记写不进去。
+不卡的话现象是派发时报「挂载失败」，而管理员看着那条登记觉得一切正常。
+
+`ResourceScope` 里用 `kind: 'dataset'` 引用它，与仓库的 `kind: 'repo'` 分开 ——
+「授权了什么」在权限快照里因此是自解释的。
+
+### 7.3 主挂载与交货后端的选择
+
+一次执行可以同时挂多个资源。**交货只对主挂载做**：
+
+1. 优先可写的仓库
+2. 其次可写的数据集
+3. 再次任意可解析的
+
+仓库优先于数据集，是因为一个既挂了代码仓库又挂了数据集的任务，产出该进仓库的
+分支，而不是覆盖数据集。其余挂载一律是只读参考。
+
+交货后端由主挂载的种类决定：`git → GitPublisher`、`object_storage →
+ObjectStoragePublisher`、`local → LocalPublisher`（没配归档根则退回 `none`）、
+`empty → NonePublisher`。
+
+> ★ `ObjectStoragePublisher` 必须**按次构造**，不能像 git 那样全局注册一个。
+> 交货时挂载点上只剩快照键，要换回 endpoint 与凭证就得知道 `targetId` ——
+> 而那个映射在本次 Run 落库的挂载清单里。做成全局单例就得往实例上挂一个
+> 「当前是哪个 Run」的可变字段，而 supervisor 判超时与事件流报 `run_ended`
+> 本来就会并发进来：两次收尾一交错，一个 Run 的产出就会传到另一个 Run 的
+> bucket 里。闭包捕获本次的挂载清单，天然没有这个问题。
 
 ---
 
@@ -288,14 +405,42 @@ apps/api/src/modules/workspace/
 
 ---
 
-## 9. 兼容与清理
+## 9. 迁移与清理
 
-| 项 | 状态 |
+| 迁移 | 内容 |
 | --- | --- |
-| `agent_runs.workspace` 加 `mounts` 字段 | **无需 SQL 迁移** —— `$type<>` 只是 TS 层标注，列类型仍是 `jsonb` |
-| 旧结构（无 `mounts`）的 in-flight Run | `normalizeMounts()` 回退到主路径 |
-| `normalizeMounts()` 何时可删 | 所有 in-flight Run 排空后（约一个发布周期），届时把 `mounts` 改成必填 |
-| `RunWorkspace` 的 `repoRef/branch/...` | 已删，统一走可空的 `vcs` 子对象 |
+| `0019_storage_targets` | 建 `storage_targets` 表（drizzle-kit 由 schema 生成） |
+| `0020_workspace_mounts_backfill` | 给它补 RLS；回填 `agent_runs.workspace.mounts` |
+
+**为什么 RLS 要单独补**：`0017_supabase_rls` 是「遍历当时存在的所有表」，
+管不到之后新建的表。而 `storage_targets` 里存的是对象存储的凭证引用 ——
+正是最不该出现在匿名 REST 接口上的那一类数据。漏掉的后果没有任何症状：
+应用照常跑、日志干净，只有被拖库之后才会知道。
+
+**为什么回填要单独一条**：`0019` 是 drizzle-kit 由 schema 生成的，
+下次改 schema 会被重新生成覆盖。手写的东西必须待在自己的文件里。
+
+**`mounts` 为什么曾经不需要迁移**：它是在 `workspace` 这个 jsonb 列**内部**加的
+字段，`$type<>` 只是 TS 层标注，列类型仍是 `jsonb` —— `drizzle-kit generate`
+不产出任何 diff。代价是老行里没有这个键，而没有它，那些 Run 的参考仓库工作树
+一个都回收不掉。`0020` 把数据补齐之后，代码里那个「读不到 mounts 就退回主路径」
+的回退从**正确性依赖**降级成**滚动发布窗口的保险**（迁移跑完仍可能有老进程在
+写老结构的行）。
+
+回填只补形状完整的行：`path` 或 `repoId` 缺失的行本来就是坏的，给它编一个
+`mounts` 只会把「坏数据」伪装成「好数据」。
+
+---
+
+### 9.1 环境变量
+
+| 变量 | 作用 | 不配的后果 |
+| --- | --- | --- |
+| `AGENT_WORKSPACE_ROOT` | 工作区根目录 | 用 `/tmp/apos-workspaces` |
+| `APOS_ARCHIVE_ROOT` | 本地归档根 | `local` 类工作区退回「不交货」，并如实标 `persisted: false` |
+| `APOS_LOCAL_MOUNT_ROOTS` | 允许挂载的宿主目录白名单（`:` 分隔） | 不限制 —— 任何被登记的路径都能挂 |
+| `APOS_WORKSPACE_PUSH_ON_FAILURE` | 失败的 Run 也推送分支 | 失败改动只留在镜像的本地分支上 |
+| `APOS_WORKSPACE_KEEP_LOCAL_BRANCHES` | 推送成功后保留镜像里的本地分支 | 推送成功即删除（远端已有一份） |
 
 ---
 

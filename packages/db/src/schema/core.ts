@@ -629,6 +629,86 @@ export const repositories = pgTable(
 );
 
 /**
+ * 非 Git 的工作区来源 —— 对象存储 bucket 与宿主机目录。
+ *
+ * ★★ 为什么不塞进 repositories。
+ *
+ *   那张表的每一列都是 git 概念：remoteUrl、defaultBranch、branchPrefix、
+ *   sshKnownHosts。一个 S3 bucket 塞进去要给这些列填占位符，而占位符会
+ *   一路流到界面上（「默认分支：main」）和 prompt 里 —— 这正是规划任务
+ *   曾经用 branch:'planning' 假装自己是 git 仓库时踩过的坑。
+ *
+ * ★ ResourceScope 里用 `kind: 'dataset'` 引用它，与仓库的 `kind: 'repo'`
+ *   分开。「授权了什么」在权限快照里因此是自解释的。
+ */
+export const storageTargets = pgTable(
+  'storage_targets',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    /** 项目级；为空表示组织级共享 */
+    projectId: uuid().references(() => projects.id),
+
+    /** ResourceScope.ref 用的稳定标识 */
+    ref: text().notNull(),
+    name: text().notNull(),
+    /** 'object_storage' | 'local' */
+    kind: text().notNull(),
+
+    // ── object_storage ────────────────────────────────────────────────
+    endpoint: text(),
+    region: text().notNull().default('us-east-1'),
+    bucket: text(),
+    /** 只挂这个前缀下的对象；空串表示整个 bucket */
+    prefix: text().notNull().default(''),
+    /**
+     * path-style（`host/bucket/key`）还是 virtual-host-style。
+     *
+     * ★ 默认 true：MinIO、Ceph、自建网关基本只支持 path-style，
+     *   而 AWS 两种都支持。反过来默认的话，自建端点的表现是 DNS 解析失败 ——
+     *   完全不指向「寻址风格」这件事。
+     */
+    forcePathStyle: boolean().notNull().default(true),
+
+    // ── local ─────────────────────────────────────────────────────────
+    /**
+     * 宿主机上的绝对路径。
+     *
+     * ★ 能不能真的挂还要过部署方的白名单（APOS_LOCAL_MOUNT_ROOTS）——
+     *   登记是管理员在界面上做的事，而一条填成 `/` 的登记等于把整台机器
+     *   交给 Agent。库里存意图，环境里存闸门。
+     */
+    rootPath: text(),
+
+    // ── 公共 ──────────────────────────────────────────────────────────
+    /** 对象存储是 `accessKeyId:secretAccessKey`。★ 同样只存引用，不存明文 */
+    credentialRef: text(),
+    credentialHint: text(),
+
+    /** 只读挂载时为 false —— 交货阶段据此拒绝写回 */
+    writable: boolean().notNull().default(false),
+
+    status: text().notNull().default('active'),
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex('storage_targets_org_ref_idx').on(t.orgId, t.ref),
+    check('storage_targets_kind_check', sql`${t.kind} in ('object_storage', 'local')`),
+    /**
+     * ★ 两类各自的必填列在库里就卡住。少一个 bucket 的对象存储登记，
+     *   现象是派发时报「挂载失败」，而管理员看着那条登记觉得一切正常。
+     */
+    check(
+      'storage_targets_shape_check',
+      sql`(${t.kind} = 'object_storage' and ${t.endpoint} is not null and ${t.bucket} is not null)
+          or (${t.kind} = 'local' and ${t.rootPath} is not null)`,
+    ),
+  ],
+);
+
+/**
  * 项目工程约定 —— prompt 三层里的第三层（[08](docs/product/pages/08-agent-workspace.md) 之外的补充）。
  *
  * ★ 刻意不做成「Agent 的 system prompt 文本框」：编码规范是**项目**属性，
@@ -778,14 +858,31 @@ export const agentRuns = pgTable(
        *   `rm -rf` 掉 —— 镜像里的 worktree 登记会残留到下一次
        *   `worktree prune`，而如果这个仓库再没有新 Run，就永远残留。
        *
-       * ★ 可选：升级瞬间还在跑的 Run 落的是旧结构。读的时候一律走
-       *   normalizeMounts() 回退到主路径，等 in-flight 的 Run 排空
-       *   （约一个发布周期）后可以改成必填。
+       * ★ 迁移 0020 已经把老行回填出 mounts。仍留可选，是因为滚动发布
+       *   期间可能还有老进程在写老结构的行 —— 那不是「正确性依赖」，
+       *   是发布窗口的保险。
        */
       mounts?: Array<{
         path: string;
-        repoId: string;
         role: 'primary' | 'reference';
+        writable?: boolean;
+        /** 挂载点的来源描述；旧结构没有，按 git 解释 */
+        source?: {
+          kind: 'git' | 'empty' | 'local' | 'object_storage';
+          identifier: string;
+          label: string;
+          baseVersion: string | null;
+        };
+        /**
+         * repositories.id 或 storage_targets.id。
+         *
+         * ★ 交货时要拿它回查 remoteUrl / endpoint 与凭证引用。存 id 而不是
+         *   把整份描述连同凭证引用抄进来 —— 那等于把凭证引用复制一份到
+         *   agent_runs 表，而那张表的读取面比 repositories 宽得多。
+         */
+        targetId?: string;
+        /** @deprecated 旧结构里的仓库 id，等价于 targetId */
+        repoId?: string;
       }>;
       /** 结束时回填 */
       headCommit?: string | null;

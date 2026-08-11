@@ -8,8 +8,8 @@ import {
   type WorkspaceCheckResult,
 } from '@apos/contracts';
 import { runCheck } from './check';
-import type { SourceMaterializer } from './sources/types';
-import type { Publisher, ReleaseContext } from './publishers/types';
+import type { SourceMaterializer } from './types';
+import type { Publisher, ReleaseContext } from './publisher-types';
 
 export interface PipelineDeps {
   sources: Map<SourceKind, SourceMaterializer>;

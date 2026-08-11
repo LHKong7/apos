@@ -35,6 +35,14 @@ x-app-env: &app-env
   APOS_SECRET_KEY: ${APOS_SECRET_KEY:-}
   AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-/var/lib/apos/workspaces}
   APOS_WORKSPACE_PUSH_ON_FAILURE: ${APOS_WORKSPACE_PUSH_ON_FAILURE:-false}
+  # 本地目录类工作区的归档根。★ 必须与 AGENT_WORKSPACE_ROOT 不同且在持久卷上 ——
+  # 落在工作区根下面的话，孤儿清理会连同工作树一起把归档删掉，
+  # 而那时用户已经在产物页上看到「已归档」了。不配则这类工作区如实标为未持久化。
+  APOS_ARCHIVE_ROOT: ${APOS_ARCHIVE_ROOT:-/var/lib/apos/archive}
+  # ★★ 允许挂载的宿主目录白名单（: 分隔）。「登记一个本地目录」是管理员在界面上
+  # 做的事，而一条填成 / 的登记等于把整台机器交给 Agent。库里存意图，环境里存闸门 ——
+  # 拿到数据库写权限的人改不动这一条。不配表示不限制。
+  APOS_LOCAL_MOUNT_ROOTS: ${APOS_LOCAL_MOUNT_ROOTS:-}
   RUN_HEARTBEAT_TIMEOUT_MS: ${RUN_HEARTBEAT_TIMEOUT_MS:-90000}
   INTEGRATION_MEMORY_ADAPTERS: ${INTEGRATION_MEMORY_ADAPTERS:-}
   GITHUB_INTEGRATION_TOKEN: ${GITHUB_INTEGRATION_TOKEN:-}
@@ -122,6 +130,8 @@ services:
       #   都会派发任务，各自准备工作区。两边看到的不是同一份目录的话，
       #   api 派出去的 Run 会在 worker 侧找不到自己的工作树
       - workspaces:/var/lib/apos/workspaces
+      # ★ 归档是**另一个**卷：工作区卷会被孤儿清理扫，归档不能跟着一起没
+      - archive:/var/lib/apos/archive
     ports:
       # 只暴露这一个端口，它同时提供前端页面与 API
       - '${APOS_PUBLIC_PORT:-8080}:3000'
@@ -144,6 +154,7 @@ services:
       PROCESS_ROLE: worker
     volumes:
       - workspaces:/var/lib/apos/workspaces
+      - archive:/var/lib/apos/archive
     # worker 不监听端口，没有 HTTP 健康检查可做；
     # 进程退出即由 restart: unless-stopped 拉起
 
@@ -153,3 +164,7 @@ volumes:
   # Agent 的代码工作区：<root>/mirrors 是仓库镜像缓存（重建代价高，
   # 必须持久化），<root>/runs 是每个 Run 的独立工作树（可随时清空）
   workspaces:
+  # 本地目录类工作区的产出归档。★ 独立成卷而不是放进 workspaces 下面 ——
+  # 孤儿清理会把 <root>/runs 底下没人认领的目录删掉，归档跟它同卷迟早会被误伤，
+  # 而那时产物页上已经写着「已归档」了
+  archive:

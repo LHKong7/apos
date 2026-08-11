@@ -1,5 +1,5 @@
 import type { ChangeSet, PublishResult, Workspace } from '@apos/contracts';
-import type { Publisher, ReleaseContext } from './types';
+import type { Publisher, ReleaseContext } from '../publisher-types';
 
 /**
  * 不交货 —— 产出留在本地目录，由上层按变更集自行收集。

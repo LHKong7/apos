@@ -258,10 +258,49 @@ async function recordWorkspaceArtifact(
     return;
   }
 
+  if (published.kind === 'object_storage') {
+    await db.insert(artifacts).values({
+      ...base,
+      title: `${published.bucket}/${published.prefix}（${published.uploaded} 个对象）`,
+      // ★ 认得出控制台地址才算 external；认不出就没有可点开的东西
+      storage: published.url ? 'external' : 'inline',
+      externalUrl: published.url,
+      storageKey: `${published.bucket}/${published.prefix}`,
+      metadata: {
+        source: { kind: 'object_storage', bucket: published.bucket, prefix: published.prefix },
+        uploaded: published.uploaded,
+        removed: published.removed,
+        changedFiles: changes.total,
+        changes: changeSet,
+        persisted: published.persisted,
+        note: published.note,
+      },
+    });
+    return;
+  }
+
+  if (published.kind === 'local') {
+    await db.insert(artifacts).values({
+      ...base,
+      title: `工作区产出（${published.files} 个文件）`,
+      storage: 'inline',
+      externalUrl: null,
+      storageKey: published.archivePath,
+      metadata: {
+        source: { kind: 'local', archivePath: published.archivePath },
+        changedFiles: changes.total,
+        changes: changeSet,
+        persisted: published.persisted,
+        note: published.note,
+      },
+    });
+    return;
+  }
+
   /**
-   * ★ 非 Git 后端：产出在一个本地目录里，没有可点开的链接。
-   *   如实写明位置与「未持久化」，而不是给一个假的 externalUrl ——
-   *   点开 404 比没有链接更糟。
+   * ★ 没有交货后端：产出只在一个临时工作目录里，没有可点开的链接，
+   *   而且工作区收尾就会被回收。如实写明「未持久化」，
+   *   而不是给一个假的 externalUrl —— 点开 404 比没有链接更糟。
    */
   await db.insert(artifacts).values({
     ...base,
@@ -272,7 +311,7 @@ async function recordWorkspaceArtifact(
       source: { kind: published.kind },
       changedFiles: changes.total,
       changes: changeSet,
-      persisted: published.kind === 'none' ? published.persisted : true,
+      persisted: published.persisted,
       note: published.note,
     },
   });

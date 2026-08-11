@@ -19,7 +19,7 @@
 | 08 | [前端架构](08-frontend-architecture.md) | React 分层、实时数据、性能 | ✅ |
 | 09 | [身份、权限与安全](09-security.md) | Identity 模型、RBAC/ABAC、审计、密钥 | ❌ |
 | 10 | [MVP 实施计划](10-mvp-plan.md) | 分阶段交付、里程碑、风险 | ❌ |
-| 11 | [工作区抽象](11-workspace-abstraction.md) | Agent 工作目录的铺料 / 交货分离、基线与变更集 | ❌ |
+| 11 | [工作区抽象](11-workspace-abstraction.md) | Agent 工作目录的铺料 / 交货分离、基线与变更集、四个后端 | ❌ |
 
 ---
 

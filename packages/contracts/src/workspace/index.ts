@@ -19,8 +19,17 @@ import { z } from 'zod';
  *   而把它们捆进一个 Provider 接口就表达不了。
  */
 
-/** 铺料后端种类。object_storage 目前只占位，没有实现（见 docs/tech/11 §6） */
-export const SourceKind = z.enum(['git', 'empty', 'object_storage']);
+/**
+ * 铺料后端种类。
+ *
+ * | 种类 | 内容从哪来 | 基线 |
+ * | --- | --- | --- |
+ * | `git` | 镜像 + worktree | commit sha |
+ * | `empty` | 建一个空目录 | 文件清单快照 |
+ * | `local` | 复制宿主机上一个已登记的目录 | 文件清单快照 |
+ * | `object_storage` | 从 S3 兼容端点同步下来 | ETag 清单 |
+ */
+export const SourceKind = z.enum(['git', 'empty', 'local', 'object_storage']);
 export type SourceKind = z.infer<typeof SourceKind>;
 
 /**
@@ -135,7 +144,21 @@ export type PublishResult =
       kind: 'object_storage';
       bucket: string;
       prefix: string;
-      objects: number;
+      /** 上传的对象数 */
+      uploaded: number;
+      /** 删除的对象数 */
+      removed: number;
+      /** 认不出可点开的控制台地址时为 null —— 不编一个打不开的链接 */
+      url: string | null;
+      persisted: boolean;
+      note: string;
+    }
+  | {
+      kind: 'local';
+      /** 归档落在哪 */
+      archivePath: string;
+      files: number;
+      persisted: boolean;
       note: string;
     }
   | {

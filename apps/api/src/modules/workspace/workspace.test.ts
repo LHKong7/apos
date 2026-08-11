@@ -1,17 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, artifacts, repositories } from '@apos/db';
+import { agentRuns, artifacts, repositories, storageTargets } from '@apos/db';
 import type { AgentPermissions } from '@apos/contracts';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent } from '../../test/agent-fixtures';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { dispatchRun } from '../agent/dispatch';
 import { ingestRunEvent } from '../agent/ingest';
-import { git, probeGit } from './git';
+import { git, probeGit } from '@apos/workspace-providers';
 import { buildBranchName, WorkspaceService } from './index';
 
 const db = testDb();
@@ -589,6 +589,141 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
     const rows = await db.select().from(artifacts).where(eq(artifacts.runId, runId));
     expect(rows).toHaveLength(0);
+  });
+
+  /**
+   * ★ dataset 类范围解析到 storage_targets，而不是硬塞进 repositories。
+   *   一个本地目录塞进那张表要给 remoteUrl / defaultBranch 填占位符，
+   *   而占位符会一路流到界面和 prompt 里 —— 这正是规划任务曾经踩过的坑。
+   */
+  it('本地目录登记为存储目标后能被挂载，产出归档到工作区之外', async () => {
+    const hostDir = join(root, 'host', 'sales');
+    await mkdir(hostDir, { recursive: true });
+    await writeFile(join(hostDir, 'input.csv'), 'a,b\n1,2\n');
+    const archive = join(root, 'archive');
+
+    const p = new WorkspaceService(db, { root, archiveRoot: archive });
+    await db.insert(storageTargets).values({
+      orgId: fx.orgId,
+      ref: 'sales-data',
+      name: '销售数据',
+      kind: 'local',
+      rootPath: hostDir,
+      writable: true,
+      createdBy: fx.userId,
+    });
+
+    const { runId, result } = await acquireFor(p, {
+      allowedTools: ['Read', 'Edit'],
+      deniedTools: [],
+      resourceScopes: [{ kind: 'dataset', ref: 'sales-data', access: 'write' }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ws = result.workspace!;
+    // ★ 不是 git 工作区，所以 vcs 为 null —— prompt 会据此换一套说法
+    expect(ws.vcs).toBeNull();
+    expect(await readFile(join(ws.path, 'input.csv'), 'utf8')).toContain('1,2');
+
+    await new Promise((r) => setTimeout(r, 5));
+    await writeFile(join(ws.path, 'report.md'), '# 分析结果\n');
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+
+    expect(release.changes.added).toEqual(['report.md']);
+    expect(release.published.kind).toBe('local');
+    if (release.published.kind !== 'local') return;
+    expect(release.published.persisted).toBe(true);
+    // 归档在工作区之外，工作区目录已被回收
+    expect(await readFile(join(archive, runId, 'report.md'), 'utf8')).toContain('分析结果');
+    await expect(stat(ws.path)).rejects.toThrow();
+    // 源目录没被 Agent 改动
+    await expect(stat(join(hostDir, 'report.md'))).rejects.toThrow();
+  });
+
+  /**
+   * ★ 没配归档目录时退回「不交货」并如实说明 —— LocalPublisher 的全部价值
+   *   就是把东西搬到工作区之外，没有归档目录它搬不到任何地方。
+   */
+  it('没配归档目录时不谎报已持久化', async () => {
+    const hostDir = join(root, 'host2');
+    await mkdir(hostDir, { recursive: true });
+    await writeFile(join(hostDir, 'a.txt'), 'a\n');
+
+    const p = new WorkspaceService(db, { root });
+    await db.insert(storageTargets).values({
+      orgId: fx.orgId,
+      ref: 'plain-dir',
+      name: '目录',
+      kind: 'local',
+      rootPath: hostDir,
+      writable: true,
+      createdBy: fx.userId,
+    });
+
+    const { runId, result } = await acquireFor(p, {
+      allowedTools: ['Read'],
+      deniedTools: [],
+      resourceScopes: [{ kind: 'dataset', ref: 'plain-dir', access: 'write' }],
+    });
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'out.txt'), 'x\n');
+
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(release.published.kind).toBe('none');
+    if (release.published.kind !== 'none') return;
+    expect(release.published.persisted).toBe(false);
+  });
+
+  it('数据集没登记时报错指向「存储目标」而不是「代码仓库」', async () => {
+    const p = new WorkspaceService(db, { root });
+    const { result } = await acquireFor(p, {
+      allowedTools: ['Read'],
+      deniedTools: [],
+      resourceScopes: [{ kind: 'dataset', ref: 'ghost-bucket', access: 'read' }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('没有在「存储目标」里登记');
+  });
+
+  /** ★ 交货只对主挂载做：既挂仓库又挂数据集时，产出该进仓库分支而不是覆盖数据集 */
+  it('同时挂仓库与数据集时，仓库是主挂载、数据集是只读参考', async () => {
+    const hostDir = join(root, 'host3');
+    await mkdir(hostDir, { recursive: true });
+    await writeFile(join(hostDir, 'ref.csv'), 'x\n');
+
+    const p = new WorkspaceService(db, { root });
+    await registerRepo();
+    await db.insert(storageTargets).values({
+      orgId: fx.orgId,
+      ref: 'lookup',
+      name: '查表数据',
+      kind: 'local',
+      rootPath: hostDir,
+      createdBy: fx.userId,
+    });
+
+    const { runId, result } = await acquireFor(p, {
+      allowedTools: ['Read', 'Edit'],
+      deniedTools: [],
+      resourceScopes: [
+        { kind: 'dataset', ref: 'lookup', access: 'read' },
+        { kind: 'repo', ref: 'order-service', access: 'write' },
+      ],
+    });
+    if (!result.ok) throw new Error('acquire failed');
+
+    // 仓库当主挂载（有 vcs），数据集挂成只读参考
+    expect(result.workspace!.vcs?.repoRef).toBe('order-service');
+    expect(result.workspace!.additionalPaths).toHaveLength(1);
+    expect(await readFile(join(result.workspace!.additionalPaths[0]!, 'ref.csv'), 'utf8')).toBe('x\n');
+
+    await writeFile(join(result.workspace!.path, 'fix.ts'), 'x\n');
+    const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
+    expect(release.published.kind).toBe('git');
+    expect(release.pushed).toBe(true);
   });
 
   it('派发链路端到端：Run 拿到真实工作目录', async () => {

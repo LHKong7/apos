@@ -1,9 +1,8 @@
-import type { Database } from '@apos/db';
 import type { ChangeSet, PublishResult, Workspace } from '@apos/contracts';
-import { git } from '../git';
-import { withRepoAuth } from '../credentials';
-import type { GitMaterializer } from '../sources/git';
-import type { Publisher, ReleaseContext } from './types';
+import { git } from './cli';
+import type { GitMaterializer } from './source';
+import type { Diagnose } from '../ports';
+import type { Publisher, ReleaseContext } from '../publisher-types';
 
 const OUTCOME_LABEL: Record<ReleaseContext['outcome'], string> = {
   completed: '成功',
@@ -22,9 +21,8 @@ export class GitPublisher implements Publisher {
   readonly kind = 'git' as const;
 
   constructor(
-    private readonly db: Database,
     private readonly source: GitMaterializer,
-    private readonly options: { onDiagnostic?: (message: string, detail?: unknown) => void } = {},
+    private readonly options: { onDiagnostic?: Diagnose } = {},
   ) {}
 
   async publish(ws: Workspace, changes: ChangeSet, ctx: ReleaseContext): Promise<PublishResult> {
@@ -39,7 +37,7 @@ export class GitPublisher implements Publisher {
      *   而副本和事实不一致时（比如收尾逻辑改过一轮）按副本推会推错分支。
      */
     const branch = (await git.currentBranch(primary.path)) ?? '';
-    const repo = await this.source.loadRepo(primary.source.identifier);
+    const remote = await this.source.loadRemote(primary.source.identifier);
     const notes: string[] = [];
 
     let headCommit: string | null = null;
@@ -62,10 +60,10 @@ export class GitPublisher implements Publisher {
       headCommit !== null &&
       (ctx.outcome === 'completed' || process.env['APOS_WORKSPACE_PUSH_ON_FAILURE'] === 'true');
 
-    if (shouldPush && repo && branch) {
+    if (shouldPush && remote && branch) {
       try {
-        await withRepoAuth(this.db, repo, (auth) =>
-          git.push(primary.path, repo.remoteUrl, branch, auth),
+        await this.source.withAuth(remote, (auth) =>
+          git.push(primary.path, remote.remoteUrl, branch, auth),
         );
         pushed = true;
         notes.push(`已推送分支 ${branch}`);
@@ -83,7 +81,7 @@ export class GitPublisher implements Publisher {
       branch,
       headCommit,
       pushed,
-      url: repo ? branchUrl(repo.remoteUrl, branch) : null,
+      url: remote ? branchUrl(remote.remoteUrl, branch) : null,
       note: notes.join('；'),
     };
   }

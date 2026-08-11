@@ -1,7 +1,5 @@
-import type { repositories } from '@apos/db';
 import type { ChangeSet, Mount, SourceKind } from '@apos/contracts';
-
-export type RepoRow = typeof repositories.$inferSelect;
+import type { GitRemoteDescriptor, LocalDirDescriptor, ObjectStoreDescriptor } from './ports';
 
 /**
  * 一次挂载的请求。
@@ -15,8 +13,12 @@ export interface MountSpec {
   writable: boolean;
   /** 目标绝对路径 */
   path: string;
-  /** git 后端：从哪个仓库挂 */
-  repo?: RepoRow;
+  /** git 后端：从哪个远端挂 */
+  remote?: GitRemoteDescriptor;
+  /** object_storage 后端：从哪个 bucket/prefix 挂 */
+  store?: ObjectStoreDescriptor;
+  /** local 后端：从宿主机哪个目录挂 */
+  dir?: LocalDirDescriptor;
   /** git 后端：可写挂载要开的分支；不给则挂 detached */
   branch?: string;
   /** empty 后端：基线快照按它命名 */

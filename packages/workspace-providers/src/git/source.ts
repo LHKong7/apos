@@ -1,11 +1,25 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Database } from '@apos/db';
 import type { ChangeSet, Mount } from '@apos/contracts';
-import { git, GitError, probeGit } from '../git';
-import { withRepoAuth } from '../credentials';
+import { git, GitError, probeGit } from './cli';
+import { withRemoteAuth } from './auth';
 import { mirrorDir } from '../paths';
-import type { MountSpec, RepoRow, SourceMaterializer } from './types';
+import type {
+  Diagnose,
+  GitRemoteDescriptor,
+  HostKeyStore,
+  RemoteResolver,
+  SecretResolver,
+} from '../ports';
+import type { MountSpec, SourceMaterializer } from '../types';
+
+export interface GitMaterializerDeps {
+  root: string;
+  secrets: SecretResolver;
+  remotes: RemoteResolver;
+  hostKeys?: HostKeyStore;
+  onDiagnostic?: Diagnose;
+}
 
 /**
  * Git 铺料后端。
@@ -22,13 +36,7 @@ export class GitMaterializer implements SourceMaterializer {
   private mirrorLocks = new Map<string, Promise<unknown>>();
   private gitReady: Promise<{ ok: boolean; problem: string | null }> | null = null;
 
-  constructor(
-    private readonly db: Database,
-    private readonly options: {
-      root: string;
-      onDiagnostic?: (message: string, detail?: unknown) => void;
-    },
-  ) {}
+  constructor(private readonly deps: GitMaterializerDeps) {}
 
   /** git 可用性只探一次，结果缓存 —— 每次派发都跑一遍 `git --version` 是浪费 */
   async ensureReady(): Promise<{ ok: boolean; problem: string | null }> {
@@ -56,10 +64,10 @@ export class GitMaterializer implements SourceMaterializer {
    *   在镜像里永久堆积垃圾。
    */
   async materialize(spec: MountSpec): Promise<Mount> {
-    const repo = spec.repo;
-    if (!repo) throw new GitError('git 挂载缺少仓库信息', ['materialize'], '');
+    const remote = spec.remote;
+    if (!remote) throw new GitError('git 挂载缺少远端信息', ['materialize'], '');
 
-    const mirror = mirrorDir(this.options.root, repo.id);
+    const mirror = mirrorDir(this.deps.root, remote.id);
 
     /**
      * ★ 认证上下文包住整段镜像操作。
@@ -67,30 +75,30 @@ export class GitMaterializer implements SourceMaterializer {
      *   SSH 那条路 ssh-agent 是个进程，起点终点必须成对；把它包在这里，
      *   clone/fetch 共用同一个 agent，也就只喂一次私钥。
      */
-    const baseCommit = await withRepoAuth(this.db, repo, (auth) =>
-      this.withMirrorLock(repo.id, async () => {
+    const baseCommit = await this.withAuth(remote, (auth) =>
+      this.withMirrorLock(remote.id, async () => {
         if (await exists(mirror)) {
           await git.updateMirror(mirror, auth);
         } else {
           await mkdir(dirname(mirror), { recursive: true });
-          await git.mirror(repo.remoteUrl, mirror, auth);
+          await git.mirror(remote.remoteUrl, mirror, auth);
         }
         // 上一轮异常退出可能留下失效的工作树登记
         await git.pruneWorktrees(mirror);
-        return git.resolveRef(mirror, repo.defaultBranch);
+        return git.resolveRef(mirror, remote.defaultBranch);
       }),
     );
 
     if (!baseCommit) {
       throw new GitError(
-        `仓库 ${repo.ref} 里找不到默认分支 ${repo.defaultBranch}`,
+        `仓库 ${remote.ref} 里找不到默认分支 ${remote.defaultBranch}`,
         ['rev-parse'],
         '',
       );
     }
 
     await mkdir(dirname(spec.path), { recursive: true });
-    await this.withMirrorLock(repo.id, () =>
+    await this.withMirrorLock(remote.id, () =>
       spec.branch
         ? git.addWorktree(mirror, spec.path, spec.branch, baseCommit)
         : git.addDetachedWorktree(mirror, spec.path, baseCommit),
@@ -103,8 +111,8 @@ export class GitMaterializer implements SourceMaterializer {
       source: {
         kind: 'git',
         // ★ 寻址用 id：仓库改名不该让本地对象库作废（见 paths.ts）
-        identifier: repo.id,
-        label: repo.ref,
+        identifier: remote.id,
+        label: remote.ref,
         baseVersion: baseCommit,
       },
     };
@@ -124,7 +132,7 @@ export class GitMaterializer implements SourceMaterializer {
     const deleted: string[] = [];
 
     for (const { code, file } of entries) {
-      // 两位状态码：索引态 + 工作区态。删除只要任一位是 D 且不是「删了又建」
+      // 两位状态码：索引态 + 工作区态
       if (code === '??' || code[0] === 'A') added.push(file);
       else if (code.includes('D')) deleted.push(file);
       else modified.push(file);
@@ -140,7 +148,7 @@ export class GitMaterializer implements SourceMaterializer {
   }
 
   async dispose(mount: Mount, opts: { keep?: boolean } = {}): Promise<void> {
-    const mirror = mirrorDir(this.options.root, mount.source.identifier);
+    const mirror = mirrorDir(this.deps.root, mount.source.identifier);
     try {
       await git.removeWorktree(mirror, mount.path);
     } catch {
@@ -156,21 +164,28 @@ export class GitMaterializer implements SourceMaterializer {
    *   一个正被工作树检出的分支。这就是它没有做进 dispose 或 publish
    *   任何一方的原因：它跨在两者中间。
    */
-  async deleteBranch(repoId: string, branch: string): Promise<void> {
-    await git.deleteBranch(mirrorDir(this.options.root, repoId), branch);
+  async deleteBranch(remoteId: string, branch: string): Promise<void> {
+    await git.deleteBranch(mirrorDir(this.deps.root, remoteId), branch);
   }
 
-  /** 仓库行，交货方要用它的 remoteUrl 与凭证 */
-  async loadRepo(repoId: string): Promise<RepoRow | null> {
-    const { repositories } = await import('@apos/db');
-    const { eq } = await import('drizzle-orm');
-    const [row] = await this.db.select().from(repositories).where(eq(repositories.id, repoId));
-    return row ?? null;
+  /** 交货方要用远端的 remoteUrl 与凭证 */
+  loadRemote(remoteId: string): Promise<GitRemoteDescriptor | null> {
+    return this.deps.remotes.byId(remoteId);
+  }
+
+  withAuth<T>(
+    remote: GitRemoteDescriptor,
+    fn: Parameters<typeof withRemoteAuth<T>>[2],
+  ): Promise<T> {
+    const deps: { secrets: SecretResolver; hostKeys?: HostKeyStore } = {
+      secrets: this.deps.secrets,
+    };
+    if (this.deps.hostKeys) deps.hostKeys = this.deps.hostKeys;
+    return withRemoteAuth(deps, remote, fn);
   }
 }
 
 async function exists(path: string): Promise<boolean> {
-  const { stat } = await import('node:fs/promises');
   try {
     await stat(path);
     return true;

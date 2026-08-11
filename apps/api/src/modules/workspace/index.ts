@@ -1,27 +1,41 @@
 import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
-import { agentRuns, repositories, type Database } from '@apos/db';
+import { agentRuns, repositories, storageTargets, type Database } from '@apos/db';
 import {
   NO_CHECK,
   type AgentPermissions,
+  type ChangeSet,
   type Mount,
   type PublishResult,
+  type ResourceScope,
   type RunWorkspace,
   type SourceKind,
-  type ChangeSet,
   type Workspace,
   type WorkspaceCheckResult,
 } from '@apos/contracts';
-import { GitError } from './git';
-import { mirrorDir, runDir, workspaceRoot } from './paths';
-import { GitMaterializer } from './sources/git';
-import { EmptyMaterializer } from './sources/empty';
-import { GitPublisher } from './publishers/git';
-import { NonePublisher } from './publishers/none';
-import { runReleasePipeline, type ReleaseOutcome } from './pipeline';
-import type { SourceMaterializer } from './sources/types';
-import type { Publisher, ReleaseContext } from './publishers/types';
+import {
+  EmptyMaterializer,
+  GitError,
+  GitMaterializer,
+  GitPublisher,
+  LocalMaterializer,
+  LocalPublisher,
+  NonePublisher,
+  ObjectStorageMaterializer,
+  ObjectStoragePublisher,
+  runDir,
+  runReleasePipeline,
+  workspaceRoot,
+  type GitRemoteDescriptor,
+  type LocalDirDescriptor,
+  type ObjectStoreDescriptor,
+  type Publisher,
+  type ReleaseContext,
+  type ReleaseOutcome,
+  type SourceMaterializer,
+} from '@apos/workspace-providers';
+import { resolveSecret } from '../security/secrets';
 
 export interface AcquireInput {
   runId: string;
@@ -58,72 +72,92 @@ export interface ReleaseResult {
   published: PublishResult;
 }
 
-/** 一个挂载点在库里的形态 */
-export interface WorkspaceMount {
-  path: string;
-  repoId: string;
-  role: 'primary' | 'reference';
-}
-
 type StoredWorkspace = NonNullable<(typeof agentRuns.$inferSelect)['workspace']>;
+type StoredMount = NonNullable<StoredWorkspace['mounts']>[number];
 
-/**
- * 读旧结构的工作区记录时补出 mounts。
- *
- * ★ 升级瞬间还在跑的 Run 落的是没有 mounts 的旧结构，直接读会得到 undefined，
- *   于是它们的工作树一个都回收不掉。回退到主路径至少保证主工作树被正常回收。
- *
- * ★ 所有 in-flight 的 Run 排空后（约一个发布周期）可以删掉这个函数，
- *   把 schema 里的 mounts 改成必填。
- */
-export function normalizeMounts(ws: StoredWorkspace): WorkspaceMount[] {
-  if (ws.mounts?.length) return ws.mounts;
-  return [{ path: ws.path, repoId: ws.repoId, role: 'primary' }];
+export interface WorkspaceServiceOptions {
+  /** 所有工作区的根目录 */
+  root?: string;
+  /**
+   * 本地目录归档根。不配则 local 类工作区退回「不交货」——
+   * 产出还在工作区里，但收尾就会被回收，所以要如实说明。
+   */
+  archiveRoot?: string;
+  /** 允许挂载的宿主目录白名单。不配表示不限制 */
+  localMountRoots?: string[];
+  onDiagnostic?: (message: string, detail?: unknown) => void;
 }
 
 /**
- * 工作区服务。
+ * 工作区服务 —— 后端在 `@apos/workspace-providers` 里，这一层只做**数据库适配**。
  *
- * ★★ 「工作区」= 一个本地目录 + 可换的两头，而不是「可替换的存储后端」。
+ * ★★ 「工作区」= 一个本地目录 + 可换的两头。平台派出去的是 headless CLI Agent，
+ *   它们无一例外要 `cd` 进一个目录再 `open()` 文件 —— 本地 POSIX 目录这一点
+ *   没有可替换性。可换的是铺料（内容从哪来）与交货（变化送到哪去），
+ *   两者独立可选。
  *
- *   平台派出去的是 headless CLI Agent，它们无一例外要 `cd` 进一个目录再
- *   `open()` 文件 —— **本地 POSIX 目录这一点没有可替换性**。可换的是：
- *     铺料（SourceMaterializer）：目录里的初始内容从哪来
- *     交货（Publisher）：        目录里的变化送到哪去
- *   两者独立可选，所以「从 Git 拉代码、把报告传对象存储」这种组合成立。
- *
- * ★ 收尾顺序（算变更集 → 核验 → 交货 → 回收）对所有后端都一样，
- *   实现在 pipeline.ts 里一份，不在每个后端里各抄一遍。
+ * ★ 这一层负责的三件事，恰好就是 providers 包声明的三个注入口：
+ *   把 `secret://…` 引用解成明文、按 id 回查远端描述、存 SSH 主机公钥。
+ *   除此之外它不掺和任何后端细节。
  */
 export class WorkspaceService {
   private readonly sources = new Map<SourceKind, SourceMaterializer>();
   private readonly publishers = new Map<string, Publisher>();
   private readonly gitSource: GitMaterializer;
+  private readonly objectSource: ObjectStorageMaterializer;
+  private readonly hasArchive: boolean;
 
   constructor(
     private readonly db: Database,
-    private readonly options: {
-      /** 所有工作区的根目录 */
-      root?: string;
-      onDiagnostic?: (message: string, detail?: unknown) => void;
-    } = {},
+    private readonly options: WorkspaceServiceOptions = {},
   ) {
     const root = this.root;
-    this.gitSource = new GitMaterializer(db, { root, onDiagnostic: options.onDiagnostic });
+    const secrets = { resolve: resolveSecret };
+    const onDiagnostic = options.onDiagnostic;
+
+    this.gitSource = new GitMaterializer({
+      root,
+      secrets,
+      remotes: { byId: (id) => this.loadRemote(id) },
+      hostKeys: { pin: (id, knownHosts) => this.pinHostKey(id, knownHosts) },
+      ...(onDiagnostic ? { onDiagnostic } : {}),
+    });
+    this.objectSource = new ObjectStorageMaterializer({
+      root,
+      secrets,
+      ...(onDiagnostic ? { onDiagnostic } : {}),
+    });
+
     this.sources.set('git', this.gitSource);
-    this.sources.set('empty', new EmptyMaterializer({ root, onDiagnostic: options.onDiagnostic }));
-    this.publishers.set(
-      'git',
-      new GitPublisher(db, this.gitSource, { onDiagnostic: options.onDiagnostic }),
+    this.sources.set('empty', new EmptyMaterializer({ root, ...(onDiagnostic ? { onDiagnostic } : {}) }));
+    this.sources.set(
+      'local',
+      new LocalMaterializer({
+        root,
+        // ★ 空数组 = 没配 = 不限制；LocalMaterializer 里也按「空则放行」处理，
+        //   两处保持一致，免得「配了个空值」变成「全部拒绝挂载」
+        ...(options.localMountRoots?.length ? { allowedRoots: options.localMountRoots } : {}),
+        ...(onDiagnostic ? { onDiagnostic } : {}),
+      }),
     );
+    this.sources.set('object_storage', this.objectSource);
+
+    this.publishers.set('git', new GitPublisher(this.gitSource, { ...(onDiagnostic ? { onDiagnostic } : {}) }));
     this.publishers.set('none', new NonePublisher());
+
+    this.hasArchive = Boolean(options.archiveRoot);
+    if (options.archiveRoot) {
+      this.publishers.set(
+        'local',
+        new LocalPublisher({ archiveRoot: options.archiveRoot, ...(onDiagnostic ? { onDiagnostic } : {}) }),
+      );
+    }
   }
 
   private get root(): string {
     return workspaceRoot(this.options.root);
   }
 
-  /** 让子类/Stage 3 的空目录后端接进来 */
   registerSource(source: SourceMaterializer): void {
     this.sources.set(source.kind, source);
   }
@@ -133,133 +167,164 @@ export class WorkspaceService {
   }
 
   /**
-   * 派发前调用。返回 null 的 workspace 表示「这个任务不需要代码仓库」，
-   * 是合法情况（调研、文档类任务），不是错误。
+   * 派发前调用。返回 null 的 workspace 表示「这个任务不需要任何外部资源」，
+   * 是合法情况（调研、纯文档类任务），不是错误。
    */
   async acquire(input: AcquireInput): Promise<AcquireResult> {
-    const scopes = input.permissions.resourceScopes.filter(
+    const repoScopes = input.permissions.resourceScopes.filter(
       (s) => s.kind === 'repo' && s.access !== 'none',
     );
-    if (scopes.length === 0) {
-      return { ok: true, workspace: null, note: '该 Agent 未授予任何仓库范围，本次不供给工作区' };
+    const dataScopes = input.permissions.resourceScopes.filter(
+      (s) => s.kind === 'dataset' && s.access !== 'none',
+    );
+    if (repoScopes.length === 0 && dataScopes.length === 0) {
+      return { ok: true, workspace: null, note: '该 Agent 未授予任何仓库或数据集范围，本次不供给工作区' };
     }
 
-    const ready = await this.gitSource.ensureReady();
-    if (!ready.ok) {
-      return { ok: false, reason: `工作区供给不可用：${ready.problem}` };
+    if (repoScopes.length > 0) {
+      const ready = await this.gitSource.ensureReady();
+      if (!ready.ok) return { ok: false, reason: `工作区供给不可用：${ready.problem}` };
     }
 
-    const refs = scopes.map((s) => s.ref);
-    const rows = await this.db
-      .select()
-      .from(repositories)
-      .where(
-        and(
-          eq(repositories.orgId, input.orgId),
-          inArray(repositories.ref, refs),
-          eq(repositories.status, 'active'),
-          // 项目级仓库只对本项目可见；org 级（projectId 为空）对全组织可见
-          or(isNull(repositories.projectId), eq(repositories.projectId, input.projectId)),
-        ),
-      );
+    const repos = await this.loadRepos(input, repoScopes);
+    const stores = await this.loadStores(input, dataScopes);
 
-    const byRef = new Map(rows.map((r) => [r.ref, r]));
-    const missing = refs.filter((r) => !byRef.has(r));
-    if (missing.length === refs.length) {
+    const missingRepos = repoScopes.filter((s) => !repos.has(s.ref)).map((s) => s.ref);
+    const missingStores = dataScopes.filter((s) => !stores.has(s.ref)).map((s) => s.ref);
+    const missing = [...missingRepos, ...missingStores];
+    const resolvable = repoScopes.length + dataScopes.length - missing.length;
+
+    if (resolvable === 0) {
       /**
-       * ★ 「授权了仓库但仓库没登记」必须是硬失败。
+       * ★ 「授权了资源但资源没登记」必须是硬失败。
        *   放行的话 Agent 会在一个空目录里开工，然后信心十足地报告
        *   「未找到相关代码，已创建新实现」—— 这种失败比报错难查十倍。
+       *
+       * ★ 报错要指到**具体哪个登记页**去补。笼统说一句「资源没登记」，
+       *   管理员还得自己猜是去代码仓库那页还是存储目标那页。
        */
-      return {
-        ok: false,
-        reason: `Agent 被授予了仓库 ${missing.join('、')}，但这些仓库没有在「代码仓库」里登记，无法准备工作区`,
-      };
+      const parts: string[] = [];
+      if (missingRepos.length) {
+        parts.push(`${missingRepos.join('、')} 没有在「代码仓库」里登记`);
+      }
+      if (missingStores.length) {
+        parts.push(`${missingStores.join('、')} 没有在「存储目标」里登记`);
+      }
+      return { ok: false, reason: `准备工作区失败：${parts.join('；')}` };
     }
 
-    const writableScope = scopes.find((s) => s.access === 'write' && byRef.has(s.ref));
-    const primaryScope = writableScope ?? scopes.find((s) => byRef.has(s.ref))!;
-    const primary = byRef.get(primaryScope.ref)!;
-    const writable = primaryScope.access === 'write';
+    /**
+     * 主挂载：优先可写的仓库，其次可写的数据集，再次任意可解析的。
+     *
+     * ★ 仓库优先于数据集，是因为「交货」这件事只对主挂载做 —— 一个既挂了
+     *   代码仓库又挂了数据集的任务，产出该进仓库的分支，而不是覆盖数据集。
+     */
+    const candidates: Array<{ scope: ResourceScope; kind: 'repo' | 'dataset' }> = [
+      ...repoScopes.filter((s) => repos.has(s.ref)).map((s) => ({ scope: s, kind: 'repo' as const })),
+      ...dataScopes.filter((s) => stores.has(s.ref)).map((s) => ({ scope: s, kind: 'dataset' as const })),
+    ];
+    const primary =
+      candidates.find((c) => c.kind === 'repo' && c.scope.access === 'write') ??
+      candidates.find((c) => c.scope.access === 'write') ??
+      candidates[0]!;
 
-    const branch = buildBranchName(primary.branchPrefix, input.workItemTitle, input.runId);
-    const path = join(runDir(this.root, input.runId), primary.ref);
+    const writable = primary.scope.access === 'write';
+    const runRoot = runDir(this.root, input.runId);
+
+    let branch: string | null = null;
+    if (primary.kind === 'repo') {
+      branch = buildBranchName(repos.get(primary.scope.ref)!.branchPrefix, input.workItemTitle, input.runId);
+    }
 
     try {
-      const primaryMount = await this.gitSource.materialize({
-        role: 'primary',
+      const primaryMount = await this.mountFor(
+        primary,
+        repos,
+        stores,
+        runRoot,
+        input.runId,
+        'primary',
         writable,
-        path,
-        repo: primary,
         branch,
-      });
-      const mounts: Mount[] = [primaryMount];
-
-      // 其余可读仓库各挂一棵只读工作树，供 Agent 查阅
+      );
+      const mounts: Array<Mount & { targetId: string }> = [primaryMount];
       const additionalPaths: string[] = [];
-      for (const scope of scopes) {
-        if (scope.ref === primaryScope.ref) continue;
-        const repo = byRef.get(scope.ref);
-        if (!repo) continue;
-        const extraPath = join(runDir(this.root, input.runId), repo.ref);
+
+      for (const candidate of candidates) {
+        if (candidate.scope.ref === primary.scope.ref && candidate.kind === primary.kind) continue;
         try {
-          // ★ 不给 branch = 挂 detached：参考挂载的内容与基线相同，分支纯属垃圾
-          mounts.push(
-            await this.gitSource.materialize({
-              role: 'reference',
-              writable: false,
-              path: extraPath,
-              repo,
-            }),
+          const mount = await this.mountFor(
+            candidate,
+            repos,
+            stores,
+            runRoot,
+            input.runId,
+            'reference',
+            false,
+            null,
           );
-          additionalPaths.push(extraPath);
+          mounts.push(mount);
+          additionalPaths.push(mount.path);
         } catch (err) {
-          // 附属仓库挂不上不该拖垮整个 Run，但要留痕
-          this.diagnose(`附属仓库 ${repo.ref} 准备失败`, err);
+          // 附属资源挂不上不该拖垮整个 Run，但要留痕
+          this.diagnose(`附属资源 ${candidate.scope.ref} 准备失败`, err);
         }
       }
 
-      const baseCommit = primaryMount.source.baseVersion;
+      const repo = primary.kind === 'repo' ? repos.get(primary.scope.ref)! : null;
       const workspace: RunWorkspace = {
-        path,
+        path: primaryMount.path,
         writable,
         additionalPaths,
-        vcs: { repoRef: primary.ref, branch, baseBranch: primary.defaultBranch, baseCommit },
+        vcs:
+          repo && branch
+            ? {
+                repoRef: repo.ref,
+                branch,
+                baseBranch: repo.defaultBranch,
+                baseCommit: primaryMount.source.baseVersion,
+              }
+            : null,
       };
 
       await this.db
         .update(agentRuns)
         .set({
           workspace: {
-            repoRef: primary.ref,
-            repoId: primary.id,
-            branch,
-            baseBranch: primary.defaultBranch,
-            baseCommit,
-            path,
+            repoRef: repo?.ref ?? primary.scope.ref,
+            repoId: repo?.id ?? primaryMount.targetId,
+            branch: branch ?? '',
+            baseBranch: repo?.defaultBranch ?? '',
+            baseCommit: primaryMount.source.baseVersion,
+            path: primaryMount.path,
             mounts: mounts.map((m) => ({
               path: m.path,
-              repoId: m.source.identifier,
               role: m.role,
+              writable: m.writable,
+              source: m.source,
+              targetId: m.targetId,
             })),
           },
         })
         .where(eq(agentRuns.id, input.runId));
 
-      const note = missing.length
-        ? `工作区就绪（${primary.ref}@${branch}）；${missing.join('、')} 未登记，已跳过`
-        : `工作区就绪（${primary.ref}@${branch}${writable ? '，可写' : '，只读'}）`;
+      const label = primaryMount.source.label + (branch ? `@${branch}` : '');
+      const note =
+        (missing.length
+          ? `工作区就绪（${label}）；${missing.join('、')} 未登记，已跳过`
+          : `工作区就绪（${label}${writable ? '，可写' : '，只读'}）`) +
+        (mounts.length > 1 ? `，另挂 ${mounts.length - 1} 个只读参考` : '');
 
       return { ok: true, workspace, note };
     } catch (err) {
       await this.cleanupRunDir(input.runId).catch(() => undefined);
-      const message = err instanceof GitError ? err.message : String(err);
+      const message = err instanceof GitError ? err.message : errText(err);
       return { ok: false, reason: `准备工作区失败：${message}` };
     }
   }
 
   /**
-   * Run 结束后调用：算变更集 → 核验 → 交货 → 回收工作树。
+   * Run 结束后调用：算变更集 → 核验 → 交货 → 回收挂载。
    *
    * ★ 幂等：重复调用不会重复提交，也不会因为工作树已经没了而抛异常。
    *   run-supervisor 判超时和事件流报 run_ended 可能同时到达。
@@ -278,24 +343,26 @@ export class WorkspaceService {
         pushed: ws.pushed === true,
         headCommit: ws.headCommit ?? null,
         changedFiles: ws.changedFiles ?? 0,
-        branch: ws.branch,
+        branch: ws.branch || null,
       };
     }
 
     if (!(await exists(ws.path))) {
-      await this.finishWorkspace(input.runId, ws, {
-        headCommit: null,
-        pushed: false,
-        changedFiles: 0,
-      });
-      return { ...emptyRelease('工作区目录已不存在，跳过收尾'), branch: ws.branch };
+      await this.finishWorkspace(input.runId, ws, { headCommit: null, pushed: false, changedFiles: 0 });
+      return { ...emptyRelease('工作区目录已不存在，跳过收尾'), branch: ws.branch || null };
     }
 
-    const [repo] = await this.db.select().from(repositories).where(eq(repositories.id, ws.repoId));
+    const workspace = toWorkspace(ws, input.runId);
+    const primary = workspace.mounts.find((m) => m.role === 'primary');
+    const check = primary?.source.kind === 'git' ? await this.checkConfigFor(ws) : null;
 
     const outcome = await runReleasePipeline(
-      { sources: this.sources, publishers: this.publishers, onDiagnostic: this.options.onDiagnostic },
-      toWorkspace(ws, input.runId),
+      {
+        sources: this.sources,
+        publishers: this.publishersFor(ws),
+        ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
+      },
+      workspace,
       {
         runId: input.runId,
         outcome: input.outcome,
@@ -304,9 +371,9 @@ export class WorkspaceService {
         goal: run.goal,
       },
       {
-        publisher: 'git',
-        checkCommand: repo?.checkCommand ?? null,
-        checkTimeoutSeconds: repo?.checkTimeoutSeconds ?? 600,
+        publisher: this.publisherFor(primary),
+        checkCommand: check?.command ?? null,
+        checkTimeoutSeconds: check?.timeoutSeconds ?? 600,
       },
     );
 
@@ -327,7 +394,7 @@ export class WorkspaceService {
       pushed,
       headCommit,
       changedFiles: outcome.changes.total,
-      branch: git?.branch || ws.branch,
+      branch: git?.branch || ws.branch || null,
       note: outcome.notes.join('；'),
       check: outcome.check,
       changes: outcome.changes,
@@ -339,8 +406,8 @@ export class WorkspaceService {
    * 不落库的本地工作区。
    *
    * ★★ 为什么需要这条通道：规划 Run **刻意不在 agent_runs 里**
-   *   （理由见 planning/agent-provider.ts 顶部那段 —— agent_runs.work_item_id
-   *   是 NOT NULL 且带外键，而规划发生在工作项存在之前）。而上面的
+   *   （agent_runs.work_item_id 是 NOT NULL 且带外键，而规划发生在工作项
+   *   存在之前，完整理由见 planning/agent-provider.ts 顶部）。而上面的
    *   acquire/release 把状态写进 agent_runs.workspace，对它没有一行可写。
    *
    *   这是抽象里唯一一处真实的耦合点，所以显式开一条路，而不是让调用方
@@ -348,12 +415,9 @@ export class WorkspaceService {
    *   代价是规划任务拿到一个 branch:'planning' 的假 Git 工作区。
    */
   async acquireLocal(input: {
-    /** 工作区标识，快照按它命名 */
     id: string;
     runId: string;
-    /** 目标目录，调用方决定放哪 */
     path: string;
-    /** 记基线之前放平台自己的输入文件（任务书之类） */
     seed?: (path: string) => Promise<void>;
   }): Promise<{ workspace: Workspace; dispatch: RunWorkspace }> {
     const source = this.sources.get('empty')!;
@@ -366,13 +430,7 @@ export class WorkspaceService {
     });
 
     return {
-      workspace: {
-        id: input.id,
-        runId: input.runId,
-        root: input.path,
-        mounts: [mount],
-        writable: true,
-      },
+      workspace: { id: input.id, runId: input.runId, root: input.path, mounts: [mount], writable: true },
       // ★ vcs 为 null —— 这次执行真的不在版本控制下，prompt 会据此换一套说法
       dispatch: { path: input.path, writable: true, additionalPaths: [], vcs: null },
     };
@@ -385,7 +443,7 @@ export class WorkspaceService {
     opts: { keep?: boolean } = {},
   ): Promise<ReleaseOutcome> {
     return runReleasePipeline(
-      { sources: this.sources, publishers: this.publishers, onDiagnostic: this.options.onDiagnostic },
+      { sources: this.sources, publishers: this.publishers, ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}) },
       workspace,
       ctx,
       {
@@ -395,21 +453,6 @@ export class WorkspaceService {
         ...(opts.keep === undefined ? {} : { keepMounts: opts.keep }),
       },
     );
-  }
-
-  private async finishWorkspace(
-    runId: string,
-    ws: StoredWorkspace,
-    result: { headCommit: string | null; pushed: boolean; changedFiles: number },
-  ) {
-    await this.db
-      .update(agentRuns)
-      .set({ workspace: { ...ws, ...result } })
-      .where(eq(agentRuns.id, runId));
-  }
-
-  private async cleanupRunDir(runId: string) {
-    await rm(runDir(this.root, runId), { recursive: true, force: true });
   }
 
   /** 进程重启后清掉没人认领的工作树目录 */
@@ -432,30 +475,249 @@ export class WorkspaceService {
     return removed;
   }
 
-  /** 镜像目录，供诊断与运维脚本定位 */
-  mirrorPathFor(repoId: string): string {
-    return mirrorDir(this.root, repoId);
+  // ── 后端选择 ────────────────────────────────────────────────────────
+
+  /**
+   * 交货后端由**主挂载**的来源种类决定。
+   *
+   * ★ local 缺归档目录时退回「不交货」而不是假装成功：LocalPublisher 的
+   *   全部价值就是把东西搬到工作区之外，没有归档目录它搬不到任何地方。
+   */
+  private publisherFor(primary: Mount | undefined): string {
+    switch (primary?.source.kind) {
+      case 'git':
+        return 'git';
+      case 'object_storage':
+        return 'object_storage';
+      case 'local':
+        return this.hasArchive ? 'local' : 'none';
+      default:
+        return 'none';
+    }
+  }
+
+  // ── DB 适配（providers 包声明的三个注入口）────────────────────────
+
+  private async loadRemote(id: string): Promise<GitRemoteDescriptor | null> {
+    const [row] = await this.db.select().from(repositories).where(eq(repositories.id, id));
+    return row ? toRemote(row) : null;
+  }
+
+  private async pinHostKey(id: string, knownHosts: string): Promise<void> {
+    await this.db
+      .update(repositories)
+      .set({ sshKnownHosts: knownHosts, updatedAt: new Date() })
+      .where(eq(repositories.id, id));
+  }
+
+  /**
+   * 本次收尾用的交货后端。
+   *
+   * ★★ 对象存储那一支必须**按次构造**，不能像 git 那样全局注册一个。
+   *
+   *   交货时挂载点上只剩快照键，要拿它换回 endpoint 与凭证就得知道
+   *   `targetId` —— 而那个映射在本次 Run 落库的挂载清单里。做成全局单例
+   *   就得往实例上挂一个「当前是哪个 Run」的可变字段，而 supervisor 判超时
+   *   与事件流报 run_ended 本来就会并发进来：两次收尾一交错，
+   *   一个 Run 的产出就会传到另一个 Run 的 bucket 里。
+   *
+   *   闭包捕获本次的挂载清单，天然没有这个问题。
+   */
+  private publishersFor(ws: StoredWorkspace): Map<string, Publisher> {
+    const byIdentifier = new Map(
+      (ws.mounts ?? [])
+        .filter((m) => m.source?.identifier && m.targetId)
+        .map((m) => [m.source!.identifier, m.targetId!] as const),
+    );
+
+    const perRun = new Map(this.publishers);
+    perRun.set(
+      'object_storage',
+      new ObjectStoragePublisher(this.objectSource, {
+        resolveStore: async (mount) => {
+          const targetId = byIdentifier.get(mount.source.identifier);
+          if (!targetId) return null;
+          const [row] = await this.db
+            .select()
+            .from(storageTargets)
+            .where(eq(storageTargets.id, targetId));
+          return row ? toStore(row) : null;
+        },
+        ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
+      }),
+    );
+    return perRun;
+  }
+
+  // ── 内部 ────────────────────────────────────────────────────────────
+
+  private async loadRepos(input: AcquireInput, scopes: ResourceScope[]) {
+    if (scopes.length === 0) return new Map<string, typeof repositories.$inferSelect>();
+    const rows = await this.db
+      .select()
+      .from(repositories)
+      .where(
+        and(
+          eq(repositories.orgId, input.orgId),
+          inArray(repositories.ref, scopes.map((s) => s.ref)),
+          eq(repositories.status, 'active'),
+          // 项目级仓库只对本项目可见；org 级（projectId 为空）对全组织可见
+          or(isNull(repositories.projectId), eq(repositories.projectId, input.projectId)),
+        ),
+      );
+    return new Map(rows.map((r) => [r.ref, r]));
+  }
+
+  private async loadStores(input: AcquireInput, scopes: ResourceScope[]) {
+    if (scopes.length === 0) return new Map<string, typeof storageTargets.$inferSelect>();
+    const rows = await this.db
+      .select()
+      .from(storageTargets)
+      .where(
+        and(
+          eq(storageTargets.orgId, input.orgId),
+          inArray(storageTargets.ref, scopes.map((s) => s.ref)),
+          eq(storageTargets.status, 'active'),
+          or(isNull(storageTargets.projectId), eq(storageTargets.projectId, input.projectId)),
+        ),
+      );
+    return new Map(rows.map((r) => [r.ref, r]));
+  }
+
+  private async mountFor(
+    candidate: { scope: ResourceScope; kind: 'repo' | 'dataset' },
+    repos: Map<string, typeof repositories.$inferSelect>,
+    stores: Map<string, typeof storageTargets.$inferSelect>,
+    runRoot: string,
+    runId: string,
+    role: 'primary' | 'reference',
+    writable: boolean,
+    branch: string | null,
+  ): Promise<Mount & { targetId: string }> {
+    const path = join(runRoot, candidate.scope.ref);
+    const source = this.sources;
+
+    if (candidate.kind === 'repo') {
+      const repo = repos.get(candidate.scope.ref)!;
+      // ★ 不给 branch = 挂 detached：参考挂载的内容与基线相同，分支纯属垃圾
+      const mount = await source.get('git')!.materialize({
+        role,
+        writable,
+        path,
+        remote: toRemote(repo),
+        ...(branch ? { branch } : {}),
+        workspaceId: runId,
+      });
+      return { ...mount, targetId: repo.id };
+    }
+
+    const target = stores.get(candidate.scope.ref)!;
+    if (target.kind === 'object_storage') {
+      const mount = await source.get('object_storage')!.materialize({
+        role,
+        writable: writable && target.writable,
+        path,
+        store: toStore(target),
+        workspaceId: runId,
+      });
+      return { ...mount, targetId: target.id };
+    }
+
+    const mount = await source.get('local')!.materialize({
+      role,
+      writable: writable && target.writable,
+      path,
+      dir: toLocalDir(target),
+      workspaceId: runId,
+    });
+    return { ...mount, targetId: target.id };
+  }
+
+  /** 质量核验命令来自仓库登记；非 git 的主挂载没有这个概念 */
+  private async checkConfigFor(
+    ws: StoredWorkspace,
+  ): Promise<{ command: string | null; timeoutSeconds: number } | null> {
+    const targetId = primaryTargetId(ws);
+    if (!targetId) return null;
+    const [repo] = await this.db.select().from(repositories).where(eq(repositories.id, targetId));
+    if (!repo) return null;
+    return { command: repo.checkCommand, timeoutSeconds: repo.checkTimeoutSeconds };
+  }
+
+  private async finishWorkspace(
+    runId: string,
+    ws: StoredWorkspace,
+    result: { headCommit: string | null; pushed: boolean; changedFiles: number },
+  ) {
+    await this.db
+      .update(agentRuns)
+      .set({ workspace: { ...ws, ...result } })
+      .where(eq(agentRuns.id, runId));
+  }
+
+  private async cleanupRunDir(runId: string) {
+    await rm(runDir(this.root, runId), { recursive: true, force: true });
   }
 
   private diagnose(message: string, detail?: unknown) {
     this.options.onDiagnostic?.(message, detail);
   }
+
 }
 
 /** 落库的工作区记录 → 抽象的 Workspace */
 function toWorkspace(ws: StoredWorkspace, runId: string): Workspace {
-  const mounts: Mount[] = normalizeMounts(ws).map((m) => ({
+  const stored = ws.mounts?.length
+    ? ws.mounts
+    : // 滚动发布窗口里可能还有老进程写的老结构行（迁移 0020 已回填历史数据）
+      [{ path: ws.path, repoId: ws.repoId, role: 'primary' as const }];
+
+  const mounts: Mount[] = stored.map((m) => ({
     path: m.path,
     role: m.role,
-    writable: m.role === 'primary',
-    source: {
+    writable: m.writable ?? m.role === 'primary',
+    source: m.source ?? {
       kind: 'git' as const,
-      identifier: m.repoId,
-      label: m.role === 'primary' ? ws.repoRef : m.repoId,
+      identifier: m.repoId ?? m.targetId ?? ws.repoId,
+      label: ws.repoRef,
       baseVersion: m.role === 'primary' ? ws.baseCommit : null,
     },
   }));
   return { id: runId, runId, root: ws.path, mounts, writable: true };
+}
+
+function primaryTargetId(ws: StoredWorkspace): string | null {
+  const primary = ws.mounts?.find((m) => m.role === 'primary');
+  return primary?.targetId ?? primary?.repoId ?? ws.repoId ?? null;
+}
+
+function toRemote(repo: typeof repositories.$inferSelect): GitRemoteDescriptor {
+  return {
+    id: repo.id,
+    ref: repo.ref,
+    remoteUrl: repo.remoteUrl,
+    defaultBranch: repo.defaultBranch,
+    credentialRef: repo.credentialRef,
+    authUsername: repo.authUsername,
+    sshKnownHosts: repo.sshKnownHosts,
+  };
+}
+
+function toStore(row: typeof storageTargets.$inferSelect): ObjectStoreDescriptor {
+  return {
+    id: row.id,
+    ref: row.ref,
+    endpoint: row.endpoint ?? '',
+    region: row.region,
+    bucket: row.bucket ?? '',
+    prefix: row.prefix,
+    forcePathStyle: row.forcePathStyle,
+    credentialRef: row.credentialRef,
+  };
+}
+
+function toLocalDir(row: typeof storageTargets.$inferSelect): LocalDirDescriptor {
+  return { id: row.id, ref: row.ref, rootPath: row.rootPath ?? '' };
 }
 
 function emptyRelease(note: string): ReleaseResult {
@@ -492,12 +754,8 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-export { GitMaterializer } from './sources/git';
-export { EmptyMaterializer } from './sources/empty';
-export { GitPublisher, branchUrl } from './publishers/git';
-export { NonePublisher } from './publishers/none';
-export { runCheck } from './check';
-export { runReleasePipeline } from './pipeline';
-export type { ReleaseOutcome } from './pipeline';
-export type { SourceMaterializer, MountSpec } from './sources/types';
-export type { Publisher, ReleaseContext } from './publishers/types';
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export type { StoredMount };

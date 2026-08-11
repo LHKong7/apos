@@ -41,7 +41,7 @@ export async function resetDb(db: Database) {
       events, run_events, artifacts,
       decision_approvals, decision_evidence, decision_options, decisions,
       agent_runs, agent_permission_changes, agents,
-      repositories, project_conventions,
+      repositories, storage_targets, project_conventions,
       work_item_dependencies, work_items, plans,
       requirement_assumptions, requirement_clarifications, requirements,
       policy_versions, policies,

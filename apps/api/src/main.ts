@@ -15,7 +15,7 @@ import { syncBuiltinRoles } from './http/roles';
 import { bootstrapSuperadmin, signupSwitch } from './modules/auth';
 import { syncAgents } from './modules/agent/runtime-factory';
 import { WorkspaceService } from './modules/workspace';
-import { probeGit } from './modules/workspace/git';
+import { probeGit } from '@apos/workspace-providers';
 import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
 import { StubPlanningProvider } from './modules/planning/stub-provider';
@@ -153,6 +153,29 @@ async function main() {
    */
   const workspaces = new WorkspaceService(db, {
     root: process.env['AGENT_WORKSPACE_ROOT'],
+    /**
+     * 本地目录类工作区的归档根。
+     *
+     * ★ 不配的话这类工作区退回「不交货」—— 产出还在工作区里，但收尾就被回收。
+     *   这是如实的，不是降级：LocalPublisher 的全部价值就是把东西搬到工作区
+     *   之外，没有归档目录它搬不到任何地方。
+     *
+     * ★ 必须与 AGENT_WORKSPACE_ROOT **不同**，而且在一个真正持久的卷上 ——
+     *   落在工作区根下面的话，pruneOrphans 会连同工作树一起把它删掉，
+     *   而那时用户已经在产物页上看到「已归档」了。
+     */
+    archiveRoot: process.env['APOS_ARCHIVE_ROOT'],
+    /**
+     * ★★ 允许挂载的宿主目录白名单。不配表示不限制。
+     *
+     *   「登记一个本地目录」是管理员在界面上做的事，而一条填成 `/` 的登记
+     *   等于把整台机器交给 Agent。库里存意图，环境里存闸门 ——
+     *   拿到数据库写权限的人改不动这一条。
+     */
+    localMountRoots: (process.env['APOS_LOCAL_MOUNT_ROOTS'] ?? '')
+      .split(':')
+      .map((s) => s.trim())
+      .filter(Boolean),
     onDiagnostic: (message, detail) => console.warn('[workspace]', message, detail ?? ''),
   });
   const gitStatus = await probeGit();
