@@ -30,6 +30,8 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { BrandMark } from './components/BrandMark';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { useThemeStore } from './stores/theme';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * ★ 外层用 h-screen 而不是 min-h-screen。
@@ -240,13 +242,11 @@ function TopNav() {
             </span>
             <span className="text-xs text-slate-600">{user?.name ?? '…'}</span>
           </span>
-          <button
-            type="button"
+          <Button variant="outline" size="sm"
             onClick={signOut}
-            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800"
-          >
+            className="border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-800">
             退出登录
-          </button>
+          </Button>
         </div>
       </div>
     </header>
@@ -412,7 +412,7 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="新建组织">
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">新建组织</h2>
         <p className="text-[11px] text-slate-500">
@@ -422,12 +422,11 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">组织名</span>
-          <input
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Acme 科技"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         <label className="block">
@@ -435,12 +434,11 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
             slug
             <span className="ml-1 font-normal text-slate-400">选填</span>
           </span>
-          <input
+          <Input
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
             placeholder={slugPreview(name)}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-          />
+            className="mt-1 font-mono" />
           <p className="mt-1 text-[11px] text-slate-500">
             出现在链接里，全局唯一。留空按组织名推断。
           </p>
@@ -451,21 +449,15 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-slate-300 px-3 py-1.5 text-xs"
-          >
+          <Button variant="outline" size="sm"
+            onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}
-            onClick={() => create.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => create.mutate()}>
             {create.isPending ? '创建中…' : '创建'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

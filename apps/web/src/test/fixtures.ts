@@ -1,4 +1,4 @@
-import type { BoardCard, BoardResponse, StreamEvent } from '../lib/api/types';
+import type { BoardCard, BoardResponse, PlanCard, StreamEvent } from '../lib/api/types';
 
 export function card(overrides: Partial<BoardCard> = {}): BoardCard {
   return {
@@ -32,18 +32,21 @@ export function card(overrides: Partial<BoardCard> = {}): BoardCard {
   };
 }
 
-export function board(cards: BoardCard[]): BoardResponse {
+export function board(cards: BoardCard[], plans: PlanCard[] = []): BoardResponse {
   const stages = ['intake', 'planning', 'execution', 'review', 'release', 'done'] as const;
   return {
     columns: stages.map((key) => {
       const items = cards.filter((c) => c.stage === key);
+      // 计划卡只落 planning 列，与服务端 getBoard 的归属一致
+      const columnPlans = key === 'planning' ? plans : [];
       return {
         key,
         name: key,
         wipLimit: null,
-        count: items.length,
+        count: items.length + columnPlans.length,
         items,
         hasMore: false,
+        plans: columnPlans,
       };
     }),
     summary: {

@@ -213,6 +213,61 @@
     --flag-warning: #f7b93f;
     --flag-serious: #fb8a3c;
     --flag-critical: #f5697a;
+
+    /* ==== shadcn/ui 令牌桥 ==============================================
+     *
+     * ★★ 这一段只写一次，**没有浅色版本**，而且这不是遗漏。
+     *
+     *   下面每一条都是指向 `--c-*` 的**引用**而不是色值。CSS 变量是
+     *   使用时才求值的：浅色主题那边覆盖了 `--c-slate-50`，
+     *   `var(--c-slate-50)` 自然跟着变，`--background` 一个字都不用改。
+     *
+     *   抄一份浅色的代价不是多几行，是**两份迟早会漂**：某天有人只改了
+     *   深色那份，浅色下的按钮就悄悄用着旧色，而没有任何东西会报错。
+     *
+     * ★★ 为什么是桥接而不是换掉原有色板：
+     *
+     *   shadcn 的组件写的是 `bg-background`、`text-muted-foreground`
+     *   这套名字，而这个项目已有 1500+ 处 `text-slate-500` 这类类名，
+     *   且它们早就接到了 `--c-*` 令牌上。两套并存、互为别名，
+     *   shadcn 组件天生就有深浅两套主题，存量代码一个字不用动。
+     *
+     * ★ 值是 `R G B` 三元组而不是 `rgb(...)`，与全站 `--c-*` 的写法一致，
+     *   这样 `bg-primary/15` 这种透明度修饰符才算得出来。
+     */
+    --background: var(--c-slate-50); /* 页底 */
+    --foreground: var(--c-slate-900); /* 主文字 */
+
+    /* 卡面比页底浮起一层 —— 深色下它不是纯白，见 --c-white 的注释 */
+    --card: var(--c-white);
+    --card-foreground: var(--c-slate-900);
+    --popover: var(--c-white);
+    --popover-foreground: var(--c-slate-900);
+
+    /* 主行动 = 品牌色。★ 前景写死近白：它是「品牌底上的字」，
+       不是一个随主题翻转的表面色，用 --c-white 会在深色下变成深蓝灰 */
+    --primary: var(--c-brand);
+    --primary-foreground: 255 255 255;
+
+    --secondary: var(--c-slate-100);
+    --secondary-foreground: var(--c-slate-900);
+    --muted: var(--c-slate-100);
+    --muted-foreground: var(--c-slate-500);
+    --accent: var(--c-slate-100);
+    --accent-foreground: var(--c-slate-900);
+
+    /* 危险操作走语义槽位 --c-overdue，与看板上的「超时红」是同一个红，
+       不另起一个只有弹窗按钮用的红 */
+    --destructive: var(--c-overdue);
+    --destructive-foreground: 255 255 255;
+
+    --border: var(--c-slate-200); /* 发丝描边 */
+    --input: var(--c-slate-300); /* 输入框边：比普通描边重一档 */
+    --ring: var(--c-brand); /* 焦点环，与 index.css 里的 :focus-visible 同色 */
+
+    /* shadcn 组件用 rounded-lg/md/sm 三档，都从这一个值推。
+       0.75rem 对齐 tailwind.config 里放大过一档的 borderRadius.lg */
+    --radius: 0.75rem;
   }
 
   /* ---- 浅色主题 --------------------------------------------------------

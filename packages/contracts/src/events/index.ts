@@ -225,6 +225,9 @@ export const EventInput = z.object({
   payload: z.record(z.unknown()).default({}),
   contextSnapshot: PolicyContext.nullable().default(null),
   causationId: z.string().nullable().default(null),
-  correlationId: z.string(),
+  // ★ uuid 而不是 string：events.correlation_id 就是 uuid 列。
+  //   这里当初漏了 .uuid()，而 TS 那侧的类型只是 string —— 于是拼一个
+  //   描述性字符串进去编译期毫无反应，只在插库那一刻炸（见 auth/bootstrap.ts）
+  correlationId: z.string().uuid(),
 });
 export type EventInput = z.infer<typeof EventInput>;

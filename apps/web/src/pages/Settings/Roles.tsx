@@ -8,6 +8,8 @@ import { GatedButton } from '../../components/Gated';
 import { usePermissions } from '../../lib/permissions/usePermissions';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { AvailablePermission, Permission, RoleRow } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 角色定义（docs/tech/09-security.md §2.2）。
@@ -200,7 +202,7 @@ export function RolesPage() {
       )}
 
       {editing && data && (
-        <Modal onClose={() => setEditing(null)}>
+        <Modal onClose={() => setEditing(null)} title="角色编辑">
           <RoleEditor
             draft={editing}
             isNew={editingKey === null}
@@ -276,13 +278,10 @@ function RoleSection({
 
               <div className="mt-1 flex gap-1.5 text-[11px]">
                 {/* 查看权限谁都可以 —— 「我为什么做不了这个」的答案就在这里 */}
-                <button
-                  type="button"
-                  onClick={() => onEdit(r)}
-                  className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50"
-                >
+                <Button variant="outline"
+                  onClick={() => onEdit(r)}>
                   {r.builtin || !canManage ? '查看权限' : '编辑'}
-                </button>
+                </Button>
                 {!r.builtin && (
                   <GatedButton
                     permission="org.roles.manage"
@@ -369,38 +368,35 @@ function RoleEditor({
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
         <label className="flex flex-col gap-1">
           <span className="text-slate-600">显示名</span>
-          <input
+          <Input
             value={draft.name}
             disabled={locked}
             onChange={(e) => onChange({ ...draft, name: e.target.value })}
             placeholder="研发"
-            className="rounded border border-slate-300 px-2 py-1 disabled:bg-slate-50 disabled:text-slate-500"
-          />
+            className="disabled:bg-slate-50 disabled:text-slate-500" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-600">
             标识
             <span className="ml-1 text-[11px] text-slate-400">Policy 规则里引用它</span>
           </span>
-          <input
+          <Input
             value={draft.key}
             disabled={!isNew || locked}
             onChange={(e) => onChange({ ...draft, key: e.target.value })}
             placeholder="dev"
-            className="rounded border border-slate-300 px-2 py-1 disabled:bg-slate-50 disabled:text-slate-400"
-          />
+            className="disabled:bg-slate-50 disabled:text-slate-400" />
         </label>
       </div>
 
       <label className="mt-2 flex flex-col gap-1 text-xs">
         <span className="text-slate-600">这个角色是做什么的</span>
-        <input
+        <Input
           value={draft.description}
           disabled={locked}
           onChange={(e) => onChange({ ...draft, description: e.target.value })}
           placeholder="写代码、跑测试、接管任务；不参与需求与计划审批"
-          className="rounded border border-slate-300 px-2 py-1 disabled:bg-slate-50 disabled:text-slate-500"
-        />
+          className="disabled:bg-slate-50 disabled:text-slate-500" />
       </label>
 
       {/* ── 谁来担任 ── */}
@@ -477,14 +473,11 @@ function RoleEditor({
           {locked ? '关闭' : '取消'}
         </button>
         {!locked && (
-          <button
-            type="button"
+          <Button variant="neutral" size="sm"
             onClick={onSave}
-            disabled={pending || !draft.name || (isNew && !draft.key)}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
+            disabled={pending || !draft.name || (isNew && !draft.key)}>
             {pending ? '保存中…' : '保存'}
-          </button>
+          </Button>
         )}
       </div>
     </div>

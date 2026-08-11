@@ -22,6 +22,7 @@ import { HitlTab } from './HitlTab';
 import { CostTab } from './CostTab';
 import { QualityTab } from './QualityTab';
 import { BenefitTab } from './BenefitTab';
+import { Button } from '@/components/ui/button';
 
 const RANGE_LABELS: Record<AnalyticsRange, string> = {
   '7d': '近 7 天',
@@ -266,17 +267,15 @@ export function AnalyticsPage() {
             <ul className="space-y-1">
               {drillItems.data?.items.map((item) => (
                 <li key={item.id}>
-                  <button
-                    type="button"
+                  <Button variant="outline" size="sm"
                     onClick={() => setOpenCard(item.id)}
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-left text-xs hover:border-slate-300"
-                  >
+                    className="w-full border-slate-200 text-left hover:border-slate-300">
                     <span className="block truncate text-slate-800">{item.title}</span>
                     <span className="mt-0.5 block text-[11px] text-slate-500">
                       {statusLabel(item.status)} · {riskLabel(item.riskLevel)}
                       {item.elapsedHours !== null && ` · 耗时 ${item.elapsedHours}h`}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>

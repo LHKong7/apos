@@ -6,6 +6,8 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { relativeTime } from '../../lib/format';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -63,22 +65,19 @@ export function RequirementListPage() {
         <div className="mx-auto max-w-3xl space-y-3">
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
             <h2 className="text-xs font-medium text-slate-700">描述你想要什么，用自己的话就行</h2>
-            <textarea
+            <Textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={5}
               placeholder="例如：现在用户查订单要等好几秒，客服天天投诉。想优化一下，最好能支持按手机号、订单号、时间段搜。"
-              className="mt-1.5 w-full rounded border border-slate-300 px-2 py-1.5 text-xs leading-6"
+              className="mt-1.5"
             />
             <div className="mt-1.5 flex items-center gap-2">
-              <button
-                type="button"
+              <Button variant="neutral" size="sm"
                 onClick={() => create.mutate()}
-                disabled={draft.trim().length === 0 || create.isPending}
-                className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-              >
+                disabled={draft.trim().length === 0 || create.isPending}>
                 {create.isPending ? '创建中…' : '下一步：AI 分析 →'}
-              </button>
+              </Button>
               {/* ★ 不阻止短输入，只如实说明后果 */}
               {draft.trim().length > 0 && draft.trim().length < 20 && (
                 <span className="text-[11px] text-amber-700">

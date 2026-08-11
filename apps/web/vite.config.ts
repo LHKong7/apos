@@ -1,8 +1,20 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      /**
+       * ★ tsconfig 里早就有 `@/*`，但 vite 这边一直没配 —— 也就是说
+       *   类型检查过得去、一 import 就在浏览器里报解析失败。
+       *   shadcn 的组件之间互相 `import { cn } from '@/lib/utils'`，
+       *   补上这条是它们能跑起来的前提。
+       */
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   server: {
     port: 5173,
     host: '0.0.0.0',

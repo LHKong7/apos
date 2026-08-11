@@ -164,6 +164,44 @@ describe('认证与错误映射', () => {
     }
   });
 
+  /**
+   * ★★ `X-Correlation-Id` 是给调用方带自己追踪 ID 用的，而
+   *   `events.correlation_id` 是 uuid 列。
+   *
+   *   之前这个头原样透传：客户端送一个 `trace-abc-123`（W3C traceparent、
+   *   Jaeger 的 span id…… 没有一个是 uuid），请求会一路走到 INSERT 才被
+   *   Postgres 以 22P02 顶回来，翻译成 400「路径或查询参数的格式不合法」。
+   *   现象是「这个接口对我永远 400，换个客户端就好了」，而报错里不提
+   *   correlation id 半个字。
+   *
+   * ★ 第二条断言同样重要：改成「一律忽略请求头」也能让第一条变绿，
+   *   但那样就把这个头的功能整个删掉了，而没有任何测试会发现。
+   */
+  it('★ X-Correlation-Id 不是 UUID 时照常受理，是 UUID 时被采纳', async () => {
+    const create = (correlationId: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/projects',
+        headers: { ...auth(), 'x-correlation-id': correlationId },
+        payload: { name: `项目-${randomUUID().slice(0, 8)}` },
+      });
+
+    // ① 非 uuid 的追踪头不该把写入挡掉
+    const messy = await create('trace-abc-123');
+    expect(messy.statusCode).toBe(201);
+
+    // ② 合法 uuid 要真的落进事件，否则跨系统对不上日志
+    const mine = randomUUID();
+    const ok = await create(mine);
+    expect(ok.statusCode).toBe(201);
+
+    const [row] = await db
+      .select({ correlationId: events.correlationId })
+      .from(events)
+      .where(eq(events.projectId, ok.json().project.id));
+    expect(row?.correlationId).toBe(mine);
+  });
+
   it('★ 查询参数是非法枚举值时返回 400 而不是 500', async () => {
     const res = await app.inject({
       method: 'GET',

@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 const SOT_LABELS: Record<string, string> = {
   apos: 'APOS',
@@ -161,13 +162,10 @@ export function SotPanel({
 
       {dirty.length > 0 && (
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700"
-          >
+          <Button variant="neutral" size="xs"
+            onClick={() => setConfirming(true)}>
             保存 {dirty.length} 项修改
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => setDraft(null)}
@@ -184,7 +182,7 @@ export function SotPanel({
        *   用户点确定之前，得知道自己刚刚把谁的修改判了死刑。
        */}
       {confirming && (
-        <Modal onClose={() => setConfirming(false)}>
+        <Modal onClose={() => setConfirming(false)} title="确认修改 Source of Truth">
           <h2 className="mb-1.5 text-sm font-semibold text-slate-900">确认修改 Source of Truth</h2>
           <p className="text-xs text-slate-600">
             这些字段以后由谁说了算会改变。非 SoT 一端的修改将按下面的策略处理，
@@ -213,14 +211,11 @@ export function SotPanel({
           )}
 
           <div className="mt-2 flex gap-1.5">
-            <button
-              type="button"
+            <Button variant="neutral" size="sm"
               disabled={save.isPending}
-              onClick={() => save.mutate()}
-              className="rounded bg-slate-900 px-2 py-1 text-xs text-white hover:bg-slate-700 disabled:opacity-40"
-            >
+              onClick={() => save.mutate()}>
               {save.isPending ? '保存中…' : '确认修改'}
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => setConfirming(false)}

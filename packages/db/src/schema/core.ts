@@ -339,6 +339,20 @@ export const requirements = pgTable(
     fieldProvenance: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     completeness: jsonb().$type<Record<string, unknown>>().notNull().default({}),
 
+    /**
+     * 上一次结构化是谁做的（`claude-code:sonnet`、`stub（规则占位，未走 Agent：…）`）。
+     *
+     * ★★ 这一列存在的唯一理由是**不许假装**。
+     *
+     *   界面上写着「🤖 AI 结构化结果」，而底下可能跑的是规则占位
+     *   （没配规划 Agent、凭证缺失、Agent 超时都会回退）。不把真相摆出来，
+     *   用户拿回自己的原话换了三个标签，只会觉得「这 AI 真差」——
+     *   没有任何线索指向「根本没接模型」。
+     *
+     *   计划那边早有 plans.model 承担同样的职责，需求这边一直缺。
+     */
+    analysisModel: text(),
+
     priority: text().notNull().default('medium'),
     dueAt: timestamp({ withTimezone: true }),
 

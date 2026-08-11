@@ -16,6 +16,9 @@ import type {
   RepositoryRow,
   RuntimeKindSpec,
 } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
@@ -106,13 +109,11 @@ function AgentsSection() {
         <p className="text-xs text-slate-500">
           每个 Agent 自带一种 headless CLI 与它的个性化配置。同一种 CLI 可以建多个 Agent，各配各的。
         </p>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => setEditing('new')}
-          className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
-        >
+          className="ml-auto">
           + 新建 Agent
-        </button>
+        </Button>
       </div>
 
       {!data.canStoreInlineCredential && (
@@ -272,28 +273,20 @@ function AgentCard({
         )}
 
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
+          <Button variant="outline" size="xs"
             onClick={onProbe}
-            disabled={probing}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-          >
+            disabled={probing}>
             {probing ? '探测中…' : '重新探测'}
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-          >
+          </Button>
+          <Button variant="outline" size="xs"
+            onClick={onEdit}>
             编辑
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="outline" size="xs"
             onClick={onDelete}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-          >
+            className="text-rose-600 hover:bg-rose-50">
             删除
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -465,7 +458,7 @@ function AgentForm({
   const advancedFields = (spec?.fields ?? []).filter((f) => f.advanced);
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="Agent 配置">
       <div className="max-h-[75vh] space-y-3 overflow-auto pr-1">
         <h2 className="text-sm font-semibold text-slate-900">
           {agent ? `编辑 ${agent.name}` : '新建 Agent'}
@@ -473,12 +466,10 @@ function AgentForm({
 
         <div className="grid grid-cols-2 gap-2">
           <Labeled label="名称">
-            <input
+            <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如 refactor-agent"
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              placeholder="如 refactor-agent" />
           </Labeled>
           <Labeled label="类型">
             <select
@@ -496,12 +487,11 @@ function AgentForm({
         </div>
 
         <Labeled label="职责描述" help="会作为「人设」进入 prompt，帮 Agent 判断任务是否在自己擅长范围内">
-          <textarea
+          <Textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             placeholder="负责后端代码实现、重构与单元测试编写"
-            className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
           />
         </Labeled>
 
@@ -529,7 +519,7 @@ function AgentForm({
 
           {spec?.credential && (
             <Labeled label={spec.credential.label} help={credentialHelp}>
-              <input
+              <Input
                 value={credential}
                 onChange={(e) => setCredential(e.target.value)}
                 type="password"
@@ -539,20 +529,16 @@ function AgentForm({
                     : canStoreInline
                       ? 'sk-… 或 env:变量名'
                       : 'env:变量名'
-                }
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              />
+                } />
             </Labeled>
           )}
 
           {spec?.endpoint && (
             <Labeled label={spec.endpoint.label} help={spec.endpoint.help}>
-              <input
+              <Input
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
-                placeholder="https://…"
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              />
+                placeholder="https://…" />
             </Labeled>
           )}
 
@@ -587,28 +573,24 @@ function AgentForm({
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
           <p className="mb-2 text-[11px] font-medium text-slate-700">权限边界</p>
           <Labeled label="可用工具" help="逗号分隔。可带作用域，如 Bash(npm test:*)">
-            <input
+            <Input
               value={allowedTools}
               onChange={(e) => setAllowedTools(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-            />
+              className="font-mono" />
           </Labeled>
           <Labeled label="禁止工具" help="黑名单优先级高于白名单，不可被覆盖">
-            <input
+            <Input
               value={deniedTools}
               onChange={(e) => setDeniedTools(e.target.value)}
               placeholder="如 Bash(rm *)"
-              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-            />
+              className="font-mono" />
           </Labeled>
           <div className="grid grid-cols-2 gap-2">
             <Labeled label="代码仓库" help="填「代码仓库」里登记的标识">
-              <input
+              <Input
                 value={repoRef}
                 onChange={(e) => setRepoRef(e.target.value)}
-                placeholder="order-service"
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              />
+                placeholder="order-service" />
             </Labeled>
             <Labeled label="仓库权限">
               <select
@@ -639,22 +621,18 @@ function AgentForm({
             </select>
           </Labeled>
           <Labeled label="技能标签" help="逗号分隔，用于任务匹配">
-            <input
+            <Input
               value={skills}
               onChange={(e) => setSkills(e.target.value)}
-              placeholder="TypeScript, SQL 优化"
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              placeholder="TypeScript, SQL 优化" />
           </Labeled>
         </div>
 
         {agent && (
           <Labeled label="变更原因" help="放宽权限时必填 —— 收紧不需要">
-            <input
+            <Input
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              onChange={(e) => setReason(e.target.value)} />
           </Labeled>
         )}
 
@@ -663,17 +641,14 @@ function AgentForm({
         )}
 
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="rounded border border-slate-300 px-3 py-1.5 text-xs">
+          <Button variant="outline" size="sm" onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!name.trim() || !ownerId || save.isPending}
-            onClick={() => save.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => save.mutate()}>
             {save.isPending ? '保存中…' : '保存'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
@@ -714,29 +689,24 @@ function ConfigInput({
           ))}
         </select>
       ) : field.type === 'number' ? (
-        <input
+        <Input
           type="number"
           value={Number(value ?? 0)}
           min={field.min}
           max={field.max}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-        />
+          onChange={(e) => onChange(Number(e.target.value))} />
       ) : field.type === 'boolean' ? (
         <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
       ) : field.type === 'string_list' ? (
-        <input
+        <Input
           value={Array.isArray(value) ? value.join(', ') : ''}
           onChange={(e) => onChange(splitList(e.target.value))}
           placeholder="逗号分隔"
-          className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-        />
+          className="font-mono" />
       ) : (
-        <input
+        <Input
           value={String(value ?? '')}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-        />
+          onChange={(e) => onChange(e.target.value)} />
       )}
     </Labeled>
   );
@@ -804,13 +774,11 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
         <p className="text-xs text-slate-500">
           Agent 的 <code>repo</code> 资源范围按这里的「标识」解析。没登记的仓库，任务派不出去。
         </p>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => setCreating(true)}
-          className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
-        >
+          className="ml-auto">
           + 登记仓库
-        </button>
+        </Button>
       </div>
 
       {/* ★ git 环境问题在这一页说清楚，而不是等第一次派发才炸 */}
@@ -918,28 +886,20 @@ function RepositoryCard({
               「准备工作区失败：… 401」告终 —— 那条报错分不清是
               token 过期、scope 不够，还是用户名占位不对。
           */}
-          <button
-            type="button"
+          <Button variant="outline" size="xs"
             onClick={() => probe.mutate()}
-            disabled={probe.isPending}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
+            disabled={probe.isPending}>
             {probe.isPending ? '测试中…' : '测试连接'}
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-          >
+          </Button>
+          <Button variant="outline" size="xs"
+            onClick={onEdit}>
             编辑
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="outline" size="xs"
             onClick={onDelete}
-            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-          >
+            className="text-rose-600 hover:bg-rose-50">
             删除
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1087,20 +1047,19 @@ function RepositoryForm({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="代码仓库配置">
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
           {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
         </h2>
         <label className="block">
           <span className="text-xs font-medium text-slate-700">标识</span>
-          <input
+          <Input
             value={form.ref}
             disabled={isEdit}
             onChange={(e) => set('ref', e.target.value)}
             placeholder="order-service"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-          />
+            className="mt-1 disabled:bg-slate-50 disabled:text-slate-500" />
           <p className="mt-1 text-[11px] text-slate-500">
             Agent 资源范围里填的就是这个值，登记后不建议再改。
           </p>
@@ -1108,22 +1067,20 @@ function RepositoryForm({
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">显示名</span>
-          <input
+          <Input
             value={form.name}
             onChange={(e) => set('name', e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">git 地址</span>
-          <input
+          <Input
             value={form.remoteUrl}
             disabled={isEdit}
             onChange={(e) => set('remoteUrl', e.target.value)}
             placeholder="https://github.com/acme/order-service.git"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-          />
+            className="mt-1 disabled:bg-slate-50 disabled:text-slate-500" />
           <p className="mt-1 text-[11px] text-slate-500">
             https 用 token 认证，<code>git@…</code> / <code>ssh://…</code> 用 SSH 私钥 ——
             填完地址下面的凭证字段会跟着切换。
@@ -1133,19 +1090,17 @@ function RepositoryForm({
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="text-xs font-medium text-slate-700">默认分支</span>
-            <input
+            <Input
               value={form.defaultBranch}
               onChange={(e) => set('defaultBranch', e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              className="mt-1" />
           </label>
           <label className="block">
             <span className="text-xs font-medium text-slate-700">分支前缀</span>
-            <input
+            <Input
               value={form.branchPrefix}
               onChange={(e) => set('branchPrefix', e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              className="mt-1" />
           </label>
         </div>
 
@@ -1155,12 +1110,11 @@ function RepositoryForm({
               凭证用户名占位
               <span className="ml-1 font-normal text-slate-400">选填</span>
             </span>
-            <input
+            <Input
               value={form.authUsername}
               onChange={(e) => set('authUsername', e.target.value)}
               placeholder={guessedAuthUsername(form.remoteUrl)}
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              className="mt-1" />
             {/*
               ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
                 留空能按 github.com / gitlab.com 推断出来，但**自建** GitLab
@@ -1180,12 +1134,12 @@ function RepositoryForm({
               主机公钥
               <span className="ml-1 font-normal text-slate-400">选填 · known_hosts 格式</span>
             </span>
-            <textarea
+            <Textarea
               value={form.sshKnownHosts}
               onChange={(e) => set('sshKnownHosts', e.target.value)}
               rows={2}
               placeholder="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…"
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-[11px]"
+              className="mt-1 font-mono"
             />
             {/*
               ★ 留空不等于不校验 —— 首次连接会 TOFU 学到并自动固定。
@@ -1206,12 +1160,11 @@ function RepositoryForm({
             质量核验命令
             <span className="ml-1 font-normal text-slate-400">选填</span>
           </span>
-          <input
+          <Input
             value={form.checkCommand}
             onChange={(e) => set('checkCommand', e.target.value)}
             placeholder="pnpm test"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
           {/*
             ★ 不填不是「少个功能」，是 reviewing 阶段的门禁没有数据可依据。
           */}
@@ -1231,7 +1184,7 @@ function RepositoryForm({
               表现是保存后提示「格式不正确」，而用户明明整段复制了。
           */}
           {isSsh ? (
-            <textarea
+            <Textarea
               value={form.credential}
               onChange={(e) => set('credential', e.target.value)}
               rows={4}
@@ -1240,16 +1193,15 @@ function RepositoryForm({
                   ? '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n\n或 env:变量名'
                   : 'env:变量名'
               }
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-[11px]"
+              className="mt-1 font-mono"
             />
           ) : (
-            <input
+            <Input
               value={form.credential}
               onChange={(e) => set('credential', e.target.value)}
               type="password"
               placeholder={canStoreInline ? 'ghp_… 或 env:变量名' : 'env:变量名'}
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            />
+              className="mt-1" />
           )}
           <p className="mt-1 text-[11px] text-slate-500">
             {isSsh ? (
@@ -1280,17 +1232,14 @@ function RepositoryForm({
         )}
 
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded border border-slate-300 px-3 py-1.5 text-xs">
+          <Button variant="outline" size="sm" onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
-            onClick={() => create.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => create.mutate()}>
             {create.isPending ? '登记中…' : '登记'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
@@ -1333,13 +1282,11 @@ function ConventionsSection({ projectId }: { projectId: string }) {
 
       <div className="flex items-center gap-2">
         <p className="text-xs text-slate-500">按顺序作为「必读上下文」下发给本项目所有 Agent。</p>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => setEditing('new')}
-          className="ml-auto rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
-        >
+          className="ml-auto">
           + 新增约定
-        </button>
+        </Button>
       </div>
 
       {data.conventions.length === 0 ? (
@@ -1370,27 +1317,19 @@ function ConventionsSection({ projectId }: { projectId: string }) {
                   </span>
                 )}
                 <div className="ml-auto flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => toggle.mutate(c)}
-                    className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                  >
+                  <Button variant="outline" size="xs"
+                    onClick={() => toggle.mutate(c)}>
                     {c.enabled ? '停用' : '启用'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditing(c)}
-                    className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                  >
+                  </Button>
+                  <Button variant="outline" size="xs"
+                    onClick={() => setEditing(c)}>
                     编辑
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button variant="outline" size="xs"
                     onClick={() => remove.mutate(c.id)}
-                    className="rounded border border-slate-300 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-                  >
+                    className="text-rose-600 hover:bg-rose-50">
                     删除
-                  </button>
+                  </Button>
                 </div>
               </div>
               <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-600">
@@ -1440,27 +1379,26 @@ function ConventionForm({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="工程约定">
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{row ? '编辑工程约定' : '新增工程约定'}</h2>
         <label className="block">
           <span className="text-xs font-medium text-slate-700">标题</span>
-          <input
+          <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="如：提交规范"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">内容</span>
-          <textarea
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={8}
             placeholder={'如：\n- 每个提交只做一件事\n- 新增逻辑必须带单元测试\n- 不要引入新依赖，先提出来讨论'}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+            className="mt-1 font-mono"
           />
         </label>
 
@@ -1481,17 +1419,14 @@ function ConventionForm({
         )}
 
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded border border-slate-300 px-3 py-1.5 text-xs">
+          <Button variant="outline" size="sm" onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!title.trim() || !content.trim() || save.isPending}
-            onClick={() => save.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => save.mutate()}>
             {save.isPending ? '保存中…' : '保存'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

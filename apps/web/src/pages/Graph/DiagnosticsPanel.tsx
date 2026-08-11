@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Diagnostic, DiagnosticAction } from '@apos/domain';
+import { Button } from '@/components/ui/button';
 
 const SEVERITY_META = {
   critical: { icon: '⛔', className: 'text-red-700' },
@@ -68,14 +69,11 @@ export function DiagnosticsPanel({
                 <p className={clsx('leading-5', meta.className)}>{d.message}</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                   {d.actions.map((action) => (
-                    <button
+                    <Button variant="outline" size="xs"
                       key={`${action.kind}-${action.label}`}
-                      type="button"
-                      onClick={() => onAction(action)}
-                      className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
-                    >
+                      onClick={() => onAction(action)}>
                       {action.label}
-                    </button>
+                    </Button>
                   ))}
                   {d.affectedNodes[0] && (
                     <button

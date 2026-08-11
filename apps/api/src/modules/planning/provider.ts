@@ -8,11 +8,28 @@ import type { AcceptanceCriterion, DependencyType, WorkItemType } from '@apos/co
  * 2. 换模型或换供应商不影响业务逻辑
  */
 
+/**
+ * 这次规划属于谁。
+ *
+ * ★ 走真实 Agent 的 provider 需要它来挑执行者：规划 Agent 是按组织配置的
+ *   （agents.applicableTypes 含 `requirement`），不给 scope 就只能退回规则占位。
+ *
+ * ★ 做成可选而不是必填：StubProvider 根本不看它，而一堆既有测试是直接
+ *   构造 StructureInput 的 —— 为了一个它们用不到的字段去改测试，
+ *   改动的是测试而不是被测的东西。缺失时 AgentProvider 会**如实回退并说明**，
+ *   不是静默降级。
+ */
+export interface PlanningScope {
+  orgId: string;
+  projectId: string;
+}
+
 export interface StructureInput {
   rawInput: string;
   projectType: string;
   /** 组织与项目上下文，如已有知识、代码仓库说明 */
   context: { title: string; content: string }[];
+  scope?: PlanningScope;
 }
 
 export type ClarificationLevel =
@@ -96,5 +113,6 @@ export interface PlanningProvider {
     req: StructuredRequirement,
     projectType: string,
     feedback?: string,
+    scope?: PlanningScope,
   ): Promise<GeneratedPlan>;
 }

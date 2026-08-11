@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { api, ApiError } from '../../lib/api/client';
 import { useAuthStore } from '../../stores/auth';
 import { BrandMark } from '../../components/BrandMark';
+import { Input } from '@/components/ui/input';
 
 type Mode = 'login' | 'register';
 
@@ -196,43 +197,40 @@ export function LoginPage() {
               <label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
                 姓名
               </label>
-              <input
+              <Input
                 id="register-name"
                 autoComplete="name"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="李娜"
-                className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
-              />
+                className="mt-1.5" />
             </>
           )}
 
           <label className="mt-4 block text-xs text-slate-600" htmlFor="login-email">
             邮箱
           </label>
-          <input
+          <Input
             id="login-email"
             type="email"
             autoComplete="username"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
-          />
+            className="mt-1.5" />
 
           <label className="mt-3.5 block text-xs text-slate-600" htmlFor="login-password">
             口令
           </label>
-          <input
+          <Input
             id="login-password"
             type="password"
             autoComplete={active === 'login' ? 'current-password' : 'new-password'}
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
-          />
+            className="mt-1.5" />
           {/* ★ 把长度要求写在前面，而不是等服务端把表单打回来才说
               —— 服务端那条规则见 modules/auth/password.ts */}
           {active === 'register' && (
@@ -245,13 +243,12 @@ export function LoginPage() {
                 组织名
                 <span className="ml-1 text-slate-400">选填</span>
               </label>
-              <input
+              <Input
                 id="register-org"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 placeholder={name.trim() ? `${name.trim()} 的组织` : '留空按姓名生成'}
-                className="mt-1.5 w-full rounded-md border border-slate-300 px-2.5 py-2 text-sm"
-              />
+                className="mt-1.5" />
             </>
           )}
 

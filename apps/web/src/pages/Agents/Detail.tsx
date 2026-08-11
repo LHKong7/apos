@@ -8,6 +8,8 @@ import { duration, money, relativeTime, riskLabel, statusLabel } from '../../lib
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CapabilityPanel } from './CapabilityPanel';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 /** 队列里动不了的状态 —— 这几项要看得出来，否则「队列 5」读起来像在忙 */
 const STALLED = new Set(['blocked', 'failed', 'awaiting_decision']);
@@ -82,13 +84,11 @@ export function AgentDetailPage() {
           >
             ← Agent 团队
           </Link>
-          <button
-            type="button"
+          <Button variant="outline" size="sm"
             onClick={() => (paused ? pause.mutate({ paused: false }) : setPausing(true))}
-            className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50"
-          >
+            className="ml-auto">
             {paused ? '恢复' : '暂停'}
-          </button>
+          </Button>
         </div>
         {a.description && <p className="mt-0.5 text-xs text-slate-500">{a.description}</p>}
         {paused && a.pausedReason && (
@@ -385,31 +385,28 @@ function PauseDialog({
 }) {
   const [reason, setReason] = useState('');
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="暂停 Agent">
       <h2 className="text-sm font-semibold text-slate-900">暂停「{name}」</h2>
       <p className="mt-1 text-xs text-slate-500">
         暂停后不再给它派新任务，进行中的 Run 不受影响。
         原因会记入事件 —— 三周后没人记得「这个 Agent 为什么一直是停的」
       </p>
-      <textarea
+      <Textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={3}
         placeholder="例如：连续三次把测试写错，先停掉查配置"
-        className="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+        className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           取消
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
-          disabled={!reason.trim() || pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={!reason.trim() || pending}>
           确认暂停
-        </button>
+        </Button>
       </div>
     </Modal>
   );

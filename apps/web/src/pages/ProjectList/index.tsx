@@ -7,6 +7,9 @@ import { QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { money, relativeTime } from '../../lib/format';
 import { useOrgStore } from '../../stores/org';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 const AUTONOMY_LABELS: Record<string, string> = {
   human_led: '人主导',
@@ -122,7 +125,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="新建项目">
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">新建项目</h2>
         <p className="text-[11px] text-slate-500">
@@ -131,12 +134,11 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">项目名</span>
-          <input
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="订单系统重构"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         <label className="block">
@@ -144,12 +146,12 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
             目标
             <span className="ml-1 font-normal text-slate-400">选填</span>
           </span>
-          <textarea
+          <Textarea
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
             rows={2}
             placeholder="把订单查询从 8s 降到 1s 以内"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-1"
           />
         </label>
 
@@ -180,13 +182,12 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
             预算上限
             <span className="ml-1 font-normal text-slate-400">选填 · 美元</span>
           </span>
-          <input
+          <Input
             value={budget}
             onChange={(e) => setBudget(e.target.value)}
             placeholder="500.00"
             inputMode="decimal"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
+            className="mt-1" />
         </label>
 
         {create.error instanceof ApiError && (
@@ -194,21 +195,15 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-slate-300 px-3 py-1.5 text-xs"
-          >
+          <Button variant="outline" size="sm"
+            onClick={onClose}>
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}
-            onClick={() => create.mutate()}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
+            onClick={() => create.mutate()}>
             {create.isPending ? '创建中…' : '创建'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

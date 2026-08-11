@@ -5,6 +5,8 @@ import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { GatedButton } from '../../components/Gated';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 账号管理（09-security §2.2「org_admin：身份管理」）。
@@ -163,20 +165,15 @@ export function AccountsPage() {
                   {error && <p className="text-[11px] text-rose-600">{error}</p>}
 
                   <div className="flex gap-1.5">
-                    <button
+                    <Button variant="neutral" size="sm"
                       type="submit"
-                      disabled={create.isPending}
-                      className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-                    >
+                      disabled={create.isPending}>
                       {create.isPending ? '创建中…' : '创建'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOpen(false)}
-                      className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600"
-                    >
+                    </Button>
+                    <Button variant="outline" size="sm"
+                      onClick={() => setOpen(false)}>
                       取消
-                    </button>
+                    </Button>
                   </div>
                 </form>
               </section>
@@ -215,13 +212,12 @@ function Field({
   return (
     <label className="block">
       <span className="text-[11px] text-slate-500">{label}</span>
-      <input
+      <Input
         type={type}
         required
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
-      />
+        className="mt-0.5" />
     </label>
   );
 }

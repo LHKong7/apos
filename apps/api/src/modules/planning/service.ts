@@ -110,6 +110,7 @@ export async function generatePlan(
     structured,
     project?.type ?? 'development',
     input.feedback,
+    { orgId: req.orgId, projectId: req.projectId },
   );
 
   const [prev] = await db

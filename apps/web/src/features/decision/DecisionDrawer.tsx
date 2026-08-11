@@ -7,6 +7,9 @@ import { deadline, riskLabel } from '../../lib/format';
 import { QueryBoundary } from '../../components/states';
 import { useAuthStore } from '../../stores/auth';
 import { Drawer } from '../../components/Drawer';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 interface Props {
   decisionId: string;
@@ -182,21 +185,18 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                   {mode === 'approve' ? (
                     <>
                       <Field label="备注（可选）">
-                        <textarea
+                        <Textarea
                           value={note}
                           onChange={(e) => setNote(e.target.value)}
                           rows={2}
-                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
                         />
                       </Field>
                       <Field label="附加执行约束（可选）">
-                        <input
+                        <Input
                           type="text"
                           value={constraint}
                           onChange={(e) => setConstraint(e.target.value)}
-                          placeholder="例如：只在业务低峰期执行"
-                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                        />
+                          placeholder="例如：只在业务低峰期执行" />
                         <p className="mt-0.5 text-[11px] text-slate-400">
                           约束会写入任务并下发给 Agent，执行时必须遵守
                         </p>
@@ -213,21 +213,18 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                   ) : (
                     <>
                       <Field label="驳回原因（必填）">
-                        <textarea
+                        <Textarea
                           value={rejectReason}
                           onChange={(e) => setRejectReason(e.target.value)}
                           rows={2}
-                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
                         />
                       </Field>
-                      <button
-                        type="button"
+                      <Button variant="destructive" size="sm"
                         disabled={!rejectReason.trim() || reject.isPending}
                         onClick={() => reject.mutate()}
-                        className="w-full rounded bg-red-600 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-40"
-                      >
+                        className="w-full">
                         {reject.isPending ? '提交中…' : '驳回（任务将被取消）'}
-                      </button>
+                      </Button>
                     </>
                   )}
 

@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss';
+import animate from 'tailwindcss-animate';
 
 /**
  * ★★ 调色盘整体接到 CSS 变量上（令牌定义见 src/index.css）。
@@ -13,6 +14,12 @@ import type { Config } from 'tailwindcss';
  *   前者才能让 `bg-gate/15`、`bg-white/70` 这类透明度修饰符算出结果。
  */
 const token = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
+/**
+ * shadcn 的令牌不带 `--c-` 前缀（它有自己一套约定名），但同样是 R G B 三元组，
+ * 所以透明度修饰符照样能算。
+ */
+const shadcn = (name: string) => `rgb(var(--${name}) / <alpha-value>)`;
 
 /** 生成一整条 50→900 的色阶，省得十个色相各抄一遍 */
 const ramp = (hue: string) =>
@@ -58,6 +65,48 @@ export default {
 
         /** 弹层遮罩 —— 深浅两套的黑度差得远，不能靠一个 slate-900/20 顶过去 */
         scrim: token('scrim'),
+
+        /**
+         * shadcn/ui 的语义色。定义在 index.css 的「令牌桥」一段，
+         * 全部是指向 --c-* 的引用 —— 所以这些名字天生就有深浅两套主题。
+         *
+         * ★ 与上面那批是**别名关系而不是替代**：`bg-card` 和 `bg-white`
+         *   指的是同一个东西。存量代码继续用 slate/white，
+         *   ui/ 下的 shadcn 组件用这批，两边不打架。
+         */
+        border: shadcn('border'),
+        input: shadcn('input'),
+        ring: shadcn('ring'),
+        background: shadcn('background'),
+        foreground: shadcn('foreground'),
+        primary: {
+          DEFAULT: shadcn('primary'),
+          foreground: shadcn('primary-foreground'),
+        },
+        secondary: {
+          DEFAULT: shadcn('secondary'),
+          foreground: shadcn('secondary-foreground'),
+        },
+        destructive: {
+          DEFAULT: shadcn('destructive'),
+          foreground: shadcn('destructive-foreground'),
+        },
+        muted: {
+          DEFAULT: shadcn('muted'),
+          foreground: shadcn('muted-foreground'),
+        },
+        accent: {
+          DEFAULT: shadcn('accent'),
+          foreground: shadcn('accent-foreground'),
+        },
+        popover: {
+          DEFAULT: shadcn('popover'),
+          foreground: shadcn('popover-foreground'),
+        },
+        card: {
+          DEFAULT: shadcn('card'),
+          foreground: shadcn('card-foreground'),
+        },
       },
 
       fontFamily: {
@@ -162,4 +211,12 @@ export default {
       },
     },
   },
+  /**
+   * shadcn 组件的入场/退场动画靠它：`animate-in`、`fade-in-0`、`zoom-in-95`，
+   * 以及 `data-[state=open]:` / `data-[state=closed]:` 这一整套状态选择器。
+   *
+   * ★ 不装的话组件仍然渲染得出来，但弹层会「啪」地出现和消失 ——
+   *   而且没有任何报错，只是看起来很廉价。
+   */
+  plugins: [animate],
 } satisfies Config;

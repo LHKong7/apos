@@ -6,6 +6,8 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { duration, riskLabel } from '../../lib/format';
 import type { DecisionCard as Card } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * 决策卡片 —— 就地拍板，不跳详情页。
@@ -211,23 +213,18 @@ export function DecisionCardView({
               >
                 批准
               </button>
-              <button
-                type="button"
-                onClick={() => setMode('reject')}
-                className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
-              >
+              <Button variant="outline" size="sm"
+                onClick={() => setMode('reject')}>
                 驳回
-              </button>
+              </Button>
             </div>
           ) : mode === 'approve' ? (
             <div className="mt-1.5 space-y-1">
-              <input
+              <Input
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="备注（可选）"
-                className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-              />
+                placeholder="备注（可选）" />
               <div className="flex gap-1.5">
                 <button
                   type="button"
@@ -250,22 +247,17 @@ export function DecisionCardView({
             <div className="mt-1.5 space-y-1">
               {/* ★ 驳回必须写原因 —— 「每次覆盖都要留下为什么」是这个系统的底线，
                   也是 Analytics 里「重复决策能不能变成规则」的唯一数据来源 */}
-              <input
+              <Input
                 type="text"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="驳回原因（必填）"
-                className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-              />
+                placeholder="驳回原因（必填）" />
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button variant="destructive" size="sm"
                   disabled={!reason.trim() || reject.isPending}
-                  onClick={() => reject.mutate()}
-                  className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700 disabled:opacity-40"
-                >
+                  onClick={() => reject.mutate()}>
                   {reject.isPending ? '提交中…' : '确认驳回（任务将被取消）'}
-                </button>
+                </Button>
                 <button
                   type="button"
                   onClick={() => setMode(null)}

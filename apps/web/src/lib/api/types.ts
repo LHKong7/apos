@@ -47,6 +47,26 @@ export interface BoardCard {
   updatedAt: string;
 }
 
+/**
+ * 「计划待批准」卡片（页面文档 05 §5.2 原型图里 Planning 列那一张）。
+ *
+ * ★ 计划不是工作项：没有状态机、没有执行者、不能拖动。所以它不复用
+ *   BoardCard，也不混进 `items` —— `items` 被四个视图当工作项处理。
+ */
+export interface PlanCard {
+  id: string;
+  requirementId: string | null;
+  title: string;
+  version: number;
+  taskCount: number;
+  approver: { id: string; name: string } | null;
+  estimatedHours: string | null;
+  estimatedCost: string | null;
+  /** 已等待多久。★ 不是倒计时 —— 计划没有截止时间字段 */
+  waitingMinutes: number;
+  createdAt: string;
+}
+
 export interface BoardColumn {
   key: Stage;
   name: string;
@@ -54,6 +74,8 @@ export interface BoardColumn {
   count: number;
   items: BoardCard[];
   hasMore: boolean;
+  /** 待批准的计划；目前只有 planning 列非空 */
+  plans: PlanCard[];
 }
 
 export interface BoardSummary {
@@ -545,6 +567,8 @@ export interface RequirementDetail {
     acceptanceCriteria: { id?: string; text?: string; description?: string }[];
     completeness: Record<string, number>;
     fieldProvenance: Record<string, unknown>;
+    /** 上一次是谁分析的。回退到规则占位时会带上原因 —— 界面必须如实显示 */
+    analysisModel: string | null;
     priority: string;
     rejectReason: string | null;
     approvedAt: string | null;

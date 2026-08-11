@@ -215,6 +215,11 @@ export function BoardPage() {
           onManualMove={(card, toStatus, toStage) =>
             setPendingMove({ card, toStatus, toStage })
           }
+          /*
+           * ★ 整页跳转而不是抽屉：批准计划要逐条看任务、改配置、确认预算，
+           *   那是 04 计划批准页一整页的事，塞进侧栏抽屉放不下。
+           */
+          onOpenPlan={(plan) => navigate(`/projects/${projectId}/plans/${plan.id}`)}
         />
       )}
 

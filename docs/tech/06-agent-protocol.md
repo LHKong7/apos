@@ -376,7 +376,8 @@ interface AgentRuntimeAdapter {
 | **Claude Code** | 通过 Agent SDK 启动会话；权限映射为 tools/allowedTools/disallowedTools + canUseTool；原生支持流式与成本上报，能力最完整。实现细节见 §9.4 |
 | **MCP** | 工具通过 MCP 暴露；MCP 本身不定义"任务"概念，需要在其上包一层任务语义；工具调用可见但推理过程可能不可见 |
 | **HTTP 通用** | 最小契约：`POST /tasks` + webhook 回调；适合企业自建 Agent；能力全靠 manifest 声明 |
-| **Codex / OpenHands** | 各自 CLI/API 封装；重点是事件归一化与错误分类 |
+| **Codex** | CLI 封装；权限是沙箱级而非工具级，映射时一律收紧。实现细节见 §9.5 |
+| **通用 headless CLI** | pi / Gemini CLI / Aider / Goose / OpenCode / Qwen Code 共用**一个**适配器 + 一张声明式 profile 表。实现细节见 §9.6 |
 | **内置** | 需求结构化、计划生成这类 APOS 自己调 LLM 的场景，走同一套 Run 记录以保证可追溯性 |
 
 **内置 Agent 也走协议**这点值得强调：需求结构化和计划生成也是 Agent 行为，也需要 Run 记录、成本统计、可追溯。不能因为"是我们自己调的 LLM"就走后门——那样 Analytics 里的成本统计就是不完整的。
@@ -482,6 +483,37 @@ Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需�
 #### 事件顺序
 
 `subscribe` 把投递串成一条 Promise 链，保证订阅者严格按 `seq` 收到事件。`(runId, seq)` 是 `run_events` 的主键，乱序会让去重和增量更新都失效。`run_started` 在会话真正启动前就发出 —— 会话起不来时也要能看到 Run 开始过。
+
+### 9.5 Codex 适配器实现纪要
+
+代码位置 `packages/agent-runtimes/src/codex/`。它压出了协议里一个此前没被验证的假设：**权限模型未必是工具级的**。Codex 只有沙箱级（`read-only` / `workspace-write`），表达不了「Bash 可用但 rm 不可用」。映射一律**收紧**，表达不了的规则列进 `unenforceable` 并在 Run 详情里显示 —— 静默吞掉的话，用户会以为 `deniedTools` 在这里也生效了。
+
+### 9.6 通用 headless CLI 适配器
+
+代码位置 `packages/agent-runtimes/src/cli/`。**一个** `GenericCliRuntime` + 一张声明式 profile 表覆盖六个 CLI：
+
+| kind | 二进制 | prompt 投递 | 输出形态 | 流式 | 工具可见 | token |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pi` | `pi` | `-p <prompt>` | 纯文本 | ✓ | ✗ | ✗ |
+| `gemini_cli` | `gemini` | `-p <prompt>` | **单个 JSON** | ✗ | ✗ | ✓ |
+| `aider` | `aider` | `-m <prompt>` | 纯文本 | ✓ | ✗ | ✗ |
+| `goose` | `goose` | stdin | stream-json | ✓ | ✓ | ✓ |
+| `opencode` | `opencode` | 位置参数 | 纯文本 | ✓ | ✗ | ✗ |
+| `qwen_code` | `qwen` | `-p <prompt>` | stream-json | ✓ | ✓ | ✓ |
+
+**为什么共用一个适配器**：把 Codex 那个抄六遍，抄的是同一份东西 —— 起子进程、设 cwd、给最小环境、超时后 SIGTERM 再补 SIGKILL、留 stderr 尾巴、事件按 seq 串行投递。这些对所有 CLI 一模一样，而且是**已经踩过一遍坑**的部分。真正不同的只有五件事（二进制名、argv、prompt 从哪进、输出形态、凭证环境变量），它们是数据不是逻辑。
+
+**为什么解析是防御式的**：这六个的输出格式来自各自的文档，不是实测。照文档写逐字段映射，字段名一变事件流就**静默变空** —— Run 在跑、界面上什么都没有、没有任何报错。所以 `translate.ts` 反过来做：只认结构上认得出的（用量数字、错误、文本、工具调用），**认不出来的原样透出成 note**。代价是事件流不如 Claude Code 精细，收益是永远不丢东西，下一个人能照着 note 把映射补上。
+
+**三处对所有 CLI 都成立的降级**，如实写进能力清单：
+
+1. **权限是沙箱级的** —— 复用 §9.5 的 `mapSandbox`，表达不了的规则在 Run 详情里列出来
+2. **没有 system prompt 通道** —— 治理规则只能折进用户消息最前面（`buildInlinePreamble`），权重低于真正的 system prompt
+3. **单次执行、无中途注入** —— `runtimeConstraints` / `interventionRequest` 均为 false
+
+几条针对性的处理：Aider 强制 `--no-auto-commits`（提交由工作区供给统一负责，两边都提交会让一个 Run 产出一堆零碎提交）；自动批准（`--yolo` / `--approval-mode yolo`）只在可写沙箱下给；Gemini CLI 在 `subscribe` 时先发一条 note 说明「要跑完才有输出」，否则用户会对着不动的执行流以为卡死。
+
+**加第七个 CLI**：在 `cli/profile.ts` 加一条 profile、在 `contracts/runtime-config.ts` 加一条 spec。适配器与 factory 一个字不用改，配置界面自动长出表单。
 
 ---
 

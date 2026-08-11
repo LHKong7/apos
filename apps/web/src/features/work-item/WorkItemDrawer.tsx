@@ -10,6 +10,8 @@ import { GatedButton } from '../../components/Gated';
 import { Drawer } from '../../components/Drawer';
 import { useBoardStore } from '../../stores/board';
 import { useEditingStore } from '../../stores/editing';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 interface Props {
   workItemId: string;
@@ -67,17 +69,15 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                 <span>更新于 {relativeTime(item.updatedAt)}</span>
               </div>
               {item.humanGate && (
-                <button
-                  type="button"
+                <Button variant="gate" size="sm"
                   onClick={() => {
                     // Human Gate 徽标是决策的入口（页面文档 05 §3）
                     const pending = timeline.find((e) => e.type === 'decision.created');
                     if (pending) onOpenDecision(String(pending.payload['decisionId'] ?? pending.id));
                   }}
-                  className="mt-2 w-full rounded bg-gate px-2 py-1 text-xs font-medium text-white"
-                >
+                  className="mt-2 w-full">
                   该任务正在等待人工决策 →
-                </button>
+                </Button>
               )}
             </header>
 
@@ -298,14 +298,13 @@ function RunsTab({
             该任务已被 Agent 更新，你输入的内容仍然保留。
           </p>
         )}
-        <textarea
+        <Textarea
           value={context}
           onChange={(e) => setContext(e.target.value)}
           onFocus={() => startEdit(workItemId, 'retryContext')}
           onBlur={() => endEdit(workItemId, 'retryContext')}
           rows={3}
           placeholder="上次失败是因为找不到 schema，这里补上表结构说明…"
-          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
         />
         {/* 重新派发要花钱、会改代码 —— 只读角色不该点得动（§2.3 执行任务） */}
         <GatedButton

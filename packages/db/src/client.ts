@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { inspectConnection } from './connection';
 import * as schema from './schema/index';
 
 export type Database = ReturnType<typeof createDatabase>;
@@ -21,8 +22,18 @@ export interface DbConfig {
 }
 
 export function createDatabase(config: DbConfig) {
-  const sql = postgres(config.url, {
+  /**
+   * ★ prepare / ssl 由连接串自己决定，调用方不用关心连的是本机还是 Supabase
+   *   （判定规则与它的代价见 connection.ts）。直连与 Session Pooler 下
+   *   prepare 是 true，与 postgres.js 的默认值一致 —— 也就是说本机与
+   *   docker-compose 的行为一个字都没变。
+   */
+  const shape = inspectConnection(config.url);
+  const sql = postgres(shape.url, {
     max: config.singleConnection ? 1 : (config.max ?? 10),
+    prepare: shape.prepare,
+    // 传 undefined 会盖掉 postgres.js 从连接串里解析出来的 sslmode，所以要条件展开
+    ...(shape.ssl ? { ssl: shape.ssl } : {}),
     onnotice: () => {},
   });
   return drizzle(sql, { schema, casing: 'snake_case' });

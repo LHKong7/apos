@@ -4,6 +4,7 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { money, relativeTime } from '../../lib/format';
 import type { RunDetail } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /**
  * 输入 Tab（页面文档 09 §5.4）。
@@ -288,20 +289,14 @@ export function ErrorTab({
       )}
 
       <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded bg-slate-900 px-3 py-1 text-white hover:bg-slate-700"
-        >
+        <Button variant="neutral"
+          onClick={onRetry}>
           补充上下文重试
-        </button>
-        <button
-          type="button"
-          onClick={onTakeover}
-          className="rounded border border-slate-300 px-3 py-1 text-slate-700 hover:bg-slate-50"
-        >
+        </Button>
+        <Button variant="outline"
+          onClick={onTakeover}>
           我来接管
-        </button>
+        </Button>
       </div>
     </div>
   );

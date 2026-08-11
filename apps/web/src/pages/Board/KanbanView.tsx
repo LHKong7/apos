@@ -4,13 +4,26 @@ import { manualTargetForStage } from '@apos/domain';
 import { statusLabel } from '../../lib/format';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
 import { BoardCard, type CardActions } from '../../features/work-item/BoardCard';
+import { PlanBoardCard } from '../../features/plan/PlanBoardCard';
 import { MOVE_STAGGER_MS, useBoardStore } from '../../stores/board';
-import type { BoardCard as Card, BoardColumn } from '../../lib/api/types';
+import type { BoardCard as Card, BoardColumn, PlanCard } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+
+/** 列名。★ 拒绝提示里不能甩英文 key 给用户，与后端 STAGE_NAMES 对齐 */
+const STAGE_LABELS: Record<Stage, string> = {
+  intake: 'Intake',
+  planning: 'Planning',
+  execution: 'Execution',
+  review: 'Review',
+  release: 'Release',
+  done: 'Done',
+};
 
 interface Props {
   columns: BoardColumn[];
   actions: CardActions;
   onManualMove: (card: Card, toStatus: WorkItemStatus, toStage: Stage) => void;
+  onOpenPlan: (plan: PlanCard) => void;
   hasFilters: boolean;
   onClearFilters: () => void;
   onExpandDone: () => void;
@@ -21,6 +34,7 @@ export function KanbanView({
   columns,
   actions,
   onManualMove,
+  onOpenPlan,
   hasFilters,
   onClearFilters,
   onExpandDone,
@@ -43,6 +57,7 @@ export function KanbanView({
           key={col.key}
           column={col}
           actions={actions}
+          onOpenPlan={onOpenPlan}
           dragging={dragging}
           hasFilters={hasFilters}
           onClearFilters={onClearFilters}
@@ -69,6 +84,7 @@ export function KanbanView({
 function Column({
   column,
   actions,
+  onOpenPlan,
   dragging,
   hasFilters,
   onClearFilters,
@@ -80,6 +96,7 @@ function Column({
 }: {
   column: BoardColumn;
   actions: CardActions;
+  onOpenPlan: (plan: PlanCard) => void;
   dragging: Card | null;
   hasFilters: boolean;
   onClearFilters: () => void;
@@ -145,6 +162,14 @@ function Column({
       )}
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2 pt-2">
+        {/*
+          ★ 计划卡排在任务前面。这一列同时有两种东西时，「等着人批的计划」
+            优先级高于任何任务 —— 它一批下去，下游整批任务才开始流动。
+        */}
+        {column.plans.map((plan) => (
+          <PlanBoardCard key={plan.id} plan={plan} onOpen={onOpenPlan} />
+        ))}
+
         {column.items.map((card, i) => (
           <BoardCard
             key={card.id}
@@ -157,7 +182,7 @@ function Column({
           />
         ))}
 
-        {column.items.length === 0 && (
+        {column.items.length === 0 && column.plans.length === 0 && (
           <p className="px-1 py-3 text-center text-[11px] text-slate-400">
             {hasFilters ? (
               <>
@@ -168,6 +193,12 @@ function Column({
               </>
             ) : column.key === 'execution' ? (
               '等待上游任务完成'
+            ) : column.key === 'planning' ? (
+              /*
+               * ★ 这一列不放任务，放的是待批准的计划 —— 不说清楚的话，
+               *   一个永远空着的列只会让人以为功能坏了（在此之前正是如此）。
+               */
+              '需求批准后，生成的计划会在这里等待批准'
             ) : (
               '暂无任务'
             )}
@@ -175,13 +206,12 @@ function Column({
         )}
 
         {column.hasMore && !doneExpanded && (
-          <button
-            type="button"
+          <Button variant="outline" size="xs"
             onClick={onExpandDone}
-            className="w-full rounded-md border border-dashed border-slate-300 py-1 text-[11px] text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700"
-          >
-            ⋯ 展开其余 {column.count - column.items.length} 项
-          </button>
+            className="w-full border-dashed text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700">
+            {/* count 含计划卡，折叠数只该算任务 */}
+            ⋯ 展开其余 {column.count - column.plans.length - column.items.length} 项
+          </Button>
         )}
       </div>
     </section>
@@ -201,12 +231,28 @@ export function evaluateDrop(
 ): { allowed: boolean; reason: string } {
   if (card.stage === toStage) return { allowed: false, reason: '已经在这一列了' };
 
+  /**
+   * ★ Planning 列装的是**待批准的计划**，不是任务 —— `planning` /
+   *   `awaiting_plan_approval` 这两个状态在 WORK_ITEM_MACHINE 里没有任何
+   *   转移指向，任务本来就进不去。
+   *
+   *   单独给一句话是因为这一列现在**看得见卡片**了：用户会自然地想把任务
+   *   拖过去归类，而通用那句「不能直接进入 planning」既没解释为什么，
+   *   还把 stage 的英文 key 直接甩在了脸上。
+   */
+  if (toStage === 'planning') {
+    return {
+      allowed: false,
+      reason: 'Planning 列放的是待批准的计划，不接收任务卡片',
+    };
+  }
+
   // ★ 落点由状态机推导，与后端 manualTriggerFor 同源
   const target = manualTargetForStage(card.status, toStage);
   if (!target) {
     return {
       allowed: false,
-      reason: `「${card.title}」当前是「${statusLabel(card.status)}」，不能直接进入 ${toStage}`,
+      reason: `「${card.title}」当前是「${statusLabel(card.status)}」，不能直接进入「${STAGE_LABELS[toStage]}」`,
     };
   }
 

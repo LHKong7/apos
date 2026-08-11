@@ -5,6 +5,7 @@ import { BlockedDuration, CostMeter, HumanGateBadge, PriorityBadge, RiskBadge } 
 import { duration, sourceIcon, sourceLabel, statusLabel, typeIcon } from '../../lib/format';
 import { MOVE_HIGHLIGHT_MS, useBoardStore } from '../../stores/board';
 import type { BoardCard as Card } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 export interface CardActions {
   onOpen: (card: Card) => void;
@@ -170,16 +171,14 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
               <AssigneeChip actor={{ type: 'human', ...card.owner }} size="sm" />
             )}
           </div>
-          <button
-            type="button"
+          <Button variant="gate" size="xs"
             onClick={(e) => {
               e.stopPropagation();
               actions.onHandleGate(card);
             }}
-            className="shrink-0 rounded-md bg-gate px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:brightness-110"
-          >
+            className="shrink-0 hover:brightness-110">
             处理 →
-          </button>
+          </Button>
         </div>
       </>
     );
@@ -321,16 +320,14 @@ function nextActionHint(card: Card): string {
 
 function CardButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      type="button"
+    <Button variant="outline" size="xs"
       onClick={(e) => {
         e.stopPropagation();
         onClick();
       }}
-      className="rounded-md border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-800"
-    >
+      className="hover:border-slate-400 hover:text-slate-800">
       {children}
-    </button>
+    </Button>
   );
 }
 

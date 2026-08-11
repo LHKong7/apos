@@ -6,6 +6,7 @@ import { EmptyState } from '../../components/states';
 import { typeIcon } from '../../lib/format';
 import type { BoardColumn } from '../../lib/api/types';
 import type { CardActions } from '../../features/work-item/BoardCard';
+import { Button } from '@/components/ui/button';
 
 /**
  * Human Decision View（页面文档 05 §5.7）。
@@ -76,13 +77,11 @@ export function DecisionView({
                 )}
               </div>
             </div>
-            <button
-              type="button"
+            <Button variant="gate" size="sm"
               onClick={() => actions.onHandleGate(card)}
-              className="shrink-0 rounded bg-gate px-3 py-1 text-xs font-medium text-white hover:brightness-95"
-            >
+              className="shrink-0 hover:brightness-95">
               处理 →
-            </button>
+            </Button>
           </article>
         );
       })}

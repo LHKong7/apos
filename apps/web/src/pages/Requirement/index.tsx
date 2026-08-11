@@ -9,6 +9,8 @@ import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
 import { Clarifications } from './Clarifications';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * 需求录入与 AI 澄清（页面文档 03）。
@@ -161,19 +163,20 @@ export function RequirementPage() {
 
             {/* ── AI 结构化结果 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
-              <h2 className="text-xs font-medium text-slate-700">🤖 AI 结构化结果</h2>
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h2 className="text-xs font-medium text-slate-700">🤖 AI 结构化结果</h2>
+                {analyzed && <AnalysisSource model={r.analysisModel} />}
+              </div>
 
               {!analyzed ? (
                 <div className="py-6 text-center">
                   <p className="text-xs text-slate-500">还没有分析过这条需求</p>
-                  <button
-                    type="button"
+                  <Button variant="neutral" size="sm"
                     onClick={() => analyze.mutate()}
                     disabled={analyze.isPending}
-                    className="mt-2 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-                  >
+                    className="mt-2">
                     {analyze.isPending ? '分析中…' : '开始 AI 分析'}
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <dl className="mt-1 space-y-1.5 text-xs">
@@ -322,6 +325,37 @@ const STATUS_LABELS: Record<string, string> = {
   on_hold: '暂缓',
 };
 
+/**
+ * 这份结果到底是谁产出的。
+ *
+ * ★★ 没有这一行的时候，界面上写着「🤖 AI 结构化结果」，而底下可能跑的是
+ *   关键词规则占位（没配规划 Agent、凭证缺失、Agent 超时都会回退）。
+ *   用户拿回自己的原话换了三个标签，只会觉得「这 AI 真差」——
+ *   没有任何线索指向「根本没接模型」。
+ *
+ * ★ 回退时不只说「占位」，把原因一起摆出来：那句话正是解决问题所需的
+ *   全部信息（比如「组织内没有可用的规划 Agent」）。藏起来只会变成一张工单。
+ */
+function AnalysisSource({ model }: { model: string | null }) {
+  if (!model) return null;
+
+  // 回退时 model 形如 `stub（规则占位，未走 Agent：原因）`，见 agent-provider.ts
+  const degraded = model.startsWith('stub');
+  if (!degraded) {
+    return <span className="text-[11px] text-slate-400">由 {model} 生成</span>;
+  }
+
+  const reason = model.match(/未走 Agent：(.+?)）\s*$/)?.[1] ?? null;
+  return (
+    <span
+      className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800"
+      title={reason ?? undefined}
+    >
+      ⚠ 规则占位，未接入模型{reason ? ` —— ${reason}` : ''}
+    </span>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <div>
@@ -354,7 +388,7 @@ function ConfirmDialog({
   onConfirm: () => void;
 }) {
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="确认这条需求">
       <h2 className="text-sm font-semibold text-slate-900">确认这条需求</h2>
       <div className="mt-2 space-y-1 text-xs text-slate-700">
         <p>确认后，Project Agent 将：</p>
@@ -378,14 +412,11 @@ function ConfirmDialog({
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           返回修改
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={onConfirm}
-          disabled={pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={pending}>
           {pending ? '生成计划中…' : '确认'}
-        </button>
+        </Button>
       </div>
     </Modal>
   );
@@ -402,28 +433,25 @@ function RejectDialog({
 }) {
   const [reason, setReason] = useState('');
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={onCancel} title="驳回需求">
       <h2 className="text-sm font-semibold text-slate-900">驳回需求</h2>
       {/* ★ 必填原因：提出人要知道为什么，否则只会原样再提一遍 */}
       <p className="mt-1 text-xs text-slate-500">原因会通知提出人，请写清楚问题在哪</p>
-      <textarea
+      <Textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={3}
-        className="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+        className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
           取消
         </button>
-        <button
-          type="button"
+        <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
-          disabled={!reason.trim() || pending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-        >
+          disabled={!reason.trim() || pending}>
           确认驳回
-        </button>
+        </Button>
       </div>
     </Modal>
   );

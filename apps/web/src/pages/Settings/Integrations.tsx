@@ -13,6 +13,8 @@ import { SotPanel } from './SotPanel';
 import { ConflictPanel } from './ConflictPanel';
 import { NotificationPanel } from './NotificationPanel';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const CATEGORY_ICONS: Record<string, string> = {
   code: '💻',
@@ -247,23 +249,17 @@ function IntegrationCard({
               通知渠道没有字段映射也没有关联对象，给一个点了什么也不发生的
               「立即同步」，用户会以为是坏的 */}
           {row.syncMappings.length > 0 && (
-            <button
-              type="button"
+            <Button variant="outline" size="xs"
               disabled={sync.isPending || !row.transportReady}
-              onClick={() => sync.mutate()}
-              className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
+              onClick={() => sync.mutate()}>
               {sync.isPending ? '同步中…' : '立即同步'}
-            </button>
+            </Button>
           )}
           {perms.disconnect && (
-            <button
-              type="button"
-              onClick={() => setDisconnecting(true)}
-              className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
-            >
+            <Button variant="outline" size="xs"
+              onClick={() => setDisconnecting(true)}>
               断开
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -403,7 +399,7 @@ function DisconnectDialog({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="断开集成">
       <h2 className="mb-1.5 text-sm font-semibold text-slate-900">断开 {row.providerLabel}</h2>
       {impact.isPending && <p className="text-xs text-slate-500">正在确认影响…</p>}
       {impact.data && (
@@ -426,14 +422,11 @@ function DisconnectDialog({
       )}
 
       <div className="mt-2 flex gap-1.5">
-        <button
-          type="button"
+        <Button variant="destructive" size="sm"
           disabled={cut.isPending || impact.isPending}
-          onClick={() => cut.mutate()}
-          className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-40"
-        >
+          onClick={() => cut.mutate()}>
           {cut.isPending ? '断开中…' : '确认断开'}
-        </button>
+        </Button>
         <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700">
           取消
         </button>
@@ -494,31 +487,27 @@ function AddRow({
       ))}
 
       {open && (
-        <Modal onClose={() => setOpen(null)}>
+        <Modal onClose={() => setOpen(null)} title="连接集成">
           <h2 className="mb-1.5 text-sm font-semibold text-slate-900">
             连接 {options.find((o) => o.provider === open)?.label}
           </h2>
           <label className="block">
             <span className="mb-0.5 block text-[11px] text-slate-500">连接对象（仓库 / 项目 / 群组）</span>
-            <input
+            <Input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="order-service"
-              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-            />
+              placeholder="order-service" />
           </label>
 
           <label className="mt-1.5 block">
             <span className="mb-0.5 block text-[11px] text-slate-500">
               访问凭证（可选）
             </span>
-            <input
+            <Input
               type="password"
               value={credential}
-              onChange={(e) => setCredential(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-            />
+              onChange={(e) => setCredential(e.target.value)} />
             {/* ★ 明说它去哪了。用户交出凭证时有权知道系统怎么保管 */}
             <span className="mt-0.5 block text-[11px] text-slate-400">
               明文不入库，只保留后四位用于辨认。保存后无法再读出
@@ -547,14 +536,11 @@ function AddRow({
           )}
 
           <div className="mt-2 flex gap-1.5">
-            <button
-              type="button"
+            <Button variant="neutral" size="sm"
               disabled={!displayName.trim() || connect.isPending}
-              onClick={() => connect.mutate()}
-              className="rounded bg-slate-900 px-2 py-1 text-xs text-white hover:bg-slate-700 disabled:opacity-40"
-            >
+              onClick={() => connect.mutate()}>
               {connect.isPending ? '测试连接中…' : '测试连接并保存'}
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => setOpen(null)}

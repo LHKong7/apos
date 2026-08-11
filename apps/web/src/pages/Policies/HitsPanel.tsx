@@ -6,6 +6,7 @@ import { qk } from '../../lib/query/keys';
 import { duration, relativeTime, riskLabel } from '../../lib/format';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CardSkeleton, ErrorState } from '../../components/states';
+import { Button } from '@/components/ui/button';
 
 const OPERATION_LABELS: Record<string, string> = {
   read: '读取',
@@ -61,7 +62,7 @@ export function HitsPanel({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} title="策略命中明细">
       <div className="max-h-[80vh] w-[42rem] max-w-full overflow-y-auto">
         <h2 className="text-sm font-semibold text-slate-900">命中明细 · {policyName}</h2>
 
@@ -192,13 +193,10 @@ export function HitsPanel({
         )}
 
         <div className="mt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-          >
+          <Button variant="outline" size="sm"
+            onClick={onClose}>
             关闭
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

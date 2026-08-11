@@ -1,4 +1,4 @@
-import { createDatabase } from '@apos/db';
+import { auditRls, createDatabase, inspectConnection } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import {
   FeishuTransport,
@@ -19,15 +19,68 @@ import { probeGit } from './modules/workspace/git';
 import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
 import { StubPlanningProvider } from './modules/planning/stub-provider';
+import { AgentPlanningProvider } from './modules/planning/agent-provider';
 import { startSchedulerLoop } from './workers/scheduler-loop';
 import { startNotificationLoop } from './workers/notification-loop';
 
 const PROCESS_ROLE = process.env['PROCESS_ROLE'] ?? 'all';
 
+/**
+ * 连接池大小。不设就用 @apos/db 的默认值（10）。
+ *
+ * ★ 托管 Postgres 的连接数是**硬上限**（Supabase 免费档直连 60 条），
+ *   而 api 与 worker 是两个进程 —— 默认值下就是 20 条，再加上迁移和
+ *   本机连进去看数据的，余量并不宽。超了的表现是「一部分请求卡住直到超时」，
+ *   而数据库那边只是安静地拒绝新连接。
+ *
+ * ★ 认不出来的取值要喊出来而不是当没设：写成 `APOS_DB_POOL_MAX=ten`
+ *   却静默回退到 10，等于配置根本没生效而现场毫无迹象。
+ */
+function poolMax(): number | undefined {
+  const raw = process.env['APOS_DB_POOL_MAX'];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    console.warn(`[db] APOS_DB_POOL_MAX=${raw} 不是正整数，已忽略，按默认池大小处理`);
+    return undefined;
+  }
+  return parsed;
+}
+
 async function main() {
-  const db = createDatabase({
-    url: process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos',
-  });
+  const databaseUrl = process.env['DATABASE_URL'] ?? 'postgres://apos@localhost:5433/apos';
+
+  /**
+   * ★ 连接形态是从连接串**推断**出来的（判定规则见 packages/db/src/connection.ts），
+   *   所以推断结果必须在启动时说出来。
+   *
+   *   推断错了的表现是「上线之后开始随机报 prepared statement does not exist」——
+   *   偶发、与负载相关、且完全不指向端口号。日志里有这一行，对一眼就知道是不是
+   *   把 Transaction Pooler 认成了直连。
+   */
+  const connection = inspectConnection(databaseUrl);
+  console.log(`[db] ${connection.summary}`);
+
+  const db = createDatabase({ url: databaseUrl, max: poolMax() });
+
+  /**
+   * ★★ 托管 Postgres（Supabase 等）会给 public 下的每张表自动生成一套
+   *   **匿名** REST 接口。迁移 0017 已经把那条通道关死了，这里再查一遍，
+   *   是因为它可能被绕开：有人手工 GRANT、在控制台点了按钮、或者后来
+   *   某次迁移改了默认权限。
+   *
+   *   ★ 漏掉的后果没有任何症状 —— 应用照常跑、日志干净，只有被拖库之后
+   *     才会知道。所以这条必须主动喊，且用 error 级别：它和 probeGit
+   *     那条警告不同，不是「某类任务跑不了」，是数据在裸奔。
+   */
+  const rls = await auditRls(db);
+  if (rls.exposed && rls.unprotected.length > 0) {
+    console.error(
+      `[db] ★ 以下表没有开启 RLS，而这个库上存在 PostgREST 角色 —— ` +
+        `它们可以被匿名 REST 接口直接读取：${rls.unprotected.join('、')}。` +
+        '补一条迁移对它们执行 ALTER TABLE … ENABLE ROW LEVEL SECURITY。',
+    );
+  }
 
   /**
    * ★★ 内置角色对齐到当前代码（09-security §2.2）。
@@ -161,7 +214,23 @@ async function main() {
     bus: defaultBus,
     registry,
     integrations: integrationRegistry,
-    provider: new StubPlanningProvider(),
+    /**
+     * ★★ 规划走真实 Agent，跑不通时回退规则占位。
+     *
+     *   回退**不是静默的**：AgentPlanningProvider 会把原因编进 model 字段，
+     *   一路显示到需求页与计划页上。在此之前界面写着「🤖 AI 结构化结果」
+     *   而底下是关键词正则，用户拿回自己的原话换了三个标签，
+     *   只会觉得「这 AI 真差」——没人会想到根本没接模型。
+     *
+     * ★ 用哪个运行时由组织里的 Agent 配置决定（applicableTypes 含
+     *   requirement 的那个），claude-code / codex / 将来的 pi / kimi
+     *   都走 AgentRuntimeAdapter 这一个接口，这里不用区分。
+     */
+    provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider(), {
+      root: process.env['AGENT_WORKSPACE_ROOT'],
+      timeoutMs: Number(process.env['PLANNING_TIMEOUT_MS'] ?? 600_000),
+      onDiagnostic: (message, detail) => console.log(message, detail ?? ''),
+    }),
     workspaces,
   };
 
