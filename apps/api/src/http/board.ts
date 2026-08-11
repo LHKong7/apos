@@ -4,7 +4,9 @@ import {
   agents,
   artifacts,
   decisions,
+  plans,
   projects,
+  requirements,
   workItemDependencies,
   workItems,
   type Database,
@@ -60,6 +62,46 @@ export interface BoardCard {
   updatedAt: string;
 }
 
+/**
+ * 「计划待批准」卡片（页面文档 05 §5.2 的原型图，Planning 列那一张）。
+ *
+ * ★★ 为什么它不是 BoardCard 的一种，而是独立类型：
+ *
+ *   计划不是工作项 —— 它没有状态机、没有执行者、没有依赖、不能被拖动。
+ *   硬塞进 BoardCard 就要给一半字段填 null，而下游那些 `card.status === 'executing'`
+ *   的分支会开始处理一个永远不成立的形态。更要命的是 `columns[].items`
+ *   被 Kanban / List / Agent / Decision **四个视图**共用，它们一律按工作项
+ *   处理：点开会去查一个不存在的 work item，批量重试会把计划一起发出去。
+ *
+ *   所以它单独挂在 {@link BoardColumn.plans} 上：想渲染的视图去读，
+ *   不认识它的视图什么都不用改，也不会误伤。
+ */
+export interface PlanCard {
+  id: string;
+  requirementId: string | null;
+  /** 需求标题。需求还没结构化出标题时退回原文截断 */
+  title: string;
+  version: number;
+  /** 批准后会带出多少个任务 —— 卡片上的「+6 任务」 */
+  taskCount: number;
+  /**
+   * 谁该批。★ `plan.approve` 是 tech_lead 的权限（rbac/catalog.ts），
+   * 所以这里给的是项目的技术负责人，而不是需求的提出者。
+   */
+  approver: { id: string; name: string } | null;
+  estimatedHours: string | null;
+  estimatedCost: string | null;
+  /**
+   * 已经等了多久（分钟）。
+   *
+   * ★ 是「已等待」而不是原型图上的「⏳ 4h 内」倒计时 —— 计划本身没有
+   *   截止时间字段，编一个出来等于在界面上撒谎。等待时长是真实数据，
+   *   而且同样能表达「这事拖着没人管」，那正是这个位置要传达的信息。
+   */
+  waitingMinutes: number;
+  createdAt: string;
+}
+
 export interface BoardColumn {
   key: StageT;
   name: string;
@@ -67,6 +109,11 @@ export interface BoardColumn {
   count: number;
   items: BoardCard[];
   hasMore: boolean;
+  /**
+   * 待批准的计划。目前只有 planning 列非空 —— 其余列固定为 `[]`
+   * 而不是省略，省得每个消费方都要判一次 undefined。
+   */
+  plans: PlanCard[];
 }
 
 const STAGE_NAMES: Record<StageT, string> = {
@@ -121,21 +168,127 @@ export async function getBoard(
     .orderBy(workItems.priority, desc(workItems.updatedAt));
 
   const enriched = await enrich(db, rows, project.identifier);
+  const pendingPlans = await loadPendingPlans(db, projectId, project.techLeadId, filters);
 
   const columns: BoardColumn[] = Stage.options.map((stage) => {
     const all = enriched.filter((c) => c.stage === stage);
     const limit = stage === 'done' ? DONE_LIMIT : COLUMN_LIMIT;
+    /**
+     * ★ 计划卡片只落在 planning 列。
+     *
+     *   这个归属放在服务端而不是让前端自己判「plans 该画在哪一列」——
+     *   列的构成本来就是这里定的（STAGE_NAMES、WIP、折叠上限都在这），
+     *   分两处决定迟早会漂移成「后端给了但前端没画」。
+     */
+    const plans = stage === 'planning' ? pendingPlans : [];
     return {
       key: stage,
       name: STAGE_NAMES[stage],
       wipLimit: project.wipLimits?.[stage] ?? null,
-      count: all.length,
+      // 列头计数要含计划，否则 Planning 列会显示 0 却挂着一张卡
+      count: all.length + plans.length,
       items: all.slice(0, limit),
       hasMore: all.length > limit,
+      plans,
     };
   });
 
   return { columns, summary: summarize(enriched) };
+}
+
+/**
+ * 待批准的计划。
+ *
+ * ★ 与 overview.ts 用的是同一个判据（`status = 'awaiting_approval'`）——
+ *   总览横幅说「有计划待批准」而看板上没有那张卡，是最难解释的一种不一致。
+ */
+async function loadPendingPlans(
+  db: Database,
+  projectId: string,
+  techLeadId: string | null,
+  filters: BoardFilters,
+): Promise<PlanCard[]> {
+  /**
+   * ★★ 筛选器是按工作项设计的，对计划大多无意义。不能默认「不匹配就留着」——
+   *   那会让用户勾了「只看阻塞」之后，Planning 列里那张计划卡岿然不动，
+   *   看起来像筛选坏了。
+   *
+   *   逐条判断它对计划成不成立：
+   *   - 阻塞 / 执行者 / 风险：计划没有这些属性 → 该筛选开启时隐藏计划
+   *   - Human Gate：计划待批准**本身就是**在等人 → 保留
+   *   - 只看我的：我是不是批准人 → 下面单独判
+   */
+  if (filters.blockedOnly || filters.executorType || filters.riskLevel?.length) return [];
+  if (filters.onlyMine && filters.onlyMine !== techLeadId) return [];
+
+  const rows = await db
+    .select({
+      id: plans.id,
+      requirementId: plans.requirementId,
+      version: plans.version,
+      estimatedHours: plans.estimatedHours,
+      estimatedCost: plans.estimatedCost,
+      createdAt: plans.createdAt,
+      requirementTitle: requirements.title,
+      requirementRaw: requirements.rawInput,
+    })
+    .from(plans)
+    .leftJoin(requirements, eq(requirements.id, plans.requirementId))
+    .where(and(eq(plans.projectId, projectId), eq(plans.status, 'awaiting_approval')))
+    .orderBy(desc(plans.createdAt));
+
+  if (rows.length === 0) return [];
+
+  /**
+   * 任务数。★ 计划生成时任务就已经建成 draft 了（planning/service.ts），
+   * 所以这里数的是真实存在的行，不是计划里那份清单的长度 —— 两者在
+   * 「有人手工删过其中一条」之后会不一样，而卡片该说的是现在有几条。
+   */
+  const counts = await db
+    .select({ planId: workItems.planId, n: sql<number>`count(*)::int` })
+    .from(workItems)
+    .where(
+      and(
+        inArray(workItems.planId, rows.map((r) => r.id)),
+        isNull(workItems.deletedAt),
+      ),
+    )
+    .groupBy(workItems.planId);
+  const taskCount = new Map(counts.map((c) => [c.planId, c.n]));
+
+  const approver = techLeadId ? await lookupUser(db, techLeadId) : null;
+  const now = Date.now();
+
+  return rows.map((r) => ({
+    id: r.id,
+    requirementId: r.requirementId,
+    title: planTitle(r.requirementTitle, r.requirementRaw),
+    version: r.version,
+    taskCount: taskCount.get(r.id) ?? 0,
+    approver,
+    estimatedHours: r.estimatedHours,
+    estimatedCost: r.estimatedCost,
+    waitingMinutes: Math.round((now - r.createdAt.getTime()) / 60_000),
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * ★ 需求在结构化之前没有 title，只有用户粘进来的原文。
+ *   这时候显示空标题的卡片等于「有个东西要你批，但不告诉你是什么」——
+ *   退回原文首句，至少能认出是哪一条。
+ */
+function planTitle(title: string | null, rawInput: string | null): string {
+  if (title?.trim()) return title;
+  const raw = rawInput?.trim().split('\n')[0] ?? '';
+  if (!raw) return '未命名需求';
+  return raw.length > 40 ? `${raw.slice(0, 40)}…` : raw;
+}
+
+async function lookupUser(db: Database, id: string): Promise<{ id: string; name: string } | null> {
+  const { users } = await import('@apos/db');
+  const [row] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, id));
+  return row ?? null;
 }
 
 export interface BoardSummary {

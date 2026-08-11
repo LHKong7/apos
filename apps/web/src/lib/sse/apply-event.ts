@@ -90,11 +90,23 @@ export function applyEventToCache(qc: QueryClient, event: StreamEvent) {
       if (event.projectId) qc.invalidateQueries({ queryKey: qk.project(event.projectId) });
       return;
 
+    /**
+     * 结构性变化：补丁拼不出新卡片，直接重拉。
+     *
+     * ★ plan.* 这四条都要在这里，因为看板的 Planning 列现在会渲染
+     *   「待批准的计划」。
+     *
+     *   在此之前只认 plan.approved —— 于是计划刚生成时那张卡不会出现，
+     *   要等用户手动刷新；而「要求修改」之后旧计划变 superseded、
+     *   新计划生成，列里会留着一张**已经不存在**的卡，点进去 404。
+     */
     case 'work_item.created':
     case 'work_item.split':
     case 'work_item.merged':
+    case 'plan.generated':
     case 'plan.approved':
-      // 结构性变化：补丁拼不出新卡片，直接重拉
+    case 'plan.revision_requested':
+    case 'plan.superseded':
       if (event.projectId) qc.invalidateQueries({ queryKey: qk.boardAll(event.projectId) });
       return;
 
