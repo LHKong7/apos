@@ -7,7 +7,6 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { duration, eventLabel, money, relativeTime, riskLabel } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
-import { RoleBadge } from '../../components/Gated';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
@@ -62,32 +61,19 @@ export function OverviewPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="relative z-10 shrink-0 border-b border-slate-200/80 px-4 py-2.5 glass">
+      {/*
+        ★ 这里原本还有一条十二个标签的横排导航（以及角色徽标）。
+          它整条搬去了项目侧栏 —— 那十二页里只有这一页看得到导航，
+          等于「能去哪」这件事只在总览成立。搬走之后这个头只交代
+          「这是哪个项目、目标是什么」。
+      */}
+      <div className="relative z-10 shrink-0 border-b border-slate-200/80 px-4 py-3 glass">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold tracking-tight text-slate-900">{d.project.name}</h1>
+          <h1 className="text-sm font-semibold tracking-tight text-slate-900">总览</h1>
           {d.project.goal && (
             <span className="truncate text-xs text-slate-500">{d.project.goal}</span>
           )}
-          <span className="rounded-full border border-slate-200 bg-slate-100/70 px-2 py-0.5 text-[11px] text-slate-600">
-            {d.project.autonomyLevel}
-          </span>
         </div>
-        <nav className="mt-2 flex flex-wrap items-center gap-0.5 text-xs">
-          <span className="rounded-md bg-slate-900 px-2 py-1 font-medium text-white">总览</span>
-          <Tab to={`/projects/${projectId}/board`}>看板</Tab>
-          <Tab to={`/projects/${projectId}/graph`}>执行图</Tab>
-          <Tab to={`/projects/${projectId}/requirements`}>需求</Tab>
-          <Tab to={`/projects/${projectId}/decisions`}>决策</Tab>
-          <Tab to={`/projects/${projectId}/agents`}>Agent 团队</Tab>
-          <Tab to={`/projects/${projectId}/analytics`}>Analytics</Tab>
-          <Tab to={`/projects/${projectId}/settings/policies`}>Policy</Tab>
-          <Tab to={`/projects/${projectId}/settings/integrations`}>集成</Tab>
-          <Tab to={`/projects/${projectId}/settings/agents`}>Agent 配置</Tab>
-          <Tab to={`/projects/${projectId}/settings/members`}>成员与角色</Tab>
-          <Tab to={`/projects/${projectId}/settings/roles`}>角色定义</Tab>
-          {/* 当前身份在本项目的角色 —— 「为什么这个按钮是灰的」的第一手线索 */}
-          <RoleBadge projectId={projectId} />
-        </nav>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
@@ -361,17 +347,6 @@ export function OverviewPage() {
         />
       )}
     </div>
-  );
-}
-
-function Tab({ to, children }: { to: string; children: React.ReactNode }) {
-  return (
-    <Link
-      to={to}
-      className="rounded-md px-2 py-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-    >
-      {children}
-    </Link>
   );
 }
 

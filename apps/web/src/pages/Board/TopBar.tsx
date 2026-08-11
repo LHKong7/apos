@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import type { BoardSummary } from '../../lib/api/types';
 import type { BoardView } from '../../stores/board';
@@ -14,11 +13,6 @@ const VIEWS: { key: BoardView; label: string }[] = [
 ];
 
 interface Props {
-  projectName: string;
-  onOpenGraph: () => void;
-  onOpenAnalytics: () => void;
-  onOpenPolicies: () => void;
-  onOpenRequirements: () => void;
   onNewWorkItem: () => void;
   summary: BoardSummary | undefined;
   view: BoardView;
@@ -39,8 +33,11 @@ interface Props {
  *   用户要在一条视觉噪声里找「风险筛选在哪」。
  *
  *   现在：
- *     第一行 = 我在哪、看哪个视图、要新建什么   （导航与动作）
- *     第二行 = 我要看哪些卡                     （**全部**是筛选）
+ *     第一行 = 看哪个视图、要新建什么   （本页的动作）
+ *     第二行 = 我要看哪些卡             （**全部**是筛选）
+ *
+ *   「我在哪」和「能去哪」都不在这条工具条上了 —— 它们归项目侧栏，
+ *   因为那两个问题在每一页都要回答，不只是看板。
  *
  *   第二行因此变成一句完整的话：三个数字是筛选入口，右边三个也是筛选，
  *   中间用 ml-auto 留出的空隙就是两组的分界，不需要再画一条线。
@@ -50,11 +47,6 @@ interface Props {
  *   这个数字就白显示了。
  */
 export function TopBar({
-  projectName,
-  onOpenGraph,
-  onOpenAnalytics,
-  onOpenPolicies,
-  onOpenRequirements,
   onNewWorkItem,
   summary,
   view,
@@ -74,13 +66,10 @@ export function TopBar({
 
   return (
     <div className="relative z-20 shrink-0 border-b border-slate-200/80 px-4 py-2 glass">
-      {/* ── 第一行：导航与动作 ─────────────────────────────────────── */}
+      {/* ── 第一行：看哪个视图、要新建什么 ─────────────────────────── */}
       <div className="flex items-center gap-3">
-        <h1 className="shrink-0 text-sm font-semibold tracking-tight text-slate-900">
-          <span className="hidden sm:inline">{projectName}</span>
-          <span className="mx-1.5 hidden font-normal text-slate-300 sm:inline">/</span>
-          <span className="font-medium text-slate-500">看板</span>
-        </h1>
+        {/* 项目名不再重复：侧栏顶上就写着，而且它一直在 */}
+        <h1 className="shrink-0 text-sm font-semibold tracking-tight text-slate-900">看板</h1>
 
         <div className="flex min-w-0 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100/60 p-0.5">
           {VIEWS.map((v) => (
@@ -117,16 +106,12 @@ export function TopBar({
             + 新建任务
           </GatedButton>
 
-          <MoreMenu
-            links={[
-              { label: '执行图', onClick: onOpenGraph },
-              { label: 'Analytics', onClick: onOpenAnalytics },
-              { label: '需求', onClick: onOpenRequirements },
-              { label: 'Policy', onClick: onOpenPolicies },
-            ]}
-            quiet={quiet}
-            onToggleQuiet={toggleQuiet}
-          />
+          {/*
+            ★ 这里曾经挂着 执行图 / Analytics / 需求 / Policy 四个跳转。
+              它们现在在项目侧栏里 —— 那才是「能去哪」该待的地方，而且
+              每一页都在，不只是看板。这个菜单只剩看板自己的显示偏好。
+          */}
+          <QuietToggle quiet={quiet} onToggle={toggleQuiet} />
         </div>
       </div>
 
@@ -221,125 +206,44 @@ export function TopBar({
 }
 
 /**
- * 「更多」菜单。
+ * 安静模式开关。
  *
- * ★★ 装的是**跳去别的页面**的四个链接，不是看板自己的功能。
+ * ★ 曾经是「更多」菜单里的一项，而那个菜单主要是为四个跨页链接开的；
+ *   链接搬进侧栏之后，为一个开关留一个下拉菜单就只剩累赘了。
  *
- *   它们此前和视图切换并排在同一个框里，看起来像六个平级的标签，
- *   实际上前四个换的是这一页的呈现，后四个会离开这一页。而且这四页
- *   在项目总览页有完整的导航入口 —— 这里是快捷方式，一次会话点一次，
- *   不值得一直占着第一行最贵的位置。
- *
- * ★ 安静模式也收在这儿：它是显示偏好，不是筛选，放在筛选那一行会
- *   让人以为它会改变「看到哪些卡」。
+ * ★ 带字而不是只给图标：「安静模式」没有公认的图标，而它一旦开着，
+ *   用户看到的现象是「卡片怎么不动了」—— 那正是他会去报的 bug。
+ *   开着的时候整颗按钮点亮，关掉的路就在他刚才看的地方。
  */
-function MoreMenu({
-  links,
-  quiet,
-  onToggleQuiet,
-}: {
-  links: { label: string; onClick: () => void }[];
-  quiet: boolean;
-  onToggleQuiet: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
+function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void }) {
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="更多"
-        title="更多"
-        className={clsx(
-          'relative flex h-7 w-7 items-center justify-center rounded-md border text-slate-500 transition',
-          open
-            ? 'border-brand/50 bg-brand/10 text-brand'
-            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800',
-        )}
-      >
-        <span aria-hidden className="text-sm leading-none">
-          ⋯
-        </span>
-        {/*
-          ★ 安静模式开着时给个角标。
-            它一旦收进菜单，用户就没有任何线索知道「卡片为什么不动了」——
-            而那正是他会去报的 bug。
-        */}
-        {quiet && (
-          <span
-            aria-hidden
-            title="安静模式已开启"
-            className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-brand ring-2 ring-slate-50"
-          />
-        )}
-      </button>
-
-      {open && (
-        <>
-          {/* 点空白处收起。和执行图右键菜单同一套做法 */}
-          <button
-            type="button"
-            aria-label="关闭菜单"
-            className="fixed inset-0 z-40 cursor-default"
-            onClick={() => setOpen(false)}
-          />
-          <div
-            role="menu"
-            className="absolute right-0 top-full z-50 mt-1.5 w-52 animate-fade-in-up rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
-          >
-            <p className="px-2 pb-1 pt-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-              去其他页面
-            </p>
-            {links.map((link) => (
-              <button
-                key={link.label}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  link.onClick();
-                }}
-                className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-              >
-                {link.label}
-                <span aria-hidden className="ml-auto text-[10px] text-slate-400">
-                  ↗
-                </span>
-              </button>
-            ))}
-
-            <div aria-hidden className="my-1 h-px bg-slate-200" />
-
-            <label className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-slate-100">
-              <input
-                type="checkbox"
-                checked={quiet}
-                onChange={onToggleQuiet}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand"
-              />
-              <span>
-                <span className="block text-xs text-slate-700">安静模式</span>
-                <span className="block text-[10px] leading-tight text-slate-400">
-                  只更新数据，不做卡片移动动画
-                </span>
-              </span>
-            </label>
-          </div>
-        </>
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={quiet}
+      title="安静模式：只更新数据，不做卡片移动动画"
+      className={clsx(
+        'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition',
+        quiet
+          ? 'border-brand/50 bg-brand/10 font-medium text-brand'
+          : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800',
       )}
-    </div>
+    >
+      <svg
+        viewBox="0 0 16 16"
+        className="h-3.5 w-3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        aria-hidden
+      >
+        {/* 三条速度线；开着的时候划掉 —— 「动效关了」 */}
+        <path d="M2.5 5h8M2.5 8h6M2.5 11h9" />
+        {quiet && <path d="M13.5 3.5l-11 9" />}
+      </svg>
+      安静模式
+    </button>
   );
 }
 

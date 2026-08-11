@@ -1,0 +1,310 @@
+import type { ReactNode } from 'react';
+import { NavLink, useLocation, useMatch } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import clsx from 'clsx';
+import { api } from '../lib/api/client';
+import { qk } from '../lib/query/keys';
+import { sidebarCollapsed, useSidebarStore } from '../stores/sidebar';
+import { RoleBadge } from './Gated';
+
+/**
+ * 项目侧栏。
+ *
+ * ★★ 这一版之前，**只有总览页有项目导航**。
+ *
+ *   执行图、Analytics、Policy、Agent 团队、需求、决策中心、设置各页
+ *   都只有一个 <h1>。从执行图想去 Analytics，除了浏览器后退没有别的路 ——
+ *   而看板上那几个跳转按钮只是这个洞的一块补丁，补在了十五个控件挤成
+ *   一行的地方。
+ *
+ *   所以导航提到这里：一份定义、每个项目页都在、当前在哪一直看得见。
+ *   总览页那条十二个标签的横排导航因此删掉了，看板工具条上的四个跨页
+ *   链接也删掉了 —— 它们都是这份导航的重复实现。
+ *
+ * ★ 分三组不是为了好看：「工作」是每天都在的地方，「洞察」是回头看的，
+ *   「配置」是装一次就不再动的。混在一起的话，一天点二十次的看板和
+ *   一年点两次的角色定义会长得一模一样。
+ */
+export function ProjectSidebar() {
+  // 只在项目内出现。项目列表、全局决策中心、Run 详情没有项目上下文
+  const match = useMatch({ path: '/projects/:projectId', end: false });
+  const projectId = match?.params.projectId;
+  const { pathname } = useLocation();
+  const manual = useSidebarStore((s) => s.manual);
+  const setManual = useSidebarStore((s) => s.setManual);
+
+  const project = useQuery({
+    queryKey: qk.project(projectId!),
+    queryFn: () => api.project(projectId!),
+    enabled: Boolean(projectId),
+  });
+
+  if (!projectId) return null;
+
+  const collapsed = sidebarCollapsed(manual, pathname);
+  const groups = navGroups(projectId);
+
+  return (
+    <aside
+      aria-label="项目导航"
+      className={clsx(
+        'relative z-10 flex shrink-0 flex-col border-r border-slate-200/80 glass',
+        'transition-[width] duration-200 ease-out',
+        collapsed ? 'w-14' : 'w-56',
+      )}
+    >
+      {/* ── 项目头 ── */}
+      <div className={clsx('shrink-0 border-b border-slate-200/70 px-3 py-2.5', collapsed && 'px-2')}>
+        {collapsed ? (
+          <div
+            className="flex h-7 w-full items-center justify-center rounded-md bg-gradient-to-br from-brand-alt/20 to-brand-far/20 text-[11px] font-semibold text-brand"
+            title={project.data?.project.name}
+          >
+            {project.data?.project.name.slice(0, 1) ?? '·'}
+          </div>
+        ) : (
+          <>
+            <p className="truncate text-xs font-semibold tracking-tight text-slate-900">
+              {project.data?.project.name ?? ' '}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-400">
+              {project.data?.project.autonomyLevel ?? ''}
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* ── 导航 ── */}
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {groups.map((group, gi) => (
+          <div key={group.title} className={clsx(gi > 0 && 'mt-3')}>
+            {collapsed ? (
+              gi > 0 && <div aria-hidden className="mx-2 mb-2 h-px bg-slate-200/70" />
+            ) : (
+              <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                {group.title}
+              </p>
+            )}
+            <ul className="space-y-0.5">
+              {group.items.map((item) => (
+                <li key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    end={item.end}
+                    title={collapsed ? item.label : undefined}
+                    className={({ isActive }) =>
+                      clsx(
+                        'group relative flex items-center rounded-md text-xs transition',
+                        collapsed ? 'h-8 justify-center' : 'gap-2.5 px-2 py-1.5',
+                        isActive
+                          ? 'bg-brand/10 font-medium text-brand'
+                          : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {/* 左侧那道亮条是「我在这儿」唯一不依赖颜色的线索 */}
+                        {isActive && (
+                          <span
+                            aria-hidden
+                            className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-brand"
+                          />
+                        )}
+                        <span aria-hidden className="shrink-0">
+                          {item.icon}
+                        </span>
+                        {!collapsed && <span className="truncate">{item.label}</span>}
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      {/* ── 页脚：我在这个项目里是什么角色 + 折叠开关 ── */}
+      <div
+        className={clsx(
+          'flex shrink-0 items-center gap-2 border-t border-slate-200/70 px-2 py-2',
+          collapsed && 'justify-center',
+        )}
+      >
+        {/*
+          ★ 角色徽标从总览页搬到这里。它回答的是「为什么那个按钮是灰的」，
+            而灰按钮在每一页都可能出现 —— 只在总览看得到就等于没有。
+          ★ 收窄时藏起来：「技术负责人」四个字塞不进 40px，缩写成一个字
+            比不显示更糟 —— 用户得先猜那个字是什么意思。
+        */}
+        {!collapsed && <RoleBadge projectId={projectId} />}
+        <button
+          type="button"
+          onClick={() => setManual(!collapsed)}
+          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+          title={collapsed ? '展开侧栏' : '收起侧栏'}
+          className={clsx(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700',
+            !collapsed && 'ml-auto',
+          )}
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d={collapsed ? 'M6 3l5 5-5 5' : 'M10 3L5 8l5 5'} />
+          </svg>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  /** 总览的路径是其余所有页的前缀，不加 end 会一直高亮 */
+  end?: boolean;
+}
+
+function navGroups(id: string): { title: string; items: NavItem[] }[] {
+  const p = `/projects/${id}`;
+  return [
+    {
+      title: '工作',
+      items: [
+        { to: p, label: '总览', icon: <Icon.Overview />, end: true },
+        { to: `${p}/board`, label: '看板', icon: <Icon.Board /> },
+        { to: `${p}/graph`, label: '执行图', icon: <Icon.Graph /> },
+        { to: `${p}/requirements`, label: '需求', icon: <Icon.Requirement /> },
+        { to: `${p}/decisions`, label: '决策', icon: <Icon.Decision /> },
+      ],
+    },
+    {
+      title: '洞察',
+      items: [
+        { to: `${p}/analytics`, label: 'Analytics', icon: <Icon.Analytics /> },
+        { to: `${p}/agents`, label: 'Agent 团队', icon: <Icon.Agents /> },
+      ],
+    },
+    {
+      title: '配置',
+      items: [
+        { to: `${p}/settings/policies`, label: 'Policy', icon: <Icon.Policy /> },
+        { to: `${p}/settings/integrations`, label: '集成', icon: <Icon.Integration /> },
+        { to: `${p}/settings/agents`, label: 'Agent 配置', icon: <Icon.AgentConfig /> },
+        { to: `${p}/settings/members`, label: '成员与角色', icon: <Icon.Members /> },
+        { to: `${p}/settings/roles`, label: '角色定义', icon: <Icon.Roles /> },
+      ],
+    },
+  ];
+}
+
+/**
+ * 图标。
+ *
+ * ★ 用线性 SVG 而不是 emoji：收窄之后图标是导航仅剩的线索，
+ *   十二个 emoji 排下来颜色各异、粗细不一，扫的时候像一排贴纸。
+ *   线性图标跟着 currentColor 走，选中态、hover、深浅主题全都自动对。
+ */
+function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {children}
+    </svg>
+  );
+}
+
+const Icon = {
+  Overview: () => (
+    <Glyph>
+      <rect x="2.25" y="2.25" width="5" height="5" rx="1.2" />
+      <rect x="8.75" y="2.25" width="5" height="5" rx="1.2" />
+      <rect x="2.25" y="8.75" width="5" height="5" rx="1.2" />
+      <rect x="8.75" y="8.75" width="5" height="5" rx="1.2" />
+    </Glyph>
+  ),
+  Board: () => (
+    <Glyph>
+      <rect x="2.25" y="2.5" width="3.4" height="11" rx="1.1" />
+      <rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1.1" />
+      <rect x="10.35" y="2.5" width="3.4" height="4.5" rx="1.1" />
+    </Glyph>
+  ),
+  // 和品牌标记同形：两条上游汇进一个决策点，再往下流
+  Graph: () => (
+    <Glyph>
+      <circle cx="4" cy="3.75" r="1.9" />
+      <circle cx="12" cy="3.75" r="1.9" />
+      <circle cx="8" cy="12.25" r="1.9" />
+      <path d="M5.2 5.25 L7 10.4M10.8 5.25 L9 10.4" />
+    </Glyph>
+  ),
+  Requirement: () => (
+    <Glyph>
+      <path d="M4 2.25h4.6L12 5.6v8.15H4z" />
+      <path d="M8.4 2.4v3.3h3.3M6.2 8.6h3.6M6.2 11h2.6" />
+    </Glyph>
+  ),
+  Decision: () => (
+    <Glyph>
+      <path d="M8 2.1l5.9 5.9L8 13.9 2.1 8z" />
+      <path d="M5.9 8l1.5 1.5L10.3 6.6" />
+    </Glyph>
+  ),
+  Analytics: () => (
+    <Glyph>
+      <path d="M2.5 13.5h11" />
+      <path d="M4.75 13.5V8.5M8 13.5V3.5M11.25 13.5V6.5" strokeWidth="1.8" />
+    </Glyph>
+  ),
+  Agents: () => (
+    <Glyph>
+      <rect x="2.5" y="4.75" width="11" height="8" rx="2.2" />
+      <path d="M8 4.75V2.25" />
+      <circle cx="6" cy="8.75" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8.75" r="0.9" fill="currentColor" stroke="none" />
+    </Glyph>
+  ),
+  Policy: () => (
+    <Glyph>
+      <path d="M8 2l5 1.9v4.3c0 3-2 5.4-5 6.3-3-.9-5-3.3-5-6.3V3.9z" />
+      <path d="M6.1 7.9l1.4 1.4 2.6-2.7" />
+    </Glyph>
+  ),
+  Integration: () => (
+    <Glyph>
+      <path d="M6.4 9.6l3.2-3.2" />
+      <path d="M9.1 4.6l1.1-1.1a2.9 2.9 0 014.1 4.1l-1.1 1.1" />
+      <path d="M6.9 11.4l-1.1 1.1a2.9 2.9 0 01-4.1-4.1l1.1-1.1" />
+    </Glyph>
+  ),
+  AgentConfig: () => (
+    <Glyph>
+      <path d="M2.5 5h3.2M9.3 5h4.2M2.5 11h2.2M8.3 11h5.2" />
+      <circle cx="7.5" cy="5" r="1.7" />
+      <circle cx="6.5" cy="11" r="1.7" />
+    </Glyph>
+  ),
+  Members: () => (
+    <Glyph>
+      <circle cx="6.3" cy="5.6" r="2.4" />
+      <path d="M2 13.4c0-2.3 1.9-3.7 4.3-3.7s4.3 1.4 4.3 3.7" />
+      <path d="M11 4.1a2.3 2.3 0 010 4.4M12.1 13.4c0-1.5-.5-2.6-1.4-3.3" />
+    </Glyph>
+  ),
+  Roles: () => (
+    <Glyph>
+      <circle cx="5.4" cy="8" r="2.7" />
+      <path d="M8.1 8h5.6M11.6 8v2.4" />
+    </Glyph>
+  ),
+};

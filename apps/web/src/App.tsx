@@ -28,6 +28,7 @@ import { AccountsPage } from './pages/Settings/Accounts';
 import { RolesPage } from './pages/Settings/Roles';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { BrandMark } from './components/BrandMark';
+import { ProjectSidebar } from './components/ProjectSidebar';
 import { useThemeStore } from './stores/theme';
 
 /**
@@ -111,7 +112,15 @@ export function App() {
     <div className="flex h-screen flex-col overflow-hidden">
       <TopNav />
       <ConnectionBanner />
-      <main className="flex min-h-0 flex-1 flex-col">
+      {/*
+        ★ 侧栏和内容并排，所以这一层是 flex-row。
+        ★ 内容列必须 min-w-0：看板整体横滚靠的是子元素 overflow-x-auto，
+          而 flex 子项默认 min-width:auto 会被内容撑开 —— 少了它，
+          横滚会跑到整个页面上去，连顶栏和侧栏一起滚走。
+      */}
+      <main className="flex min-h-0 flex-1">
+        {orgSynced && <ProjectSidebar />}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/*
           ★ 身份确认之前不渲染任何页面。
 
@@ -151,6 +160,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         )}
+        </div>
       </main>
     </div>
   );
