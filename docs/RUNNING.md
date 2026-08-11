@@ -43,7 +43,8 @@ Postgres/Redis 容器 → 建 apos 与 apos_test 两个库 → 迁移 → 空库
 把那个链接贴进浏览器，用超管账号登录。
 
 > **先配超管再跑。** `cp .env.example .env` 之后至少要改这两行 ——
-> 系统没有自助注册，第一个账号只能来自这里（[§4](#4-环境变量)、
+> 自助注册开的是注册者**自己的新空组织**，进不到已有组织里，
+> 所以第一个能管事的账号只能来自这里（[§4](#4-环境变量)、
 > [09-security §1.0](tech/09-security.md#10-人类凭证与账号来源)）：
 >
 > ```
@@ -149,10 +150,11 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `TEST_DATABASE_URL` | `postgres://apos@localhost:5433/apos_test` | **必须与上面不同**，测试会清表 |
 | `PORT` | `3000` | API 端口 |
 | `API_URL` | `http://localhost:3000` | Vite `/api` 代理指向哪儿 |
-| `APOS_SUPERADMIN_EMAIL` | — | **必填**。第一个账号。系统没有自助注册，账号只能由管理员创建，而第一个管理员只能来自这里 |
+| `APOS_SUPERADMIN_EMAIL` | — | **必填**。第一个账号。进已有组织只能靠管理员拉人（自助注册只会开新组织），而第一个管理员只能来自这里 |
 | `APOS_SUPERADMIN_PASSWORD` | — | **必填**。**初始**口令，只在建号那一次用；之后在界面上改了，重启不会被打回去 |
 | `APOS_SUPERADMIN_NAME` | `超级管理员` | 显示名 |
 | `APOS_SUPERADMIN_ORG` | `默认组织` | 自举时他还不属于任何组织的话，用这个名字建一个 |
+| `APOS_ALLOW_SIGNUP` | 开 | 自助注册总开关。注册开的是注册者**自己的新空组织**。认不出来的取值一律按**关**处理，并在启动日志里说明 |
 | `APOS_JWT_SECRET` | — | 令牌签名密钥。不设置就每进程随机生成：**重启后所有人要重新登录**，多副本部署会表现为随机掉线 |
 | `APOS_JWT_TTL_SECONDS` | `43200` | 令牌有效期。令牌无状态，改口令 / 停用账号都要等它自然过期，所以不宜太长 |
 | `RUNTIME_SYNC_INTERVAL_MS` | `15000` | 多久重新扫一次数据库里的 Agent 运行时，`0` 关闭 |
@@ -161,6 +163,7 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `ANTHROPIC_API_KEY` | — | 平台自身用（需求结构化）。不设时用 `StubPlanningProvider`，闭环照样跑通 |
 | `APOS_AGENT_ANTHROPIC_API_KEY` | — | **Agent 专用**，与平台分开。不设时 Claude Code 运行时拒绝派发，不会悄悄回退到上面那个 key |
 | `AGENT_WORKSPACE_ROOT` | — | Agent 可写的目录根。不设时 `claude_code` 运行时拒绝派发 |
+| `APOS_ARCHIVE_ROOT` | — | 本地目录类工作区的归档根。**必须与上面不同且不在它下面**（否则 `pruneOrphans` 会连产物一起删）。不设时这类工作区退回「不交货」 |
 
 `dev-up.sh` 另外认这几个：`APOS_PGPORT`(5433)、`APOS_API_PORT`(3000)、
 `APOS_WEB_PORT`(5173)、`APOS_REDIS_PORT`(6379)、`APOS_LOG_DIR`(`/tmp/apos-dev`)。

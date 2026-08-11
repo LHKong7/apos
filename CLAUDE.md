@@ -84,7 +84,7 @@ apps/web/                      React 18 + Vite + TanStack Query + zustand + shad
 
 **数据库连接形态是从连接串推断的**（`packages/db/src/connection.ts`）。Transaction Pooler（:6543）下不能用预编译语句，认错了的表现是上线后随机报 `prepared statement does not exist`。迁移不要走 Transaction Pooler，用 `DATABASE_DIRECT_URL`。启动日志里那行 `[db] …` 就是给对这个用的。
 
-**账号来源只有三条**：`.env` 里的超管（启动时自举，幂等，不会覆盖改过的口令）、组织管理员开的号、自助注册（默认关，每次注册长出一个**新的空组织**）。种子脚本不造账号，且是追加不是重置。
+**账号来源只有三条**：`.env` 里的超管（启动时自举，幂等，不会覆盖改过的口令）、组织管理员开的号、自助注册（`APOS_ALLOW_SIGNUP`，**默认开**，每次注册长出一个**新的空组织**）。种子脚本不造账号，且是追加不是重置。
 
 ## 约定
 
