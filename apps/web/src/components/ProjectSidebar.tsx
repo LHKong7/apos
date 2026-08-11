@@ -26,12 +26,29 @@ import { RoleBadge } from './Gated';
  *   一年点两次的角色定义会长得一模一样。
  */
 export function ProjectSidebar() {
-  // 只在项目内出现。项目列表、全局决策中心、Run 详情没有项目上下文
-  const match = useMatch({ path: '/projects/:projectId', end: false });
-  const projectId = match?.params.projectId;
+  const projectMatch = useMatch({ path: '/projects/:projectId', end: false });
+  /**
+   * ★ Run 详情的 URL 里没有项目：它是 /runs/:runId，从看板点「看日志」过来。
+   *   但那次执行**属于**某个项目 —— 侧栏在这里消失，等于用户一点日志
+   *   就被扔出了项目，回去只能靠浏览器后退。
+   *
+   * ★ 由侧栏自己去问，而不是让 Run 详情页把 projectId 存到某个全局态里：
+   *   那种写法要靠每个页面记得设、记得清，漏一处就是「侧栏指着上一个项目」。
+   *   这里的查询和 Run 详情页用的是同一个 key，React Query 会合并成一次请求。
+   */
+  const runMatch = useMatch('/runs/:runId');
+  const runId = runMatch?.params.runId;
   const { pathname } = useLocation();
   const manual = useSidebarStore((s) => s.manual);
   const setManual = useSidebarStore((s) => s.setManual);
+
+  const run = useQuery({
+    queryKey: qk.run(runId!),
+    queryFn: () => api.run(runId!),
+    enabled: Boolean(runId),
+  });
+
+  const projectId = projectMatch?.params.projectId ?? run.data?.project?.id;
 
   const project = useQuery({
     queryKey: qk.project(projectId!),
@@ -39,9 +56,23 @@ export function ProjectSidebar() {
     enabled: Boolean(projectId),
   });
 
-  if (!projectId) return null;
-
   const collapsed = sidebarCollapsed(manual, pathname);
+
+  if (!projectId) {
+    /*
+     * ★ Run 还在路上时先把宽度占住。
+     *   等数据回来再插进来的话，整个内容区会在那一刻横向平移 224px ——
+     *   用户正在读的日志会跳走。项目真的为空（极少数没有项目的 Run）时，
+     *   下一帧它会消失，那一次跳动无法避免，但那是罕见分支。
+     */
+    if (runId && run.isPending) {
+      return (
+        <div aria-hidden className={clsx('shrink-0 border-r border-slate-200/80 glass', collapsed ? 'w-14' : 'w-56')} />
+      );
+    }
+    return null;
+  }
+
   const groups = navGroups(projectId);
 
   return (

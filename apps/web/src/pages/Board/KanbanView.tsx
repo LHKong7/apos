@@ -30,7 +30,14 @@ export function KanbanView({
   const setDraggingId = useBoardStore((s) => s.setDragging);
 
   return (
-    <div className="board-scroll flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+    /*
+     * ★ 列间距 12px → 8px。这不是审美调整，是拿回横向预算：
+     *   加了项目侧栏之后，看板的可用宽度少了图标栏那 56px，
+     *   六列不横滚的门槛从 1332px 抬到了 1388px —— 1366 的笔记本因此
+     *   全都开始横滚。缩间距 + 缩列的下限把门槛压回 1272px。
+     *   宽屏上没有损失：列是 flex-1，省下来的间距全给了列本身。
+     */
+    <div className="board-scroll flex min-h-0 flex-1 gap-2 overflow-x-auto p-3">
       {columns.map((col) => (
         <Column
           key={col.key}
@@ -102,8 +109,8 @@ function Column({
         if (dragging && drop?.allowed) onDrop(dragging, column.key);
       }}
       className={clsx(
-        // 六列在 1440 宽度内不横滚；更窄时按 min-w 收缩后再横滚
-        'flex min-w-[13rem] max-w-[20rem] flex-1 shrink-0 flex-col rounded-xl border border-slate-200/60 bg-slate-100/50 transition',
+        // 六列在 1280 宽度内不横滚（含 56px 图标栏）；更窄时按 min-w 收缩后再横滚
+        'flex min-w-[12rem] max-w-[20rem] flex-1 shrink-0 flex-col rounded-xl border border-slate-200/60 bg-slate-100/50 transition',
         over && drop?.allowed && 'border-emerald-400/60 ring-2 ring-emerald-400',
         over && drop && !drop.allowed && 'border-red-400/60 ring-2 ring-red-400',
       )}
