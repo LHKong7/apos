@@ -45,6 +45,11 @@ export interface CodexRuntimeOptions {
   approvalPolicy?: string;
   /** 透传给子进程的环境变量名白名单 */
   passthroughEnv?: string[];
+  /**
+   * 用户直接给出值的环境变量表（配置里的 `env` JSON）。
+   * ★ 最后应用，会盖掉上面各项算出来的同名变量 —— 填了就一定生效。
+   */
+  env?: Record<string, string>;
   /** 注入 spawn，测试用 */
   spawnFn?: SpawnFn;
   onDiagnostic?: (message: string, detail?: unknown) => void;
@@ -135,13 +140,14 @@ export class CodexRuntime implements AgentRuntimeAdapter {
     const existing = this.byIdempotencyKey.get(task.idempotencyKey);
     if (existing) return { externalRunId: this.externalId(existing), accepted: true };
 
-    if (!this.resolveCredential()) {
+    // 环境变量表里直接给出 OPENAI_API_KEY 也算配齐了（接中转站的常见形态）
+    if (!this.resolveCredential() && !(this.options.env ?? {})['OPENAI_API_KEY']) {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
         rejectReason:
           '未配置 Agent 凭证：请为该运行时登记 OpenAI API Key（不要复用平台凭证），' +
-          '或显式开启 allowInheritedCredentials。',
+          '或显式开启 allowInheritedCredentials，也可以在环境变量表里直接给出 OPENAI_API_KEY。',
       };
     }
 
@@ -399,6 +405,8 @@ export class CodexRuntime implements AgentRuntimeAdapter {
     };
     if (this.options.baseUrl) env['OPENAI_BASE_URL'] = this.options.baseUrl;
     for (const key of this.options.passthroughEnv ?? []) env[key] = process.env[key];
+    // ★ 用户填的排最后：填了就一定生效
+    for (const [key, value] of Object.entries(this.options.env ?? {})) env[key] = value;
     return env;
   }
 

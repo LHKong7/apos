@@ -161,7 +161,7 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `INTEGRATION_MEMORY_ADAPTERS` | — | 设成 `all` 强制所有集成走进程内适配器（离线开发／演示） |
 | `REDIS_URL` | `redis://localhost:6379` | 目前**还没有代码读它**，留给后续的 BullMQ 队列与多实例 SSE 扇出 |
 | `ANTHROPIC_API_KEY` | — | 平台自身用（需求结构化）。不设时用 `StubPlanningProvider`，闭环照样跑通 |
-| `APOS_AGENT_ANTHROPIC_API_KEY` | — | **Agent 专用**，与平台分开。不设时 Claude Code 运行时拒绝派发，不会悄悄回退到上面那个 key |
+| `APOS_AGENT_ANTHROPIC_API_KEY` | — | **Agent 专用**，与平台分开。不设时 Claude Code 运行时拒绝派发，不会悄悄回退到上面那个 key。也可以不设它，改在界面上逐个 Agent 登记凭证 |
 | `AGENT_WORKSPACE_ROOT` | — | Agent 可写的目录根。不设时 `claude_code` 运行时拒绝派发 |
 | `APOS_ARCHIVE_ROOT` | — | 本地目录类工作区的归档根。**必须与上面不同且不在它下面**（否则 `pruneOrphans` 会连产物一起删）。不设时这类工作区退回「不交货」 |
 
@@ -273,6 +273,23 @@ APOS_API_PORT=3001 bash scripts/dev-up.sh
 API 会每 15 秒自动重扫一次并补注册，日志里会出现 `[runtime] 新注册 N 个运行时`，
 **等一下即可，不需要重启**。想立刻生效就重启 API；
 把 `RUNTIME_SYNC_INTERVAL_MS=0` 关掉自动同步的话，加运行时就必须重启。
+
+### Claude Code Agent 报 401 / 连不上官方端点
+
+接中转站或自建网关的三样东西分别配在「Agent 配置 → 运行时」里：
+
+- **接入地址** → 注入 `ANTHROPIC_BASE_URL`
+- **凭证下发变量名**（高级选项） → 官方端点用 `ANTHROPIC_API_KEY`，多数中转站要 `ANTHROPIC_AUTH_TOKEN`。**这一项配错就是 401，而 401 的报错里没有任何东西指向它**
+- **环境变量（JSON）** → 其余任意变量原样下发，例如
+  `{"ANTHROPIC_BASE_URL": "https://gw.example.com", "ANTHROPIC_AUTH_TOKEN": "sk-…"}`
+
+环境变量表里敏感键（含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 字样）的值加密入库，
+保存后回显为 `secret://saved` —— 原样存回表示「这一项不改」。
+想让值留在进程环境里就写 `env:变量名`。
+
+配置页上那个 Agent 显示红色且写着「环境变量 X：环境变量 Y 未设置」，
+说明引用取不到值 —— 那个变量**不会**被下发，先把它设上。
+直接粘贴凭证需要部署时配好 `APOS_SECRET_KEY`，否则接口会拒绝并让你改用 `env:` 形态。
 
 ### 界面上一堆「未接入」
 

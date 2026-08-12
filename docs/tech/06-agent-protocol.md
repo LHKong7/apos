@@ -444,6 +444,33 @@ APOS 的 `AgentPermissions` 映射到 SDK 的四个开关，组合出闭世界�
 - 凭证读 `APOS_AGENT_ANTHROPIC_API_KEY`，**与平台自用的 `ANTHROPIC_API_KEY` 分开**。未配置时直接拒绝派发，不会悄悄回退到平台 key。要复用必须显式设 `allowInheritedCredentials`，留下审计痕迹。
 - 子进程环境只给 `PATH` / `HOME` / Agent 自己的 key。不做 `{ ...process.env }` —— 那等于把数据库口令和其他服务的 token 一起交给 Agent，绕开资源范围控制。
 
+#### 接中转站：接入地址、凭证变量名、环境变量表
+
+官方端点之外还有一大类接法：中转站、自建网关、Bedrock/Vertex 前置代理。它们要的三样东西分别落在三处：
+
+| 要配的 | 配在哪 | 落成什么 |
+| --- | --- | --- |
+| 网关地址 | Agent 的「接入地址」（`agents.endpoint`） | `ANTHROPIC_BASE_URL` |
+| 认证方式 | 配置项 `credentialEnv` | 凭证下发到 `ANTHROPIC_API_KEY` 还是 `ANTHROPIC_AUTH_TOKEN` |
+| 其余任意变量 | 配置项 `env`（一份 JSON） | 原样下发给子进程 |
+
+**为什么 `credentialEnv` 值得一个独立的配置项**：官方端点走 `x-api-key`，多数中转站走 `Authorization: Bearer`，认的是 `ANTHROPIC_AUTH_TOKEN`。下错变量名的表现是一句 401，而 401 里没有任何东西指向「名字错了」。做成一栏明确的选择，比让人去环境变量表里猜强。改投之后**不再同时下发 `ANTHROPIC_API_KEY`** —— 两个都给的话 SDK 会优先认 API Key，症状是「我明明改成了 AUTH_TOKEN，请求还是带着 x-api-key 打官方端点」。
+
+**为什么要有 `env` 这个自由 JSON**：平台的配置 schema 一定滞后于运行时。网关地址与 token 属于**这个 Agent**，不属于 APOS 进程 —— 用 `passthroughEnv`（给变量名、值从 APOS 环境取）表达不了，为一个 Agent 去改部署的环境变量还会波及所有共用该变量名的 Agent。
+
+它仍然是**声明出来的一个字段**，不是「整坨配置随便填」：
+
+- **值的形状照样校验**。键必须是合法变量名，值必须是字符串 —— 写成 `{"MAX_TOKENS": 4096}` 会在保存那一刻被拒，而不是让 Node 悄悄转成 `"4096"`。
+- **敏感键照样走加密通道**。键名含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 等字样时（判据 `isSecretEnvKey`，按下划线切段匹配，`GIT_AUTHOR_NAME` 不算），字面量值加密入库，接口只回占位符 `secret://saved`。把这个占位符原样存回来表示「这一项不改」—— 界面上那是一个 JSON 文本框，改网关地址时整份 JSON 会一起提交，没有这个约定的话改一个字段就会把同一份里的 token 冲掉。
+- **不接受手工填写的 `secret://` 引用**。否则任何能编辑 Agent 的人都可以粘一条 `secret://env/DATABASE_URL` 进来，把 APOS 进程环境里的任意变量读给 Agent —— 那正是 `passthroughEnv` 那份白名单要挡住的事。要从进程环境取值只能写 `env:变量名`。
+- **解不开的引用不下发，并在配置页上列出来**。悄悄下发空串的表现是 Agent 报一句 401，而现场没有任何东西指向「那把 key 所在的环境变量没设置」。
+
+**叠加顺序是由平台到用户，`env` 排最后**：最小集 → 凭证 → 接入地址 → `passthroughEnv` → `env`。用户填的一定生效，哪怕代价是他能把自己的凭证覆盖掉 —— 「我填了却没生效」是配置类功能最坏的失败形态。
+
+代价说清楚：这一栏能把上面的安全设置绕过去（比如手工给一个放开限制的变量），所以它在界面上标着「影响安全边界」。
+
+**凭证也可以只写在 `env` 里**。此时凭证栏是空的，`dispatch` 的凭证闸门认这种形态 —— 否则一个配好了、也确实能跑的 Agent 会被拒发，而报错还理直气壮地让人去配 `APOS_AGENT_ANTHROPIC_API_KEY`。同样的规则适用于 Codex 与六个通用 CLI。
+
 #### 成本：估算 + 权威值校正
 
 Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需要执行过程中的成本。因此走双轨：
@@ -514,6 +541,8 @@ Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需�
 几条针对性的处理：Aider 强制 `--no-auto-commits`（提交由工作区供给统一负责，两边都提交会让一个 Run 产出一堆零碎提交）；自动批准（`--yolo` / `--approval-mode yolo`）只在可写沙箱下给；Gemini CLI 在 `subscribe` 时先发一条 note 说明「要跑完才有输出」，否则用户会对着不动的执行流以为卡死。
 
 **加第七个 CLI**：在 `cli/profile.ts` 加一条 profile、在 `contracts/runtime-config.ts` 加一条 spec。适配器与 factory 一个字不用改，配置界面自动长出表单。
+
+这六个也各自带一份 `env` 环境变量表（§9.4 的规则原样适用）。profile 里的 `baseUrlEnv` 为 `null` 的那几个（pi / gemini_cli / goose / opencode）没有声明式的接入地址通道，接自建端点只能走 `env` —— 这正是那个口子存在的意义：不必等平台先给每个 CLI 补一条 `baseUrlEnv`。
 
 ---
 

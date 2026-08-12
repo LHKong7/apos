@@ -1,6 +1,7 @@
 import { agents, type Database } from '@apos/db';
 import {
   defaultRuntimeConfig,
+  envOverridesOf,
   isKnownRuntimeKind,
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
@@ -14,7 +15,7 @@ import {
   type AgentRuntimeAdapter,
   type RuntimeRegistry,
 } from '@apos/agent-runtimes';
-import { resolveSecret } from '../security/secrets';
+import { resolveEnvOverrides, resolveSecret } from '../security/secrets';
 
 export type AgentRow = typeof agents.$inferSelect;
 
@@ -54,6 +55,18 @@ export function createAgentAdapter(
   const num = (k: string) => (typeof cfg[k] === 'number' ? (cfg[k] as number) : undefined);
   const list = (k: string) => (Array.isArray(cfg[k]) ? (cfg[k] as string[]) : undefined);
 
+  /**
+   * 环境变量表：库里存的是引用，交给适配器的必须是明文。
+   *
+   * ★ 解不开的键要**喊出来**。它们不会被下发，而症状是 Agent 报一句 401 ——
+   *   那句报错里没有任何东西指向「ANTHROPIC_AUTH_TOKEN 引用的环境变量没设置」。
+   */
+  const overrides = resolveEnvOverrides(envOverridesOf(cfg));
+  if (overrides.unresolved.length > 0) {
+    diagnose(`${tag} 这些环境变量的引用解不开，不会下发：${overrides.unresolved.join('、')}`);
+  }
+  const env = Object.keys(overrides.env).length > 0 ? { env: overrides.env } : {};
+
   switch (agent.runtimeKind) {
     case 'mock':
       return new MockRuntime(
@@ -69,6 +82,11 @@ export function createAgentAdapter(
         apiKey,
         // 没登记凭证时才允许沿用进程环境（单机部署的常见形态）
         allowInheritedCredentials: agent.credentialRef === null,
+        // 接入地址 → ANTHROPIC_BASE_URL。中转站 / 自建网关走这条
+        ...(agent.endpoint ? { baseUrl: agent.endpoint } : {}),
+        ...(str('credentialEnv')
+          ? { credentialEnv: str('credentialEnv') as 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' }
+          : {}),
         ...(str('model') ? { model: str('model')! } : {}),
         ...(str('effort') ? { effort: str('effort') as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
         ...(num('maxTurns') !== undefined ? { maxTurns: num('maxTurns')! } : {}),
@@ -76,6 +94,7 @@ export function createAgentAdapter(
           ? { onUngrantedTool: str('onUngrantedTool') as 'escalate' | 'deny' }
           : {}),
         ...(list('passthroughEnv') ? { passthroughEnv: list('passthroughEnv')! } : {}),
+        ...env,
         onDiagnostic: (message, detail) => diagnose(`${tag} ${message}`, detail),
       });
 
@@ -88,6 +107,7 @@ export function createAgentAdapter(
         ...(str('binary') ? { binary: str('binary')! } : {}),
         ...(str('approvalPolicy') ? { approvalPolicy: str('approvalPolicy')! } : {}),
         ...(list('passthroughEnv') ? { passthroughEnv: list('passthroughEnv')! } : {}),
+        ...env,
         onDiagnostic: (message, detail) => diagnose(`${tag} ${message}`, detail),
       });
 
@@ -110,6 +130,7 @@ export function createAgentAdapter(
         ...(str('binary') ? { binary: str('binary')! } : {}),
         ...(list('extraArgs') ? { extraArgs: list('extraArgs')! } : {}),
         ...(list('passthroughEnv') ? { passthroughEnv: list('passthroughEnv')! } : {}),
+        ...env,
         onDiagnostic: (message, detail) => diagnose(`${tag} ${message}`, detail),
       });
     }

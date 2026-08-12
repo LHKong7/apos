@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { isSecretEnvKey } from '@apos/contracts';
 
 /**
  * 凭证引用（页面文档 14 §9 的纪律，扩展到 Agent 运行时与代码仓库）。
@@ -178,6 +179,122 @@ export function hintOf(input: string, label?: string | null): string {
   }
 
   return `****${trimmed.slice(-4)}`;
+}
+
+/**
+ * ── Agent 运行时配置里的环境变量表 ────────────────────────────────────
+ *
+ * 用户在界面上直接写一份 JSON 下发给子进程（`{"ANTHROPIC_BASE_URL": …,
+ * "ANTHROPIC_AUTH_TOKEN": …}`）。这里负责让它遵守上面那三条规矩：
+ * 敏感值不以明文进库、接口不回显、钥匙在库外。
+ *
+ * 库里的值有三种形态，其余都是普通明文：
+ * | 形态 | 怎么来的 | 回显成 |
+ * | --- | --- | --- |
+ * | `secret://enc/…` | 敏感键填了字面量，加密入库 | `secret://saved` |
+ * | `secret://env/NAME` | 值写成 `env:NAME` | `env:NAME` |
+ * | 明文 | 非敏感键的字面量（如网关地址） | 原样 |
+ */
+
+/**
+ * 加密值回显时的占位符。
+ *
+ * ★ 必须能原样存回来表示「这一项不改」—— 界面上那是一个 JSON 文本框，
+ *   用户改网关地址时会把整份 JSON 一起提交。没有这个约定的话，
+ *   改一个字段就会把同一份 JSON 里的 token 冲成字面量 "****1234"，
+ *   而这件事直到下一次派发报 401 才会被发现。
+ */
+export const KEPT_SECRET = 'secret://saved';
+
+/** 保存时：明文 → 引用。previous 是库里已有的那份，用于兑现 KEPT_SECRET */
+export function encodeEnvOverrides(
+  next: Record<string, string>,
+  previous: Record<string, string> = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(next)) {
+    if (value === KEPT_SECRET) {
+      const kept = previous[key];
+      if (!kept) {
+        throw new SecretConfigError(
+          `环境变量 ${key} 没有已保存的值可以沿用。${KEPT_SECRET} 是「保持不变」的占位符，` +
+            '新增这一项时请填入实际值。',
+        );
+      }
+      out[key] = kept;
+      continue;
+    }
+
+    /**
+     * ★ 不接受手工填写的 secret:// 引用。
+     *   放行的话，任何能编辑 Agent 的人都可以粘一条 `secret://env/DATABASE_URL`
+     *   进来，把 APOS 自己进程环境里的任意变量读给 Agent —— 那正是
+     *   passthroughEnv 那份白名单要挡住的事。
+     */
+    if (value.startsWith('secret://')) {
+      throw new SecretConfigError(
+        `环境变量 ${key} 的值不能是 secret:// 引用。要从进程环境取值请写成 \`env:变量名\`。`,
+      );
+    }
+
+    if (value.startsWith('env:') || isSecretEnvKey(key)) {
+      out[key] = encodeSecret(value);
+      continue;
+    }
+
+    out[key] = value;
+  }
+
+  return out;
+}
+
+/** 回显时：引用 → 占位符。加密值永不回显原文 */
+export function maskEnvOverrides(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).map(([key, value]) => {
+      if (value.startsWith(ENC_PREFIX)) return [key, KEPT_SECRET];
+      if (value.startsWith(ENV_PREFIX)) return [key, `env:${value.slice(ENV_PREFIX.length)}`];
+      return [key, value];
+    }),
+  );
+}
+
+/**
+ * 派发前：引用 → 明文。
+ *
+ * ★ 解不开的键**不下发**，并单独列出来。
+ *   悄悄下发一个空串的表现是 Agent 报一句 401，而现场没有任何东西
+ *   指向「那把 key 所在的环境变量没设置」——「配置没生效而现场毫无迹象」
+ *   是这个仓库反复吃过的亏。
+ */
+export function resolveEnvOverrides(env: Record<string, string>): {
+  env: Record<string, string>;
+  unresolved: string[];
+} {
+  const out: Record<string, string> = {};
+  const unresolved: string[] = [];
+
+  for (const [key, value] of Object.entries(env)) {
+    if (!value.startsWith('secret://')) {
+      out[key] = value;
+      continue;
+    }
+    const plain = resolveSecret(value);
+    if (plain === null) unresolved.push(key);
+    else out[key] = plain;
+  }
+
+  return { env: out, unresolved };
+}
+
+/** 这份环境变量表里有哪些引用现在取不到值，以及为什么 */
+export function describeEnvOverrides(env: Record<string, string>): string[] {
+  return Object.entries(env)
+    .filter(([, value]) => value.startsWith('secret://'))
+    .map(([key, value]) => ({ key, ...describeRef(value) }))
+    .filter((d) => !d.usable)
+    .map((d) => `环境变量 ${d.key}：${d.problem ?? '凭证不可用'}`);
 }
 
 /** 仅用于识别的指纹，不可逆。integrations 的历史行为保留在这里 */

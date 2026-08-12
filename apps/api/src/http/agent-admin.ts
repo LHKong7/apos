@@ -10,7 +10,9 @@ import {
 } from '@apos/db';
 import {
   ACTIVE_RUN_STATUSES,
+  envOverridesOf,
   isKnownRuntimeKind,
+  isSecretEnvKey,
   ResourceScope,
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
@@ -22,10 +24,13 @@ import { agentPermissionChangeDirection } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { registerAgentNow, type AgentRow } from '../modules/agent/runtime-factory';
 import {
+  describeEnvOverrides,
   describeRef,
+  encodeEnvOverrides,
   encodeSecret,
   hasMasterKey,
   hintOf,
+  maskEnvOverrides,
   SecretConfigError,
 } from '../modules/security/secrets';
 import { ApiError, notFound } from './errors';
@@ -104,15 +109,16 @@ export async function createAgent(
   await assertOwner(db, input.ownerId);
   assertPermissionsSane(input);
 
+  const { config, dropped } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
+
   const credential = input.credential?.trim() || null;
-  if (spec.credential && !credential) {
+  if (spec.credential && !credential && !credentialGivenInEnv(config)) {
     throw new ApiError(
       'VALIDATION_FAILED',
-      `${spec.label} 需要凭证（${spec.credential.label}）。可填 \`env:变量名\` 让凭证留在进程环境里。`,
+      `${spec.label} 需要凭证（${spec.credential.label}）。可填 \`env:变量名\` 让凭证留在进程环境里，` +
+        '或在运行时配置的环境变量表里直接给出对应的变量。',
     );
   }
-
-  const config = validateConfig(input.runtimeKind, input.runtimeConfig);
 
   const [row] = await db
     .insert(agents)
@@ -156,7 +162,7 @@ export async function createAgent(
     reason: '创建 Agent',
   });
 
-  return { agent: await describeAgent(db, registry, row!) };
+  return { agent: await describeAgent(db, registry, row!), droppedConfigKeys: dropped };
 }
 
 export async function updateAgent(
@@ -208,11 +214,20 @@ export async function updateAgent(
   /**
    * ★ 换了 CLI 类型就要重新校验配置：旧 kind 的参数在新 kind 下多半不合法，
    *   原样带过去的话，界面显示配置完好，实际派发时 CLI 收到一堆它不认识的参数。
+   *
+   * ★ 换类型时也不给 `prepareConfig` 传旧配置：配置整个重来了，
+   *   此时出现的 `secret://saved` 占位符没有对应的旧值，应当当场报错，
+   *   而不是从上一种 CLI 的环境变量表里捞一个同名的值接上。
    */
-  const config =
+  const switchingKind = Boolean(input.runtimeKind && input.runtimeKind !== existing.runtimeKind);
+  const prepared =
     input.runtimeConfig !== undefined || input.runtimeKind
-      ? validateConfig(kind, input.runtimeConfig ?? (input.runtimeKind ? {} : existing.runtimeConfig))
-      : undefined;
+      ? prepareConfig(
+          kind,
+          input.runtimeConfig ?? (input.runtimeKind ? {} : existing.runtimeConfig),
+          switchingKind ? null : existing.runtimeConfig,
+        )
+      : null;
 
   const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
 
@@ -223,7 +238,7 @@ export async function updateAgent(
       ...(input.type ? { type: input.type } : {}),
       ...(input.description !== undefined ? { description: input.description ?? null } : {}),
       ...(input.runtimeKind ? { runtimeKind: input.runtimeKind } : {}),
-      ...(config !== undefined ? { runtimeConfig: config } : {}),
+      ...(prepared ? { runtimeConfig: prepared.config } : {}),
       ...(input.endpoint !== undefined ? { endpoint: input.endpoint ?? null } : {}),
       ...(credential !== undefined ? credentialColumns(credential) : {}),
       ...(input.model !== undefined ? { model: input.model ?? null } : {}),
@@ -264,7 +279,11 @@ export async function updateAgent(
     });
   }
 
-  return { agent: await describeAgent(db, registry, row!), permissionsChanged };
+  return {
+    agent: await describeAgent(db, registry, row!),
+    permissionsChanged,
+    droppedConfigKeys: prepared?.dropped ?? [],
+  };
 }
 
 export async function deleteAgent(db: Database, agentId: string) {
@@ -398,7 +417,14 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
 
     runtimeKind: row.runtimeKind,
     runtimeKindLabel: spec?.label ?? row.runtimeKind,
-    runtimeConfig: row.runtimeConfig,
+    /** ★ 环境变量表里的加密值只回占位符，与凭证同一条纪律 */
+    runtimeConfig: maskRuntimeConfig(row.runtimeConfig),
+    /**
+     * ★ 环境变量表里那些取不到值的引用。
+     *   和 credentialProblem 是同一类问题：配置看着完好，派发时才炸，
+     *   而报错不会指向「那个环境变量没设置」。
+     */
+    runtimeConfigProblems: describeEnvOverrides(envOverridesOf(row.runtimeConfig)),
     endpoint: row.endpoint,
 
     /** ★ 只回 hint 与可用性判断，永不回原值 */
@@ -451,7 +477,17 @@ function assertKind(kind: string) {
   return runtimeKindSpec(kind)!;
 }
 
-function validateConfig(kind: string, input: Record<string, unknown> | undefined) {
+/**
+ * 校验运行时配置，并把环境变量表里的敏感值换成引用。
+ *
+ * @param previous 库里已有的那份配置，用于兑现 `secret://saved` 占位符。
+ *   新建时传 null。
+ */
+function prepareConfig(
+  kind: string,
+  input: Record<string, unknown> | undefined,
+  previous: Record<string, unknown> | null,
+): { config: Record<string, unknown>; dropped: string[] } {
   const result = validateRuntimeConfig(kind, input);
   if (!result.ok) {
     /**
@@ -463,7 +499,39 @@ function validateConfig(kind: string, input: Record<string, unknown> | undefined
       issues: result.issues,
     });
   }
-  return result.config;
+
+  // 该运行时没有环境变量表这一项（如 mock）时不要凭空塞一个 env 键进去
+  if (!('env' in result.config)) return { config: result.config, dropped: result.dropped };
+
+  try {
+    return {
+      config: {
+        ...result.config,
+        env: encodeEnvOverrides(envOverridesOf(result.config), envOverridesOf(previous)),
+      },
+      dropped: result.dropped,
+    };
+  } catch (err) {
+    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    throw err;
+  }
+}
+
+/** 回显用：环境变量表里的加密值换成占位符，永不回显原文 */
+function maskRuntimeConfig(config: Record<string, unknown>): Record<string, unknown> {
+  if (!('env' in config)) return config;
+  return { ...config, env: maskEnvOverrides(envOverridesOf(config)) };
+}
+
+/**
+ * 环境变量表里是不是已经给了凭证。
+ *
+ * ★ 只是「别让人存下一个明显跑不起来的 Agent」的粗筛：这里不知道每种 CLI
+ *   认哪个变量名，就按「有没有敏感形状的键」判断。真正的判定在适配器的
+ *   dispatch 里 —— 它知道自己认什么，也只有它拦得住。
+ */
+function credentialGivenInEnv(config: Record<string, unknown>): boolean {
+  return Object.keys(envOverridesOf(config)).some(isSecretEnvKey);
 }
 
 function credentialColumns(credential: string | null) {
