@@ -6,6 +6,7 @@ import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib
 import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard, BoardColumn } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type SortKey = 'title' | 'status' | 'risk' | 'cost' | 'updatedAt';
 
@@ -79,14 +80,12 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
         <thead className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_0_rgb(var(--c-slate-200))]">
           <tr>
             <th className="w-9 px-3 py-2">
-              <input
-                type="checkbox"
+              <Checkbox
                 aria-label="全选"
                 checked={selected.size > 0 && selected.size === rows.length}
-                onChange={(e) =>
-                  setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                onCheckedChange={(v) =>
+                  setSelected(v ? new Set(rows.map((r) => r.id)) : new Set())
                 }
-                className="h-3.5 w-3.5 accent-brand"
               />
             </th>
             <SortHeader label="任务" sortKey="title" sort={sort} onSort={setSort} />
@@ -108,12 +107,10 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
               )}
             >
               <td className="px-3 py-2.5 align-middle" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
+                <Checkbox
                   aria-label={`选择 ${card.title}`}
                   checked={selected.has(card.id)}
-                  onChange={() => toggle(card.id)}
-                  className="h-3.5 w-3.5 accent-brand"
+                  onCheckedChange={() => toggle(card.id)}
                 />
               </td>
               {/*

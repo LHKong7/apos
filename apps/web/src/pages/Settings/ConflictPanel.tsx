@@ -7,6 +7,7 @@ import { qk } from '../../lib/query/keys';
 import { relativeTime } from '../../lib/format';
 import type { SyncConflictRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * 同步冲突处理（页面文档 14 §5.3 的冲突界面）。
@@ -137,12 +138,7 @@ function ConflictRow({
           {/* ★ 记的是字段级规则，不是这一条对象 —— 用户勾它时想表达的是
               「这个字段以后别再问我」 */}
           <label className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
-            <input
-              type="checkbox"
-              checked={applyToSimilar}
-              onChange={(e) => setApplyToSimilar(e.target.checked)}
-              className="h-3 w-3"
-            />
+            <Checkbox checked={applyToSimilar} onCheckedChange={setApplyToSimilar} />
             以后「{conflict.fieldLabel}」的同类冲突自动按此处理
           </label>
         </>

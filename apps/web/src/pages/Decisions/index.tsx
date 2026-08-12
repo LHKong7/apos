@@ -8,6 +8,7 @@ import { qk } from '../../lib/query/keys';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionCardView } from './Card';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * 决策中心（页面文档 10）。
@@ -210,13 +211,9 @@ export function DecisionsPage() {
 
           {batchable.length > 1 && (
             <label className="flex items-center gap-1.5 px-1 text-[11px] text-slate-500">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected.length === batchable.length}
-                onChange={(e) =>
-                  setPicked(e.target.checked ? new Set(batchableIds) : new Set())
-                }
-                className="h-3.5 w-3.5"
+                onCheckedChange={(v) => setPicked(v ? new Set(batchableIds) : new Set())}
               />
               全选可批量的 {batchable.length} 条（低风险且可逆）
             </label>

@@ -9,6 +9,7 @@ import type {
   NotificationConfigRow,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 const ESCALATE_LABELS: Record<string, string> = {
@@ -76,12 +77,10 @@ export function NotificationPanel({
               e.noisy ? 'text-slate-500' : 'text-slate-700',
             )}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               disabled={!canEdit}
               checked={config.events.includes(e.key)}
-              onChange={() => toggle(e.key)}
-              className="h-3 w-3"
+              onCheckedChange={() => toggle(e.key)}
             />
             {e.label}
             {e.noisy && <span className="text-slate-400">← 默认关</span>}
@@ -136,12 +135,10 @@ export function NotificationPanel({
         </label>
         {/* ★ 免打扰保护的是注意力，不是责任 —— 高风险决策必须能穿透 */}
         <label className="flex items-center gap-1">
-          <input
-            type="checkbox"
+          <Checkbox
             disabled={!canEdit}
             checked={config.quietHoursExceptHighRisk}
-            onChange={(e) => setDraft({ ...config, quietHoursExceptHighRisk: e.target.checked })}
-            className="h-3 w-3"
+            onCheckedChange={(v) => setDraft({ ...config, quietHoursExceptHighRisk: v })}
           />
           高风险决策不受免打扰限制
         </label>

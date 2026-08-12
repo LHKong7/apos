@@ -9,6 +9,7 @@ import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { relativeTime } from '../../lib/format';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -237,12 +238,11 @@ export function RequirementListPage() {
                       ★ 勾选框独立于整行按钮之外：按钮不能嵌套，而且勾选与
                         「进入这条需求」是两个意图，共用一次点击必然误触。
                     */}
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      tone="destructive"
                       checked={selected.has(r.id)}
-                      onChange={() => toggle(r.id)}
+                      onCheckedChange={() => toggle(r.id)}
                       aria-label={`选择「${r.title}」`}
-                      className="shrink-0 accent-red-600"
                     />
                     <button
                       type="button"

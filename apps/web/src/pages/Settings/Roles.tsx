@@ -9,6 +9,7 @@ import { usePermissions } from '../../lib/permissions/usePermissions';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { AvailablePermission, Permission, RoleRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /**
@@ -405,11 +406,10 @@ function RoleEditor({
       <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
         <p className="text-xs font-medium text-slate-700">谁来担任这个角色</p>
         <label className="mt-1 flex items-start gap-2 text-xs">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={draft.agents && agentAllowed}
             disabled={!agentAllowed || locked}
-            onChange={(e) => onChange({ ...draft, agents: e.target.checked })}
+            onCheckedChange={(v) => onChange({ ...draft, agents: v })}
             className="mt-0.5"
           />
           <span className={clsx(!agentAllowed && 'text-slate-400')}>
@@ -444,11 +444,10 @@ function RoleEditor({
               <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                 {items.map((p) => (
                   <label key={p.key} className="flex items-start gap-1.5 text-[11px]">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={draft.permissions.has(p.key)}
                       disabled={locked}
-                      onChange={() => toggle(p.key)}
+                      onCheckedChange={() => toggle(p.key)}
                       className="mt-0.5"
                     />
                     <span className="text-slate-700">

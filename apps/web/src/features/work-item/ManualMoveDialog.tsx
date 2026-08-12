@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { stageLabel, statusLabel } from '../../lib/format';
 import type { BoardCard } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /** 原因分类进 Analytics 的「人工覆盖率」，自由文本没法聚合 */
@@ -64,7 +65,7 @@ export function ManualMoveDialog({
         <legend className="text-xs font-medium text-slate-700">原因</legend>
         {REASONS.map((r) => (
           <label key={r.value} className="flex items-center gap-2 text-xs text-slate-700">
-            <input
+            <Input
               type="radio"
               name="reason"
               value={r.value}
@@ -90,12 +91,7 @@ export function ManualMoveDialog({
 
       {hasRunningRun && (
         <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
-          <input
-            type="checkbox"
-            checked={terminateRun}
-            onChange={(e) => setTerminateRun(e.target.checked)}
-            className="accent-slate-900"
-          />
+          <Checkbox tone="neutral" checked={terminateRun} onCheckedChange={setTerminateRun} />
           同时终止正在运行的 Agent Run
         </label>
       )}

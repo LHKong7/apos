@@ -13,6 +13,7 @@ import { RunSummary } from '../../features/run/RunSummary';
 import { useRunEvents } from '../../features/run/useRunEvents';
 import { ArtifactsTab, CostTab, ErrorTab, InputTab } from '../../features/run/tabs';
 import type { RunDetail } from '../../lib/api/types';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const ACTIVE = ['queued', 'dispatching', 'running', 'paused'];
 
@@ -124,12 +125,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           <div className="ml-auto flex items-center gap-2">
             {/* ★ 本页最重要的开关：两类用户，两种深度（页面文档 09 §2） */}
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={detailed}
-                onChange={(e) => setDetailed(e.target.checked)}
-                className="h-3.5 w-3.5 accent-slate-900"
-              />
+              <Checkbox tone="neutral" checked={detailed} onCheckedChange={setDetailed} />
               详细模式
             </label>
           </div>

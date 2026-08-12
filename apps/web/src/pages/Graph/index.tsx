@@ -20,6 +20,7 @@ import {
 } from '../../features/graph/highlight';
 import { resolveDiagnosticAction } from '../../features/graph/diagnostic-actions';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const LAYOUT_LABELS: Record<LayoutKind, string> = {
   layered: '分层',
@@ -132,11 +133,10 @@ export function GraphPage() {
             <span className="text-[11px] text-slate-400">高亮</span>
             {HIGHLIGHT_MODES.map((mode) => (
               <label key={mode} className="flex cursor-pointer items-center gap-1 text-xs text-slate-600">
-                <input
-                  type="checkbox"
+                <Checkbox
+                  tone="neutral"
                   checked={modes.includes(mode)}
-                  onChange={() => toggleMode(mode)}
-                  className="h-3.5 w-3.5 accent-slate-900"
+                  onCheckedChange={() => toggleMode(mode)}
                 />
                 {MODE_LABELS[mode]}
               </label>

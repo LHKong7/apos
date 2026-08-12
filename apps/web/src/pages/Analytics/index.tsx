@@ -23,6 +23,7 @@ import { CostTab } from './CostTab';
 import { QualityTab } from './QualityTab';
 import { BenefitTab } from './BenefitTab';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const RANGE_LABELS: Record<AnalyticsRange, string> = {
   '7d': '近 7 天',
@@ -154,11 +155,10 @@ export function AnalyticsPage() {
 
           {/* ★ 默认开启：绝对值不重要，趋势才重要（页面文档 §5.8） */}
           <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
-            <input
-              type="checkbox"
+            <Checkbox
+              tone="neutral"
               checked={compare}
-              onChange={(e) => setParam('compare', String(e.target.checked))}
-              className="h-3.5 w-3.5 accent-slate-900"
+              onCheckedChange={(v) => setParam('compare', String(v))}
             />
             对比上一周期
           </label>

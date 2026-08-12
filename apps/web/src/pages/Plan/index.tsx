@@ -11,6 +11,7 @@ import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { VersionDiff } from './VersionDiff';
 import type { PlanDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 
 /**
@@ -424,11 +425,11 @@ function ApproveDialog({
 
         {needsAck && (
           <label className="mt-2 flex cursor-pointer items-start gap-1.5 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
-            <input
-              type="checkbox"
+            <Checkbox
+              tone="destructive"
               checked={acknowledged}
-              onChange={(e) => setAcknowledged(e.target.checked)}
-              className="mt-0.5 h-3.5 w-3.5 accent-red-700"
+              onCheckedChange={setAcknowledged}
+              className="mt-0.5"
             />
             我知道这份计划会让项目超出预算，仍然批准
           </label>

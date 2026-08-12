@@ -14,6 +14,7 @@ import { ConflictPanel } from './ConflictPanel';
 import { NotificationPanel } from './NotificationPanel';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -515,12 +516,7 @@ function AddRow({
           </label>
 
           <label className="mt-1.5 flex items-start gap-1.5 text-[11px] text-slate-600">
-            <input
-              type="checkbox"
-              checked={grantWrite}
-              onChange={(e) => setGrantWrite(e.target.checked)}
-              className="mt-0.5 h-3 w-3"
-            />
+            <Checkbox checked={grantWrite} onCheckedChange={setGrantWrite} className="mt-0.5" />
             <span>
               授予写权限
               <span className="ml-1 text-slate-400">

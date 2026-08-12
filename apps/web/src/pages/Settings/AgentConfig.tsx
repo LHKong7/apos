@@ -17,6 +17,7 @@ import type {
   RuntimeKindSpec,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -1613,11 +1614,7 @@ function RepositoryForm({
         </label>
 
         <label className="flex items-center gap-2 text-xs text-slate-700">
-          <input
-            type="checkbox"
-            checked={form.orgWide}
-            onChange={(e) => set('orgWide', e.target.checked)}
-          />
+          <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
           组织共享（其他项目也能用）
         </label>
       </div>

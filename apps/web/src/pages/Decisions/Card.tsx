@@ -7,6 +7,7 @@ import { qk } from '../../lib/query/keys';
 import { duration, riskLabel } from '../../lib/format';
 import type { DecisionCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /**
@@ -66,12 +67,10 @@ export function DecisionCardView({
         {showSelectColumn && (
           <div className="w-4 shrink-0 pt-0.5">
             {onSelect ? (
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected}
-                onChange={(e) => onSelect(e.target.checked)}
+                onCheckedChange={onSelect}
                 aria-label={`选择「${card.title}」`}
-                className="h-3.5 w-3.5"
               />
             ) : (
               <span
