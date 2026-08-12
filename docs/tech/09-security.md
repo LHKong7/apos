@@ -569,13 +569,21 @@ async function buildAgentContext(item: WorkItem, agent: Agent): Promise<ContextI
 ### 5.4 代码仓库凭证（GitHub / GitLab / …）
 
 登记在「Agent 配置 → 代码仓库」（`/api/v1/admin/repositories`，需 `repository.manage`）。
-凭证两种形态，没有第三种（`modules/security/secrets.ts`）：
+凭证三种形态（`modules/security/secrets.ts`）：
 
 - `env:GITHUB_TOKEN` —— 库里只存变量名，明文只在进程环境。**生产首选**
-- 直接粘贴 —— AES-256-GCM 加密入库，钥匙是库外的 `APOS_SECRET_KEY`
+- 直接粘贴 + 配了 `APOS_SECRET_KEY` —— AES-256-GCM 加密入库，钥匙在库外
+- 直接粘贴 + 没配 `APOS_SECRET_KEY` —— 明文入库（`secret://plain/…`），本机开发与演示环境
 
-没配 `APOS_SECRET_KEY` 时接口**直接拒绝**粘贴的凭证并要求改用 `env:` 形态，
-不做「先存着回头再加密」。Token 需要的权限就是 clone / fetch / push
+★ 主密钥决定的是**存成什么样**，不是**能不能存**。此前没配主密钥时接口直接
+拒绝一切粘贴进来的值；但 Agent 的运行时配置是一份用户自己写的 JSON，
+键名带 `TOKEN` / `KEY` / `AUTH` 的值都会走同一条判定 —— 于是「配一下中转站」
+变成了「先去改部署的环境变量再重启」。一个把常规配置挡在门外的安全措施，
+换来的是用户绕开这一页。现在改为永远存得下，并在配置页上如实标注当前是哪一种
+（`encryptsInlineSecrets`）。三种形态都带 `secret://` 前缀，因此
+「接口永不回显」那条纪律对它们一视同仁。
+
+Token 需要的权限就是 clone / fetch / push
 （GitHub fine-grained PAT 给 Contents: Read and write 即可）——
 平台不调 GitHub / GitLab 的 API。
 

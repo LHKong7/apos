@@ -371,12 +371,12 @@ export const api = {
    */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
   createAgent: (body: Record<string, unknown>) =>
-    request<{ agent: { id: string }; droppedConfigKeys: string[] }>('/admin/agents', {
+    request<{ agent: { id: string }; unknownConfigKeys: string[] }>('/admin/agents', {
       method: 'POST',
       json: body,
     }),
   updateAgent: (id: string, body: Record<string, unknown>) =>
-    request<{ agent: unknown; permissionsChanged: boolean; droppedConfigKeys: string[] }>(
+    request<{ agent: unknown; permissionsChanged: boolean; unknownConfigKeys: string[] }>(
       `/admin/agents/${id}`,
       { method: 'PATCH', json: body },
     ),

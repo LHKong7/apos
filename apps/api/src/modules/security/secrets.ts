@@ -4,26 +4,35 @@ import { isSecretEnvKey } from '@apos/contracts';
 /**
  * 凭证引用（页面文档 14 §9 的纪律，扩展到 Agent 运行时与代码仓库）。
  *
- * 三条规矩：
- * 1. 业务表里存的永远是 `secret://…` 引用，不是明文。
- * 2. 接口只回 `credentialHint`（后四位），任何响应都读不出原值。
- * 3. 引用能被解回明文的那把钥匙（APOS_SECRET_KEY）住在库外。
- *    只拿到一份数据库导出的人，解不开任何一条凭证。
+ * 两条不变的规矩：
+ * 1. 业务表里存的永远是 `secret://…` 引用，读的一方靠前缀知道它是什么。
+ * 2. 接口只回 `credentialHint`（后四位）或占位符，任何响应都读不出原值。
  *
- * 支持两种引用形态，按运维成熟度二选一：
+ * 三种引用形态：
  *
  * | 形态 | 写法 | 明文落在哪 | 适用 |
  * | --- | --- | --- | --- |
  * | 环境变量 | `env:GITHUB_TOKEN` | 只在进程环境 | 生产首选；有 KMS/Vault 时也走这条 |
- * | 加密内联 | 直接粘贴 key | 密文进库，钥匙在环境 | 自建单机、演示环境 |
+ * | 加密内联 | 直接粘贴 key（配了主密钥） | 密文进库，钥匙在环境 | 自建单机 |
+ * | 明文内联 | 直接粘贴 key（没配主密钥） | 明文进库 | 本机开发、演示环境 |
  *
- * ★ 没有第三种「明文进库」。APOS_SECRET_KEY 未配置时，
- *   接口会直接拒绝粘贴进来的凭证并告诉用户改用 env: 形态 ——
- *   而不是"先存着，回头再加密"。回头是不会来的。
+ * ★★ APOS_SECRET_KEY 决定的是**存成密文还是明文**，不再决定**能不能存**。
+ *
+ *   此前没配主密钥时接口直接拒绝粘贴进来的值，理由是「不做先存着回头再
+ *   加密」。但它拦下的不只是凭证 —— Agent 的运行时配置是一份用户自己写的
+ *   JSON，里面凡是键名带 TOKEN/KEY/AUTH 的都会被同一条规则判定为凭证，
+ *   于是「配一下中转站」变成了「先去改部署的环境变量再重启」。
+ *   一个把常规配置挡在门外的安全措施，最后换来的是用户绕开这一页。
+ *
+ *   所以改成：永远存得下，配了主密钥就是密文，没配就是明文，且这件事
+ *   在界面上明说（catalog 的 `encryptsInlineSecrets`）。明文形态同样带
+ *   `secret://` 前缀，因此「接口不回显」那条纪律对三种形态一视同仁。
  */
 
 const ENC_PREFIX = 'secret://enc/';
 const ENV_PREFIX = 'secret://env/';
+/** 没配主密钥时的明文形态。带前缀是为了让读的一方仍然知道「这是一条凭证」 */
+const PLAIN_PREFIX = 'secret://plain/';
 const FINGERPRINT_PREFIX = 'secret://local/';
 
 const ALGO = 'aes-256-gcm';
@@ -35,7 +44,7 @@ export class SecretConfigError extends Error {
   }
 }
 
-/** 主密钥。取不到时返回 null —— 调用方要据此给出可行动的报错，而不是静默降级 */
+/** 主密钥。取不到时返回 null —— 此时内联值明文入库，界面上要如实标注 */
 function masterKey(): Buffer | null {
   const raw = process.env['APOS_SECRET_KEY'];
   if (!raw) return null;
@@ -43,6 +52,7 @@ function masterKey(): Buffer | null {
   return createHash('sha256').update(raw).digest();
 }
 
+/** 内联的敏感值现在是不是密文入库。false 不是「存不下」，是「明文进库」 */
 export function hasMasterKey(): boolean {
   return masterKey() !== null;
 }
@@ -50,7 +60,10 @@ export function hasMasterKey(): boolean {
 /**
  * 明文 → 引用。
  *
- * 输入以 `env:` 开头时不加密、不存储任何密文，只记住去哪个环境变量取。
+ * 输入以 `env:` 开头时不加密、不存储任何值，只记住去哪个环境变量取。
+ *
+ * ★ 没配主密钥时退化成明文形态而不是抛错 —— 保存永远不会因为部署少配了
+ *   一个环境变量而失败。理由见文件头。
  */
 export function encodeSecret(input: string): string {
   const trimmed = input.trim();
@@ -66,10 +79,11 @@ export function encodeSecret(input: string): string {
 
   const key = masterKey();
   if (!key) {
-    throw new SecretConfigError(
-      '未配置 APOS_SECRET_KEY，无法安全保存凭证。' +
-        '请设置该环境变量后重试，或改用 `env:变量名` 形态把凭证放在进程环境里。',
-    );
+    /**
+     * ★ base64url 编码只是为了让引用里不出现换行与 `/`（PEM 私钥两样都有），
+     *   不是加密 —— 谁拿到这一行都能解回原值，界面上必须这么说。
+     */
+    return `${PLAIN_PREFIX}${Buffer.from(trimmed, 'utf8').toString('base64url')}`;
   }
 
   const iv = randomBytes(12);
@@ -92,6 +106,10 @@ export function resolveSecret(ref: string | null): string | null {
 
   if (ref.startsWith(ENV_PREFIX)) {
     return process.env[ref.slice(ENV_PREFIX.length)] ?? null;
+  }
+
+  if (ref.startsWith(PLAIN_PREFIX)) {
+    return Buffer.from(ref.slice(PLAIN_PREFIX.length), 'base64url').toString('utf8');
   }
 
   if (ref.startsWith(ENC_PREFIX)) {
@@ -121,10 +139,18 @@ export function resolveSecret(ref: string | null): string | null {
 /** 这条引用现在能不能用，以及用不了的话是为什么 */
 export function describeRef(ref: string | null): {
   usable: boolean;
-  kind: 'none' | 'env' | 'encrypted' | 'fingerprint';
+  kind: 'none' | 'env' | 'encrypted' | 'plain' | 'fingerprint';
   problem: string | null;
 } {
   if (!ref) return { usable: false, kind: 'none', problem: null };
+
+  /**
+   * ★ 明文形态永远可用 —— 它不依赖任何环境。「明文入库」这件事本身
+   *   不在这里报，它是部署的选择而不是这条凭证的故障：混进 problem
+   *   会让每个 Agent 都挂着一条红字，真正的故障反而被淹没。
+   *   界面上由 catalog 的 encryptsInlineSecrets 统一说一次。
+   */
+  if (ref.startsWith(PLAIN_PREFIX)) return { usable: true, kind: 'plain', problem: null };
 
   if (ref.startsWith(ENV_PREFIX)) {
     const name = ref.slice(ENV_PREFIX.length);
@@ -185,15 +211,18 @@ export function hintOf(input: string, label?: string | null): string {
  * ── Agent 运行时配置里的环境变量表 ────────────────────────────────────
  *
  * 用户在界面上直接写一份 JSON 下发给子进程（`{"ANTHROPIC_BASE_URL": …,
- * "ANTHROPIC_AUTH_TOKEN": …}`）。这里负责让它遵守上面那三条规矩：
- * 敏感值不以明文进库、接口不回显、钥匙在库外。
+ * "ANTHROPIC_AUTH_TOKEN": …}`）。这里负责让敏感值不被接口回显。
  *
- * 库里的值有三种形态，其余都是普通明文：
+ * 库里的值有四种形态：
  * | 形态 | 怎么来的 | 回显成 |
  * | --- | --- | --- |
- * | `secret://enc/…` | 敏感键填了字面量，加密入库 | `secret://saved` |
+ * | `secret://enc/…` | 敏感键填了字面量，且配了主密钥 | `secret://saved` |
+ * | `secret://plain/…` | 敏感键填了字面量，没配主密钥 | `secret://saved` |
  * | `secret://env/NAME` | 值写成 `env:NAME` | `env:NAME` |
  * | 明文 | 非敏感键的字面量（如网关地址） | 原样 |
+ *
+ * ★ 前两种回显成同一个占位符，因此界面与调用方不必分辨部署有没有配主密钥 ——
+ *   「保存了、不回显、原样存回表示不改」这套语义对两者完全一致。
  */
 
 /**
@@ -249,11 +278,17 @@ export function encodeEnvOverrides(
   return out;
 }
 
-/** 回显时：引用 → 占位符。加密值永不回显原文 */
+/**
+ * 回显时：引用 → 占位符。已保存的敏感值永不回显原文。
+ *
+ * ★ 明文形态也照样遮住。它进库时是不是密文取决于部署有没有配主密钥，
+ *   而「接口不把 token 吐回浏览器」这条与那个无关 —— 两者绑在一起的话，
+ *   少配一个环境变量就等于顺手打开了回显。
+ */
 export function maskEnvOverrides(env: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(env).map(([key, value]) => {
-      if (value.startsWith(ENC_PREFIX)) return [key, KEPT_SECRET];
+      if (value.startsWith(ENC_PREFIX) || value.startsWith(PLAIN_PREFIX)) return [key, KEPT_SECRET];
       if (value.startsWith(ENV_PREFIX)) return [key, `env:${value.slice(ENV_PREFIX.length)}`];
       return [key, value];
     }),

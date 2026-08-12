@@ -177,7 +177,11 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
     /** 同理：镜像里少装 openssh-client，ssh 形态的仓库一个都用不了 */
     sshAvailable: sshEnv.ok,
     sshProblem: sshEnv.problem,
-    canStoreInlineCredential: hasMasterKey(),
+    /**
+     * ★ 直接粘贴的凭证是不是**密文**入库 —— 不是「能不能存」。
+     *   没配 APOS_SECRET_KEY 照样存得下，只是明文进库，界面上如实说。
+     */
+    encryptsInlineSecrets: hasMasterKey(),
   };
 }
 

@@ -52,16 +52,26 @@ import { ApiError, notFound } from './errors';
 // ── 平台侧的配置目录 ──────────────────────────────────────────────────
 
 /**
- * 每种 CLI 能配什么，由平台统一定义。前端按它动态渲染表单 ——
- * 加一种 CLI 只改 contracts 里那一个文件，界面自动长出对应字段。
+ * 每种 CLI 能配什么，由平台统一定义。
+ *
+ * ★ 界面不再按它逐项渲染输入框 —— 运行时配置是一个 JSON 文本框，这张表
+ *   在旁边充当说明书（能配什么键、取值范围、默认值、影响成本还是安全）。
+ *   JSON 框里没有标签，没有这张表用户就只能猜键名。
  */
 export function listRuntimeCatalog() {
   return {
     kinds: RUNTIME_KIND_SPECS,
-    canStoreInlineCredential: hasMasterKey(),
+    /**
+     * ★ 内联的敏感值是不是**密文**入库。
+     *
+     *   注意它不是「能不能存」：没配主密钥照样存得下，只是明文进库。
+     *   界面据此提示，而不是据此禁用输入 —— 一个把常规配置挡在门外的
+     *   安全措施，最后换来的是用户绕开这一页。
+     */
+    encryptsInlineSecrets: hasMasterKey(),
     credentialHelp:
       '推荐填 `env:变量名`：凭证只留在进程环境、不进数据库，多个 Agent 共用同一变量名时轮换只需改一处。' +
-      '直接粘贴 key 需要部署时配置 APOS_SECRET_KEY，密文进库、钥匙在库外。',
+      '直接粘贴也可以：配了 APOS_SECRET_KEY 就密文进库、钥匙在库外，没配则明文进库（接口一律不回显）。',
   };
 }
 
@@ -74,7 +84,13 @@ export const AgentInput = z.object({
 
   /** headless CLI 类型 */
   runtimeKind: z.string().min(1, '必须选择运行时类型'),
-  /** 该 CLI 的个性化参数，按 RUNTIME_KIND_SPECS 校验 */
+  /**
+   * 该 CLI 的配置，一份自定义 JSON。
+   *
+   * ★ 平台认识的键按 RUNTIME_KIND_SPECS 校验，其余键原样收下、原样入库
+   *   （回给调用方一份 unknownConfigKeys）。运行时升级得比平台快，
+   *   把不认识的键拒掉等于让每次升级都先等平台发版。
+   */
   runtimeConfig: z.record(z.unknown()).optional(),
   endpoint: z.string().url('接入地址必须是合法 URL').nullable().optional(),
   /** 明文凭证或 `env:变量名`。不传 = 不改动；null = 清除 */
@@ -109,7 +125,7 @@ export async function createAgent(
   await assertOwner(db, input.ownerId);
   assertPermissionsSane(input);
 
-  const { config, dropped } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
+  const { config, unknownKeys } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
 
   const credential = input.credential?.trim() || null;
   if (spec.credential && !credential && !credentialGivenInEnv(config)) {
@@ -162,7 +178,7 @@ export async function createAgent(
     reason: '创建 Agent',
   });
 
-  return { agent: await describeAgent(db, registry, row!), droppedConfigKeys: dropped };
+  return { agent: await describeAgent(db, registry, row!), unknownConfigKeys: unknownKeys };
 }
 
 export async function updateAgent(
@@ -282,7 +298,7 @@ export async function updateAgent(
   return {
     agent: await describeAgent(db, registry, row!),
     permissionsChanged,
-    droppedConfigKeys: prepared?.dropped ?? [],
+    unknownConfigKeys: prepared?.unknownKeys ?? [],
   };
 }
 
@@ -487,7 +503,7 @@ function prepareConfig(
   kind: string,
   input: Record<string, unknown> | undefined,
   previous: Record<string, unknown> | null,
-): { config: Record<string, unknown>; dropped: string[] } {
+): { config: Record<string, unknown>; unknownKeys: string[] } {
   const result = validateRuntimeConfig(kind, input);
   if (!result.ok) {
     /**
@@ -501,7 +517,7 @@ function prepareConfig(
   }
 
   // 该运行时没有环境变量表这一项（如 mock）时不要凭空塞一个 env 键进去
-  if (!('env' in result.config)) return { config: result.config, dropped: result.dropped };
+  if (!('env' in result.config)) return { config: result.config, unknownKeys: result.unknownKeys };
 
   try {
     return {
@@ -509,7 +525,7 @@ function prepareConfig(
         ...result.config,
         env: encodeEnvOverrides(envOverridesOf(result.config), envOverridesOf(previous)),
       },
-      dropped: result.dropped,
+      unknownKeys: result.unknownKeys,
     };
   } catch (err) {
     if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
