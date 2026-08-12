@@ -105,8 +105,9 @@ export function RuleEditor({
   const params = template?.params ?? [];
 
   return (
-    <Modal onClose={onClose} title="规则编辑">
-      <div className="max-h-[80vh] w-[34rem] max-w-full overflow-y-auto">
+    // 宽度与滚动都归 Modal 管：自己再套一层会长出第二根滚动条
+    <Modal onClose={onClose} title="规则编辑" width="lg">
+      <div>
         <h2 className="text-sm font-semibold text-slate-900">
           {editing ? `编辑规则「${editing.name}」` : `新建规则 · ${template?.name}`}
         </h2>

@@ -522,8 +522,35 @@ function AgentForm({
   const jsonProblem = Object.values(jsonErrors)[0] ?? null;
 
   return (
-    <Modal onClose={onClose} title="Agent 配置">
-      <div className="max-h-[75vh] space-y-3 overflow-auto pr-1">
+    <Modal
+      onClose={onClose}
+      title="Agent 配置"
+      /* ★ 表单长，两栏也挤 —— JSON 文本框在 md 宽度下一行放不下几个字 */
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{save.error.message}</p>
+          )}
+          {/*
+            ★ JSON 解析不通过时按钮必须禁掉，而不是让它存下上一个合法值。
+              「显示保存成功、存进去的是改之前那份」比直接报错难查得多。
+          */}
+          {jsonProblem && <p className="text-xs text-rose-600">JSON 还没改对：{jsonProblem}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!name.trim() || !ownerId || save.isPending || jsonProblem !== null}
+              onClick={() => save.mutate()}>
+              {save.isPending ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
           {agent ? `编辑 ${agent.name}` : '新建 Agent'}
         </h2>
@@ -744,26 +771,6 @@ function AgentForm({
               onChange={(e) => setReason(e.target.value)} />
           </Labeled>
         )}
-
-        {save.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{save.error.message}</p>
-        )}
-        {/*
-          ★ JSON 解析不通过时按钮必须禁掉，而不是让它存下上一个合法值。
-            「显示保存成功、存进去的是改之前那份」比直接报错难查得多。
-        */}
-        {jsonProblem && <p className="text-xs text-rose-600">JSON 还没改对：{jsonProblem}</p>}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!name.trim() || !ownerId || save.isPending || jsonProblem !== null}
-            onClick={() => save.mutate()}>
-            {save.isPending ? '保存中…' : '保存'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1305,7 +1312,28 @@ function RepositoryForm({
   });
 
   return (
-    <Modal onClose={onClose} title="代码仓库配置">
+    <Modal
+      onClose={onClose}
+      title="代码仓库配置"
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {create.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{create.error.message}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
+              onClick={() => create.mutate()}>
+              {create.isPending ? '登记中…' : '登记'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
           {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
@@ -1484,21 +1512,6 @@ function RepositoryForm({
           />
           组织共享（其他项目也能用）
         </label>
-
-        {create.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{create.error.message}</p>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
-            onClick={() => create.mutate()}>
-            {create.isPending ? '登记中…' : '登记'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1637,7 +1650,28 @@ function ConventionForm({
   });
 
   return (
-    <Modal onClose={onClose} title="工程约定">
+    <Modal
+      onClose={onClose}
+      title="工程约定"
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{save.error.message}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!title.trim() || !content.trim() || save.isPending}
+              onClick={() => save.mutate()}>
+              {save.isPending ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{row ? '编辑工程约定' : '新增工程约定'}</h2>
         <label className="block">
@@ -1671,21 +1705,6 @@ function ConventionForm({
             <option value="reference">参考（进「参考上下文」）</option>
           </select>
         </label>
-
-        {save.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{save.error.message}</p>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!title.trim() || !content.trim() || save.isPending}
-            onClick={() => save.mutate()}>
-            {save.isPending ? '保存中…' : '保存'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
