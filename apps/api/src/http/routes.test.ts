@@ -506,6 +506,282 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
   });
 });
 
+/**
+ * 需求结构化的两条路：AI 分析、人工填写。
+ *
+ * ★★ 这一组盯的是「人工那条路能不能自己走到头」。
+ *
+ *   此前它走不到：结构化字段只开放了一半、人工改完不重算完整度、
+ *   而确认按钮的前置是「分析过」。三样叠在一起的结果是，
+ *   一份人写得清清楚楚的需求也必须先让 Agent 跑一遍才能确认 ——
+ *   没配规划 Agent 或分析超时时（产品文档 03 §7），这一页直接是死路。
+ */
+describe('★ 需求：AI 与人工两条路并行', () => {
+  async function createRequirement(rawInput = '订单查询太慢，想支持按手机号和时间段搜索') {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${fx.projectId}/requirements`,
+      headers: auth(),
+      payload: { rawInput },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().requirement.id as string;
+  }
+
+  const edit = (id: string, payload: Record<string, unknown>) =>
+    app.inject({ method: 'PATCH', url: `/api/v1/requirements/${id}`, headers: auth(), payload });
+
+  const FULL_MANUAL = {
+    title: '订单查询性能优化',
+    businessContext:
+      '客服每天收到大量关于订单查询慢的投诉，当前列表页 P95 超过 4 秒，已影响续约谈判。',
+    userProblem: '客服查一个订单要等好几秒',
+    businessGoal: 'P95 查询耗时降到 500ms 以内',
+    scope: { inScope: ['按手机号搜索', '按时间段搜索'], outOfScope: ['历史数据迁移'] },
+    risks: ['可能涉及生产数据库索引变更'],
+    acceptanceCriteria: [
+      { text: '按手机号搜索 P95 < 500ms', verification: 'auto' as const },
+      { text: '按时间段搜索结果正确', verification: 'agent' as const },
+      { text: '客服验收通过', verification: 'human' as const },
+    ],
+  };
+
+  it('不跑分析，纯人工填出来的需求能确认并生成计划', async () => {
+    const id = await createRequirement();
+
+    const saved = await edit(id, FULL_MANUAL);
+    expect(saved.statusCode).toBe(200);
+
+    /**
+     * ★ 人工改完必须重算完整度并推进状态。
+     *   不重算的话它一直是 0 分 + draft，而用户正是照着这个分数
+     *   判断「够不够格确认」的，状态则决定确认按钮出不出现。
+     */
+    const r = saved.json().requirement;
+    expect(r.status).toBe('awaiting_approval');
+    expect(r.completeness.total).toBeGreaterThan(60);
+    expect(r.completeness.goal).toBe(100);
+    expect(r.completeness.acceptance).toBeGreaterThan(0);
+
+    // 没有澄清问题也照样能确认 —— 澄清是 AI 分析的产物，不是确认的前置
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/approve`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(approved.statusCode).toBe(200);
+
+    // 规划器读的是库里那几个字段，不关心它们是谁写的
+    const planned = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/plans`,
+      headers: auth(),
+    });
+    expect(planned.statusCode).toBe(201);
+    expect(planned.json().taskCount).toBeGreaterThan(0);
+  });
+
+  it('一张白纸不能确认，报错给出 AI 与人工两条出路', async () => {
+    const id = await createRequirement();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/approve`,
+      headers: auth(),
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+    // ★ 只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路
+    expect(res.json().error.message).toContain('AI 分析');
+    expect(res.json().error.message).toContain('自己填');
+  });
+
+  it('只改了背景、还没有正题时不推进状态，需求列表上不会冒出一条空的待确认', async () => {
+    const id = await createRequirement();
+
+    const res = await edit(id, { businessContext: '客服投诉很多' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().requirement.status).toBe('draft');
+  });
+
+  it('人工写的验收标准被补齐成与 AI 产出相同的形状', async () => {
+    const id = await createRequirement();
+    await edit(id, { acceptanceCriteria: [{ text: '按手机号能搜到' }] });
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+    });
+    const [ac] = detail.json().requirement.acceptanceCriteria;
+
+    /**
+     * ★ 下游按 id 指回这一条、按 verification 分派核验。
+     *   缺哪一样都表现为「这条标准永远没人验」，而页面上它和别的没区别。
+     */
+    expect(ac.id).toBeTruthy();
+    expect(ac.status).toBe('pending');
+    // 平台没有依据认定一条手写文本能自动核验，默认成 auto 是替用户许了个承诺
+    expect(ac.verification).toBe('human');
+  });
+
+  it('空文本的验收标准在保存那一刻被拒', async () => {
+    const id = await createRequirement();
+    const res = await edit(id, { acceptanceCriteria: [{ text: '   ' }] });
+    expect(res.statusCode).toBe(400);
+  });
+
+  /**
+   * ★ 需求上的风险是一串字符串。放个对象进来的话，报错要等到生成计划
+   *   那一步（`r.includes is not a function`），而那时人早就走开了。
+   */
+  it('风险不是字符串数组时在保存那一刻被拒', async () => {
+    const id = await createRequirement();
+    const res = await edit(id, { risks: [{ description: '数据库变更' }] });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('AI 出稿之后人改一部分，两种来源在字段上分得清', async () => {
+    const id = await createRequirement();
+
+    const analyzed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/analyze`,
+      headers: auth(),
+    });
+    expect(analyzed.statusCode).toBe(200);
+
+    const before = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+    });
+    const ai = before.json().requirement;
+
+    /**
+     * ★★ 编辑器一次提交整份需求，其中只有业务目标是人改的。
+     *   按「提交了什么」记溯源的话，整块面板会全变成「👤 人工」——
+     *   而那一排标记存在的唯一理由正是分清哪句话是自己写的。
+     */
+    await edit(id, {
+      title: ai.title,
+      businessContext: ai.businessContext,
+      userProblem: ai.userProblem,
+      businessGoal: '人工改过的业务目标',
+      scope: ai.scope,
+      acceptanceCriteria: ai.acceptanceCriteria,
+    });
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+    });
+    const r = detail.json().requirement;
+
+    expect(r.businessGoal).toBe('人工改过的业务目标');
+    /**
+     * ★★ 「这句话是我写的还是 AI 写的」正是确认时最该看清的一件事。
+     *   两种来源混在一起显示，等于把这个判断从用户手里拿走。
+     */
+    expect(r.fieldProvenance.businessGoal.source).toBe('human');
+    // 原样带回来的字段不算人改的 —— 它还是 AI 写的那一句
+    expect(r.fieldProvenance.title.source).not.toBe('human');
+    expect(r.fieldProvenance.businessContext.source).not.toBe('human');
+    // 人工编辑不动原文，也不动 AI 那一轮的署名
+    expect(r.rawInput).toContain('订单查询太慢');
+    expect(r.analysisModel).toBeTruthy();
+  });
+
+  /** ★ 打开编辑器又原样保存，不该在审计流里留下一条「改过需求」 */
+  it('什么都没改时不记溯源也不发事件', async () => {
+    const id = await createRequirement();
+    await edit(id, FULL_MANUAL);
+
+    const again = await edit(id, FULL_MANUAL);
+    expect(again.statusCode).toBe(200);
+
+    const edits = await db
+      .select()
+      .from(events)
+      .where(eq(events.type, 'requirement.field_edited'));
+    expect(edits.length).toBe(1);
+  });
+
+  /**
+   * ★★ 两条路要真正并行，就必须有一方让步 —— 让步的只能是 AI。
+   *
+   *   人改过的东西被静默覆盖，代价是他重写一遍并且从此不敢再改；
+   *   AI 的建议被挡下，代价只是重新点一次分析之前先把那一项清空。
+   */
+  it('重新分析不覆盖人改过的字段，并说出保住了哪几个', async () => {
+    const id = await createRequirement();
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/analyze`,
+      headers: auth(),
+    });
+    await edit(id, { businessGoal: '人工写的业务目标' });
+
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/analyze`,
+      headers: auth(),
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().keptHumanFields).toEqual(['businessGoal']);
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+    });
+    const r = detail.json().requirement;
+
+    expect(r.businessGoal).toBe('人工写的业务目标');
+    // 保住的字段仍然记着「人工」，否则下一轮分析就会把它盖掉
+    expect(r.fieldProvenance.businessGoal.source).toBe('human');
+    // 没被人碰过的字段照常被这一轮刷新
+    expect(r.title).toBeTruthy();
+    expect(r.fieldProvenance.title.source).not.toBe('human');
+  });
+
+  it('已确认的需求不能再人工编辑', async () => {
+    const id = await createRequirement();
+    await edit(id, FULL_MANUAL);
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/approve`,
+      headers: auth(),
+      payload: {},
+    });
+
+    const res = await edit(id, { businessGoal: '偷偷改一下' });
+    expect(res.statusCode).toBe(409);
+  });
+
+  /**
+   * ★ 驳回是一个结论。让编辑把它悄悄变回「待确认」，等于绕过了那个结论 ——
+   *   而驳回的人不会收到任何提示。
+   */
+  it('人工编辑不会把已驳回的需求变回待确认', async () => {
+    const id = await createRequirement();
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/reject`,
+      headers: auth(),
+      payload: { reason: '这个季度不做' },
+    });
+
+    const res = await edit(id, FULL_MANUAL);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().requirement.status).toBe('rejected');
+  });
+});
+
 describe('看板', () => {
   it('卡片带执行主体名称、依赖数与成本，前端不用二次请求', async () => {
     const agent = await seedAgent(db, fx, { registry, name: 'code-agent-1' });

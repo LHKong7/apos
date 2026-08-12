@@ -61,6 +61,7 @@ import {
   analyzeRequirement,
   answerClarification,
   approveRequirement,
+  refreshCompleteness,
 } from '../modules/requirement/service';
 import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
@@ -269,6 +270,27 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 function corr(req: { headers: Record<string, unknown> }): string {
   const header = req.headers['x-correlation-id'];
   return typeof header === 'string' && UUID_PATTERN.test(header) ? header : randomUUID();
+}
+
+/**
+ * 键序无关的深比较用序列化 —— 判断「这个字段真的变了吗」。
+ *
+ * ★★ 不能直接 `JSON.stringify` 两边比。
+ *
+ *   提交上来的对象保持代码里写的键序，而从库里读回来的 jsonb 是
+ *   Postgres 归一化过的键序（先按键长、再按字典序）。同一份验收标准
+ *   进出一趟就「不相等」了，于是每一次保存都被判定为改动过 ——
+ *   人只改了一个字段，整块面板却全被标成「👤 人工」。
+ */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
+      );
+    }
+    return v;
+  });
 }
 
 export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
@@ -937,6 +959,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   /**
    * 人工编辑结构化字段（页面文档 03 §5.4）。
    *
+   * ★★ 这条路与 AI 分析是**并行**的，不是它的补丁。
+   *
+   *   结构化字段可以完全由人填出来，不必先跑一次分析 —— 需求本来就写得
+   *   清楚、规划 Agent 没配好、分析超时（产品文档 03 §7 明确要求「转人工
+   *   填写」的那条出路），都是这条路的正当来源。所以这里给的是**全部**
+   *   结构化字段，而不是 AI 结果的几个可修补项：只开放一半的话，
+   *   人工路径永远填不出一份完整的需求。
+   *
    * ★ 原文永不覆盖：`rawInput` 不在可改字段里。
    *   用户必须能对照原文验证 AI 没有曲解自己的意思 ——
    *   一旦原文可被结构化结果反向覆盖，这个对照就失去意义了。
@@ -946,7 +976,46 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     businessContext: z.string().optional(),
     userProblem: z.string().optional(),
     businessGoal: z.string().optional(),
-    acceptanceCriteria: z.array(z.unknown()).optional(),
+    userStories: z.array(z.string()).optional(),
+    scope: z
+      .object({
+        inScope: z.array(z.string()).default([]),
+        outOfScope: z.array(z.string()).default([]),
+      })
+      .optional(),
+    nonFunctional: z.array(z.string()).optional(),
+    successMetrics: z.array(z.string()).optional(),
+    constraints: z.array(z.string()).optional(),
+    /**
+     * ★ 需求上的风险是一串字符串，不是对象。
+     *   规划器会 `risks.some(r => r.includes('数据库'))` —— 放个对象进来，
+     *   报错要等到生成计划那一步，而且是一句 `r.includes is not a function`。
+     */
+    risks: z.array(z.string()).optional(),
+    /**
+     * ★★ 人工写的验收标准必须归一成和 AI 产出**完全一样**的形状。
+     *
+     *   它下游是 Review 阶段的核验调度（按 verification 分派）与工作项上的
+     *   验收清单。少一个 id 或 status，表现是那条标准永远没人验，
+     *   而页面上它和其它标准看起来一模一样。
+     *
+     * ★ verification 默认 human：一条人手写的自由文本，平台没有依据
+     *   认定它能被自动核验。默认成 auto 是在替用户许一个他没许的承诺。
+     */
+    acceptanceCriteria: z
+      .array(
+        z.object({
+          id: z.string().min(1).optional(),
+          // ★ 先 trim 再判空：`"   "` 是 3 个字符，min(1) 拦不住它，
+          //   而一条空白的验收标准在 Review 阶段是一行永远无法判定的活
+          text: z.string().trim().min(1, '验收标准不能是空的'),
+          verification: z.enum(['auto', 'agent', 'human']).default('human'),
+          status: z.enum(['pending', 'passed', 'failed']).default('pending'),
+          evidenceRef: z.string().nullable().default(null),
+          verifiedAt: z.string().datetime().nullable().default(null),
+        }),
+      )
+      .optional(),
   });
 
   app.patch('/api/v1/requirements/:id', async (req) => {
@@ -960,8 +1029,42 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       throw new ApiError('INVALID_TRANSITION', '需求已确认，不能再编辑。如需修改请先重新打开。');
     }
 
-    const patch = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
-    if (Object.keys(patch).length === 0) return { requirement: before };
+    const submitted = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
+
+    /**
+     * 新写的验收标准补上 id —— 工作项与核验记录都按 id 指回这一条。
+     *
+     * ★ 没带 id 进来时先按原文找回旧的那一条。每次都新发一个 id 的话，
+     *   「原样再存一遍」就会把所有标准换一批身份，而指向它们的工作项
+     *   与核验记录当场变成悬空引用 —— 页面上看不出任何异样。
+     */
+    if (body.acceptanceCriteria) {
+      const idByText = new Map(
+        (before.acceptanceCriteria ?? []).map((c) => [c.text, c.id] as const),
+      );
+      submitted['acceptanceCriteria'] = body.acceptanceCriteria.map((c) => ({
+        ...c,
+        id: c.id ?? idByText.get(c.text) ?? randomUUID(),
+      }));
+    }
+
+    /**
+     * ★★ 只认**真的变了**的字段，不认「提交了」的字段。
+     *
+     *   编辑器一次提交整份结构化需求（一份表单，字段之间互相关联，
+     *   拆成一堆 PATCH 只会让中途失败留下半份需求）。按提交的字段记溯源，
+     *   表现就是：AI 出稿之后人只改了业务目标，整块面板全变成「👤 人工」——
+     *   而那一排标记存在的唯一理由，正是让人在确认前分清哪句话是自己写的。
+     *   一改全变之后，它比没有还糟：它在撒谎。
+     */
+    const changed = Object.keys(submitted).filter(
+      (k) =>
+        stableJson(submitted[k]) !==
+        stableJson((before as unknown as Record<string, unknown>)[k]),
+    );
+    if (changed.length === 0) return { requirement: before };
+
+    const patch = Object.fromEntries(changed.map((k) => [k, submitted[k]]));
 
     const [updated] = await db
       .update(requirements)
@@ -971,7 +1074,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     // 人类改过的字段要能与 AI 原值区分（§5.4「已由人类修改」）
     const provenance = { ...(before.fieldProvenance as Record<string, unknown>) };
-    for (const field of Object.keys(patch)) {
+    for (const field of changed) {
       provenance[field] = { source: 'human', editedBy: userId, editedAt: new Date().toISOString() };
     }
     await db.update(requirements).set({ fieldProvenance: provenance }).where(eq(requirements.id, id));
@@ -983,11 +1086,21 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       actor: humanActor(userId),
       subjectType: 'requirement',
       subjectId: id,
-      payload: { fields: Object.keys(patch) },
+      payload: { fields: changed },
       correlationId: corr(req),
     });
 
-    return { requirement: updated };
+    /**
+     * ★★ 人工改完要重算完整度并推进状态，和回答澄清问题走同一条路径。
+     *
+     *   不重算的话，一个人把目标、范围、验收标准全填好之后，头部的六维
+     *   评分还停在分析那一刻（没分析过就是 0 分），而用户正是照着那个分数
+     *   判断「够不够格确认」的。状态同理：纯人工填出来的需求会一直卡在
+     *   draft，确认按钮永远不出现 —— 人工这条路就走不到头。
+     */
+    const refreshed = await refreshCompleteness(db, id);
+
+    return { requirement: refreshed ?? updated };
   });
 
   app.post('/api/v1/requirements/:id/reject', async (req) => {
@@ -1078,6 +1191,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
 
     if (!result.ok) {
+      /**
+       * ★ 空需求要给出**两条**出路。
+       *   只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路 ——
+       *   而这一页本来就允许人自己把结构化字段填出来。
+       */
+      if (result.code === 'EMPTY_REQUIREMENT') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
+        );
+      }
       // 必答问题未回答 —— 返回具体是哪几个，前端可直接定位
       throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', result.questions);
     }

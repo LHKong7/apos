@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
@@ -9,27 +9,49 @@ import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
 import { Clarifications } from './Clarifications';
+import { StructuredEditor, type RequirementPatch } from './StructuredEditor';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
 /**
- * 需求录入与 AI 澄清（页面文档 03）。
+ * 需求录入、AI 澄清与人工填写（页面文档 03）。
  *
  * ★ 这是整个产品的第一个 Human Gate，也是决定后续所有自动化质量的地方。
  *   宁可在这里多花两分钟，也不要让 Agent 基于错误理解跑三小时。
  *
- * ★ 原始输入永远保留在左边，与 AI 的结构化结果左右对照。
+ * ★ 原始输入永远保留在左边，与结构化结果左右对照。
  *   用户必须能验证 AI 没有曲解自己的意思 —— 这是建立信任的地基，
  *   一旦原文被结构化结果覆盖掉，用户就再也没法自己核对了。
+ *
+ * ★★ 结构化结果有**两个来源，地位相同**：AI 分析、人工填写。
+ *
+ *   此前只有 AI 一条路，而且是硬闸门：没分析过就没有标题，没有标题
+ *   确认按钮就不出现。于是需求写得再清楚也得先让 Agent 跑一遍；
+ *   没配规划 Agent 或分析超时（产品文档 03 §7 给的出路正是「转人工填写」）
+ *   时，这一页干脆走不下去。
+ *
+ *   现在两条路可以互相接力：AI 出稿→人改、人写→AI 补充分析，都成立。
+ *   每个字段标出它现在是谁写的（fieldProvenance），因为「这句话是我写的
+ *   还是 AI 写的」正是确认时最该看清的一件事。
  */
 export function RequirementPage() {
   const { projectId, reqId } = useParams<{ projectId: string; reqId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  /**
+   * ★ 列表页选了「自己填写」就带着 ?edit=1 进来，直接落在编辑态。
+   *   否则用户刚表达完「我要自己填」，看到的还是一个「让 AI 分析」的空面板 ——
+   *   他的选择在跳转的一瞬间就丢了。
+   */
+  const [params] = useSearchParams();
 
   const [answering, setAnswering] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [editing, setEditing] = useState(params.get('edit') === '1');
+  /** 上一轮重新分析保住了哪些人工字段 */
+  const [keptFields, setKeptFields] = useState<string[]>([]);
+  const [editError, setEditError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const detail = useQuery({
@@ -40,10 +62,35 @@ export function RequirementPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: qk.requirement(reqId!) });
 
+  /**
+   * ★ 重新分析**不覆盖**人改过的字段（服务端按 fieldProvenance 判定）。
+   *   保住了哪几个必须说出来：不说的话，用户会以为「分析怎么没改这几项」，
+   *   而真相恰恰相反 —— 是平台在替他护着自己写的那几句。
+   */
   const analyze = useMutation({
     mutationFn: () => api.analyzeRequirement(reqId!),
-    onSuccess: () => void refresh(),
+    onSuccess: (res) => {
+      setKeptFields(res.keptHumanFields ?? []);
+      void refresh();
+    },
     onError: (e) => setError(e instanceof ApiError ? e.message : '分析失败'),
+  });
+
+  /**
+   * 人工填写 / 修改结构化字段。
+   *
+   * ★ 保存后要重新拉一次：服务端会据此重算完整度并推进状态，
+   *   而完整度正是用户判断「够不够格确认」的依据 ——
+   *   不刷新的话，他改完看到的还是改之前那个分数。
+   */
+  const edit = useMutation({
+    mutationFn: (patch: RequirementPatch) => api.editRequirement(reqId!, patch),
+    onSuccess: () => {
+      setEditing(false);
+      setEditError(null);
+      void refresh();
+    },
+    onError: (e) => setEditError(e instanceof ApiError ? e.message : '保存失败'),
   });
 
   const answer = useMutation({
@@ -97,7 +144,15 @@ export function RequirementPage() {
   }
 
   const { requirement: r, clarifications } = detail.data!;
-  const analyzed = r.title !== null;
+  /**
+   * ★★ 闸门看**有没有内容**，不看**是不是 AI 分析出来的**。
+   *   按后者设闸门，等于把人工填写这条路堵死在最后一步：
+   *   一份人写得清清楚楚的需求，会因为「没跑过分析」而没有确认按钮。
+   */
+  const structured = Boolean(
+    r.title?.trim() || r.businessGoal?.trim() || r.acceptanceCriteria.length > 0,
+  );
+  const analyzed = r.analysisModel !== null;
   const readOnly = r.status === 'approved' || r.status === 'rejected';
   const mustConfirm = clarifications.filter((c) => c.level === 'must_confirm' && !c.answer);
   const assumptions = clarifications.filter((c) => c.level === 'assumption_ok');
@@ -129,7 +184,8 @@ export function RequirementPage() {
           </Link>
         </div>
 
-        {analyzed && <div className="mt-1.5"><Completeness scores={r.completeness} /></div>}
+        {/* ★ 人工填的需求同样有完整度 —— 它评的是内容，不是「跑没跑过分析」 */}
+        {structured && <div className="mt-1.5"><Completeness scores={r.completeness} /></div>}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
@@ -161,31 +217,100 @@ export function RequirementPage() {
               </p>
             </section>
 
-            {/* ── AI 结构化结果 ── */}
+            {/* ── 结构化需求：AI 分析与人工填写共用这一块 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <div className="flex flex-wrap items-baseline gap-2">
-                <h2 className="text-xs font-medium text-slate-700">🤖 AI 结构化结果</h2>
+                <h2 className="text-xs font-medium text-slate-700">📋 结构化需求</h2>
                 {analyzed && <AnalysisSource model={r.analysisModel} />}
+                {!editing && !readOnly && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => analyze.mutate()}
+                      disabled={analyze.isPending}
+                      className="text-[11px] text-slate-500 underline disabled:opacity-50"
+                    >
+                      {analyze.isPending ? '分析中…' : analyzed ? '重新分析' : 'AI 分析'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditError(null);
+                        setEditing(true);
+                      }}
+                      className="text-[11px] text-slate-500 underline hover:text-slate-700"
+                    >
+                      {structured ? '人工修改' : '自己填写'}
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {!analyzed ? (
+              {keptFields.length > 0 && !editing && (
+                <p className="mt-1 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-800">
+                  这几项是你改过的，重新分析没有覆盖它们：
+                  {keptFields.map((f) => FIELD_LABELS[f] ?? f).join('、')}。
+                  想让 AI 重写其中某一项，改回空白再分析即可。
+                  <button
+                    type="button"
+                    className="ml-1 underline"
+                    onClick={() => setKeptFields([])}
+                  >
+                    知道了
+                  </button>
+                </p>
+              )}
+
+              {editing ? (
+                <StructuredEditor
+                  requirement={r}
+                  saving={edit.isPending}
+                  error={editError}
+                  onSave={(patch) => edit.mutate(patch)}
+                  onCancel={() => {
+                    setEditing(false);
+                    setEditError(null);
+                  }}
+                />
+              ) : !structured ? (
+                /*
+                  ★ 两个入口并排给，措辞上不分主次。
+                    把「自己填写」做成小字兜底，人只会在 AI 失败之后才发现它 ——
+                    而那时他已经等过一轮超时了。
+                */
                 <div className="py-6 text-center">
-                  <p className="text-xs text-slate-500">还没有分析过这条需求</p>
-                  <Button variant="neutral" size="sm"
-                    onClick={() => analyze.mutate()}
-                    disabled={analyze.isPending}
-                    className="mt-2">
-                    {analyze.isPending ? '分析中…' : '开始 AI 分析'}
-                  </Button>
+                  <p className="text-xs text-slate-500">这条需求还没有结构化内容</p>
+                  <div className="mt-2 flex justify-center gap-2">
+                    <Button
+                      variant="neutral"
+                      size="sm"
+                      onClick={() => analyze.mutate()}
+                      disabled={analyze.isPending || readOnly}
+                    >
+                      {analyze.isPending ? '分析中…' : '让 AI 分析'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditing(true)}
+                      disabled={readOnly}
+                    >
+                      自己填写
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    两条路都能走到确认。需求本身已经写清楚了，或者 AI 分析用不了时，直接自己填
+                  </p>
                 </div>
               ) : (
                 <dl className="mt-1 space-y-1.5 text-xs">
-                  <Field label="业务背景" value={r.businessContext} />
-                  <Field label="用户问题" value={r.userProblem} />
-                  <Field label="业务目标" value={r.businessGoal} />
+                  <Field label="业务背景" value={r.businessContext} source={sourceOf(r, 'businessContext')} />
+                  <Field label="用户问题" value={r.userProblem} source={sourceOf(r, 'userProblem')} />
+                  <Field label="业务目标" value={r.businessGoal} source={sourceOf(r, 'businessGoal')} />
                   <div>
                     <dt className="text-[11px] text-slate-500">
                       功能范围
+                      <SourceTag source={sourceOf(r, 'scope')} />
                       {(r.scope.inScope?.length ?? 0) === 0 && (
                         <span className="ml-1 text-amber-700">⚠ 未识别</span>
                       )}
@@ -205,6 +330,7 @@ export function RequirementPage() {
                     */}
                     <dt className="text-[11px] text-slate-500">
                       验收标准（{r.acceptanceCriteria.length}）
+                      <SourceTag source={sourceOf(r, 'acceptanceCriteria')} />
                       {r.acceptanceCriteria.length < 3 && (
                         <span className="ml-1 text-amber-700">⚠ 偏少，Review 阶段可校验的点不多</span>
                       )}
@@ -219,22 +345,13 @@ export function RequirementPage() {
                       </ul>
                     </dd>
                   </div>
-                  {analyzed && !readOnly && (
-                    <button
-                      type="button"
-                      onClick={() => analyze.mutate()}
-                      disabled={analyze.isPending}
-                      className="text-[11px] text-slate-500 underline disabled:opacity-50"
-                    >
-                      {analyze.isPending ? '重新分析中…' : '重新分析'}
-                    </button>
-                  )}
                 </dl>
               )}
             </section>
           </div>
 
-          {analyzed && (
+          {/* ★ 澄清问题是 AI 分析的产物，人工路径没有这一块 —— 不是漏了 */}
+          {analyzed && clarifications.length > 0 && (
             <Clarifications
               clarifications={clarifications}
               pending={answering}
@@ -267,7 +384,7 @@ export function RequirementPage() {
               驳回也是结论 —— 「需求不成立」和「需求成立」都是业务判断，
               把驳回放低一档，等于让没资格拍板的人拍另一半的板。
           */}
-          {analyzed && !readOnly && (
+          {structured && !readOnly && !editing && (
             <div className="flex flex-wrap items-center justify-end gap-2">
               <GatedButton
                 permission="requirement.approve"
@@ -315,6 +432,21 @@ export function RequirementPage() {
   );
 }
 
+/** 字段名 → 界面上的说法。提示语里出现 businessGoal 这种词等于没说 */
+const FIELD_LABELS: Record<string, string> = {
+  title: '标题',
+  businessContext: '业务背景',
+  userProblem: '用户问题',
+  businessGoal: '业务目标',
+  userStories: '用户故事',
+  scope: '功能范围',
+  nonFunctional: '非功能要求',
+  successMetrics: '成功指标',
+  constraints: '约束',
+  risks: '潜在风险',
+  acceptanceCriteria: '验收标准',
+};
+
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
   analyzing: '分析中',
@@ -356,15 +488,61 @@ function AnalysisSource({ model }: { model: string | null }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null }) {
+function Field({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: string | null;
+  source: FieldSource;
+}) {
   return (
     <div>
       <dt className="text-[11px] text-slate-500">
         {label}
+        <SourceTag source={source} />
         {!value && <span className="ml-1 text-amber-700">⚠ 未识别</span>}
       </dt>
       <dd className="leading-5 text-slate-700">{value ?? '—'}</dd>
     </div>
+  );
+}
+
+type FieldSource = 'human' | 'ai' | 'unknown';
+
+/**
+ * 这个字段现在是谁写的。
+ *
+ * ★★ 两条路并行之后，这一行从「锦上添花」变成了必需品。
+ *   确认需求时最该看清的就是「这句话是我写的，还是 AI 替我写的」——
+ *   前者我为它负责，后者我要先核对。混在一起显示等于把这个判断拿走了。
+ *
+ * ★ 认不出来的来源如实标成 unknown（不显示），不假装是 AI 也不假装是人写的。
+ *   fieldProvenance 里 AI 记的是原文片段（source: 'raw_input'），
+ *   人工编辑记的是 source: 'human'（见 routes.ts 的 PATCH）。
+ */
+function sourceOf(
+  r: { fieldProvenance: Record<string, unknown> },
+  field: string,
+): FieldSource {
+  const entry = r.fieldProvenance?.[field] as { source?: string } | undefined;
+  if (!entry?.source) return 'unknown';
+  return entry.source === 'human' ? 'human' : 'ai';
+}
+
+function SourceTag({ source }: { source: FieldSource }) {
+  if (source === 'unknown') return null;
+  return (
+    <span
+      className={clsx(
+        'ml-1 rounded px-1 text-[10px]',
+        source === 'human' ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500',
+      )}
+      title={source === 'human' ? '这一项由人填写或修改过' : '这一项来自 AI 分析'}
+    >
+      {source === 'human' ? '👤 人工' : '🤖 AI'}
+    </span>
   );
 }
 
