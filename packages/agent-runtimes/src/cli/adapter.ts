@@ -39,6 +39,11 @@ export interface GenericCliOptions {
   /** 追加到 argv 末尾的原始参数 */
   extraArgs?: string[];
   passthroughEnv?: string[];
+  /**
+   * 用户直接给出值的环境变量表（配置里的 `env` JSON）。
+   * ★ 最后应用，会盖掉上面各项算出来的同名变量 —— 填了就一定生效。
+   */
+  env?: Record<string, string>;
   /** 注入 spawn，测试用 */
   spawnFn?: CliSpawnFn;
   onDiagnostic?: (message: string, detail?: unknown) => void;
@@ -143,13 +148,22 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
      *   平台不该拦。其余情况没凭证就明确拒绝 —— 让它跑起来再失败，
      *   报错会是 CLI 自己那句没人看得懂的鉴权错误。
      */
-    if (this.profile.credentialEnv && !this.resolveCredential()) {
+    /**
+     * ★ 环境变量表里直接给出凭证变量也算配齐了 —— 接中转站时凭证常常写在那里，
+     *   此时 credentialRef 是空的。只认凭证栏的话，一个配好了、也确实能跑的
+     *   Agent 会被拒发，而报错还理直气壮地让人去登记凭证。
+     */
+    const credentialInEnv = Boolean(
+      this.profile.credentialEnv && (this.options.env ?? {})[this.profile.credentialEnv],
+    );
+    if (this.profile.credentialEnv && !this.resolveCredential() && !credentialInEnv) {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
         rejectReason:
           `未配置 Agent 凭证：请为「${this.profile.label}」登记凭证（不要复用平台凭证），` +
-          `或设置 ${this.profile.dedicatedEnv ?? '专用环境变量'}。`,
+          `或设置 ${this.profile.dedicatedEnv ?? '专用环境变量'}，` +
+          `也可以在环境变量表里直接给出 ${this.profile.credentialEnv}。`,
       };
     }
 
@@ -416,6 +430,8 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
       env[this.profile.baseUrlEnv] = this.options.baseUrl;
     }
     for (const key of this.options.passthroughEnv ?? []) env[key] = process.env[key];
+    // ★ 用户填的排最后：填了就一定生效
+    for (const [key, value] of Object.entries(this.options.env ?? {})) env[key] = value;
     return env;
   }
 

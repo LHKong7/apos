@@ -1025,12 +1025,14 @@ export interface ConfigFieldOption {
 export interface ConfigField {
   key: string;
   label: string;
-  type: 'string' | 'number' | 'boolean' | 'select' | 'string_list';
+  type: 'string' | 'number' | 'boolean' | 'select' | 'string_list' | 'json';
   default: unknown;
   help?: string;
   options?: ConfigFieldOption[];
   min?: number;
   max?: number;
+  /** type: 'json' 时值的语义。'env' = 环境变量表 */
+  jsonShape?: 'env' | 'free';
   /** 界面据此凸显：调这个字段会花更多钱 / 会放宽安全边界 */
   impact?: 'cost' | 'safety';
   advanced?: boolean;
@@ -1068,7 +1070,10 @@ export interface AgentAdminRow {
 
   runtimeKind: string;
   runtimeKindLabel: string;
+  /** ★ 环境变量表里的加密值已换成 `secret://saved` 占位符，原样存回表示不改 */
   runtimeConfig: Record<string, unknown>;
+  /** 环境变量表里那些取不到值的引用 */
+  runtimeConfigProblems: string[];
   endpoint: string | null;
 
   /** ★ 只有后四位。接口永不回显凭证原值 */

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { stageLabel, statusLabel } from '../../lib/format';
@@ -136,26 +137,60 @@ export function ManualMoveDialog({
  *   读屏用户听到的是「对话框」三个字，不知道弹出来的是什么。
  *   调用方自己画的那个 <h2> 只是视觉上的标题，读屏器不认。
  */
+/**
+ * 宽度档位。
+ *
+ * ★ 做成档位而不是让调用方自己传 `w-[560px]`：那样写出来的宽度会**超过**
+ *   DialogContent 的 max-w-md，于是要么被裁掉、要么横向溢出，而调用方看到的
+ *   现象是「我设了宽度但没变宽」。宽度必须由弹层自己定，才可能同时改到那个上限。
+ */
+const MODAL_WIDTH = {
+  md: 'max-w-md',
+  /** 表单类：两列布局、JSON 文本框这些在 md 下太挤 */
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+} as const;
+
 export function Modal({
   children,
   onClose,
   title = '对话框',
+  footer,
+  width = 'md',
 }: {
   children: React.ReactNode;
   onClose: () => void;
   /** 读屏器播报用。调用方通常自己画了可见标题，所以这里默认隐藏 */
   title?: string;
+  /**
+   * 常驻底栏，通常是取消/保存。
+   *
+   * ★ 它在滚动区**外面** —— 表单再长，按钮也一直在那儿。
+   *   放进滚动区的代价是实测出来的：Agent 配置表单在 780px 高的窗口上
+   *   内容有 1555px，「保存」按钮落在 y=1620，而可视区只到 683 ——
+   *   得往下滚将近一千像素才够得着，中途还很容易以为这个弹层坏了。
+   */
+  footer?: React.ReactNode;
+  width?: keyof typeof MODAL_WIDTH;
 }) {
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
       <DialogContent
         hideClose
-        className="max-w-md p-5"
+        className={clsx('gap-0 p-0', MODAL_WIDTH[width])}
         // 这些弹层的说明文字形态各异，交给调用方自己写，不套 DialogDescription
         aria-describedby={undefined}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
-        {children}
+        {/*
+          ★ min-h-0 不能省。flex 子项默认 min-height:auto，不加的话它不肯
+            缩到内容高度以下，overflow-y-auto 永远不触发 —— 弹层照样被撑高，
+            等于上面那个 max-height 白加了。
+        */}
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+        {footer && (
+          <div className="shrink-0 border-t border-border bg-card px-5 py-3">{footer}</div>
+        )}
       </DialogContent>
     </Dialog>
   );

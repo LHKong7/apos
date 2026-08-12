@@ -62,8 +62,9 @@ export function HitsPanel({
   });
 
   return (
-    <Modal onClose={onClose} title="策略命中明细">
-      <div className="max-h-[80vh] w-[42rem] max-w-full overflow-y-auto">
+    // 宽度与滚动都归 Modal 管：自己再套一层会长出第二根滚动条
+    <Modal onClose={onClose} title="策略命中明细" width="lg">
+      <div>
         <h2 className="text-sm font-semibold text-slate-900">命中明细 · {policyName}</h2>
 
         {q.isPending && <CardSkeleton />}

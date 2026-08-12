@@ -655,6 +655,75 @@ describe('ClaudeCodeRuntime 执行', () => {
     delete process.env['APOS_TEST_SECRET'];
   });
 
+  it('接入地址注入 ANTHROPIC_BASE_URL，凭证可改投 ANTHROPIC_AUTH_TOKEN', async () => {
+    const h = harness();
+    const rt = runtime(h, {
+      baseUrl: 'https://gw.example.com',
+      credentialEnv: 'ANTHROPIC_AUTH_TOKEN',
+    });
+    const t = task();
+    const c = collector();
+
+    await rt.dispatch(t);
+    await rt.subscribe(t.runId, c.onEvent);
+    h.channel.push(resultMsg());
+    await c.ended;
+
+    const env = h.captured.options!.env!;
+    expect(env['ANTHROPIC_BASE_URL']).toBe('https://gw.example.com');
+    expect(env['ANTHROPIC_AUTH_TOKEN']).toBe('sk-agent-test');
+    // ★ 改投之后不能两个变量都给：官方 SDK 会优先认 API Key，
+    //   表现是「我明明改成了 AUTH_TOKEN，请求还是往官方端点带 x-api-key」
+    expect(env['ANTHROPIC_API_KEY']).toBeUndefined();
+  });
+
+  it('配置里的环境变量表最后应用，能盖掉平台算出来的同名变量', async () => {
+    const h = harness();
+    const rt = runtime(h, {
+      baseUrl: 'https://gw.example.com',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://override.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'sk-from-env-table',
+        HTTPS_PROXY: 'http://proxy:8080',
+      },
+    });
+    const t = task();
+    const c = collector();
+
+    await rt.dispatch(t);
+    await rt.subscribe(t.runId, c.onEvent);
+    h.channel.push(resultMsg());
+    await c.ended;
+
+    const env = h.captured.options!.env!;
+    // ★ 用户填的一定生效 —— 「填了却没生效」是配置类功能最坏的失败形态
+    expect(env['ANTHROPIC_BASE_URL']).toBe('https://override.example.com');
+    expect(env['ANTHROPIC_AUTH_TOKEN']).toBe('sk-from-env-table');
+    expect(env['HTTPS_PROXY']).toBe('http://proxy:8080');
+  });
+
+  it('环境变量表里给了 token 就算配齐凭证，不再拒发', async () => {
+    const h = harness();
+    // 凭证栏为空：接中转站时凭证常常只写在环境变量表里
+    const rt = new ClaudeCodeRuntime({
+      workspaceRoot: '/tmp/workspace',
+      queryFn: h.queryFn,
+      env: { ANTHROPIC_AUTH_TOKEN: 'sk-gateway' },
+    });
+
+    const ack = await rt.dispatch(task());
+    expect(ack.accepted).toBe(true);
+  });
+
+  it('凭证栏与环境变量表都为空时仍然拒发', async () => {
+    const h = harness();
+    const rt = new ClaudeCodeRuntime({ workspaceRoot: '/tmp/workspace', queryFn: h.queryFn });
+
+    const ack = await rt.dispatch(task());
+    expect(ack.accepted).toBe(false);
+    expect(ack.rejectReason).toContain('凭证');
+  });
+
   it('结束后状态可查，成功与失败分别落到 completed / failed', async () => {
     const h = harness();
     const rt = runtime(h);

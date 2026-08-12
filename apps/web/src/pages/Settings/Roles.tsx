@@ -202,7 +202,9 @@ export function RolesPage() {
       )}
 
       {editing && data && (
-        <Modal onClose={() => setEditing(null)} title="角色编辑">
+        // ★ 宽度归 Modal 管：写在里层的 w-[560px] 超过弹层自己的 max-w-md，
+        //   结果是横向溢出，而调用方看到的现象是「我设了宽度但没变宽」。
+        <Modal onClose={() => setEditing(null)} title="角色编辑" width="lg">
           <RoleEditor
             draft={editing}
             isNew={editingKey === null}
@@ -353,7 +355,7 @@ function RoleEditor({
   };
 
   return (
-    <div className="max-h-[80vh] w-[560px] overflow-y-auto p-4">
+    <div>
       <h2 className="text-sm font-semibold text-slate-900">
         {isNew ? '新建角色' : `${locked ? '' : '编辑'}「${draft.name}」`}
       </h2>

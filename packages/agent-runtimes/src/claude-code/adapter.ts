@@ -39,6 +39,21 @@ export interface ClaudeCodeRuntimeOptions {
    */
   apiKey?: string;
   /**
+   * 凭证下发到哪个环境变量。默认 ANTHROPIC_API_KEY（官方端点）；
+   * 中转站/网关多数认 ANTHROPIC_AUTH_TOKEN（走 Authorization: Bearer）。
+   */
+  credentialEnv?: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN';
+  /** 自建网关 / 中转站地址，注入 ANTHROPIC_BASE_URL。留空走官方端点 */
+  baseUrl?: string;
+  /**
+   * 用户直接给出值的环境变量表（配置里的 `env` JSON）。
+   *
+   * ★ **最后应用**，会盖掉 apiKey / baseUrl / passthroughEnv 算出来的同名变量。
+   *   「我明明填了却没生效」是配置类功能最坏的失败形态 —— 用户写下的东西
+   *   必须一定生效，哪怕代价是他能把自己的凭证覆盖掉。
+   */
+  env?: Record<string, string>;
+  /**
    * 显式允许继承进程环境里的 ANTHROPIC_API_KEY。
    * 默认 false —— 想开就得写出来，便于审计。
    */
@@ -171,14 +186,13 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return { externalRunId: this.externalId(existing), accepted: true };
     }
 
-    const credential = this.resolveCredential();
-    if (!credential) {
+    if (!this.hasCredential()) {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
         rejectReason:
-          '未配置 Agent 凭证：请设置 APOS_AGENT_ANTHROPIC_API_KEY（不要复用平台的 ANTHROPIC_API_KEY），' +
-          '或显式开启 allowInheritedCredentials。',
+          '未配置 Agent 凭证：请在 Agent 的凭证栏登记，或设置 APOS_AGENT_ANTHROPIC_API_KEY' +
+          '（不要复用平台的 ANTHROPIC_API_KEY）。接中转站时也可以在环境变量表里给出 ANTHROPIC_AUTH_TOKEN。',
       };
     }
 
@@ -562,15 +576,25 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
    *
    * 不做 { ...process.env } —— 那会把平台的密钥、数据库口令、
    * 其他服务的 token 一起交给 Agent，等于绕开了资源范围控制。
+   *
+   * 叠加顺序是**由平台到用户**，用户填的排最后：
+   * 最小集 → 凭证 → 接入地址 → 透传变量 → 配置里的 env 表。
    */
   private childEnv(): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = {
       PATH: process.env['PATH'],
       HOME: process.env['HOME'],
-      ANTHROPIC_API_KEY: this.resolveCredential() ?? undefined,
     };
+
+    const credential = this.resolveCredential();
+    if (credential) env[this.options.credentialEnv ?? 'ANTHROPIC_API_KEY'] = credential;
+    if (this.options.baseUrl) env['ANTHROPIC_BASE_URL'] = this.options.baseUrl;
+
     for (const key of this.options.passthroughEnv ?? []) {
       env[key] = process.env[key];
+    }
+    for (const [key, value] of Object.entries(this.options.env ?? {})) {
+      env[key] = value;
     }
     return env;
   }
@@ -583,6 +607,20 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return process.env['ANTHROPIC_API_KEY'] ?? null;
     }
     return null;
+  }
+
+  /**
+   * 凭证是不是备齐了 —— 派发前的闸门。
+   *
+   * ★ 光看 resolveCredential 不够：接中转站时凭证常常是直接写在
+   *   环境变量表里的 ANTHROPIC_AUTH_TOKEN，此时 credentialRef 是空的。
+   *   只认凭证栏的话，一个配好了、也确实能跑的 Agent 会被拒发，
+   *   而报错还理直气壮地让人去配 APOS_AGENT_ANTHROPIC_API_KEY。
+   */
+  private hasCredential(): boolean {
+    if (this.resolveCredential()) return true;
+    const env = this.options.env ?? {};
+    return Boolean(env['ANTHROPIC_AUTH_TOKEN'] || env['ANTHROPIC_API_KEY']);
   }
 
   private workspaceFor(scope: ResourceScope): string | null {

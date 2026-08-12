@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -92,9 +92,21 @@ export function AgentConfigPage() {
 function AgentsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
+  /**
+   * ★ 保存时被丢弃的配置键。
+   *
+   *   配置可以直接粘一份 JSON 进来之后，「不认识的键静默丢弃」就从
+   *   schema 演进的必要行为变成了坑：用户填了 anthropicBaseUrl，保存完
+   *   它没了，而界面上这个 Agent 显示为配置完好。丢了什么必须说出来。
+   */
+  const [dropped, setDropped] = useState<string[]>([]);
 
   const q = useQuery({ queryKey: qk.adminAgents(), queryFn: api.adminAgents });
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.adminAgents() });
+  const openForm = (target: AgentAdminRow | 'new') => {
+    setDropped([]);
+    setEditing(target);
+  };
 
   const probe = useMutation({ mutationFn: (id: string) => api.probeAgent(id), onSuccess: invalidate });
   const remove = useMutation({ mutationFn: (id: string) => api.deleteAgent(id), onSuccess: invalidate });
@@ -110,7 +122,7 @@ function AgentsSection() {
           每个 Agent 自带一种 headless CLI 与它的个性化配置。同一种 CLI 可以建多个 Agent，各配各的。
         </p>
         <Button variant="neutral" size="sm"
-          onClick={() => setEditing('new')}
+          onClick={() => openForm('new')}
           className="ml-auto">
           + 新建 Agent
         </Button>
@@ -119,7 +131,15 @@ function AgentsSection() {
       {!data.canStoreInlineCredential && (
         <Notice tone="warning">
           未配置 <code>APOS_SECRET_KEY</code>，无法保存直接粘贴的凭证。
-          请用 <code>env:变量名</code> 的形式，把凭证放在进程环境里。
+          请用 <code>env:变量名</code> 的形式，把凭证放在进程环境里
+          —— 运行时配置里环境变量表的敏感值同理。
+        </Notice>
+      )}
+
+      {dropped.length > 0 && (
+        <Notice tone="warning">
+          这些配置项不被该运行时支持，已丢弃：<code>{dropped.join('、')}</code>。
+          要下发运行时自己认的变量，请写进「环境变量（JSON）」那一栏。
         </Notice>
       )}
 
@@ -130,7 +150,7 @@ function AgentsSection() {
           icon="🤖"
           message="还没有任何 Agent"
           hint="建一个 Agent 才能派发任务。可以先用「内存运行时」跑通流程，不花钱"
-          action={{ label: '新建 Agent', onClick: () => setEditing('new') }}
+          action={{ label: '新建 Agent', onClick: () => openForm('new') }}
         />
       ) : (
         <div className="space-y-2">
@@ -140,7 +160,7 @@ function AgentsSection() {
               agent={a}
               spec={data.kinds.find((k) => k.kind === a.runtimeKind) ?? null}
               onProbe={() => probe.mutate(a.id)}
-              onEdit={() => setEditing(a)}
+              onEdit={() => openForm(a)}
               onDelete={() => remove.mutate(a.id)}
               error={remove.error}
               probing={probe.isPending}
@@ -156,8 +176,14 @@ function AgentsSection() {
           credentialHelp={data.credentialHelp}
           agent={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
-          onDone={() => {
+          /**
+           * ★ 无论丢没丢键都关闭弹窗。
+           *   留着弹窗让用户「看完再关」的话，新建那次的 agent 已经建出来了，
+           *   而表单还以为自己是新建态 —— 再点一次保存就是第二个 Agent。
+           */
+          onSaved={(droppedKeys) => {
             setEditing(null);
+            setDropped(droppedKeys);
             void invalidate();
           }}
         />
@@ -234,9 +260,15 @@ function AgentCard({
     ? { tone: 'error' as const, text: agent.problem ?? '适配器未在本进程注册' }
     : !agent.credentialUsable && agent.credentialHint
       ? { tone: 'error' as const, text: agent.credentialProblem ?? '凭证不可用' }
-      : !agent.reachable
-        ? { tone: 'warning' as const, text: agent.problem ?? '能力探测失败' }
-        : { tone: 'ok' as const, text: '就绪' };
+      : /*
+         * ★ 环境变量表里解不开的引用与凭证不可用是同一类问题：
+         *   配置看着完好，派发时才炸，而报错不会指向那个没设置的变量。
+         */
+        agent.runtimeConfigProblems.length > 0
+        ? { tone: 'error' as const, text: agent.runtimeConfigProblems[0]! }
+        : !agent.reachable
+          ? { tone: 'warning' as const, text: agent.problem ?? '能力探测失败' }
+          : { tone: 'ok' as const, text: '就绪' };
 
   /** 只展示与默认值不同的配置 —— 全列一遍会淹没真正被改过的那几项 */
   const overrides = spec
@@ -381,14 +413,14 @@ function AgentForm({
   credentialHelp,
   agent,
   onClose,
-  onDone,
+  onSaved,
 }: {
   kinds: RuntimeKindSpec[];
   canStoreInline: boolean;
   credentialHelp: string;
   agent: AgentAdminRow | null;
   onClose: () => void;
-  onDone: () => void;
+  onSaved: (droppedConfigKeys: string[]) => void;
 }) {
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
   const currentUser = useAuthStore((s) => s.userId);
@@ -422,15 +454,46 @@ function AgentForm({
    *   保存时才报错的字段。
    */
   const [config, setConfig] = useState<Record<string, unknown>>(agent?.runtimeConfig ?? {});
+
+  /**
+   * ★ JSON 模式：整份运行时配置摊成一个文本框，可以直接粘贴。
+   *
+   *   表单模式仍是默认 —— 它带着每个字段的取值范围、影响成本/安全的标注，
+   *   以及各运行时「做不到什么」的说明，那些是这一页真正有用的信息。
+   *   JSON 模式是给已经知道自己要什么的人准备的：从别处抄一份配置过来，
+   *   或者一次改好几项。两边共用同一份 state，随时切换。
+   */
+  const [jsonMode, setJsonMode] = useState(false);
+
+  /**
+   * ★ 哪些 JSON 文本框此刻解析不通过。
+   *
+   *   JSON 输入必须留在本地字符串里（边打字边解析会把还没敲完的内容毁掉），
+   *   于是解析失败时 config 停在上一个合法值。不把这件事顶上来的话，
+   *   用户对着一段红字报错点保存，存下去的是他改之前的那份 —— 而界面显示保存成功。
+   */
+  const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
+  const setJsonError = useCallback((key: string, message: string | null) => {
+    setJsonErrors((prev) => {
+      if (message === null) {
+        if (!(key in prev)) return prev;
+        const { [key]: _dropped, ...rest } = prev;
+        return rest;
+      }
+      return prev[key] === message ? prev : { ...prev, [key]: message };
+    });
+  }, []);
+
   const switchKind = (next: string) => {
     setKind(next);
     setConfig(agent?.runtimeKind === next ? (agent.runtimeConfig ?? {}) : {});
+    setJsonErrors({});
   };
 
-  const valueOf = (f: ConfigField) => (config[f.key] !== undefined ? config[f.key] : f.default);
+  const valueOf = (f: ConfigField) => (f.key in config ? config[f.key] : f.default);
   const setField = (key: string, v: unknown) => setConfig((c) => ({ ...c, [key]: v }));
 
-  const save = useMutation<unknown, Error, void>({
+  const save = useMutation<{ droppedConfigKeys?: string[] }, Error, void>({
     mutationFn: async () => {
       const body: Record<string, unknown> = {
         name,
@@ -451,15 +514,43 @@ function AgentForm({
       };
       return agent ? api.updateAgent(agent.id, body) : api.createAgent(body);
     },
-    onSuccess: onDone,
+    onSuccess: (result) => onSaved(result.droppedConfigKeys ?? []),
   });
 
   const basicFields = (spec?.fields ?? []).filter((f) => !f.advanced);
   const advancedFields = (spec?.fields ?? []).filter((f) => f.advanced);
+  const jsonProblem = Object.values(jsonErrors)[0] ?? null;
 
   return (
-    <Modal onClose={onClose} title="Agent 配置">
-      <div className="max-h-[75vh] space-y-3 overflow-auto pr-1">
+    <Modal
+      onClose={onClose}
+      title="Agent 配置"
+      /* ★ 表单长，两栏也挤 —— JSON 文本框在 md 宽度下一行放不下几个字 */
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{save.error.message}</p>
+          )}
+          {/*
+            ★ JSON 解析不通过时按钮必须禁掉，而不是让它存下上一个合法值。
+              「显示保存成功、存进去的是改之前那份」比直接报错难查得多。
+          */}
+          {jsonProblem && <p className="text-xs text-rose-600">JSON 还没改对：{jsonProblem}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!name.trim() || !ownerId || save.isPending || jsonProblem !== null}
+              onClick={() => save.mutate()}>
+              {save.isPending ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
           {agent ? `编辑 ${agent.name}` : '新建 Agent'}
         </h2>
@@ -497,7 +588,16 @@ function AgentForm({
 
         {/* ── 运行时 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-2 text-[11px] font-medium text-slate-700">运行时</p>
+          <div className="mb-2 flex items-center gap-2">
+            <p className="text-[11px] font-medium text-slate-700">运行时</p>
+            <button
+              type="button"
+              onClick={() => setJsonMode((v) => !v)}
+              className="ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
+            >
+              {jsonMode ? '← 回到表单' : '直接编辑 JSON →'}
+            </button>
+          </div>
 
           <Labeled label="Headless CLI">
             <select
@@ -542,30 +642,66 @@ function AgentForm({
             </Labeled>
           )}
 
-          {/* ★ 按平台定义的 schema 动态渲染 —— 加一种 CLI 不用改这里 */}
-          {basicFields.map((f) => (
-            <ConfigInput key={f.key} field={f} value={valueOf(f)} onChange={(v) => setField(f.key, v)} />
-          ))}
-
-          {advancedFields.length > 0 && (
+          {jsonMode ? (
+            <Labeled
+              label="运行时配置（JSON）"
+              help={`${spec ? spec.fields.map((f) => f.key).join(' / ') : ''} —— 不在这张表里的键保存时会被丢弃并提示。`}
+            >
+              <JsonInput
+                /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
+                key={kind}
+                errorKey="__config__"
+                value={withDefaults(spec, config)}
+                onChange={setConfig}
+                onError={setJsonError}
+                rows={12}
+              />
+            </Labeled>
+          ) : (
             <>
-              <button
-                type="button"
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-700"
-              >
-                {showAdvanced ? '收起高级选项' : `高级选项（${advancedFields.length}）`}
-              </button>
-              {showAdvanced &&
-                advancedFields.map((f) => (
-                  <ConfigInput
-                    key={f.key}
-                    field={f}
-                    value={valueOf(f)}
-                    onChange={(v) => setField(f.key, v)}
-                  />
-                ))}
+              {/* ★ 按平台定义的 schema 动态渲染 —— 加一种 CLI 不用改这里 */}
+              {basicFields.map((f) => (
+                <ConfigInput
+                  key={f.key}
+                  field={f}
+                  value={valueOf(f)}
+                  onChange={(v) => setField(f.key, v)}
+                  onJsonError={setJsonError}
+                />
+              ))}
+
+              {advancedFields.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced((v) => !v)}
+                    className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-700"
+                  >
+                    {showAdvanced ? '收起高级选项' : `高级选项（${advancedFields.length}）`}
+                  </button>
+                  {showAdvanced &&
+                    advancedFields.map((f) => (
+                      <ConfigInput
+                        key={f.key}
+                        field={f}
+                        value={valueOf(f)}
+                        onChange={(v) => setField(f.key, v)}
+                        onJsonError={setJsonError}
+                      />
+                    ))}
+                </>
+              )}
             </>
+          )}
+
+          {agent && agent.runtimeConfigProblems.length > 0 && (
+            <div className="mt-2 space-y-0.5">
+              {agent.runtimeConfigProblems.map((p) => (
+                <p key={p} className="text-[11px] text-rose-600">
+                  ⚠ {p}
+                </p>
+              ))}
+            </div>
           )}
         </div>
 
@@ -635,24 +771,139 @@ function AgentForm({
               onChange={(e) => setReason(e.target.value)} />
           </Labeled>
         )}
-
-        {save.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{save.error.message}</p>
-        )}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!name.trim() || !ownerId || save.isPending}
-            onClick={() => save.mutate()}>
-            {save.isPending ? '保存中…' : '保存'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
+}
+
+/**
+ * 表单值 → JSON 模式的初始内容：缺的字段补上默认值。
+ *
+ * ★ 只给已知字段，且要**全给**。只摊出被改过的那几项的话，
+ *   用 JSON 模式的人看不出还能配什么 —— 而那正是他切过来的原因。
+ */
+function withDefaults(
+  spec: RuntimeKindSpec | undefined,
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!spec) return config;
+  return Object.fromEntries(
+    spec.fields.map((f) => [f.key, f.key in config ? config[f.key] : f.default]),
+  );
+}
+
+/**
+ * JSON 对象输入框。
+ *
+ * ★ 文本留在本地 state，不是每次按键都往上抛解析结果 ——
+ *   边打字边解析会在敲到一半（`{"A":` ）时判定失败，
+ *   而把值重置回上一个合法对象会当场把用户正在敲的内容清掉。
+ *
+ * ★ 解析失败时**不**往上抛值，改为抛错误。上层据此禁用保存按钮：
+ *   继续用上一个合法值保存，界面会显示成功而存进去的是旧内容。
+ */
+export function JsonInput({
+  errorKey,
+  value,
+  onChange,
+  onError,
+  rows = 4,
+}: {
+  /** 这个框在表单的错误表里占的位置 */
+  errorKey: string;
+  value: unknown;
+  onChange: (v: Record<string, unknown>) => void;
+  onError: (key: string, message: string | null) => void;
+  rows?: number;
+}) {
+  const [text, setText] = useState(() => toJsonText(value));
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /**
+   * ★★ 清理副作用要走 ref，不能把 onError 放进依赖数组。
+   *
+   *   调用方传一个每次渲染新建的箭头函数是很自然的写法，而那会让
+   *   下面这个 effect 每渲染一次就重跑一遍 cleanup —— 刚记下的错误
+   *   当场被自己清掉，保存按钮永远不会被禁，于是用户对着一段红字报错
+   *   点保存，存进去的是他改之前的那份，界面还显示保存成功。
+   *
+   *   与其要求调用方记得 useCallback，不如让这个组件自己扛住 ——
+   *   靠调用方守纪律的约定，迟早有一处不守。
+   */
+  const clear = useRef(onError);
+  useEffect(() => {
+    clear.current = onError;
+  }, [onError]);
+
+  /**
+   * ★ 卸载时清掉自己的错误。
+   *   高级选项收起来、或者切到别的模式时这个框会消失，
+   *   而它留下的那条错误会永远禁着保存按钮 —— 页面上还找不到是谁在报错。
+   */
+  useEffect(() => () => clear.current(errorKey, null), [errorKey]);
+
+  const handle = (next: string) => {
+    setText(next);
+
+    if (next.trim() === '') {
+      setProblem(null);
+      onError(errorKey, null);
+      onChange({});
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '格式不正确';
+      setProblem(message);
+      onError(errorKey, message);
+      return;
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      const message = '必须是 JSON 对象，形如 {"KEY": "值"}';
+      setProblem(message);
+      onError(errorKey, message);
+      return;
+    }
+
+    setProblem(null);
+    onError(errorKey, null);
+    onChange(parsed as Record<string, unknown>);
+  };
+
+  return (
+    <>
+      <Textarea
+        value={text}
+        onChange={(e) => handle(e.target.value)}
+        rows={rows}
+        spellCheck={false}
+        placeholder={'{\n  "ANTHROPIC_BASE_URL": "https://gw.example.com"\n}'}
+        className={clsx('font-mono text-xs', problem && 'border-rose-300')}
+      />
+      {problem && <p className="mt-1 text-[11px] text-rose-600">{problem}</p>}
+    </>
+  );
+}
+
+function toJsonText(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  /**
+   * ★ 空表显示成空文本框，而不是一对光秃秃的 `{}`。
+   *   空着才会显示 placeholder 里的示例 —— 对没填过的人来说，
+   *   那行示例是这一栏唯一说明「该往里写什么」的东西。
+   */
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+    return '';
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
 }
 
 /** 按 schema 渲染单个配置项。影响成本/安全的用颜色标出来 */
@@ -660,10 +911,13 @@ function ConfigInput({
   field,
   value,
   onChange,
+  onJsonError,
 }: {
   field: ConfigField;
   value: unknown;
   onChange: (v: unknown) => void;
+  /** type: 'json' 时，解析失败要顶到表单上去禁用保存。必须是稳定引用 */
+  onJsonError: (key: string, message: string | null) => void;
 }) {
   const badge =
     field.impact === 'cost' ? (
@@ -703,6 +957,8 @@ function ConfigInput({
           onChange={(e) => onChange(splitList(e.target.value))}
           placeholder="逗号分隔"
           className="font-mono" />
+      ) : field.type === 'json' ? (
+        <JsonInput errorKey={field.key} value={value} onChange={onChange} onError={onJsonError} />
       ) : (
         <Input
           value={String(value ?? '')}
@@ -744,6 +1000,15 @@ function splitList(v: string): string[] {
 
 function formatValue(v: unknown): string {
   if (Array.isArray(v)) return v.join('、') || '（空）';
+  /**
+   * ★ JSON 对象只列键名。
+   *   值里可能有网关地址、也可能有 `secret://saved` 这种占位符 ——
+   *   卡片上一个也不该出现：前者是噪音，后者会让人以为凭证存坏了。
+   */
+  if (v && typeof v === 'object') {
+    const keys = Object.keys(v as Record<string, unknown>);
+    return keys.length > 0 ? keys.join('、') : '（空）';
+  }
   return String(v);
 }
 
@@ -1047,7 +1312,28 @@ function RepositoryForm({
   });
 
   return (
-    <Modal onClose={onClose} title="代码仓库配置">
+    <Modal
+      onClose={onClose}
+      title="代码仓库配置"
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {create.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{create.error.message}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
+              onClick={() => create.mutate()}>
+              {create.isPending ? '登记中…' : '登记'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
           {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
@@ -1226,21 +1512,6 @@ function RepositoryForm({
           />
           组织共享（其他项目也能用）
         </label>
-
-        {create.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{create.error.message}</p>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
-            onClick={() => create.mutate()}>
-            {create.isPending ? '登记中…' : '登记'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1379,7 +1650,28 @@ function ConventionForm({
   });
 
   return (
-    <Modal onClose={onClose} title="工程约定">
+    <Modal
+      onClose={onClose}
+      title="工程约定"
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && (
+            <p className="text-xs text-rose-600">{save.error.message}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button variant="neutral" size="sm"
+              disabled={!title.trim() || !content.trim() || save.isPending}
+              onClick={() => save.mutate()}>
+              {save.isPending ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{row ? '编辑工程约定' : '新增工程约定'}</h2>
         <label className="block">
@@ -1413,21 +1705,6 @@ function ConventionForm({
             <option value="reference">参考（进「参考上下文」）</option>
           </select>
         </label>
-
-        {save.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{save.error.message}</p>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="neutral" size="sm"
-            disabled={!title.trim() || !content.trim() || save.isPending}
-            onClick={() => save.mutate()}>
-            {save.isPending ? '保存中…' : '保存'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );

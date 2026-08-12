@@ -46,7 +46,23 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-md -translate-x-1/2 -translate-y-1/2 gap-3',
+        'fixed left-1/2 top-1/2 z-50 flex w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col gap-3',
+        /**
+         * ★★ 弹层永远不能比屏幕高。
+         *
+         *   在此之前这里既没有 max-height 也没有 overflow：内容一长，
+         *   弹层就整个撑高，而它是 top-1/2 + -translate-y-1/2 居中的 ——
+         *   撑出来的部分**上下各溢出一半**。表现是「一部分输入框在弹窗外」，
+         *   底部的取消/保存按钮跑到视口下面，鼠标够不着、页面也滚不到
+         *   （Radix 开弹层时锁了 body 滚动）。
+         *
+         *   截到的实例：代码仓库登记表单在 780px 高的窗口上是 950px 高，
+         *   top=-85、bottom=865，「组织共享」勾选框和两个按钮全在视口外。
+         *
+         *   配套的是 Modal 里那个 flex-1 滚动区 —— 只封顶不给滚动出口的话，
+         *   够不着会变成看不见，更糟。
+         */
+        'max-h-[calc(100dvh-2rem)] overflow-hidden',
         'rounded-xl border border-border bg-card p-4 shadow-xl',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',

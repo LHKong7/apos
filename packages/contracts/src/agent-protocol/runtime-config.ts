@@ -12,11 +12,26 @@ import { z } from 'zod';
  *   3. **影响可标注**。哪些字段影响成本、哪些影响安全边界，界面要能凸显。
  *      一个把 maxTurns 从 60 调到 500 的人，应该当场看到「这会显著提高单次成本」。
  *
+ * ★ 但 schema 一定会滞后于运行时。因此有一个**受控的自由 JSON 口子**：
+ *   `env` 字段（`type: 'json'` + `jsonShape: 'env'`）让用户直接写一份环境变量表
+ *   下发给子进程 —— 中转站的 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`、
+ *   代理的 `HTTPS_PROXY`，都不必等平台发版。
+ *
+ *   它仍然是**声明出来的一个字段**而不是「整坨配置随便填」：值的形状照样校验，
+ *   敏感键照样走加密通道（见 http/agent-admin.ts），界面照样标出它影响安全边界。
+ *
  * ★ 这里只描述**能配什么**，不描述**怎么用**。怎么用是各适配器的事，
- *   两边靠 key 对齐（见 runtime-factory 的 buildOptions）。
+ *   两边靠 key 对齐（见 runtime-factory 的 createAgentAdapter）。
  */
 
-export const ConfigFieldType = z.enum(['string', 'number', 'boolean', 'select', 'string_list']);
+export const ConfigFieldType = z.enum([
+  'string',
+  'number',
+  'boolean',
+  'select',
+  'string_list',
+  'json',
+]);
 export type ConfigFieldType = z.infer<typeof ConfigFieldType>;
 
 export interface ConfigFieldOption {
@@ -34,10 +49,39 @@ export interface ConfigField {
   options?: ConfigFieldOption[];
   min?: number;
   max?: number;
+  /**
+   * `type: 'json'` 时值的语义，决定校验强度：
+   * - `'env'`：环境变量表，键必须是合法变量名、值必须是字符串
+   * - `'free'`（默认）：只要求是 JSON 对象
+   *
+   * ★ 用声明式的 shape 而不是在校验函数里按 key 名特判 —— 特判会让
+   *   「加一个 json 字段」变成「同时要改校验函数」，schema 就不再是数据了。
+   */
+  jsonShape?: 'env' | 'free';
   /** 界面据此凸显：调这个字段会花更多钱 / 会放宽安全边界 */
   impact?: 'cost' | 'safety';
   /** 折叠进「高级」，默认不展示 */
   advanced?: boolean;
+}
+
+/** 环境变量名的合法形状 */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * 这个环境变量名看起来是不是一份凭证。
+ *
+ * ★ 判据放在 contracts 是因为**三处**都要用同一份：服务端据此决定值要不要
+ *   加密入库、界面据此提示「这一项保存后不再回显」、校验据此要求配了主密钥。
+ *   三处各写各的正则，迟早出现「界面说会加密、实际明文进了库」。
+ *
+ * ★ 按下划线切段匹配，不是子串匹配：`GIT_AUTHOR_NAME` 里的 AUTHOR 不是 AUTH，
+ *   `KEYCLOAK_URL` 里的 KEY 也不是 KEY —— 误判成凭证会把一个本该看得见、
+ *   改得动的值锁进密文里。
+ */
+const SECRET_ENV_NAME = /(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|KEY|AUTH)(_|$)/i;
+
+export function isSecretEnvKey(key: string): boolean {
+  return SECRET_ENV_NAME.test(key);
 }
 
 export interface RuntimeKindSpec {
@@ -64,6 +108,37 @@ const PASSTHROUGH_ENV: ConfigField = {
     '默认只给子进程 PATH / HOME / 该运行时自己的凭证。这里每加一个变量名，' +
     '就等于把它交给 Agent —— 不要把数据库口令、其他服务的 token 放进来。',
 };
+
+/**
+ * 环境变量表 —— 直接写死值下发给子进程的那个 JSON。
+ *
+ * ★ 与 `passthroughEnv` 的分工：那个只能**透传进程里已有的**变量（给名字，
+ *   值从 APOS 自己的环境取），这个是**在界面上直接给出值**。
+ *   接中转站的场景只有后者可用 —— 网关地址与 token 属于这个 Agent，
+ *   不属于 APOS 进程，不该为了给一个 Agent 配网关去改部署的环境变量
+ *   （改了还会波及所有共用该变量名的 Agent）。
+ *
+ * ★ 值有两种写法，都支持：
+ *   - 字面量：`"https://gw.example.com"`。敏感键（见 isSecretEnvKey）的字面量
+ *     会被加密入库，保存后接口只回占位符 —— 与凭证栏同一条纪律。
+ *   - `env:变量名`：值从 APOS 进程环境取，什么都不进库。
+ *
+ * ★ 它排在最后应用，会盖掉上面所有字段算出来的同名变量。
+ *   「我填了却没生效」是配置类功能最坏的失败形态，宁可让它一定生效。
+ */
+const ENV_OVERRIDES = (examples: string): ConfigField => ({
+  key: 'env',
+  label: '环境变量（JSON）',
+  type: 'json',
+  jsonShape: 'env',
+  default: {},
+  impact: 'safety',
+  help:
+    `原样下发给子进程，覆盖同名的平台默认值。例如 ${examples}。` +
+    '敏感键（含 TOKEN / KEY / SECRET / AUTH 等字样）加密入库、保存后不回显；' +
+    '值写成 `env:变量名` 则改为从 APOS 进程环境取，什么都不进库。' +
+    '★ 这里能把上面的安全设置绕过去，填之前想清楚给的是什么。',
+});
 
 /**
  * 通用 headless CLI 都有的两个字段。
@@ -95,6 +170,7 @@ const CLI_COMMON_FIELDS = (binary: string): ConfigField[] => [
       '原样追加到命令行末尾。平台不校验内容 —— 填错会让 CLI 直接启动失败，' +
       '也可能绕开上面的安全设置（例如手工加上放开审批的开关）。',
   },
+  ENV_OVERRIDES('`{"HTTPS_PROXY": "http://…"}`'),
   PASSTHROUGH_ENV,
 ];
 
@@ -241,10 +317,23 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
     label: 'Claude Code',
     description: '基于 Claude Agent SDK。工具级权限、实时事件流、执行中可注入约束，能力最完整。',
     credential: {
-      label: 'Anthropic API Key',
-      help: '推荐填 `env:变量名`，凭证只留在进程环境、不进数据库，且多个 Agent 共用同一变量名时轮换只需改一处。',
+      label: 'Anthropic 凭证',
+      help:
+        '推荐填 `env:变量名`，凭证只留在进程环境、不进数据库，且多个 Agent 共用同一变量名时轮换只需改一处。' +
+        '走中转站/网关时把下面的「凭证下发变量名」改成 ANTHROPIC_AUTH_TOKEN。',
     },
-    endpoint: null,
+    /**
+     * ★ 接入地址 = ANTHROPIC_BASE_URL。
+     *
+     *   在此之前 claude_code 的 spec 里这一项是 null，界面上根本不渲染 ——
+     *   于是 agents.endpoint 这一列对 Claude Code Agent 写了也不会被消费，
+     *   而中转站/自建网关恰恰是最常见的接法。
+     */
+    endpoint: {
+      label: '接入地址',
+      help:
+        '注入 ANTHROPIC_BASE_URL。中转站、自建网关、Bedrock/Vertex 前置代理才填，留空走官方端点。',
+    },
     prerequisite: null,
     fields: [
       {
@@ -303,6 +392,36 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
           },
         ],
       },
+      /**
+       * ★ 凭证下发到哪个变量名。
+       *
+       *   官方端点认 ANTHROPIC_API_KEY，多数中转站认 ANTHROPIC_AUTH_TOKEN
+       *   （它走的是 Authorization: Bearer，而 API Key 走 x-api-key）。
+       *   下错变量名的表现是一句 401，而 401 不会告诉你是名字错了 ——
+       *   所以做成明确的一栏，而不是让人去环境变量 JSON 里猜。
+       */
+      {
+        key: 'credentialEnv',
+        label: '凭证下发变量名',
+        type: 'select',
+        default: 'ANTHROPIC_API_KEY',
+        advanced: true,
+        options: [
+          {
+            value: 'ANTHROPIC_API_KEY',
+            label: 'ANTHROPIC_API_KEY（默认）',
+            help: '官方端点用这个',
+          },
+          {
+            value: 'ANTHROPIC_AUTH_TOKEN',
+            label: 'ANTHROPIC_AUTH_TOKEN',
+            help: '多数中转站/网关用这个（Authorization: Bearer）',
+          },
+        ],
+      },
+      ENV_OVERRIDES(
+        '`{"ANTHROPIC_BASE_URL": "https://gw.example.com", "ANTHROPIC_AUTH_TOKEN": "sk-…"}`',
+      ),
       PASSTHROUGH_ENV,
     ],
   },
@@ -357,6 +476,7 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
         advanced: true,
         help: '不在 PATH 里时填绝对路径。',
       },
+      ENV_OVERRIDES('`{"OPENAI_BASE_URL": "https://gw.example.com"}`'),
       PASSTHROUGH_ENV,
     ],
   },
@@ -413,19 +533,27 @@ export interface ConfigValidationIssue {
  * ★ 未知字段会被**丢弃**而不是报错：schema 演进时（删掉一个字段）
  *   老 Agent 的库里还留着那个 key，报错会让它们全部改不动。
  *
+ *   但**丢掉了什么要说出来**（`dropped`）。用户可以直接粘一份 JSON 进来之后，
+ *   静默丢弃就成了「我明明填了 anthropicBaseUrl，保存完它没了」——
+ *   而界面上这个 Agent 显示为配置完好。调用方负责把它回给用户。
+ *
  * ★ 缺失字段用默认值补齐，所以适配器侧永远能拿到完整配置，
  *   不用到处写 `?? 默认值` —— 那种散落的默认值迟早和这里对不上。
  */
 export function validateRuntimeConfig(
   kind: string,
   input: Record<string, unknown> | null | undefined,
-): { ok: true; config: Record<string, unknown> } | { ok: false; issues: ConfigValidationIssue[] } {
+):
+  | { ok: true; config: Record<string, unknown>; dropped: string[] }
+  | { ok: false; issues: ConfigValidationIssue[] } {
   const spec = runtimeKindSpec(kind);
   if (!spec) return { ok: false, issues: [{ key: 'kind', message: `不支持的运行时类型：${kind}` }] };
 
   const raw = input ?? {};
   const config: Record<string, unknown> = {};
   const issues: ConfigValidationIssue[] = [];
+  const known = new Set(spec.fields.map((f) => f.key));
+  const dropped = Object.keys(raw).filter((k) => !known.has(k));
 
   for (const field of spec.fields) {
     const value = raw[field.key];
@@ -479,6 +607,44 @@ export function validateRuntimeConfig(
         break;
       }
 
+      case 'json': {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          issues.push({ key: field.key, message: `${field.label} 必须是 JSON 对象` });
+          continue;
+        }
+
+        const entries = Object.entries(value as Record<string, unknown>);
+
+        if (field.jsonShape === 'env') {
+          const badName = entries.filter(([k]) => !ENV_NAME.test(k)).map(([k]) => k);
+          if (badName.length > 0) {
+            issues.push({
+              key: field.key,
+              message: `${field.label} 里这些不是合法的环境变量名：${badName.join('、')}（只能是字母/数字/下划线，且不以数字开头）`,
+            });
+            continue;
+          }
+
+          /**
+           * ★ 值必须是字符串。写成 `{"MAX_TOKENS": 4096}` 是很自然的手笔，
+           *   而子进程环境只认字符串 —— 放行的话数字会被 Node 悄悄转成
+           *   `"4096"`，布尔会变成 `"true"`，用户看到的是「有时候能用有时候不能」。
+           *   在这里说清楚要加引号，比让人去猜强。
+           */
+          const badValue = entries.filter(([, v]) => typeof v !== 'string').map(([k]) => k);
+          if (badValue.length > 0) {
+            issues.push({
+              key: field.key,
+              message: `${field.label} 的值必须是字符串（要加引号）：${badValue.join('、')}`,
+            });
+            continue;
+          }
+        }
+
+        config[field.key] = Object.fromEntries(entries);
+        break;
+      }
+
       case 'string':
       default: {
         if (typeof value !== 'string') {
@@ -491,7 +657,7 @@ export function validateRuntimeConfig(
     }
   }
 
-  return issues.length > 0 ? { ok: false, issues } : { ok: true, config };
+  return issues.length > 0 ? { ok: false, issues } : { ok: true, config, dropped };
 }
 
 /** 只取默认值，用于新建表单的初始状态 */
@@ -499,4 +665,21 @@ export function defaultRuntimeConfig(kind: string): Record<string, unknown> {
   const spec = runtimeKindSpec(kind);
   if (!spec) return {};
   return Object.fromEntries(spec.fields.map((f) => [f.key, f.default]));
+}
+
+/**
+ * 取出配置里的环境变量表。
+ *
+ * ★ 单独一个函数是因为读它的地方有三处（工厂解引用、接口脱敏、保存时加密），
+ *   各写一遍 `typeof cfg['env'] === 'object' ? … : {}` 的话，
+ *   总有一处会漏掉「值不是对象」的情况然后在生产上抛 TypeError。
+ */
+export function envOverridesOf(config: Record<string, unknown> | null | undefined): Record<string, string> {
+  const raw = config?.['env'];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter(
+      (e): e is [string, string] => typeof e[1] === 'string',
+    ),
+  );
 }

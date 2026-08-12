@@ -280,6 +280,180 @@ describe('凭证', () => {
   });
 });
 
+/**
+ * 环境变量表 —— 用户直接写一份 JSON 下发给子进程的那个口子。
+ *
+ * ★ 它同时是一条**新的凭证入口**（接中转站时 token 就写在这里），
+ *   所以它必须遵守和凭证栏完全一样的三条纪律：
+ *   明文不进库、接口不回显、钥匙在库外。这一组测试盯的就是这件事。
+ */
+describe('运行时配置里的环境变量表', () => {
+  const envAgent = (env: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { env },
+      ...extra,
+    });
+
+  async function storedEnv() {
+    const [row] = await db.select().from(agents).where(eq(agents.runtimeKind, 'claude_code'));
+    return (row!.runtimeConfig as { env?: Record<string, string> }).env ?? {};
+  }
+
+  it('非敏感值原样保存，看得见也改得动', async () => {
+    const res = await envAgent({ ANTHROPIC_BASE_URL: 'https://gw.example.com' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().agent.runtimeConfig.env).toEqual({
+      ANTHROPIC_BASE_URL: 'https://gw.example.com',
+    });
+    expect(await storedEnv()).toEqual({ ANTHROPIC_BASE_URL: 'https://gw.example.com' });
+  });
+
+  it('敏感键的字面量加密入库，接口只回占位符', async () => {
+    const res = await envAgent({
+      ANTHROPIC_BASE_URL: 'https://gw.example.com',
+      ANTHROPIC_AUTH_TOKEN: 'sk-gateway-secret-4321',
+    });
+
+    expect(res.statusCode).toBe(201);
+    // ★ 明文一次都不能出现在响应里
+    expect(res.payload).not.toContain('sk-gateway-secret');
+    expect(res.json().agent.runtimeConfig.env).toEqual({
+      ANTHROPIC_BASE_URL: 'https://gw.example.com',
+      ANTHROPIC_AUTH_TOKEN: 'secret://saved',
+    });
+
+    const stored = await storedEnv();
+    expect(stored['ANTHROPIC_AUTH_TOKEN']).toMatch(/^secret:\/\/enc\//);
+    expect(stored['ANTHROPIC_AUTH_TOKEN']).not.toContain('sk-gateway-secret');
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/admin/agents', headers: auth() });
+    expect(list.payload).not.toContain('sk-gateway-secret');
+    expect(list.payload).not.toContain('secret://enc/');
+  });
+
+  it('env: 形态什么都不进库，回显成原来的写法', async () => {
+    const res = await envAgent({ ANTHROPIC_AUTH_TOKEN: 'env:GATEWAY_TOKEN' });
+
+    expect(res.json().agent.runtimeConfig.env).toEqual({
+      ANTHROPIC_AUTH_TOKEN: 'env:GATEWAY_TOKEN',
+    });
+    expect(await storedEnv()).toEqual({ ANTHROPIC_AUTH_TOKEN: 'secret://env/GATEWAY_TOKEN' });
+  });
+
+  /**
+   * ★★ 这是占位符存在的全部理由。
+   *
+   *   界面上那是一个 JSON 文本框，改网关地址时整份 JSON 会一起提交。
+   *   占位符不被兑现的话，改一个字段就把同一份 JSON 里的 token
+   *   冲成了字面量 "secret://saved" —— 而这件事直到下一次派发报 401 才会被发现。
+   */
+  it('回存占位符表示「这一项不改」，密文原封不动', async () => {
+    const created = await envAgent({ ANTHROPIC_AUTH_TOKEN: 'sk-keep-me-1111' });
+    const id = created.json().agent.id;
+    const before = (await storedEnv())['ANTHROPIC_AUTH_TOKEN'];
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: {
+        runtimeConfig: {
+          env: {
+            ANTHROPIC_AUTH_TOKEN: 'secret://saved',
+            ANTHROPIC_BASE_URL: 'https://new-gw.example.com',
+          },
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const after = await storedEnv();
+    expect(after['ANTHROPIC_AUTH_TOKEN']).toBe(before);
+    expect(after['ANTHROPIC_BASE_URL']).toBe('https://new-gw.example.com');
+  });
+
+  it('新增一项时填占位符会被拒 —— 没有旧值可以沿用', async () => {
+    const res = await envAgent({ ANTHROPIC_AUTH_TOKEN: 'secret://saved' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('ANTHROPIC_AUTH_TOKEN');
+  });
+
+  /**
+   * ★ 放行的话，任何能编辑 Agent 的人都可以粘一条
+   *   `secret://env/DATABASE_URL` 进来，把 APOS 自己进程环境里的任意变量
+   *   读给 Agent —— 那正是 passthroughEnv 那份白名单要挡住的事。
+   */
+  it('手工填写的 secret:// 引用被拒，不能借它读平台的任意环境变量', async () => {
+    const res = await envAgent({ SOME_VALUE: 'secret://env/DATABASE_URL' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('secret://');
+  });
+
+  it('值不是字符串时在保存那一刻就被拒', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { env: { MAX_TOKENS: 4096 } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('MAX_TOKENS');
+  });
+
+  /**
+   * ★ 接中转站时凭证就写在环境变量表里，凭证栏是空的。
+   *   只认凭证栏的话，一个配好了、也确实能跑的 Agent 存都存不下来。
+   */
+  it('凭证写在环境变量表里时，凭证栏可以留空', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      runtimeConfig: {
+        env: { ANTHROPIC_BASE_URL: 'https://gw.example.com', ANTHROPIC_AUTH_TOKEN: 'sk-gw-0001' },
+      },
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('取不到值的引用在配置页上就说清楚，不等派发才炸', async () => {
+    delete process.env['MISSING_GATEWAY_TOKEN'];
+    const created = await envAgent({ ANTHROPIC_AUTH_TOKEN: 'env:MISSING_GATEWAY_TOKEN' });
+
+    expect(created.json().agent.runtimeConfigProblems).toEqual([
+      '环境变量 ANTHROPIC_AUTH_TOKEN：环境变量 MISSING_GATEWAY_TOKEN 未设置',
+    ]);
+  });
+
+  /**
+   * ★ 仍然丢弃（schema 删字段时老 Agent 才改得动），但要说出来 ——
+   *   配置可以直接粘 JSON 之后，静默丢弃就成了「我明明填了它没了」。
+   */
+  it('不认识的配置键回给界面，而不是悄悄消失', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { effort: 'low', anthropicBaseUrl: 'https://gw.example.com' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().droppedConfigKeys).toEqual(['anthropicBaseUrl']);
+  });
+
+  it('接入地址对 Claude Code 也可配，界面据此渲染输入框', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      endpoint: 'https://gw.example.com',
+      runtimeConfig: { credentialEnv: 'ANTHROPIC_AUTH_TOKEN' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().agent.endpoint).toBe('https://gw.example.com');
+    expect(res.json().agent.runtimeConfig.credentialEnv).toBe('ANTHROPIC_AUTH_TOKEN');
+  });
+});
+
 describe('Agent 档案与权限', () => {
   it('建档写入权限变更审计', async () => {
     const res = await createAgent();
