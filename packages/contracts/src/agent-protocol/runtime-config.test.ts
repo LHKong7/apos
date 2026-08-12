@@ -63,19 +63,29 @@ describe('validateRuntimeConfig：环境变量表', () => {
     expect(defaultRuntimeConfig('claude_code')['env']).toEqual({});
   });
 
-  it('mock 运行时没有环境变量表，传了也不会凭空长出一个 env 键', () => {
-    const r = validateRuntimeConfig('mock', { env: { A: 'b' } });
+  it('mock 运行时没有环境变量表，不传就不会凭空长出一个 env 键', () => {
+    const r = validateRuntimeConfig('mock', {});
     expect(r.ok).toBe(true);
     expect(r.ok && 'env' in r.config).toBe(false);
+  });
+
+  /** mock 不认识 env，于是它就是一个普通的自定义键：收下、不校验、不下发给谁 */
+  it('mock 上写了 env 也照样存下来，只是算自定义键', () => {
+    const r = validateRuntimeConfig('mock', { env: { A: 'b' } });
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.config['env']).toEqual({ A: 'b' });
+    expect(r.ok && r.unknownKeys).toEqual(['env']);
   });
 });
 
 describe('validateRuntimeConfig：不认识的键', () => {
   /**
-   * ★ 仍然丢弃（schema 删字段时老 Agent 才改得动），但要**说出来**。
-   *   配置可以直接粘 JSON 之后，静默丢弃就成了「我明明填了它没了」。
+   * ★★ 原样保留，不丢弃也不报错 —— 配置是一份自定义 JSON。
+   *
+   *   丢弃是「我明明填了它没了」，报错是「运行时升级了、平台还没发版，
+   *   于是这个 Agent 存不下」。两条路都堵死之后配置就只能等发版。
    */
-  it('未知键被丢弃，并列进 dropped 回给调用方', () => {
+  it('未知键原样保留，并列进 unknownKeys 回给调用方', () => {
     const r = validateRuntimeConfig('claude_code', {
       model: 'claude-opus-5',
       anthropicBaseUrl: 'https://gw.example.com',
@@ -83,13 +93,35 @@ describe('validateRuntimeConfig：不认识的键', () => {
     });
 
     expect(r.ok).toBe(true);
-    expect(r.ok && r.config['anthropicBaseUrl']).toBeUndefined();
-    expect(r.ok && r.dropped.sort()).toEqual(['anthropicBaseUrl', 'nonsense']);
+    expect(r.ok && r.config['anthropicBaseUrl']).toBe('https://gw.example.com');
+    expect(r.ok && r.config['nonsense']).toBe(1);
+    expect(r.ok && r.unknownKeys.sort()).toEqual(['anthropicBaseUrl', 'nonsense']);
   });
 
-  it('全是已知键时 dropped 为空', () => {
+  /** 自定义键的值不受平台的类型判据管 —— 平台不知道它该长什么样 */
+  it('自定义键可以是任意 JSON 值，不参与已知键那套校验', () => {
+    const r = validateRuntimeConfig('claude_code', {
+      customTools: [{ name: 'x' }],
+      retries: 3,
+      flag: true,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.config['customTools']).toEqual([{ name: 'x' }]);
+    expect(r.ok && r.config['retries']).toBe(3);
+    expect(r.ok && r.config['flag']).toBe(true);
+  });
+
+  /** ★ 已知键仍然照校验：自定义键放行了，不等于错值也一起放行 */
+  it('自定义键不影响已知键的校验', () => {
+    const r = validateRuntimeConfig('claude_code', { effort: 'ultra', myOwnKey: 'x' });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.issues[0]!.key).toBe('effort');
+  });
+
+  it('全是已知键时 unknownKeys 为空', () => {
     const r = validateRuntimeConfig('claude_code', { model: 'claude-sonnet-5' });
-    expect(r.ok && r.dropped).toEqual([]);
+    expect(r.ok && r.unknownKeys).toEqual([]);
   });
 });
 

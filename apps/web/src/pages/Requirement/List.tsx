@@ -25,7 +25,11 @@ const STATUS_LABELS: Record<string, string> = {
  * ★ MVP 只做「直接描述」一种录入方式。
  *   对话式录入需要多轮状态同步、上传文档需要解析、外部导入依赖集成配置 ——
  *   三样都不是小工程，而它们解决的是「录入更顺手」，
- *   不是「录入之后 AI 理解得对不对」。后者才是这条链路的价值所在。
+ *   不是「录入之后理解得对不对」。后者才是这条链路的价值所在。
+ *
+ * ★★ 但「接下来谁来结构化」是两条路：AI 分析，或者自己填。
+ *   两个按钮并排给、措辞不分主次 —— 把人工那条做成小字兜底的话，
+ *   用户只会在 AI 失败之后才发现它，而那时他已经等过一轮了。
  */
 export function RequirementListPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -39,9 +43,19 @@ export function RequirementListPage() {
     enabled: Boolean(projectId),
   });
 
+  /**
+   * @param next 建完之后干什么：交给 AI 分析，还是直接进人工填写。
+   *
+   * ★ 两种都只是**落地页不同**，建出来的需求完全一样 ——
+   *   人在详情页里随时能改主意，两条路互相接力。
+   */
   const create = useMutation({
-    mutationFn: () => api.createRequirement(projectId!, { rawInput: draft.trim() }),
-    onSuccess: (r) => navigate(`/projects/${projectId}/requirements/${r.requirement.id}`),
+    mutationFn: (next: 'ai' | 'manual') =>
+      api
+        .createRequirement(projectId!, { rawInput: draft.trim() })
+        .then((r) => ({ id: r.requirement.id, next })),
+    onSuccess: ({ id, next }) =>
+      navigate(`/projects/${projectId}/requirements/${id}${next === 'manual' ? '?edit=1' : ''}`),
     onError: (e) => setError(e instanceof ApiError ? e.message : '创建失败'),
   });
 
@@ -72,11 +86,16 @@ export function RequirementListPage() {
               placeholder="例如：现在用户查订单要等好几秒，客服天天投诉。想优化一下，最好能支持按手机号、订单号、时间段搜。"
               className="mt-1.5"
             />
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <Button variant="neutral" size="sm"
-                onClick={() => create.mutate()}
+                onClick={() => create.mutate('ai')}
                 disabled={draft.trim().length === 0 || create.isPending}>
-                {create.isPending ? '创建中…' : '下一步：AI 分析 →'}
+                {create.isPending ? '创建中…' : '交给 AI 分析 →'}
+              </Button>
+              <Button variant="outline" size="sm"
+                onClick={() => create.mutate('manual')}
+                disabled={draft.trim().length === 0 || create.isPending}>
+                自己填写 →
               </Button>
               {/* ★ 不阻止短输入，只如实说明后果 */}
               {draft.trim().length > 0 && draft.trim().length < 20 && (

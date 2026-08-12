@@ -27,8 +27,18 @@ import { Textarea } from '@/components/ui/textarea';
  *   建 N 个 Agent 就是 N 套独立配置：CLI 类型、该 CLI 的参数、凭证、
  *   权限、成本上限全在一张表里填完，不用先去别处建接入再回来挂。
  *
+ * ★★ 运行时配置是一个**自定义 JSON 文本框**，不是一堆逐项渲染的输入框。
+ *
+ *   逐项表单的问题不在于难用，在于它划定了能配什么：平台的字段表一定
+ *   滞后于 CLI 本身，而滞后的那几周里，界面上没有那一栏 = 这个功能不存在。
+ *   接中转站、加一个上周新出的 flag，都不该等平台发版。
+ *
+ *   平台认识的键仍然在服务端校验（写错的值当场拒掉），不认识的键原样保存
+ *   并在保存后提示 —— 它可能是你有意下发的，也可能是键名敲错了。
+ *
  * ★ 每种 CLI 能配什么由**平台**定义（contracts 的 RUNTIME_KIND_SPECS），
- *   这里按它动态渲染表单。加一种 CLI 只改那一个文件，界面自动长出字段。
+ *   这里把它渲染成 JSON 框旁边的**说明书**：能配什么键、取值范围、默认值、
+ *   哪些影响成本或安全。JSON 框里没有标签，没有这张表用户只能猜键名。
  *
  * ★ 凭证输入框只在**新建或轮换**时出现，且永远不回显原值 ——
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
@@ -93,18 +103,18 @@ function AgentsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
   /**
-   * ★ 保存时被丢弃的配置键。
+   * ★ 保存时平台不认识的配置键。
    *
-   *   配置可以直接粘一份 JSON 进来之后，「不认识的键静默丢弃」就从
-   *   schema 演进的必要行为变成了坑：用户填了 anthropicBaseUrl，保存完
-   *   它没了，而界面上这个 Agent 显示为配置完好。丢了什么必须说出来。
+   *   它们**已经存下来了**（配置是自定义 JSON），但仍然要说出来：
+   *   「有意下发一个平台还不认识的键」和「键名敲错了」存进去的样子一样，
+   *   而后者永远不会生效 —— 不提示的话，现场没有任何迹象。
    */
-  const [dropped, setDropped] = useState<string[]>([]);
+  const [unknownKeys, setUnknownKeys] = useState<string[]>([]);
 
   const q = useQuery({ queryKey: qk.adminAgents(), queryFn: api.adminAgents });
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.adminAgents() });
   const openForm = (target: AgentAdminRow | 'new') => {
-    setDropped([]);
+    setUnknownKeys([]);
     setEditing(target);
   };
 
@@ -128,18 +138,22 @@ function AgentsSection() {
         </Button>
       </div>
 
-      {!data.canStoreInlineCredential && (
+      {/*
+        ★ 这里说的是「存成什么样」，不是「能不能存」。
+          没配主密钥照样能保存 —— 只是明文进库，值得知道，但不该拦着人干活。
+      */}
+      {!data.encryptsInlineSecrets && (
         <Notice tone="warning">
-          未配置 <code>APOS_SECRET_KEY</code>，无法保存直接粘贴的凭证。
-          请用 <code>env:变量名</code> 的形式，把凭证放在进程环境里
-          —— 运行时配置里环境变量表的敏感值同理。
+          未配置 <code>APOS_SECRET_KEY</code>：直接粘贴的凭证与 JSON 里的敏感值会
+          <strong>明文</strong>存进数据库（接口仍然只回占位符，不回显）。
+          想让它们密文入库就配上这个环境变量，或改用 <code>env:变量名</code> 把值留在进程环境里。
         </Notice>
       )}
 
-      {dropped.length > 0 && (
+      {unknownKeys.length > 0 && (
         <Notice tone="warning">
-          这些配置项不被该运行时支持，已丢弃：<code>{dropped.join('、')}</code>。
-          要下发运行时自己认的变量，请写进「环境变量（JSON）」那一栏。
+          这些键平台不认识，已按你写的原样保存：<code>{unknownKeys.join('、')}</code>。
+          如果是有意下发给运行时的就不用管；如果只是键名敲错了，它永远不会生效。
         </Notice>
       )}
 
@@ -172,18 +186,18 @@ function AgentsSection() {
       {editing && (
         <AgentForm
           kinds={data.kinds}
-          canStoreInline={data.canStoreInlineCredential}
+          encryptsInline={data.encryptsInlineSecrets}
           credentialHelp={data.credentialHelp}
           agent={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           /**
-           * ★ 无论丢没丢键都关闭弹窗。
+           * ★ 有没有认不出来的键都关闭弹窗。
            *   留着弹窗让用户「看完再关」的话，新建那次的 agent 已经建出来了，
            *   而表单还以为自己是新建态 —— 再点一次保存就是第二个 Agent。
            */
-          onSaved={(droppedKeys) => {
+          onSaved={(keys) => {
             setEditing(null);
-            setDropped(droppedKeys);
+            setUnknownKeys(keys);
             void invalidate();
           }}
         />
@@ -279,6 +293,15 @@ function AgentCard({
       )
     : [];
 
+  /**
+   * ★ 平台不认识的键也要出现在卡片上。
+   *   它们同样会被下发给运行时，只是平台不知道它们是什么 —— 藏起来的话，
+   *   一个键名敲错的配置在这一页看上去和干净的配置一模一样。
+   */
+  const customKeys = Object.keys(agent.runtimeConfig).filter(
+    (k) => !(spec?.fields ?? []).some((f) => f.key === k),
+  );
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -341,7 +364,7 @@ function AgentCard({
         <Field label="最近探测">{agent.lastCheckAt ? relativeTime(agent.lastCheckAt) : '—'}</Field>
       </dl>
 
-      {overrides.length > 0 && (
+      {(overrides.length > 0 || customKeys.length > 0) && (
         <div className="mt-2 flex flex-wrap gap-1">
           {overrides.map((f) => (
             <span
@@ -357,6 +380,15 @@ function AgentCard({
               title={f.help}
             >
               {f.label}: {formatValue(agent.runtimeConfig[f.key])}
+            </span>
+          ))}
+          {customKeys.map((k) => (
+            <span
+              key={k}
+              className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 font-mono text-[11px] text-slate-600"
+              title="平台不认识这个键，原样保存并下发。如果只是键名敲错了，它不会生效"
+            >
+              {k}: {formatValue(agent.runtimeConfig[k])}
             </span>
           ))}
         </div>
@@ -409,18 +441,19 @@ function AgentCard({
 
 function AgentForm({
   kinds,
-  canStoreInline,
+  encryptsInline,
   credentialHelp,
   agent,
   onClose,
   onSaved,
 }: {
   kinds: RuntimeKindSpec[];
-  canStoreInline: boolean;
+  /** 直接粘贴的敏感值是不是密文入库。两种都能存，只影响提示语 */
+  encryptsInline: boolean;
   credentialHelp: string;
   agent: AgentAdminRow | null;
   onClose: () => void;
-  onSaved: (droppedConfigKeys: string[]) => void;
+  onSaved: (unknownConfigKeys: string[]) => void;
 }) {
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
   const currentUser = useAuthStore((s) => s.userId);
@@ -444,7 +477,8 @@ function AgentForm({
     agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
   );
   const [reason, setReason] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
+  const [showReference, setShowReference] = useState(true);
 
   const spec = kinds.find((k) => k.kind === kind);
 
@@ -454,16 +488,6 @@ function AgentForm({
    *   保存时才报错的字段。
    */
   const [config, setConfig] = useState<Record<string, unknown>>(agent?.runtimeConfig ?? {});
-
-  /**
-   * ★ JSON 模式：整份运行时配置摊成一个文本框，可以直接粘贴。
-   *
-   *   表单模式仍是默认 —— 它带着每个字段的取值范围、影响成本/安全的标注，
-   *   以及各运行时「做不到什么」的说明，那些是这一页真正有用的信息。
-   *   JSON 模式是给已经知道自己要什么的人准备的：从别处抄一份配置过来，
-   *   或者一次改好几项。两边共用同一份 state，随时切换。
-   */
-  const [jsonMode, setJsonMode] = useState(false);
 
   /**
    * ★ 哪些 JSON 文本框此刻解析不通过。
@@ -490,10 +514,7 @@ function AgentForm({
     setJsonErrors({});
   };
 
-  const valueOf = (f: ConfigField) => (f.key in config ? config[f.key] : f.default);
-  const setField = (key: string, v: unknown) => setConfig((c) => ({ ...c, [key]: v }));
-
-  const save = useMutation<{ droppedConfigKeys?: string[] }, Error, void>({
+  const save = useMutation<{ unknownConfigKeys?: string[] }, Error, void>({
     mutationFn: async () => {
       const body: Record<string, unknown> = {
         name,
@@ -514,11 +535,9 @@ function AgentForm({
       };
       return agent ? api.updateAgent(agent.id, body) : api.createAgent(body);
     },
-    onSuccess: (result) => onSaved(result.droppedConfigKeys ?? []),
+    onSuccess: (result) => onSaved(result.unknownConfigKeys ?? []),
   });
 
-  const basicFields = (spec?.fields ?? []).filter((f) => !f.advanced);
-  const advancedFields = (spec?.fields ?? []).filter((f) => f.advanced);
   const jsonProblem = Object.values(jsonErrors)[0] ?? null;
 
   return (
@@ -588,16 +607,7 @@ function AgentForm({
 
         {/* ── 运行时 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <div className="mb-2 flex items-center gap-2">
-            <p className="text-[11px] font-medium text-slate-700">运行时</p>
-            <button
-              type="button"
-              onClick={() => setJsonMode((v) => !v)}
-              className="ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
-            >
-              {jsonMode ? '← 回到表单' : '直接编辑 JSON →'}
-            </button>
-          </div>
+          <p className="mb-2 text-[11px] font-medium text-slate-700">运行时</p>
 
           <Labeled label="Headless CLI">
             <select
@@ -626,9 +636,7 @@ function AgentForm({
                 placeholder={
                   agent?.credentialHint
                     ? `当前 ${agent.credentialHint} —— 留空不改，填入则轮换`
-                    : canStoreInline
-                      ? 'sk-… 或 env:变量名'
-                      : 'env:变量名'
+                    : 'sk-… 或 env:变量名'
                 } />
             </Labeled>
           )}
@@ -642,56 +650,42 @@ function AgentForm({
             </Labeled>
           )}
 
-          {jsonMode ? (
-            <Labeled
-              label="运行时配置（JSON）"
-              help={`${spec ? spec.fields.map((f) => f.key).join(' / ') : ''} —— 不在这张表里的键保存时会被丢弃并提示。`}
-            >
-              <JsonInput
-                /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
-                key={kind}
-                errorKey="__config__"
-                value={withDefaults(spec, config)}
-                onChange={setConfig}
-                onError={setJsonError}
-                rows={12}
-              />
-            </Labeled>
-          ) : (
-            <>
-              {/* ★ 按平台定义的 schema 动态渲染 —— 加一种 CLI 不用改这里 */}
-              {basicFields.map((f) => (
-                <ConfigInput
-                  key={f.key}
-                  field={f}
-                  value={valueOf(f)}
-                  onChange={(v) => setField(f.key, v)}
-                  onJsonError={setJsonError}
-                />
-              ))}
+          {/*
+            ★★ 整份运行时配置就是这一个 JSON 框。
+              平台认识的键带着默认值先摆进去（用户才知道能配什么），
+              自己加的键原样保存 —— 服务端不认识也照收，只在保存后提示一句。
+          */}
+          <Labeled
+            label="运行时配置（JSON）"
+            help={
+              '平台认识的键见下方「可配置项」，值写错会在保存时被拒；其余键原样保存并下发。' +
+              '敏感键（含 TOKEN / KEY / SECRET / AUTH 字样）' +
+              (encryptsInline ? '加密入库' : '明文入库（未配置 APOS_SECRET_KEY）') +
+              '，保存后回显为 secret://saved —— 原样存回表示「这一项不改」。'
+            }
+          >
+            <JsonInput
+              /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
+              key={kind}
+              errorKey="__config__"
+              value={withDefaults(spec, config)}
+              onChange={setConfig}
+              onError={setJsonError}
+              rows={14}
+            />
+          </Labeled>
 
-              {advancedFields.length > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced((v) => !v)}
-                    className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-700"
-                  >
-                    {showAdvanced ? '收起高级选项' : `高级选项（${advancedFields.length}）`}
-                  </button>
-                  {showAdvanced &&
-                    advancedFields.map((f) => (
-                      <ConfigInput
-                        key={f.key}
-                        field={f}
-                        value={valueOf(f)}
-                        onChange={(v) => setField(f.key, v)}
-                        onJsonError={setJsonError}
-                      />
-                    ))}
-                </>
-              )}
-            </>
+          {spec && spec.fields.length > 0 && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowReference((v) => !v)}
+                className="text-[11px] text-slate-500 underline hover:text-slate-700"
+              >
+                {showReference ? '收起可配置项' : `可配置项（${spec.fields.length}）`}
+              </button>
+              {showReference && <ConfigReference fields={spec.fields} />}
+            </div>
           )}
 
           {agent && agent.runtimeConfigProblems.length > 0 && (
@@ -777,19 +771,26 @@ function AgentForm({
 }
 
 /**
- * 表单值 → JSON 模式的初始内容：缺的字段补上默认值。
+ * JSON 框里的初始内容：平台认识的键（缺的补默认值）+ 这个 Agent 自己加的键。
  *
- * ★ 只给已知字段，且要**全给**。只摊出被改过的那几项的话，
- *   用 JSON 模式的人看不出还能配什么 —— 而那正是他切过来的原因。
+ * ★ 已知字段要**全给**，哪怕没改过。只摊出被改过的那几项的话，
+ *   这个框就成了一张白纸 —— 而它是用户唯一能看出「能配什么」的地方。
+ *
+ * ★ 自定义键必须原样带出来，否则「打开编辑、改个模型、保存」会把它们抹掉，
+ *   而那正是接中转站的人最不能丢的那几行。
  */
 function withDefaults(
   spec: RuntimeKindSpec | undefined,
   config: Record<string, unknown>,
 ): Record<string, unknown> {
   if (!spec) return config;
-  return Object.fromEntries(
+  const known = Object.fromEntries(
     spec.fields.map((f) => [f.key, f.key in config ? config[f.key] : f.default]),
   );
+  const custom = Object.fromEntries(
+    Object.entries(config).filter(([k]) => !spec.fields.some((f) => f.key === k)),
+  );
+  return { ...known, ...custom };
 }
 
 /**
@@ -906,66 +907,80 @@ function toJsonText(value: unknown): string {
   }
 }
 
-/** 按 schema 渲染单个配置项。影响成本/安全的用颜色标出来 */
-function ConfigInput({
-  field,
-  value,
-  onChange,
-  onJsonError,
-}: {
-  field: ConfigField;
-  value: unknown;
-  onChange: (v: unknown) => void;
-  /** type: 'json' 时，解析失败要顶到表单上去禁用保存。必须是稳定引用 */
-  onJsonError: (key: string, message: string | null) => void;
-}) {
-  const badge =
-    field.impact === 'cost' ? (
-      <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">影响成本</span>
-    ) : field.impact === 'safety' ? (
-      <span className="rounded bg-rose-50 px-1 text-[10px] text-rose-700">影响安全边界</span>
-    ) : null;
-
-  const selected = field.options?.find((o) => o.value === value);
-
+/**
+ * JSON 框旁边的说明书：平台认识哪些键、能填什么、默认是什么。
+ *
+ * ★★ 取消逐项表单之后，这张表是这一页信息量的全部来源。
+ *   JSON 文本框里只有键名，没有取值范围、没有「这一项影响成本」、
+ *   也没有各运行时「做不到什么」—— 那些正是用户在这一页要做的判断
+ *   （哪个 Agent 干哪类活、调这个数字会不会烧钱）所依赖的东西。
+ *   所以它不是可选的装饰，是从表单里搬过来的那部分内容。
+ */
+function ConfigReference({ fields }: { fields: ConfigField[] }) {
   return (
-    <Labeled label={field.label} badge={badge} help={selected?.help ?? field.help}>
-      {field.type === 'select' ? (
-        <select
-          value={String(value ?? '')}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-        >
-          {(field.options ?? []).map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      ) : field.type === 'number' ? (
-        <Input
-          type="number"
-          value={Number(value ?? 0)}
-          min={field.min}
-          max={field.max}
-          onChange={(e) => onChange(Number(e.target.value))} />
-      ) : field.type === 'boolean' ? (
-        <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
-      ) : field.type === 'string_list' ? (
-        <Input
-          value={Array.isArray(value) ? value.join(', ') : ''}
-          onChange={(e) => onChange(splitList(e.target.value))}
-          placeholder="逗号分隔"
-          className="font-mono" />
-      ) : field.type === 'json' ? (
-        <JsonInput errorKey={field.key} value={value} onChange={onChange} onError={onJsonError} />
-      ) : (
-        <Input
-          value={String(value ?? '')}
-          onChange={(e) => onChange(e.target.value)} />
-      )}
-    </Labeled>
+    <div className="mt-1 space-y-1 rounded border border-slate-200 bg-white p-2">
+      {fields.map((f) => (
+        <div key={f.key} className="text-[11px] leading-relaxed">
+          <div className="flex flex-wrap items-center gap-1">
+            <code className="rounded bg-slate-100 px-1 py-0.5 font-medium text-slate-800">
+              {f.key}
+            </code>
+            <span className="text-slate-500">{f.label}</span>
+            <span className="text-slate-400">· 默认 {formatValue(f.default)}</span>
+            {f.impact === 'cost' && (
+              <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">影响成本</span>
+            )}
+            {f.impact === 'safety' && (
+              <span className="rounded bg-rose-50 px-1 text-[10px] text-rose-700">影响安全边界</span>
+            )}
+          </div>
+          {/* ★ 取值范围要写死在这里：JSON 框不会拦下越界的值，服务端才会 */}
+          <p className="text-slate-500">{describeAccepts(f)}</p>
+          {f.help && <p className="text-slate-500">{f.help}</p>}
+          {(f.options ?? []).some((o) => o.help) && (
+            <ul className="ml-3 list-disc text-slate-400">
+              {(f.options ?? [])
+                .filter((o) => o.help)
+                .map((o) => (
+                  <li key={o.value}>
+                    <code>{o.value}</code> —— {o.help}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
   );
+}
+
+/** 这个键能填什么。写给对着一个空 JSON 框的人看 */
+function describeAccepts(f: ConfigField): string {
+  switch (f.type) {
+    case 'select':
+      return `只能是：${(f.options ?? []).map((o) => `"${o.value}"`).join(' / ')}`;
+    case 'number': {
+      const range =
+        f.min !== undefined && f.max !== undefined
+          ? `（${f.min} ~ ${f.max}）`
+          : f.min !== undefined
+            ? `（不小于 ${f.min}）`
+            : f.max !== undefined
+              ? `（不大于 ${f.max}）`
+              : '';
+      return `数字${range}`;
+    }
+    case 'boolean':
+      return 'true / false';
+    case 'string_list':
+      return '字符串数组，如 ["--flag", "值"]';
+    case 'json':
+      return f.jsonShape === 'env'
+        ? 'JSON 对象，键是环境变量名、值必须是字符串（数字要加引号）'
+        : 'JSON 对象';
+    default:
+      return '字符串';
+  }
 }
 
 function Labeled({
@@ -1009,6 +1024,8 @@ function formatValue(v: unknown): string {
     const keys = Object.keys(v as Record<string, unknown>);
     return keys.length > 0 ? keys.join('、') : '（空）';
   }
+  /** 空串要显示成「（空）」—— 「默认 」后面跟着一片空白看着像坏了 */
+  if (v === '' || v === null || v === undefined) return '（空）';
   return String(v);
 }
 
@@ -1082,7 +1099,7 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
         <RepositoryForm
           projectId={projectId}
           existing={editing}
-          canStoreInline={data.canStoreInlineCredential}
+          encryptsInline={data.encryptsInlineSecrets}
           onClose={() => {
             setCreating(false);
             setEditing(null);
@@ -1242,14 +1259,15 @@ function RepositoryCard({
 function RepositoryForm({
   projectId,
   existing,
-  canStoreInline,
+  encryptsInline,
   onClose,
   onDone,
 }: {
   projectId: string;
   /** 传了就是编辑，标识与远端不可改 */
   existing?: RepositoryRow | null;
-  canStoreInline: boolean;
+  /** 直接粘贴的凭证是不是密文入库。两种都能存，只影响提示语 */
+  encryptsInline: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -1475,9 +1493,7 @@ function RepositoryForm({
               onChange={(e) => set('credential', e.target.value)}
               rows={4}
               placeholder={
-                canStoreInline
-                  ? '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n\n或 env:变量名'
-                  : 'env:变量名'
+                '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n\n或 env:变量名'
               }
               className="mt-1 font-mono"
             />
@@ -1486,13 +1502,14 @@ function RepositoryForm({
               value={form.credential}
               onChange={(e) => set('credential', e.target.value)}
               type="password"
-              placeholder={canStoreInline ? 'ghp_… 或 env:变量名' : 'env:变量名'}
+              placeholder="ghp_… 或 env:变量名"
               className="mt-1" />
           )}
           <p className="mt-1 text-[11px] text-slate-500">
             {isSsh ? (
               <>
-                粘贴私钥全文（部署密钥即可，只需这个仓库的读写权限）。加密保存，接口永不回显。
+                粘贴私钥全文（部署密钥即可，只需这个仓库的读写权限）。
+                {encryptsInline ? '加密保存' : '明文保存（未配置 APOS_SECRET_KEY）'}，接口永不回显。
                 <span className="text-amber-700">
                   不支持带密码短语的私钥 —— 无人值守场景没法输入，保存时会被拒。
                 </span>

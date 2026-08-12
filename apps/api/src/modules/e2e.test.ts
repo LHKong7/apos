@@ -82,9 +82,10 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
       correlationId: c,
     });
     expect(premature.ok).toBe(false);
-    if (!premature.ok) {
-      expect(premature.code).toBe('UNANSWERED_MUST_CONFIRM');
+    if (!premature.ok && premature.code === 'UNANSWERED_MUST_CONFIRM') {
       expect(premature.questions.length).toBe(analysis.mustConfirmCount);
+    } else {
+      expect.unreachable('必答问题未回答时应当以 UNANSWERED_MUST_CONFIRM 阻断');
     }
 
     // ── 4. 回答澄清问题（多数一键采纳 Agent 倾向）────────────────────

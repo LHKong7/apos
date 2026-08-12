@@ -1,24 +1,31 @@
 import { z } from 'zod';
 
 /**
- * Headless CLI 的运行时配置 schema —— 由平台统一定义，Agent 逐个覆盖。
+ * Headless CLI 的运行时配置 —— 一份**自定义 JSON**，平台只描述其中「认识哪些键」。
  *
- * ★ 为什么要有这层 schema，而不是让每个 Agent 存一坨自由 JSON：
+ * ★★ 配置整体是自由 JSON：界面上直接写/粘一份进来，**平台不认识的键原样保存、
+ *   原样留在库里**。schema 一定会滞后于运行时（中转站的变量、CLI 上周新加的
+ *   flag），让它决定「能不能存」等于让每一次运行时升级都要先等平台发版 ——
+ *   而那正是这个口子存在的理由。
  *
- *   1. **前端不必为每种 CLI 各写一个表单**。加一种 CLI 只改这一个文件，
- *      配置界面自动长出对应的字段。
- *   2. **服务端能校验**。`effort: 'ultra'` 这种值如果放行，表现是派发成功
- *      但 CLI 启动时报一句没人看的参数错误 —— 在保存那一刻拒掉才对。
- *   3. **影响可标注**。哪些字段影响成本、哪些影响安全边界，界面要能凸显。
- *      一个把 maxTurns 从 60 调到 500 的人，应该当场看到「这会显著提高单次成本」。
+ * ★ 但**认识的键仍然校验**。`effort: 'ultra'` 这种值放行的表现是派发成功、
+ *   CLI 启动时报一句没人看的参数错误 —— 在保存那一刻拒掉才对。
+ *   校验只管平台自己定义的那些键，不管用户自带的。
  *
- * ★ 但 schema 一定会滞后于运行时。因此有一个**受控的自由 JSON 口子**：
- *   `env` 字段（`type: 'json'` + `jsonShape: 'env'`）让用户直接写一份环境变量表
- *   下发给子进程 —— 中转站的 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`、
- *   代理的 `HTTPS_PROXY`，都不必等平台发版。
+ * ★ 认不出来的键要**说出来**（`unknownKeys`）而不是静默收下：键名敲错了
+ *   （`modle`）和有意下发一个平台还不认识的键，存进库的样子一模一样，
+ *   而前者永远不会生效。调用方负责把它回给用户。
  *
- *   它仍然是**声明出来的一个字段**而不是「整坨配置随便填」：值的形状照样校验，
- *   敏感键照样走加密通道（见 http/agent-admin.ts），界面照样标出它影响安全边界。
+ * ★ 字段表还有两个与「校验」无关、因而不能取消的用途：
+ *   1. **界面据此列出能配什么**：取值范围、默认值、各运行时做不到什么。
+ *      JSON 文本框里没有标签，这张表是用户唯一知道该往里写什么的地方。
+ *   2. **影响可标注**：哪些键影响成本、哪些放宽安全边界。一个把 maxTurns
+ *      从 60 调到 500 的人，应该当场看到「这会显著提高单次成本」。
+ *
+ * ★ 其中 `env` 字段（`type: 'json'` + `jsonShape: 'env'`）是下发给子进程的
+ *   环境变量表 —— 中转站的 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`、
+ *   代理的 `HTTPS_PROXY` 都走它。值的形状照样校验（子进程环境只认字符串），
+ *   敏感键照样走加密通道（见 modules/security/secrets.ts）。
  *
  * ★ 这里只描述**能配什么**，不描述**怎么用**。怎么用是各适配器的事，
  *   两边靠 key 对齐（见 runtime-factory 的 createAgentAdapter）。
@@ -530,12 +537,15 @@ export interface ConfigValidationIssue {
 /**
  * 校验并归一化配置。
  *
- * ★ 未知字段会被**丢弃**而不是报错：schema 演进时（删掉一个字段）
- *   老 Agent 的库里还留着那个 key，报错会让它们全部改不动。
+ * ★★ 平台不认识的键**原样保留**，不丢弃也不报错。
  *
- *   但**丢掉了什么要说出来**（`dropped`）。用户可以直接粘一份 JSON 进来之后，
- *   静默丢弃就成了「我明明填了 anthropicBaseUrl，保存完它没了」——
- *   而界面上这个 Agent 显示为配置完好。调用方负责把它回给用户。
+ *   丢弃的表现是「我明明填了 anthropicBaseUrl，保存完它没了」，而界面上
+ *   这个 Agent 显示为配置完好；报错则是「运行时升级了、平台还没发版，
+ *   于是这个 Agent 存不下」。两条路都堵死之后，配置就只能等平台发版 ——
+ *   所以这里选第三条：收下来，存进去，并把它列进 `unknownKeys` 说出来。
+ *
+ *   代价是键名敲错（`modle`）不再被当成错误。它和「有意下发一个平台还不
+ *   认识的键」在这一层分辨不了，只能靠 `unknownKeys` 提醒用户自己看一眼。
  *
  * ★ 缺失字段用默认值补齐，所以适配器侧永远能拿到完整配置，
  *   不用到处写 `?? 默认值` —— 那种散落的默认值迟早和这里对不上。
@@ -544,7 +554,7 @@ export function validateRuntimeConfig(
   kind: string,
   input: Record<string, unknown> | null | undefined,
 ):
-  | { ok: true; config: Record<string, unknown>; dropped: string[] }
+  | { ok: true; config: Record<string, unknown>; unknownKeys: string[] }
   | { ok: false; issues: ConfigValidationIssue[] } {
   const spec = runtimeKindSpec(kind);
   if (!spec) return { ok: false, issues: [{ key: 'kind', message: `不支持的运行时类型：${kind}` }] };
@@ -553,7 +563,7 @@ export function validateRuntimeConfig(
   const config: Record<string, unknown> = {};
   const issues: ConfigValidationIssue[] = [];
   const known = new Set(spec.fields.map((f) => f.key));
-  const dropped = Object.keys(raw).filter((k) => !known.has(k));
+  const unknownKeys = Object.keys(raw).filter((k) => !known.has(k));
 
   for (const field of spec.fields) {
     const value = raw[field.key];
@@ -657,7 +667,13 @@ export function validateRuntimeConfig(
     }
   }
 
-  return issues.length > 0 ? { ok: false, issues } : { ok: true, config, dropped };
+  /**
+   * ★ 自定义键在**已知键之后**并入，不参与上面的类型校验 ——
+   *   平台不知道它们该长什么样，装作知道只会把合法的值拦下来。
+   */
+  for (const key of unknownKeys) config[key] = raw[key];
+
+  return issues.length > 0 ? { ok: false, issues } : { ok: true, config, unknownKeys };
 }
 
 /** 只取默认值，用于新建表单的初始状态 */

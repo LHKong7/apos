@@ -458,10 +458,12 @@ APOS 的 `AgentPermissions` 映射到 SDK 的四个开关，组合出闭世界�
 
 **为什么要有 `env` 这个自由 JSON**：平台的配置 schema 一定滞后于运行时。网关地址与 token 属于**这个 Agent**，不属于 APOS 进程 —— 用 `passthroughEnv`（给变量名、值从 APOS 环境取）表达不了，为一个 Agent 去改部署的环境变量还会波及所有共用该变量名的 Agent。
 
-它仍然是**声明出来的一个字段**，不是「整坨配置随便填」：
+★ 整份运行时配置本身也是一份**自定义 JSON**（界面上就是一个 JSON 文本框）：平台认识的键按 spec 校验，不认识的键**原样保存、原样入库**，只在保存后把它们列给用户看一眼（`unknownConfigKeys`）。丢弃是「我明明填了它没了」，拒绝是「运行时升级了、平台还没发版，于是这个 Agent 存不下」—— 两条都会把人逼去改数据库。代价是键名敲错（`modle`）不再被当成错误，只能靠那句提示。
+
+`env` 在其中仍是**声明出来的一个字段**，因而多两层约束：
 
 - **值的形状照样校验**。键必须是合法变量名，值必须是字符串 —— 写成 `{"MAX_TOKENS": 4096}` 会在保存那一刻被拒，而不是让 Node 悄悄转成 `"4096"`。
-- **敏感键照样走加密通道**。键名含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 等字样时（判据 `isSecretEnvKey`，按下划线切段匹配，`GIT_AUTHOR_NAME` 不算），字面量值加密入库，接口只回占位符 `secret://saved`。把这个占位符原样存回来表示「这一项不改」—— 界面上那是一个 JSON 文本框，改网关地址时整份 JSON 会一起提交，没有这个约定的话改一个字段就会把同一份里的 token 冲掉。
+- **敏感键照样走凭证通道**。键名含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 等字样时（判据 `isSecretEnvKey`，按下划线切段匹配，`GIT_AUTHOR_NAME` 不算），字面量值转成 `secret://` 引用（配了 `APOS_SECRET_KEY` 就是密文，没配就是明文，见 09-security §5.4），接口只回占位符 `secret://saved`。把这个占位符原样存回来表示「这一项不改」—— 界面上那是一个 JSON 文本框，改网关地址时整份 JSON 会一起提交，没有这个约定的话改一个字段就会把同一份里的 token 冲掉。
 - **不接受手工填写的 `secret://` 引用**。否则任何能编辑 Agent 的人都可以粘一条 `secret://env/DATABASE_URL` 进来，把 APOS 进程环境里的任意变量读给 Agent —— 那正是 `passthroughEnv` 那份白名单要挡住的事。要从进程环境取值只能写 `env:变量名`。
 - **解不开的引用不下发，并在配置页上列出来**。悄悄下发空串的表现是 Agent 报一句 401，而现场没有任何东西指向「那把 key 所在的环境变量没设置」。
 
@@ -540,7 +542,7 @@ Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需�
 
 几条针对性的处理：Aider 强制 `--no-auto-commits`（提交由工作区供给统一负责，两边都提交会让一个 Run 产出一堆零碎提交）；自动批准（`--yolo` / `--approval-mode yolo`）只在可写沙箱下给；Gemini CLI 在 `subscribe` 时先发一条 note 说明「要跑完才有输出」，否则用户会对着不动的执行流以为卡死。
 
-**加第七个 CLI**：在 `cli/profile.ts` 加一条 profile、在 `contracts/runtime-config.ts` 加一条 spec。适配器与 factory 一个字不用改，配置界面自动长出表单。
+**加第七个 CLI**：在 `cli/profile.ts` 加一条 profile、在 `contracts/runtime-config.ts` 加一条 spec。适配器与 factory 一个字不用改，配置界面自动长出这一种的可配置项清单与 JSON 默认值。
 
 这六个也各自带一份 `env` 环境变量表（§9.4 的规则原样适用）。profile 里的 `baseUrlEnv` 为 `null` 的那几个（pi / gemini_cli / goose / opencode）没有声明式的接入地址通道，接自建端点只能走 `env` —— 这正是那个口子存在的意义：不必等平台先给每个 CLI 补一条 `baseUrlEnv`。
 

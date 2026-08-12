@@ -241,6 +241,7 @@ POST   /requirements/{id}/analyze                    ★ SSE 流式返回
        → event: score_updated  { total, dimensions }
        → event: done           { cost, durationMs }
 
+PATCH  /requirements/{id}                            人工填写 / 修改结构化字段
 POST   /requirements/{id}/questions/{qid}/answer
 POST   /requirements/{id}/approve   { note? }        → 触发计划生成（异步）
 POST   /requirements/{id}/reject    { reason }       reason 必填
@@ -248,6 +249,15 @@ POST   /requirements/{id}/delegate  { assigneeId, note }
 ```
 
 **`analyze` 用 SSE 而不是轮询**：结构化过程 20–60 秒，逐字段流式填充是页面文档 03 §7 明确要求的体验。
+
+**`PATCH` 与 `analyze` 是并行的两条结构化路径，不是主次关系**：
+
+- `PATCH` 接受**全部**结构化字段。只开放几个可修补项的话，人工那条路永远填不出一份完整的需求
+  （完整度六个维度里有五个落在这些字段上）
+- 只有**真的变了**的字段才记 `source: 'human'` 溯源。编辑器一次提交整份表单，按「提交了什么」
+  记溯源的话，改一个字段会把整块面板标成人工产出 —— 那一排标记就成了假的
+- `analyze` **不覆盖**已标记 `human` 的字段，并在响应里回报 `keptHumanFields`
+- 确认闸门只看有没有内容（标题 / 业务目标 / 验收标准三者之一），不看内容是谁产出的
 
 ### 6.3 计划
 

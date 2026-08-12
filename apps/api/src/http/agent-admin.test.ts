@@ -155,14 +155,18 @@ describe('Agent 自带运行时配置', () => {
     expect(res.json().error.details.issues[0].message).toContain('500');
   });
 
-  it('未知配置字段被丢弃而不是报错 —— schema 演进不能让老 Agent 改不动', async () => {
+  /**
+   * ★ 两个方向都不能拒：schema 删过的老字段（legacyField）要让老 Agent 还改得动，
+   *   平台还不认识的新字段要让人现在就能用上。所以一律原样收下。
+   */
+  it('未知配置字段原样保存而不是被丢弃或报错', async () => {
     const res = await createAgent({
       runtimeKind: 'claude_code',
       credential: 'env:KEY',
       runtimeConfig: { effort: 'low', legacyField: 'whatever' },
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json().agent.runtimeConfig.legacyField).toBeUndefined();
+    expect(res.json().agent.runtimeConfig.legacyField).toBe('whatever');
   });
 
   it('改配置会替换注册表里的实例，而不是留着旧的', async () => {
@@ -284,8 +288,8 @@ describe('凭证', () => {
  * 环境变量表 —— 用户直接写一份 JSON 下发给子进程的那个口子。
  *
  * ★ 它同时是一条**新的凭证入口**（接中转站时 token 就写在这里），
- *   所以它必须遵守和凭证栏完全一样的三条纪律：
- *   明文不进库、接口不回显、钥匙在库外。这一组测试盯的就是这件事。
+ *   所以它必须遵守和凭证栏一样的纪律：接口永不回显；配了主密钥就密文入库。
+ *   这一组测试盯的就是这件事。
  */
 describe('运行时配置里的环境变量表', () => {
   const envAgent = (env: Record<string, string>, extra: Record<string, unknown> = {}) =>
@@ -426,10 +430,12 @@ describe('运行时配置里的环境变量表', () => {
   });
 
   /**
-   * ★ 仍然丢弃（schema 删字段时老 Agent 才改得动），但要说出来 ——
-   *   配置可以直接粘 JSON 之后，静默丢弃就成了「我明明填了它没了」。
+   * ★★ 配置是一份自定义 JSON：平台不认识的键原样存下来，只把它们说出来。
+   *
+   *   丢弃的表现是「我明明填了它没了」，拒绝的表现是「运行时升级了、
+   *   平台还没发版，于是这个 Agent 存不下」—— 两条都会把人逼去改数据库。
    */
-  it('不认识的配置键回给界面，而不是悄悄消失', async () => {
+  it('不认识的配置键原样保存，并回给界面提示', async () => {
     const res = await createAgent({
       runtimeKind: 'claude_code',
       credential: 'env:MY_KEY',
@@ -437,10 +443,68 @@ describe('运行时配置里的环境变量表', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    expect(res.json().droppedConfigKeys).toEqual(['anthropicBaseUrl']);
+    expect(res.json().unknownConfigKeys).toEqual(['anthropicBaseUrl']);
+    expect(res.json().agent.runtimeConfig.anthropicBaseUrl).toBe('https://gw.example.com');
+
+    const [row] = await db.select().from(agents).where(eq(agents.runtimeKind, 'claude_code'));
+    expect((row!.runtimeConfig as Record<string, unknown>)['anthropicBaseUrl']).toBe(
+      'https://gw.example.com',
+    );
   });
 
-  it('接入地址对 Claude Code 也可配，界面据此渲染输入框', async () => {
+  /** 自定义键的值不受平台类型判据的管 —— 平台不知道它该长什么样 */
+  it('自定义键可以是任意 JSON 值', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { mcpServers: { fs: { command: 'npx', args: ['-y', 'mcp-fs'] } }, retries: 3 },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().agent.runtimeConfig.mcpServers).toEqual({
+      fs: { command: 'npx', args: ['-y', 'mcp-fs'] },
+    });
+    expect(res.json().agent.runtimeConfig.retries).toBe(3);
+  });
+
+  /** ★ 自定义键放行了，不等于已知键的错值也一起放行 */
+  it('已知键的值写错仍然在保存那一刻被拒', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { effort: 'ultra', myOwnKey: 'x' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('推理强度');
+  });
+
+  /**
+   * ★ 编辑时自定义键必须活下来。
+   *   「打开编辑、改个模型、保存」把它们抹掉的话，接中转站的人每改一次
+   *   常规配置就要重新贴一遍那几行 —— 而丢失是静默的。
+   */
+  it('改别的字段时自定义键不会被抹掉', async () => {
+    const created = await createAgent({
+      runtimeKind: 'claude_code',
+      credential: 'env:MY_KEY',
+      runtimeConfig: { effort: 'low', myOwnKey: 'keep-me' },
+    });
+    const id = created.json().agent.id;
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: { runtimeConfig: { effort: 'high', myOwnKey: 'keep-me' } },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agent.runtimeConfig.myOwnKey).toBe('keep-me');
+    expect(res.json().agent.runtimeConfig.effort).toBe('high');
+  });
+
+  it('接入地址对 Claude Code 也可配，可以接中转站', async () => {
     const res = await createAgent({
       runtimeKind: 'claude_code',
       credential: 'env:MY_KEY',
@@ -451,6 +515,73 @@ describe('运行时配置里的环境变量表', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().agent.endpoint).toBe('https://gw.example.com');
     expect(res.json().agent.runtimeConfig.credentialEnv).toBe('ANTHROPIC_AUTH_TOKEN');
+  });
+});
+
+/**
+ * 没配 APOS_SECRET_KEY 的部署。
+ *
+ * ★★ 主密钥决定的是「存成密文还是明文」，不是「能不能存」。
+ *
+ *   此前没配主密钥时接口直接拒绝一切粘贴进来的值。但运行时配置是一份
+ *   用户自己写的 JSON，键名带 TOKEN/KEY/AUTH 的都会走同一条判定 ——
+ *   于是「配一下中转站」变成了「先去改部署的环境变量再重启」，
+ *   本机开发和演示环境尤其吃这个亏。
+ */
+describe('没有主密钥时的保存行为', () => {
+  beforeEach(() => {
+    delete process.env['APOS_SECRET_KEY'];
+  });
+
+  it('运行时 JSON 里的敏感值照样存得下，且接口仍然不回显', async () => {
+    const res = await createAgent({
+      runtimeKind: 'claude_code',
+      runtimeConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: 'https://gw.example.com',
+          ANTHROPIC_AUTH_TOKEN: 'sk-no-master-key-9876',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload).not.toContain('sk-no-master-key');
+    expect(res.json().agent.runtimeConfig.env).toEqual({
+      ANTHROPIC_BASE_URL: 'https://gw.example.com',
+      ANTHROPIC_AUTH_TOKEN: 'secret://saved',
+    });
+
+    // 明文进库是这条路径的代价，但它带前缀 —— 脱敏靠认前缀，裸值会漏出去
+    const [row] = await db.select().from(agents).where(eq(agents.runtimeKind, 'claude_code'));
+    const stored = (row!.runtimeConfig as { env: Record<string, string> }).env;
+    expect(stored['ANTHROPIC_AUTH_TOKEN']!.startsWith('secret://plain/')).toBe(true);
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/admin/agents', headers: auth() });
+    expect(list.payload).not.toContain('sk-no-master-key');
+  });
+
+  it('直接粘贴的凭证也存得下，并判为可用', async () => {
+    const res = await createAgent({ runtimeKind: 'claude_code', credential: 'sk-pasted-1234' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload).not.toContain('sk-pasted-1234');
+    expect(res.json().agent.credentialHint).toBe('****1234');
+    /**
+     * ★ 明文形态是可用的，不该被显示成故障。
+     *   「明文入库」是部署的选择，页面上由 encryptsInlineSecrets 统一说一次，
+     *   混进每个 Agent 的 problem 里会把真正的故障淹掉。
+     */
+    expect(res.json().agent.credentialUsable).toBe(true);
+    expect(res.json().agent.credentialProblem).toBeNull();
+  });
+
+  it('目录如实回「不加密」，界面据此提示而不是禁用输入', async () => {
+    const list = await app.inject({ method: 'GET', url: '/api/v1/admin/agents', headers: auth() });
+    expect(list.json().encryptsInlineSecrets).toBe(false);
+
+    process.env['APOS_SECRET_KEY'] = 'test-master-key';
+    const again = await app.inject({ method: 'GET', url: '/api/v1/admin/agents', headers: auth() });
+    expect(again.json().encryptsInlineSecrets).toBe(true);
   });
 });
 

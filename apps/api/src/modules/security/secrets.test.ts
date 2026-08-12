@@ -38,22 +38,46 @@ describe('凭证引用', () => {
   });
 
   /**
-   * ★ 这条是整个模块存在的理由：没有主密钥时**拒绝**保存，
-   *   而不是「先明文存着，回头再加密」。回头是不会来的。
+   * ★★ 没有主密钥时**照样存得下**，只是明文。
+   *
+   *   此前这里是「直接拒绝」。但被它拦下的不只是凭证 —— Agent 的运行时
+   *   配置是一份用户自己写的 JSON，键名带 TOKEN/KEY/AUTH 的值都会走这条
+   *   路径，于是「配一下中转站」变成了「先去改部署的环境变量再重启」。
+   *   一个把常规配置挡在门外的安全措施，换来的是用户绕开这一页。
+   *
+   *   密钥现在决定的是**存成什么样**，不是**能不能存**。
    */
-  it('没有主密钥时拒绝保存粘贴进来的凭证，并给出可行动的替代方案', () => {
+  it('没有主密钥时明文入库而不是拒绝保存', () => {
     delete process.env[KEY];
     expect(hasMasterKey()).toBe(false);
 
-    expect(() => encodeSecret('sk-ant-plain')).toThrowError(SecretConfigError);
-    try {
-      encodeSecret('sk-ant-plain');
-    } catch (e) {
-      expect((e as Error).message).toContain('env:');
-    }
+    const ref = encodeSecret('sk-ant-plain');
+    expect(ref.startsWith('secret://plain/')).toBe(true);
+    // 明文形态取得回原值，且自称可用 —— 它不依赖任何环境
+    expect(resolveSecret(ref)).toBe('sk-ant-plain');
+    expect(describeRef(ref)).toEqual({ usable: true, kind: 'plain', problem: null });
 
-    // env: 形态不需要主密钥
+    // env: 形态不受影响，仍是推荐写法
     expect(encodeSecret('env:MY_TOKEN')).toBe('secret://env/MY_TOKEN');
+  });
+
+  /**
+   * ★ 明文形态带 `secret://` 前缀，不是裸值。
+   *   前缀是「接口不回显」那条纪律的抓手：脱敏靠认前缀，
+   *   裸值一旦混进库里，同一条 JSON 里的 token 就会随响应发回浏览器。
+   */
+  it('明文形态仍带 secret:// 前缀，且引用里不出现原值本身', () => {
+    delete process.env[KEY];
+    const ref = encodeSecret('sk-ant-plain-12345');
+
+    expect(ref.startsWith('secret://')).toBe(true);
+    expect(ref).not.toContain('sk-ant-plain-12345');
+  });
+
+  /** 空值任何形态下都不接受 —— 存一条空凭证等于把故障推迟到派发那一刻 */
+  it('空值仍然拒绝，不因为少了主密钥就放行', () => {
+    delete process.env[KEY];
+    expect(() => encodeSecret('   ')).toThrowError(SecretConfigError);
   });
 
   it('换过主密钥之后旧密文解不开，且能说清原因', () => {

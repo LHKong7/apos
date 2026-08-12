@@ -371,12 +371,12 @@ export const api = {
    */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
   createAgent: (body: Record<string, unknown>) =>
-    request<{ agent: { id: string }; droppedConfigKeys: string[] }>('/admin/agents', {
+    request<{ agent: { id: string }; unknownConfigKeys: string[] }>('/admin/agents', {
       method: 'POST',
       json: body,
     }),
   updateAgent: (id: string, body: Record<string, unknown>) =>
-    request<{ agent: unknown; permissionsChanged: boolean; droppedConfigKeys: string[] }>(
+    request<{ agent: unknown; permissionsChanged: boolean; unknownConfigKeys: string[] }>(
       `/admin/agents/${id}`,
       { method: 'PATCH', json: body },
     ),
@@ -614,10 +614,15 @@ export const api = {
   requirement: (id: string) => request<RequirementDetail>(`/requirements/${id}`),
 
   analyzeRequirement: (id: string) =>
-    request<{ requirementId: string; completeness: Record<string, number>; clarificationCount: number; mustConfirmCount: number; cost: number }>(
-      `/requirements/${id}/analyze`,
-      { method: 'POST', json: {} },
-    ),
+    request<{
+      requirementId: string;
+      completeness: Record<string, number>;
+      clarificationCount: number;
+      mustConfirmCount: number;
+      cost: number;
+      /** 人改过、因而这一轮没被覆盖的字段。要说出来，否则用户以为分析漏了它们 */
+      keptHumanFields: string[];
+    }>(`/requirements/${id}/analyze`, { method: 'POST', json: {} }),
 
   answerClarification: (id: string, body: { answer: string; usedSuggestion?: boolean }) =>
     request<{ clarification: Clarification }>(`/clarifications/${id}/answer`, {
@@ -625,9 +630,32 @@ export const api = {
       json: body,
     }),
 
+  /**
+   * 人工填写 / 修改结构化字段。
+   *
+   * ★ 给的是**全部**结构化字段，不是 AI 结果的几个可修补项 ——
+   *   人工是与 AI 并列的一条录入路径，只开放一半的话它永远填不出
+   *   一份完整的需求（完整度评分那六个维度里有五个在这些字段上）。
+   */
   editRequirement: (
     id: string,
-    body: Partial<{ title: string; businessContext: string; userProblem: string; businessGoal: string }>,
+    body: Partial<{
+      title: string;
+      businessContext: string;
+      userProblem: string;
+      businessGoal: string;
+      userStories: string[];
+      scope: { inScope: string[]; outOfScope: string[] };
+      nonFunctional: string[];
+      successMetrics: string[];
+      constraints: string[];
+      risks: string[];
+      acceptanceCriteria: {
+        id?: string;
+        text: string;
+        verification: 'auto' | 'agent' | 'human';
+      }[];
+    }>,
   ) => request<{ requirement: unknown }>(`/requirements/${id}`, { method: 'PATCH', json: body }),
 
   approveRequirement: (id: string, note?: string) =>

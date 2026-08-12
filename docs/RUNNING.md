@@ -276,20 +276,34 @@ API 会每 15 秒自动重扫一次并补注册，日志里会出现 `[runtime] 
 
 ### Claude Code Agent 报 401 / 连不上官方端点
 
-接中转站或自建网关的三样东西分别配在「Agent 配置 → 运行时」里：
+接中转站或自建网关，配在「Agent 配置 → 运行时」里。凭证与接入地址各有一栏，
+其余全部写在**运行时配置（JSON）**那一个框里：
 
-- **接入地址** → 注入 `ANTHROPIC_BASE_URL`
-- **凭证下发变量名**（高级选项） → 官方端点用 `ANTHROPIC_API_KEY`，多数中转站要 `ANTHROPIC_AUTH_TOKEN`。**这一项配错就是 401，而 401 的报错里没有任何东西指向它**
-- **环境变量（JSON）** → 其余任意变量原样下发，例如
-  `{"ANTHROPIC_BASE_URL": "https://gw.example.com", "ANTHROPIC_AUTH_TOKEN": "sk-…"}`
+```json
+{
+  "model": "claude-opus-5",
+  "credentialEnv": "ANTHROPIC_AUTH_TOKEN",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://gw.example.com",
+    "ANTHROPIC_AUTH_TOKEN": "sk-…"
+  }
+}
+```
 
-环境变量表里敏感键（含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 字样）的值加密入库，
-保存后回显为 `secret://saved` —— 原样存回表示「这一项不改」。
-想让值留在进程环境里就写 `env:变量名`。
+- **接入地址**（单独一栏） → 注入 `ANTHROPIC_BASE_URL`
+- **`credentialEnv`** → 凭证下发到哪个变量名。官方端点用 `ANTHROPIC_API_KEY`，多数中转站要 `ANTHROPIC_AUTH_TOKEN`。**这一项配错就是 401，而 401 的报错里没有任何东西指向它**
+- **`env`** → 其余任意变量原样下发给子进程，覆盖同名的平台默认值
+
+JSON 里平台不认识的键**原样保存并下发**，不会被丢弃 —— 运行时新加的开关不必等平台发版。
+保存后界面会把认不出来的键列一遍，顺手确认不是键名敲错了。
+框下面那份「可配置项」列出平台认识的键、取值范围与默认值。
+
+`env` 里敏感键（含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 字样）的值保存后回显为
+`secret://saved` —— 原样存回表示「这一项不改」。配了 `APOS_SECRET_KEY` 就密文入库，
+没配则明文入库（接口一律不回显）。想让值只留在进程环境里就写 `env:变量名`。
 
 配置页上那个 Agent 显示红色且写着「环境变量 X：环境变量 Y 未设置」，
-说明引用取不到值 —— 那个变量**不会**被下发，先把它设上。
-直接粘贴凭证需要部署时配好 `APOS_SECRET_KEY`，否则接口会拒绝并让你改用 `env:` 形态。
+说明 `env:` 引用取不到值 —— 那个变量**不会**被下发，先把它设上。
 
 ### 界面上一堆「未接入」
 

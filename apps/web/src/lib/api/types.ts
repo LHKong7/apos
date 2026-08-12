@@ -1115,7 +1115,13 @@ export interface AgentAdminResponse {
   agents: AgentAdminRow[];
   credentialUsage: CredentialUsageRow[];
   kinds: RuntimeKindSpec[];
-  canStoreInlineCredential: boolean;
+  /**
+   * 直接粘贴的敏感值是不是**密文**入库。
+   *
+   * ★ 不是「能不能存」：没配 APOS_SECRET_KEY 照样存得下，只是明文进库。
+   *   界面据此提示，而不是据此禁用输入。
+   */
+  encryptsInlineSecrets: boolean;
   credentialHelp: string;
 }
 
@@ -1181,7 +1187,8 @@ export interface RepositoriesResponse {
   /** 镜像里少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */
   sshAvailable: boolean;
   sshProblem: string | null;
-  canStoreInlineCredential: boolean;
+  /** 直接粘贴的凭证是不是密文入库。false = 明文进库，不是存不下 */
+  encryptsInlineSecrets: boolean;
 }
 
 export interface ConventionRow {

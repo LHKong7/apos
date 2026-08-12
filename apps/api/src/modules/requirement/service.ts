@@ -22,6 +22,29 @@ export interface Completeness {
 
 const DIMENSIONS = ['goal', 'scope', 'acceptance', 'dependency', 'risk', 'technical'] as const;
 
+/**
+ * 这条需求有没有结构化内容 —— 不管它是 AI 分析出来的还是人工填的。
+ *
+ * ★★ 判据只看**内容**，不看来源。
+ *
+ *   AI 分析与人工填写是并行的两条路：有人愿意先让 Agent 出稿再改，
+ *   也有人（尤其是需求本来就写得很清楚、或者压根没配规划 Agent 时）
+ *   直接自己填。按「分析过没有」设闸门，等于把后一条路堵死 ——
+ *   而这条路是产品文档 03 §7「分析超时 → 取消并转人工填写」的出路。
+ *
+ * ★ 三选一而不是全都要：这里只是「不是一张白纸」的下限。
+ *   够不够详细由完整度评分说，那是给人看的建议，不是闸门。
+ */
+export function hasStructuredContent(req: {
+  title: string | null;
+  businessGoal: string | null;
+  acceptanceCriteria: unknown[];
+}): boolean {
+  return Boolean(
+    req.title?.trim() || req.businessGoal?.trim() || (req.acceptanceCriteria?.length ?? 0) > 0,
+  );
+}
+
 export function scoreCompleteness(req: {
   businessGoal: string | null;
   scope: Record<string, unknown>;
@@ -53,6 +76,37 @@ export interface AnalyzeResult {
   clarificationCount: number;
   mustConfirmCount: number;
   cost: number;
+  /** 因为是人改过的而被保留、没有被这一轮分析覆盖的字段 */
+  keptHumanFields: string[];
+}
+
+/** 结构化字段一览 —— 分析要写的、人工能改的，就是这些 */
+const STRUCTURED_FIELDS = [
+  'title',
+  'businessContext',
+  'userProblem',
+  'businessGoal',
+  'userStories',
+  'scope',
+  'nonFunctional',
+  'successMetrics',
+  'constraints',
+  'risks',
+  'acceptanceCriteria',
+] as const;
+
+/**
+ * 这个字段现在是不是人改过的。
+ *
+ * ★★ 人改过的字段，重新分析不覆盖（产品文档 03 §9「人类编辑中的字段不被
+ *   AI 重新分析覆盖」）。
+ *
+ *   不这么做的话，「AI 与人工同时支持」就只是并列摆着两个入口：人辛苦
+ *   改完的措辞，被同事随手点一次「重新分析」就静默清掉了 —— 页面上没有
+ *   任何迹象，而他下次看到的是一份自己没写过、却署着自己名字的需求。
+ */
+function isHumanWritten(provenance: Record<string, unknown>, field: string): boolean {
+  return (provenance[field] as { source?: string } | undefined)?.source === 'human';
 }
 
 /**
@@ -121,12 +175,48 @@ export async function analyzeRequirement(
   }
 
   const mustConfirm = structured.clarifications.filter((c) => c.level === 'must_confirm').length;
-  const completeness = scoreCompleteness({
-    businessGoal: structured.businessGoal,
-    scope: structured.scope,
-    acceptanceCriteria: structured.acceptanceCriteria,
-    risks: structured.risks,
+
+  /**
+   * ★★ 人改过的字段保留原值，这一轮分析的结果不往上盖。
+   *
+   *   两条路要能真正并行，就必须有一方让步 —— 让步的只能是 AI：
+   *   人改过的东西被静默覆盖，代价是他重新写一遍并且从此不敢再改；
+   *   AI 的建议被挡下，代价只是他重新点一次「重新分析」前先把那个标记清掉。
+   */
+  const provenanceBefore = req.fieldProvenance as Record<string, unknown>;
+  const analyzedValues: Record<string, unknown> = {
+    title: structured.title,
     businessContext: structured.businessContext,
+    userProblem: structured.userProblem,
+    businessGoal: structured.businessGoal,
+    userStories: structured.userStories,
+    scope: structured.scope,
+    nonFunctional: structured.nonFunctional,
+    successMetrics: structured.successMetrics,
+    constraints: structured.constraints,
+    risks: structured.risks,
+    acceptanceCriteria: structured.acceptanceCriteria,
+  };
+
+  const keptHumanFields = STRUCTURED_FIELDS.filter((f) => isHumanWritten(provenanceBefore, f));
+  const kept = new Set<string>(keptHumanFields);
+  const merged = Object.fromEntries(
+    STRUCTURED_FIELDS.map((f) => [
+      f,
+      kept.has(f) ? (req as unknown as Record<string, unknown>)[f] : analyzedValues[f],
+    ]),
+  );
+
+  // 溯源同理：保住的字段留着「人工」那条记录，其余换成这一轮的原文溯源
+  const provenance: Record<string, unknown> = { ...structured.provenance };
+  for (const f of kept) provenance[f] = provenanceBefore[f];
+
+  const completeness = scoreCompleteness({
+    businessGoal: merged['businessGoal'] as string | null,
+    scope: merged['scope'] as Record<string, unknown>,
+    acceptanceCriteria: merged['acceptanceCriteria'] as unknown[],
+    risks: merged['risks'] as unknown[],
+    businessContext: merged['businessContext'] as string | null,
     unansweredMustConfirm: mustConfirm,
   });
 
@@ -134,23 +224,13 @@ export async function analyzeRequirement(
     .update(requirements)
     .set({
       status: mustConfirm > 0 ? 'clarifying' : 'awaiting_approval',
-      title: structured.title,
-      businessContext: structured.businessContext,
-      userProblem: structured.userProblem,
-      businessGoal: structured.businessGoal,
-      userStories: structured.userStories,
-      scope: structured.scope,
-      nonFunctional: structured.nonFunctional,
-      successMetrics: structured.successMetrics,
-      constraints: structured.constraints,
-      risks: structured.risks,
-      acceptanceCriteria: structured.acceptanceCriteria,
-      fieldProvenance: structured.provenance,
+      ...merged,
+      fieldProvenance: provenance,
       completeness: completeness as unknown as Record<string, unknown>,
       // ★ 记下这一轮到底是谁分析的。回退到规则占位时它会带上原因（见 agent-provider.ts）
       analysisModel: structured.model,
       updatedAt: new Date(),
-    })
+    } as never)
     .where(eq(requirements.id, req.id));
 
   await emitAndPublish(db, {
@@ -166,6 +246,8 @@ export async function analyzeRequirement(
       mustConfirmCount: mustConfirm,
       cost: structured.cost,
       model: structured.model,
+      // 保住了哪些人工字段要进审计：它解释了「为什么这一版和 AI 说的不一样」
+      keptHumanFields,
     },
     correlationId: input.correlationId,
   });
@@ -176,6 +258,7 @@ export async function analyzeRequirement(
     clarificationCount: structured.clarifications.length,
     mustConfirmCount: mustConfirm,
     cost: structured.cost,
+    keptHumanFields: [...keptHumanFields],
   };
 }
 
@@ -221,10 +304,22 @@ export async function answerClarification(db: Database, input: AnswerInput) {
   return row;
 }
 
-/** 回答问题后实时回升分数，给予正反馈 */
-async function refreshCompleteness(db: Database, requirementId: string) {
+/**
+ * 重算完整度并推进状态。
+ *
+ * ★★ 回答澄清问题与**人工编辑字段**走同一个函数。
+ *
+ *   人工编辑那条路以前不重算：一个人把业务目标、范围、验收标准全填好，
+ *   完整度还停在分析那一刻的分数（没分析过就是 0），头部的六维评分与他
+ *   眼前的内容完全对不上 —— 而这一页所有的「够不够格确认」的判断，
+ *   用户都是照着那个分数做的。
+ *
+ * ★ 已确认 / 已驳回的不动。让编辑把 rejected 悄悄变回待确认，
+ *   等于绕过了驳回这个结论；要重提就走重新打开，那是一个显式动作。
+ */
+export async function refreshCompleteness(db: Database, requirementId: string) {
   const [req] = await db.select().from(requirements).where(eq(requirements.id, requirementId));
-  if (!req) return;
+  if (!req) return null;
 
   const pending = await db
     .select()
@@ -242,24 +337,43 @@ async function refreshCompleteness(db: Database, requirementId: string) {
     unansweredMustConfirm: unanswered,
   });
 
-  await db
+  /**
+   * ★ 还是一张白纸时保持 draft。
+   *   只改了业务背景就把状态推到「待确认」，会让需求列表上出现一条
+   *   等着人拍板、而实际上什么都没写的需求。
+   */
+  const settled = req.status === 'approved' || req.status === 'rejected';
+  const status = settled
+    ? req.status
+    : unanswered > 0
+      ? 'clarifying'
+      : hasStructuredContent(req)
+        ? 'awaiting_approval'
+        : req.status;
+
+  const [updated] = await db
     .update(requirements)
-    .set({
-      completeness: completeness as unknown as Record<string, unknown>,
-      status: unanswered === 0 ? 'awaiting_approval' : 'clarifying',
-    })
-    .where(eq(requirements.id, requirementId));
+    .set({ completeness: completeness as unknown as Record<string, unknown>, status })
+    .where(eq(requirements.id, requirementId))
+    .returning();
+
+  return updated ?? null;
 }
 
 export type ApproveResult =
   | { ok: true; requirementId: string }
-  | { ok: false; code: 'UNANSWERED_MUST_CONFIRM'; questions: { id: string; question: string }[] };
+  | { ok: false; code: 'UNANSWERED_MUST_CONFIRM'; questions: { id: string; question: string }[] }
+  | { ok: false; code: 'EMPTY_REQUIREMENT'; questions?: undefined };
 
 /**
  * Human Gate：需求确认（产品文档 8.2.5）。
  *
  * 必答问题未回答时阻断 —— 这是最后一次以极低成本纠正需求理解错误的机会，
  * 放过去之后的返工成本要高一个数量级。
+ *
+ * ★ 闸门只有两道：**有没有内容**、**必答问题答完没有**。
+ *   两道都不问「这份内容是 AI 出的还是人写的」—— 规划器读的是库里那几个
+ *   结构化字段，它不关心字段是怎么来的，闸门也不该关心。
  */
 export async function approveRequirement(
   db: Database,
@@ -270,6 +384,15 @@ export async function approveRequirement(
     .from(requirements)
     .where(eq(requirements.id, input.requirementId));
   if (!req) throw new Error(`需求不存在: ${input.requirementId}`);
+
+  /**
+   * ★ 一张白纸不能被确认。
+   *   放过去的话，规划器拿着一份空需求照样能生成一份计划 ——
+   *   那份计划里的任务全是它自己编的，而页面上它看起来和正常的计划没区别。
+   */
+  if (!hasStructuredContent(req)) {
+    return { ok: false, code: 'EMPTY_REQUIREMENT' };
+  }
 
   const clarifications = await db
     .select()
