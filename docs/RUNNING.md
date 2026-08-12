@@ -160,13 +160,40 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `RUNTIME_SYNC_INTERVAL_MS` | `15000` | 多久重新扫一次数据库里的 Agent 运行时，`0` 关闭 |
 | `INTEGRATION_MEMORY_ADAPTERS` | — | 设成 `all` 强制所有集成走进程内适配器（离线开发／演示） |
 | `REDIS_URL` | `redis://localhost:6379` | 目前**还没有代码读它**，留给后续的 BullMQ 队列与多实例 SSE 扇出 |
-| `ANTHROPIC_API_KEY` | — | 平台自身用（需求结构化）。不设时用 `StubPlanningProvider`，闭环照样跑通 |
-| `APOS_AGENT_ANTHROPIC_API_KEY` | — | **Agent 专用**，与平台分开。不设时 Claude Code 运行时拒绝派发，不会悄悄回退到上面那个 key。也可以不设它，改在界面上逐个 Agent 登记凭证 |
 | `AGENT_WORKSPACE_ROOT` | — | Agent 可写的目录根。不设时 `claude_code` 运行时拒绝派发 |
 | `APOS_ARCHIVE_ROOT` | — | 本地目录类工作区的归档根。**必须与上面不同且不在它下面**（否则 `pruneOrphans` 会连产物一起删）。不设时这类工作区退回「不交货」 |
 
 `dev-up.sh` 另外认这几个：`APOS_PGPORT`(5433)、`APOS_API_PORT`(3000)、
 `APOS_WEB_PORT`(5173)、`APOS_REDIS_PORT`(6379)、`APOS_LOG_DIR`(`/tmp/apos-dev`)。
+
+### 模型凭证：在界面上配，不在这里配
+
+去 **设置 → Agent 配置**，在每个 Agent 的凭证栏里登记。凭证挂在 `agents` 行上，
+配了 `APOS_SECRET_KEY` 就密文入库，接口永不回显。接中转站时凭证也可以直接写进
+Agent 的环境变量表（多数中转站认 `ANTHROPIC_AUTH_TOKEN` 而不是 `ANTHROPIC_API_KEY`，
+配错就是一句 401，见 [§8 排错](#claude-code-agent-报-401--连不上官方端点)）。
+
+放进环境变量则是整个部署共用一把：换一个 Agent 换一把 key、单独停用某一把，
+这些都做不到，审计上也认不出是谁在用。所以 `.env.example` 里不列这些变量。
+
+代码里仍留着两级兜底，给「一个 Agent 都还没建」的单机部署用
+（[`resolveCredential`](../packages/agent-runtimes/src/cli/adapter.ts)）：先看专用变量，
+再看继承变量 —— **后者只在这个 Agent 从没登记过凭证时才生效**。登记了但解不开
+不会回退，否则「我明明配了 key」和「它在用别人的 key」长得一模一样。
+
+| 运行时 | 专用变量 | 继承变量 |
+| --- | --- | --- |
+| `claude_code` | `APOS_AGENT_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` |
+| `codex` | `APOS_AGENT_OPENAI_API_KEY` | `OPENAI_API_KEY` |
+| `pi` | `APOS_AGENT_PI_API_KEY` | `ANTHROPIC_API_KEY` |
+| `gemini_cli` | `APOS_AGENT_GEMINI_API_KEY` | `GEMINI_API_KEY` |
+| `aider` | `APOS_AGENT_AIDER_API_KEY` | `OPENAI_API_KEY` |
+| `goose` | `APOS_AGENT_GOOSE_API_KEY` | `ANTHROPIC_API_KEY` |
+| `opencode` | `APOS_AGENT_OPENCODE_API_KEY` | `ANTHROPIC_API_KEY` |
+| `qwen_code` | `APOS_AGENT_QWEN_API_KEY` | `OPENAI_API_KEY` |
+
+需求结构化与计划生成走的是同一套 —— 平台自己不调任何模型 API，
+它挑组织里 `applicableTypes` 含 `requirement` 的那个 Agent，用它的凭证。
 
 ---
 

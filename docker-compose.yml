@@ -21,12 +21,13 @@ x-app-env: &app-env
   DATABASE_URL: postgres://apos@postgres:5432/apos
   REDIS_URL: redis://redis:6379
   NODE_ENV: production
-  LOG_LEVEL: ${LOG_LEVEL:-info}
   # ★ 通知里的链接要指向用户实际访问的地址，不是容器内部地址。
   #   配错的表现是：飞书/Slack 收到的卡片点进去打不开
   WEB_BASE_URL: ${APOS_PUBLIC_URL:-http://localhost:8080}
-  # 平台与 Agent 的凭证分开（产品文档 10.2）。留空时对应能力会明确
-  # 拒绝派发，而不是悄悄回退到另一个 key
+  # ★ 模型凭证的**兜底**通道，主路径是在界面上逐个 Agent 登记（产品文档 10.2：
+  #   Agent 是独立身份，凭证不复用）。这里留着是因为不透传的话，
+  #   「一个 Agent 都还没建」的部署连兜底都没有。
+  #   继承那一级只在某个 Agent 从没登记过凭证时才生效，不会盖掉已登记的。
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   APOS_AGENT_ANTHROPIC_API_KEY: ${APOS_AGENT_ANTHROPIC_API_KEY:-}
   APOS_AGENT_OPENAI_API_KEY: ${APOS_AGENT_OPENAI_API_KEY:-}

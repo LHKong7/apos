@@ -105,9 +105,7 @@ pnpm deploy:down      # 停止并删除容器（数据卷保留）
 | `APOS_PUBLIC_URL` | `http://localhost:8080` | **用户实际访问的地址**，见下 |
 | `APOS_PGPORT` | `5433` | Postgres 在宿主机上的端口，只绑 `127.0.0.1` |
 | `APOS_REDIS_PORT` | `6379` | 同上 |
-| `LOG_LEVEL` | `info` | |
-| `ANTHROPIC_API_KEY` | 空 | 平台自身用（需求结构化）。不配时用 `StubPlanningProvider`，闭环照样跑通 |
-| `APOS_AGENT_ANTHROPIC_API_KEY` | 空 | **Agent 专用凭证，与平台分开**。不配时 Claude Code 运行时拒绝派发 |
+| 模型凭证 | — | **不在这里配**：去 设置 → Agent 配置，登记在每个 Agent 的凭证栏上（密文入库，见 `APOS_SECRET_KEY`）。环境变量兜底与各运行时的变量名见 [RUNNING.md § 模型凭证](RUNNING.md#模型凭证在界面上配不在这里配) |
 | `AGENT_WORKSPACE_ROOT` | 空 | Agent 可写的目录根。不配时 `claude_code` 运行时拒绝派发 |
 | `GITHUB_INTEGRATION_TOKEN` | 空 | 不配时 GitHub 集成显示未连接 |
 | `INTEGRATION_MEMORY_ADAPTERS` | 空 | 设 `all` 则所有集成走进程内适配器，不发任何外部请求 |
