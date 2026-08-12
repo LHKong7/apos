@@ -153,6 +153,8 @@ else
   else
     curl -s -m 5 "localhost:$API_PORT/api/v1/projects" -H "Authorization: Bearer $TOKEN" |
       WEB_PORT="$WEB_PORT" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const p=JSON.parse(s).projects[0];if(p)console.log('项目  '+p.name+'  http://localhost:'+process.env.WEB_PORT+'/projects/'+p.id+'/board')}catch{}})" 2>/dev/null
-    echo "登录  $ADMIN_EMAIL（口令见 .env 的 APOS_SUPERADMIN_PASSWORD）"
+    # ★ ${} 不能省：紧跟全角括号时 bash 3.2 会把它的第一个字节吃进变量名，
+    #   配 set -u 报 `ADMIN_EMAIL?: unbound variable`（同 §Postgres 那处）
+    echo "登录  ${ADMIN_EMAIL}（口令见 .env 的 APOS_SUPERADMIN_PASSWORD）"
   fi
 fi

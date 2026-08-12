@@ -90,6 +90,11 @@ export const DOMAIN_EVENT_TYPES = [
   'requirement.field_edited',
   'requirement.approved',
   'requirement.rejected',
+  /**
+   * ★ 实体已经不在了，这条事件是它存在过的唯一痕迹 ——
+   *   payload 因此要带标题与原文摘要，只留 subjectId 等于什么都没留。
+   */
+  'requirement.deleted',
   'requirement.assumption_invalidated',
   // plan
   'plan.generated',

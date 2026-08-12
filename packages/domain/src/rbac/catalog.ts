@@ -39,6 +39,7 @@ export const PERMISSIONS = [
   'requirement.create',
   'requirement.edit',
   'requirement.approve',
+  'requirement.delete',
   'clarification.answer',
 
   // ── 计划 ──────────────────────────────────────────────────────────
@@ -215,6 +216,26 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     projectRoles: ['sponsor', 'pm'],
     humanOnly: true,
     requires: '确认需求需要 sponsor 或 pm —— 需求是否成立是业务判断',
+  },
+  /**
+   * §2.3：删除需求 = pm / tech_lead，且是**不可逆**的一档。
+   *
+   * ★★ 与驳回是两件事，不要互相替代。
+   *   驳回是「这个需求不成立」—— 一个有原因、可追溯的结论，记录留着。
+   *   删除是「这条记录本不该存在」—— 录错了、重复提交、试验数据。
+   *   没有删除的话，前者会被当成后者用，于是「已驳回」列表里堆满噪音，
+   *   真正的驳回结论反而看不见了。
+   *
+   * ★ humanOnly：Agent 不该有抹掉自己输入的能力。
+   *   它可以提需求（requirement.create），但删除是对记录本身的处置。
+   */
+  'requirement.delete': {
+    scope: 'project',
+    label: '删除需求',
+    projectRoles: ['pm', 'tech_lead'],
+    humanOnly: true,
+    governance: { audit: true },
+    requires: '删除需求需要 pm 或 tech_lead —— 记录一旦删除无法恢复',
   },
   'clarification.answer': {
     scope: 'project',

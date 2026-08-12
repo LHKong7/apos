@@ -249,6 +249,11 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
   'POST /api/v1/requirements/:id/reject': 'requirement.approve',
+  /**
+   * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
+   *   删除是对记录本身的处置（pm / tech_lead）—— 两者的责任人不是同一批。
+   */
+  'DELETE /api/v1/requirements/:id': 'requirement.delete',
   'POST /api/v1/clarifications/:id/answer': 'clarification.answer',
 
   // ── 计划 ──────────────────────────────────────────────────────────

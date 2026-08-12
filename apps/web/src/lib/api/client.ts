@@ -667,6 +667,13 @@ export const api = {
       json: { reason },
     }),
 
+  /**
+   * ★ 与驳回不是一回事：驳回记录结论，删除抹掉一条本不该存在的记录。
+   *   已派生出计划或工作项的需求会被服务端以 GUARD_FAILED 挡下。
+   */
+  deleteRequirement: (id: string) =>
+    request<{ ok: true }>(`/requirements/${id}`, { method: 'DELETE' }),
+
   generatePlan: (requirementId: string) =>
     request<{ planId: string; version: number }>(`/requirements/${requirementId}/plans`, {
       method: 'POST',

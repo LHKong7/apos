@@ -15,6 +15,7 @@ import {
   integrations,
   organizationMembers,
   projectMembers,
+  requirementAssumptions,
   requirementClarifications,
   requirements,
   syncConflicts,
@@ -1134,6 +1135,82 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
 
     return { requirement: updated };
+  });
+
+  /**
+   * 删除需求。
+   *
+   * ★★ 与驳回是两件事，不能互相替代。
+   *   驳回是「这个需求不成立」—— 一个有原因、可追溯的结论，记录必须留着。
+   *   删除是「这条记录本不该存在」—— 录错了、重复提交、试验数据。
+   *   只有驳回而没有删除的话，后者会被当成前者用，「已驳回」列表里堆满
+   *   噪音，真正的驳回结论反而看不见。
+   *
+   * ★ 只删得掉**没有派生物**的需求。计划与工作项有独立的生命周期，
+   *   它们一旦存在，这条需求就已经影响了别的东西 —— 此时正确的动作是
+   *   驳回。挡下时必须报出挡在哪：只说「删不掉」，用户不知道该去处理什么。
+   *
+   * ★ 澄清项与假设随需求一起删 —— 它们只属于这一条需求，没有独立生命周期。
+   *   这也是数据库层面必须的：那两张表的 requirementId 是 NOT NULL 外键。
+   */
+  app.delete('/api/v1/requirements/:id', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+
+    const [existing] = await db.select().from(requirements).where(eq(requirements.id, id));
+    if (!existing) throw notFound('需求');
+
+    const derivedPlans = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(eq(plans.requirementId, id));
+    const derivedItems = await db
+      .select({ id: workItems.id })
+      .from(workItems)
+      .where(eq(workItems.requirementId, id));
+
+    if (derivedPlans.length > 0 || derivedItems.length > 0) {
+      const blockers = [
+        derivedPlans.length > 0 ? `${derivedPlans.length} 个计划` : null,
+        derivedItems.length > 0 ? `${derivedItems.length} 个工作项` : null,
+      ].filter((s): s is string => s !== null);
+      throw new ApiError(
+        'GUARD_FAILED',
+        `这条需求已经派生出${blockers.join(' 与 ')}，不能删除。要终止它请改用驳回。`,
+        { requirementId: id, plans: derivedPlans.length, workItems: derivedItems.length },
+      );
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(requirementClarifications)
+        .where(eq(requirementClarifications.requirementId, id));
+      await tx.delete(requirementAssumptions).where(eq(requirementAssumptions.requirementId, id));
+      await tx.delete(requirements).where(eq(requirements.id, id));
+    });
+
+    /**
+     * ★ 提交之后才发事件（modules/event/bus.ts 的纪律）。
+     *
+     * ★ payload 要带上标题与原文摘要：实体没了，这条事件是它存在过的
+     *   唯一痕迹。只记一个 id 的话，审计时翻到这一行也不知道删的是什么。
+     */
+    await emitAndPublish(db, {
+      orgId: existing.orgId,
+      projectId: existing.projectId,
+      type: 'requirement.deleted',
+      actor: humanActor(userId),
+      subjectType: 'requirement',
+      subjectId: id,
+      payload: {
+        title: existing.title,
+        status: existing.status,
+        rawInput: existing.rawInput.slice(0, 200),
+      },
+      correlationId: corr(req),
+    });
+
+    return { ok: true };
   });
 
   app.get('/api/v1/requirements/:id', async (req) => {

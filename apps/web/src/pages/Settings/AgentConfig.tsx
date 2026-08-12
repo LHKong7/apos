@@ -355,6 +355,18 @@ function AgentCard({
             <span className="text-slate-400">未配置</span>
           )}
         </Field>
+        {/*
+          ★ 空的时候要**显眼地**说出来，而不是显示一个「—」。
+            这个 Agent 会一直闲着，而它的凭证、探针、权限全是绿的 ——
+            不在卡片上点破的话，排查会从运行时一路查到调度器。
+        */}
+        <Field label="承接范围">
+          {agent.applicableTypes.length > 0 ? (
+            agent.applicableTypes.map((t) => typeLabel(t)).join('、')
+          ) : (
+            <span className="text-amber-700">未设置 · 不接任何工作</span>
+          )}
+        </Field>
         <Field label="并发 / 超时">
           {agent.maxConcurrency} · {Math.round(agent.timeoutSeconds / 60)} 分钟
         </Field>
@@ -466,6 +478,15 @@ function AgentForm({
   const [endpoint, setEndpoint] = useState(agent?.endpoint ?? '');
   const [ownerId, setOwnerId] = useState(agent?.ownerId ?? currentUser ?? '');
   const [skills, setSkills] = useState((agent?.skills ?? []).join(', '));
+  /**
+   * ★★ 承接范围。空数组的含义是「什么都不接」，不是「不限制」
+   *   （domain/flow/matching.ts 是 `applicableTypes.includes(target.type)` 判定）。
+   *
+   *   这一栏此前根本没有渲染，而后端建 Agent 时它默认是空数组 —— 于是
+   *   界面上建出来的 Agent 永远接不到任何工作，也永远当不了规划 Agent，
+   *   而页面上没有任何地方提示缺了什么。配置页不给的字段，用户没法自己发现。
+   */
+  const [applicableTypes, setApplicableTypes] = useState<string[]>(agent?.applicableTypes ?? []);
   const [allowedTools, setAllowedTools] = useState(
     (agent?.permissions.allowedTools ?? ['Read', 'Grep']).join(', '),
   );
@@ -525,6 +546,7 @@ function AgentForm({
         endpoint: endpoint.trim() || null,
         ownerId,
         skills: splitList(skills),
+        applicableTypes,
         allowedTools: splitList(allowedTools),
         deniedTools: splitList(deniedTools),
         resourceScopes: repoRef.trim()
@@ -699,6 +721,48 @@ function AgentForm({
           )}
         </div>
 
+        {/* ── 承接范围 ── */}
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <p className="mb-1 text-[11px] font-medium text-slate-700">承接范围</p>
+          <p className="mb-2 text-[11px] text-slate-500">
+            调度器按类型匹配执行者。
+            {/*
+              ★ 「一个都不勾」的后果要当场说，不能等用户发现 Agent 一直闲着。
+                这是这一栏被漏掉时最贵的那个症状：配置看起来是完整的。
+            */}
+            <span className={clsx(applicableTypes.length === 0 && 'text-amber-700')}>
+              一个都不勾 = 不接任何工作
+            </span>
+            ；<code className="text-slate-600">需求</code> 这一项同时决定它能否承接
+            需求结构化与计划生成。
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {WORK_ITEM_TYPES.map(([value, label]) => {
+              const on = applicableTypes.includes(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setApplicableTypes((prev) =>
+                      prev.includes(value) ? prev.filter((t) => t !== value) : [...prev, value],
+                    )
+                  }
+                  className={clsx(
+                    'rounded border px-2 py-0.5 text-[11px]',
+                    on
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* ── 权限 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
           <p className="mb-2 text-[11px] font-medium text-slate-700">权限边界</p>
@@ -768,6 +832,33 @@ function AgentForm({
       </div>
     </Modal>
   );
+}
+
+/**
+ * 13 种工作项类型（contracts 的 WorkItemType，产品文档 6.3）。
+ *
+ * ★ 顺序跟着 contracts 走，不按字母排 —— 那个顺序是「从需求到交付」的流程序，
+ *   界面上照抄能让人一眼看出这个 Agent 站在链路的哪一段。
+ */
+const WORK_ITEM_TYPES: [string, string][] = [
+  ['requirement', '需求'],
+  ['feature', '特性'],
+  ['story', '用户故事'],
+  ['task', '任务'],
+  ['bug', '缺陷'],
+  ['research', '调研'],
+  ['review', '评审'],
+  ['test', '测试'],
+  ['incident', '故障'],
+  ['decision', '决策'],
+  ['approval', '审批'],
+  ['release', '发布'],
+  ['knowledge', '知识'],
+];
+
+/** 认不出来的类型原样显示 —— 库里出现新类型时，显示成空白比显示英文更糟 */
+function typeLabel(value: string): string {
+  return WORK_ITEM_TYPES.find(([v]) => v === value)?.[1] ?? value;
 }
 
 /**

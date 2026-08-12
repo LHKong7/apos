@@ -2,13 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { agentRuns, decisions, events, projectMembers, workItems } from '@apos/db';
+import {
+  agentRuns,
+  decisions,
+  events,
+  projectMembers,
+  requirementClarifications,
+  requirements,
+  workItems,
+} from '@apos/db';
 import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
   auth as authFor,
+  createMember,
   createOutsider,
   createWorkItem,
   integrationRegistry,
@@ -779,6 +788,105 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     const res = await edit(id, FULL_MANUAL);
     expect(res.statusCode).toBe(200);
     expect(res.json().requirement.status).toBe('rejected');
+  });
+
+  /**
+   * ★★ 删除与驳回是两件事。
+   *
+   *   驳回记录一个结论，删除抹掉一条本不该存在的记录（录错、重复提交、
+   *   试验数据）。只有驳回时，后者会被当成前者用 —— 于是「已驳回」
+   *   列表里堆满噪音，真正的驳回结论反而看不见。
+   */
+  describe('删除需求', () => {
+    const del = (id: string, headers: Record<string, string>) =>
+      app.inject({ method: 'DELETE', url: `/api/v1/requirements/${id}`, headers });
+
+    it('没有派生物的需求删得掉，澄清项跟着一起走', async () => {
+      const id = await createRequirement();
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/requirements/${id}/analyze`,
+        headers: auth(),
+      });
+
+      const before = await db
+        .select()
+        .from(requirementClarifications)
+        .where(eq(requirementClarifications.requirementId, id));
+      expect(before.length).toBeGreaterThan(0);
+
+      const res = await del(id, auth());
+      expect(res.statusCode).toBe(200);
+
+      const left = await db.select().from(requirements).where(eq(requirements.id, id));
+      expect(left).toHaveLength(0);
+      const orphans = await db
+        .select()
+        .from(requirementClarifications)
+        .where(eq(requirementClarifications.requirementId, id));
+      expect(orphans).toHaveLength(0);
+    });
+
+    /**
+     * ★ 实体没了，事件是它存在过的唯一痕迹 —— 只留一个 id 的话，
+     *   审计时翻到这一行也不知道删掉的是什么。
+     */
+    it('删除留下带标题的领域事件', async () => {
+      const id = await createRequirement('删了也要留痕的需求');
+      await del(id, auth());
+
+      const [ev] = await db.select().from(events).where(eq(events.subjectId, id));
+      expect(ev?.type).toBe('requirement.deleted');
+      expect((ev?.payload as { rawInput?: string })?.rawInput).toContain('删了也要留痕');
+    });
+
+    /**
+     * ★ 有派生物就不能删：计划与工作项有独立的生命周期，这条需求已经
+     *   影响了别的东西。此时正确的动作是驳回，而报错必须说清挡在哪 ——
+     *   只说「删不掉」，用户不知道该去处理什么。
+     */
+    it('已生成计划的需求删不掉，且报出挡在哪', async () => {
+      const id = await createRequirement();
+      await edit(id, FULL_MANUAL);
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/requirements/${id}/approve`,
+        headers: auth(),
+        payload: {},
+      });
+      const plan = await app.inject({
+        method: 'POST',
+        url: `/api/v1/requirements/${id}/plans`,
+        headers: auth(),
+      });
+      expect(plan.statusCode).toBe(201);
+
+      const res = await del(id, auth());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('GUARD_FAILED');
+      expect(res.json().error.message).toContain('计划');
+      expect(res.json().error.message).toContain('驳回');
+
+      const left = await db.select().from(requirements).where(eq(requirements.id, id));
+      expect(left).toHaveLength(1);
+    });
+
+    /**
+     * ★ 用 createMember 造明确角色 —— 夹具身份是组织管理员，
+     *   拿它测「谁不能删」永远是绿的。
+     */
+    it('viewer 与普通成员都不能删', async () => {
+      const id = await createRequirement();
+
+      for (const role of ['viewer', 'member']) {
+        const userId = await createMember(db, fx, { projectRole: role });
+        const res = await del(id, authFor(userId));
+        expect(res.statusCode, `${role} 不该删得掉`).toBe(403);
+      }
+
+      const left = await db.select().from(requirements).where(eq(requirements.id, id));
+      expect(left).toHaveLength(1);
+    });
   });
 });
 

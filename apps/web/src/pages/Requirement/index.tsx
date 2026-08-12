@@ -48,6 +48,7 @@ export function RequirementPage() {
   const [answering, setAnswering] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(params.get('edit') === '1');
   /** 上一轮重新分析保住了哪些人工字段 */
   const [keptFields, setKeptFields] = useState<string[]>([]);
@@ -131,6 +132,25 @@ export function RequirementPage() {
       void refresh();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : '驳回失败'),
+  });
+
+  /**
+   * 删除。成功后回需求列表 —— 详情页的主体已经不存在了，留在原地
+   * 只会是一屏各自 404 的组件。
+   *
+   * ★ 服务端挡下时（已派生出计划或工作项）报错里写了挡在哪，
+   *   原样显示即可，不要换成一句「删除失败」。
+   */
+  const remove = useMutation({
+    mutationFn: () => api.deleteRequirement(reqId!),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.requirements(projectId!) });
+      navigate(`/projects/${projectId}/requirements`);
+    },
+    onError: (e) => {
+      setDeleting(false);
+      setError(e instanceof ApiError ? e.message : '删除失败');
+    },
   });
 
   if (!projectId || !reqId) return null;
@@ -384,22 +404,40 @@ export function RequirementPage() {
               驳回也是结论 —— 「需求不成立」和「需求成立」都是业务判断，
               把驳回放低一档，等于让没资格拍板的人拍另一半的板。
           */}
-          {structured && !readOnly && !editing && (
+          {!editing && (
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {/*
+                ★ 删除对**已驳回**的需求同样开放，而且那才是它最常用的场景 ——
+                  「已驳回」列表里堆的正是录错、重复提交、试验数据这些噪音，
+                  留着会把真正的驳回结论淹掉。所以它不受 readOnly 约束。
+                ★ 权限也与驳回分开：驳回是业务判断（sponsor / pm），
+                  删除是对记录本身的处置（pm / tech_lead）。
+              */}
               <GatedButton
-                permission="requirement.approve"
-                onClick={() => setRejecting(true)}
-                className="text-xs text-slate-500 hover:text-slate-800"
+                permission="requirement.delete"
+                onClick={() => setDeleting(true)}
+                className="mr-auto text-xs text-red-600 hover:text-red-800"
               >
-                驳回
+                删除
               </GatedButton>
-              <GatedButton
-                permission="requirement.approve"
-                onClick={() => setConfirming(true)}
-                className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
-              >
-                确认需求 →
-              </GatedButton>
+              {structured && !readOnly && (
+                <>
+                  <GatedButton
+                    permission="requirement.approve"
+                    onClick={() => setRejecting(true)}
+                    className="text-xs text-slate-500 hover:text-slate-800"
+                  >
+                    驳回
+                  </GatedButton>
+                  <GatedButton
+                    permission="requirement.approve"
+                    onClick={() => setConfirming(true)}
+                    className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+                  >
+                    确认需求 →
+                  </GatedButton>
+                </>
+              )}
             </div>
           )}
 
@@ -426,6 +464,15 @@ export function RequirementPage() {
           pending={reject.isPending}
           onCancel={() => setRejecting(false)}
           onConfirm={(reason) => reject.mutate(reason)}
+        />
+      )}
+
+      {deleting && (
+        <DeleteDialog
+          title={r.title ?? r.rawInput.slice(0, 40)}
+          pending={remove.isPending}
+          onCancel={() => setDeleting(false)}
+          onConfirm={() => remove.mutate()}
         />
       )}
     </div>
@@ -594,6 +641,45 @@ function ConfirmDialog({
           onClick={onConfirm}
           disabled={pending}>
           {pending ? '生成计划中…' : '确认'}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 删除确认。
+ *
+ * ★ 要把标题回显出来 —— 从列表点进来再点删除，用户未必记得自己在哪一条上。
+ * ★ 也要说清「这不是驳回」：两个动作在同一排按钮里，选错的代价不对称。
+ */
+function DeleteDialog({
+  title,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal onClose={onCancel} title="删除需求">
+      <h2 className="text-sm font-semibold text-slate-900">删除需求</h2>
+      <p className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+        {title}
+      </p>
+      <p className="mt-2 text-xs text-slate-500">
+        记录连同它的澄清项与假设一并删除，<span className="text-red-600">无法恢复</span>。
+        如果这条需求是「不成立」而不是「录错了」，请改用驳回 —— 那会留下结论和原因。
+      </p>
+      <div className="mt-3 flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+          取消
+        </button>
+        <Button variant="destructive" size="sm" onClick={onConfirm} disabled={pending}>
+          {pending ? '删除中…' : '确认删除'}
         </Button>
       </div>
     </Modal>
