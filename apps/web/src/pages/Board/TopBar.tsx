@@ -65,6 +65,7 @@ export function TopBar({
     filters.blocked ||
     filters.humanGate ||
     filters.executorType ||
+    filters.unclaimed ||
     (filters.risk?.length ?? 0) > 0;
 
   return (
@@ -191,6 +192,18 @@ export function TopBar({
             onClick={() => onFilters({ onlyMine: !filters.onlyMine })}
           >
             {t('board.onlyMine')}
+          </FilterToggle>
+
+          {/*
+            ★ 待认领：标为人工执行但没人接的任务。批准计划时可以确认放行它们，
+              没有这个入口的话，它们在看板上和别的卡片长得一模一样，
+              而调度器又永远不会碰它们。
+          */}
+          <FilterToggle
+            active={Boolean(filters.unclaimed)}
+            onClick={() => onFilters({ unclaimed: !filters.unclaimed })}
+          >
+            {t('board.unclaimed')}
           </FilterToggle>
 
           {hasFilters && (

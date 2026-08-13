@@ -161,6 +161,7 @@ export function BoardPage() {
     Boolean(filters.blocked) ||
     Boolean(filters.humanGate) ||
     Boolean(filters.executorType) ||
+    Boolean(filters.unclaimed) ||
     (filters.risk?.length ?? 0) > 0;
 
   return (

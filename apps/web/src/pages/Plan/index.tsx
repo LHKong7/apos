@@ -39,11 +39,30 @@ export function PlanPage() {
     enabled: Boolean(planId),
   });
 
+  /**
+   * ★★ 「有人工任务没人认领」是一次**可确认**的拦截，不是失败。
+   *
+   *   服务端第一次会拒掉并列出是哪几项 —— 因为批下去它们会进 ready 然后
+   *   停在那里：调度器不碰人工任务，而没有人被通知过它是自己的。
+   *   用户看清楚之后可以回去指派，也可以确认让它们进待认领队列。
+   */
+  const [unassigned, setUnassigned] = useState<{ id: string; title: string }[] | null>(null);
+
   const approve = useMutation({
-    mutationFn: (acknowledgedOverrun: boolean) => api.approvePlan(planId!, acknowledgedOverrun),
+    mutationFn: (opts: { overrun: boolean; unassigned: boolean }) =>
+      api.approvePlan(planId!, opts.overrun, opts.unassigned),
     onSuccess: () => navigate(`/projects/${projectId}/board`),
     onError: (e) => {
       setApproving(false);
+      const detail =
+        e instanceof ApiError && (e.details as { code?: string } | undefined)?.code === 'UNASSIGNED_HUMAN_TASKS'
+          ? (e.details as { tasks: { id: string; title: string }[] }).tasks
+          : null;
+      if (detail) {
+        setUnassigned(detail);
+        setError(null);
+        return;
+      }
       setError(e instanceof ApiError ? e.message : t('plan.approveFailed'));
     },
   });
@@ -271,8 +290,50 @@ export function PlanPage() {
           detail={d}
           pending={approve.isPending}
           onCancel={() => setApproving(false)}
-          onConfirm={() => approve.mutate(d.metrics.overBudget)}
+          onConfirm={() => approve.mutate({ overrun: d.metrics.overBudget, unassigned: false })}
         />
+      )}
+
+      {/*
+        ★ 单独一个确认框，不和超支那个合并：两者要用户判断的事完全不同 ——
+          一个是「愿不愿意为此花钱」，一个是「这几项先没人接，行不行」。
+      */}
+      {unassigned && (
+        <Modal onClose={() => setUnassigned(null)} title={t('plan.unassignedTitle')}>
+          <h2 className="text-sm font-semibold text-slate-900">{t('plan.unassignedTitle')}</h2>
+          <p className="mt-1 text-xs text-slate-600">
+            {t('plan.unassignedIntro', { count: unassigned.length })}
+          </p>
+          <ul className="mt-1.5 space-y-0.5">
+            {unassigned.map((task) => (
+              <li key={task.id} className="text-[11px] text-slate-700">
+                · {task.title}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-amber-800">{t('plan.unassignedWhy')}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setUnassigned(null)}
+              className="text-xs text-slate-500"
+            >
+              {t('plan.unassignedGoAssign')}
+            </button>
+            <Button
+              variant="neutral"
+              size="sm"
+              disabled={approve.isPending}
+              onClick={() => {
+                setUnassigned(null);
+                setApproving(false);
+                approve.mutate({ overrun: d.metrics.overBudget, unassigned: true });
+              }}
+            >
+              {t('plan.unassignedConfirm')}
+            </Button>
+          </div>
+        </Modal>
       )}
 
       {revising && (

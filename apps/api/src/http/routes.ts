@@ -1362,7 +1362,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
     const body = z
-      .object({ acknowledgedOverrun: z.boolean().optional() })
+      .object({
+        acknowledgedOverrun: z.boolean().optional(),
+        /** 确认「这几项人工任务先进待认领队列」 */
+        acknowledgedUnassigned: z.boolean().optional(),
+      })
       .parse(req.body ?? {});
 
     const result = await approvePlan(db, {
@@ -1373,6 +1377,20 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
 
     if (!result.ok) {
+      /**
+       * ★ 两种拦截各用各的错误码。合成一个的话前端分不清该弹哪个确认框 ——
+       *   一个是「确认超支」，一个是「确认这几项先没人认领」，
+       *   用户要做的判断完全不同。
+       */
+      if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
+            .map((t) => t.title)
+            .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,
+          result,
+        );
+      }
       throw new ApiError(
         'BUDGET_EXCEEDED',
         `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
@@ -1395,6 +1413,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       executorType: q['executorType'],
       humanGateOnly: q['humanGate'] === 'true',
       blockedOnly: q['blocked'] === 'true',
+      unclaimedOnly: q['unclaimed'] === 'true',
     });
   });
 

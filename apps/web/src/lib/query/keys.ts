@@ -82,5 +82,7 @@ function normalizeFilters(f: BoardFilters) {
     executorType: f.executorType ?? '',
     humanGate: f.humanGate ?? false,
     blocked: f.blocked ?? false,
+    // ★ 漏一项的表现是「两组不同筛选共用一份缓存」—— 切换筛选界面不动
+    unclaimed: f.unclaimed ?? false,
   };
 }

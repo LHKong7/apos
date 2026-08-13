@@ -145,6 +145,8 @@ export interface BoardFilters {
   executorType?: string;
   humanGate?: boolean;
   blocked?: boolean;
+  /** 待认领：标为人工执行但没有执行者 —— 批准计划时确认放行的那些 */
+  unclaimed?: boolean;
 }
 
 export function boardQueryString(filters: BoardFilters): string {
@@ -153,6 +155,7 @@ export function boardQueryString(filters: BoardFilters): string {
   if (filters.risk?.length) params.set('risk', filters.risk.join(','));
   if (filters.executorType) params.set('executorType', filters.executorType);
   if (filters.humanGate) params.set('humanGate', 'true');
+  if (filters.unclaimed) params.set('unclaimed', 'true');
   if (filters.blocked) params.set('blocked', 'true');
   const qs = params.toString();
   return qs ? `?${qs}` : '';
@@ -741,10 +744,15 @@ export const api = {
 
   plan: (id: string) => request<PlanDetail>(`/plans/${id}`),
 
-  approvePlan: (id: string, acknowledgedOverrun?: boolean) =>
+  approvePlan: (
+    id: string,
+    acknowledgedOverrun?: boolean,
+    /** ★ 与超支确认分开：一个是「确认花钱」，一个是「确认这几项先没人接」 */
+    acknowledgedUnassigned?: boolean,
+  ) =>
     request<{ ok: true; planId: string; activatedTasks: number }>(`/plans/${id}/approve`, {
       method: 'POST',
-      json: { acknowledgedOverrun },
+      json: { acknowledgedOverrun, acknowledgedUnassigned },
     }),
 
   revisePlan: (id: string, feedback: string) =>

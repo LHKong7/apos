@@ -15,6 +15,7 @@ import {
   type PolicyContext,
 } from '@apos/contracts';
 import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
+import { executionModeOf } from '../agent/matching';
 import { emitAndPublish } from '../event/bus';
 import { allocateNumbers } from '../work-item/numbering';
 import { transition } from '../flow/transition';
@@ -373,8 +374,24 @@ function predictPolicyOutcomes(
 }
 
 export type ApprovePlanResult =
-  | { ok: true; planId: string; activatedTasks: number }
-  | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number };
+  | { ok: true; planId: string; activatedTasks: number; unclaimed: number }
+  | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number }
+  /**
+   * ★★ 有人工任务没人认领。
+   *
+   *   这不是「不许批准」，是「批准之前得知道」。一个 executionMode=human
+   *   却没有执行者的任务，批下去之后会进 ready 然后**停在那里**：
+   *   调度器不碰人工任务，而没有人被通知过它是自己的。它不报错、不失败，
+   *   只是永远不动 —— 计划看起来批了，其中几项其实没人接。
+   *
+   *   与 BUDGET_EXCEEDED 同一套形态：先拦一次、说清楚是哪几项，
+   *   调用方确认后再放行（那时它们进「待认领」）。
+   */
+  | {
+      ok: false;
+      code: 'UNASSIGNED_HUMAN_TASKS';
+      tasks: { id: string; title: string }[];
+    };
 
 /**
  * Human Gate：计划批准。批准后任务从 draft 转 ready，Scheduler 开始接手。
@@ -386,6 +403,8 @@ export async function approvePlan(
     approverId: string;
     correlationId: string;
     acknowledgedOverrun?: boolean;
+    /** 确认「这几项人工任务先进待认领队列」 */
+    acknowledgedUnassigned?: boolean;
   },
 ): Promise<ApprovePlanResult> {
   const [plan] = await db.select().from(plans).where(eq(plans.id, input.planId));
@@ -399,6 +418,23 @@ export async function approvePlan(
     return { ok: false, code: 'BUDGET_EXCEEDED', estimated, budget };
   }
 
+  const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
+
+  /**
+   * ★ 在写 approved 之前判，不是之后 —— 拦下来的时候计划必须还是待批状态，
+   *   否则用户补完执行者回来会发现计划已经批过了。
+   */
+  const unassignedHuman = tasks.filter(
+    (t) => t.status === 'draft' && executionModeOf(t.typeData) === 'human' && !t.executorId,
+  );
+  if (unassignedHuman.length > 0 && !input.acknowledgedUnassigned) {
+    return {
+      ok: false,
+      code: 'UNASSIGNED_HUMAN_TASKS',
+      tasks: unassignedHuman.map((t) => ({ id: t.id, title: t.title })),
+    };
+  }
+
   await db
     .update(plans)
     .set({
@@ -407,8 +443,6 @@ export async function approvePlan(
       approvedAt: new Date(),
     })
     .where(eq(plans.id, plan.id));
-
-  const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
 
   let activated = 0;
   for (const task of tasks) {
@@ -434,11 +468,18 @@ export async function approvePlan(
       approvers: [input.approverId],
       acknowledgedOverrun: input.acknowledgedOverrun ?? false,
       activatedTasks: activated,
+      /** ★ 留痕：批准时有几项人工任务是没人认领就放行的 */
+      unclaimedHumanTasks: unassignedHuman.length,
       // 批准时的自动化清单快照 —— 追溯「他到底批准了什么」
       autoActionsSnapshot: plan.autoActions,
     },
     correlationId: input.correlationId,
   });
 
-  return { ok: true, planId: plan.id, activatedTasks: activated };
+  return {
+    ok: true,
+    planId: plan.id,
+    activatedTasks: activated,
+    unclaimed: unassignedHuman.length,
+  };
 }
