@@ -280,6 +280,20 @@ export type PublishResult =
     };
 
 /**
+ * 产出到底有没有落到工作区之外。
+ *
+ * ★★ git 变体刻意没有 `persisted` 字段，因为它的判据不一样：只提交没推送时，
+ *   那个 commit 跟着工作树一起被删掉，等于没留下。所以对 git 来说
+ *   「持久化」就是 pushed。
+ *
+ * ★ 有了这个统一判据，调用方才能回答「这次的东西还在不在」——
+ *   而那正是「要不要保留工作区目录」唯一该依据的事实。
+ */
+export function isPersisted(result: PublishResult): boolean {
+  return result.kind === 'git' ? result.pushed : result.persisted;
+}
+
+/**
  * 质量核验结果 —— 与铺料/交货后端**正交**：它只是「在一个本地目录里跑一条命令」。
  *
  * ★ 名字带 Workspace 前缀是为了和 common/enums 里那个 CheckResult

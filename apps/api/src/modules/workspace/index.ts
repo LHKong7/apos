@@ -2,6 +2,7 @@ import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { agentRuns, repositories, storageTargets, type Database } from '@apos/db';
+import { isPersisted } from '@apos/contracts';
 import {
   NO_CHECK,
   type AgentPermissions,
@@ -335,6 +336,7 @@ export class WorkspaceService {
 
       return { ok: true, workspace, note };
     } catch (err) {
+      // 准备阶段失败：目录里没有任何产出，直接清掉
       await this.cleanupRunDir(input.runId).catch(() => undefined);
       const message = err instanceof GitError ? err.message : errText(err);
       return { ok: false, reason: `准备工作区失败：${message}` };
@@ -396,7 +398,16 @@ export class WorkspaceService {
       },
     );
 
-    await this.cleanupRunDir(input.runId).catch(() => undefined);
+    /**
+     * ★★ 与 pipeline 里那条同一个判断：有改动却没交货成功时不删运行目录。
+     *   删了的话，Agent 干的活既没上传、本地也没了 —— 只在 note 里留下一句话。
+     */
+    const lost = !isPersisted(outcome.published) && outcome.changes.total > 0;
+    if (lost) {
+      this.diagnose(`Run ${input.runId} 产出未交货，保留运行目录以便人工取回`);
+    } else {
+      await this.cleanupRunDir(input.runId).catch(() => undefined);
+    }
 
     const git = outcome.published.kind === 'git' ? outcome.published : null;
     const headCommit = git?.headCommit ?? null;

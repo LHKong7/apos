@@ -1,5 +1,6 @@
 import {
   EMPTY_CHANGE_SET,
+  isPersisted,
   NO_CHECK,
   type ChangeSet,
   type PublishResult,
@@ -94,15 +95,32 @@ export async function runReleasePipeline(
   }
 
   /**
-   * 无论成败都回收挂载，否则磁盘会被慢慢吃光。
+   * 回收挂载，否则磁盘会被慢慢吃光。
    *
    * ★ 逐个回收，不只回收主挂载 —— 参考仓库的工作树挂在**它自己的**镜像上，
    *   用主仓库的镜像目录去 remove 是找不到的。
+   *
+   * ★★ 但「有改动却没能交货」时**保留**目录。
+   *
+   *   publish 已经在 dispose 之前跑过了，所以顺序本身是对的。真正会丢东西的
+   *   是另一种情况：publish 报了 persisted:false（变更集不完整、部分上传失败、
+   *   或者上面那个 catch 吞掉了一个异常），而这里照样把目录删了 ——
+   *   于是 Agent 干的活既没上传、本地也没了，只在 note 里留下一句话。
+   *
+   *   这种时候磁盘该让位于数据：留着目录，让人能去捞。调用方可以用
+   *   keepMounts 显式覆盖这个判断。
    */
+  const lostIfDisposed = !isPersisted(published) && changes.total > 0;
+  if (lostIfDisposed && opts.keepMounts === undefined) {
+    notes.push('产出未能交货，工作区目录已保留以便人工取回');
+    deps.onDiagnostic?.('产出未能交货，保留工作区目录', { runId: ctx.runId, note: published.note });
+  }
+  const keep = opts.keepMounts ?? lostIfDisposed;
+
   for (const mount of ws.mounts) {
     const m = deps.sources.get(mount.source.kind);
     if (!m) continue;
-    await m.dispose(mount, { keep: opts.keepMounts }).catch((err) => {
+    await m.dispose(mount, { keep }).catch((err) => {
       deps.onDiagnostic?.(`挂载 ${mount.path} 回收失败`, err);
     });
   }
