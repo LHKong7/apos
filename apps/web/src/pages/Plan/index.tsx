@@ -93,10 +93,10 @@ export function PlanPage() {
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
           <span className="ml-auto text-[11px] text-slate-400">
-            由 Project Agent 生成 · {d.plan.model ?? t('plan.unknownModel')} ·{' '}
+            {t('plan.generatedBy', { model: d.plan.model ?? t('plan.unknownModel') })} ·{' '}
             {d.plan.generationMs ? `${Math.round(d.plan.generationMs / 1000)}s` : '—'} ·{' '}
             {money(String(d.plan.generationCost))}
           </span>
@@ -109,7 +109,7 @@ export function PlanPage() {
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
               <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                知道了
+                {t('common.gotIt')}
               </button>
             </p>
           )}
@@ -118,7 +118,7 @@ export function PlanPage() {
               「这一版是怎么来的」在下面的版本对比里，取自上一版的同一个字段。 */}
           {d.plan.revisionFeedback && (
             <p className="rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-              💬 这一版被{t('plan.requestChanges')}：{d.plan.revisionFeedback}
+              {t('plan.revisionFeedback', { feedback: d.plan.revisionFeedback })}
             </p>
           )}
 
@@ -159,9 +159,11 @@ export function PlanPage() {
 
           {d.metrics.overBudget && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
-              ⚠ 预估成本加上已花费会超出项目预算（
-              {money(String(d.metrics.spent))} + {money(String(d.metrics.estimatedCost))} &gt;{' '}
-              {money(String(d.metrics.budget ?? 0))}）。批准时需要显式确认超支
+              {t('plan.overBudget', {
+                spent: money(String(d.metrics.spent)),
+                estimated: money(String(d.metrics.estimatedCost)),
+                budget: money(String(d.metrics.budget ?? 0)),
+              })}
             </p>
           )}
 
@@ -171,7 +173,7 @@ export function PlanPage() {
           {/* ── 任务拆解 ── */}
           <section className="rounded border border-slate-200 bg-white">
             <h2 className="border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-              任务拆解（{d.tasks.length}）
+              {t('plan.taskBreakdown', { count: d.tasks.length })}
             </h2>
             <ul>
               {d.tasks.map((task) => (
@@ -209,7 +211,7 @@ export function PlanPage() {
           {d.assumptions.length > 0 && (
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <h2 className="text-xs font-medium text-slate-700">
-                📌 本计划基于以下假设（{d.assumptions.length}）
+                {t('plan.assumptions', { count: d.assumptions.length })}
               </h2>
               <ul className="mt-1 space-y-0.5">
                 {d.assumptions.map((a) => (
@@ -226,7 +228,7 @@ export function PlanPage() {
                   to={`/projects/${projectId}/requirements/${d.plan.requirementId}`}
                   className="mt-1 inline-block text-[11px] text-slate-500 underline"
                 >
-                  有误？返回需求页
+                  {t('plan.wrongGoToRequirement')}
                 </Link>
               )}
             </section>
@@ -249,15 +251,16 @@ export function PlanPage() {
                 onClick={() => setApproving(true)}
                 className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
               >
-                批准并开始执行 →
+                {t('plan.approveAndStart')}
               </GatedButton>
             </div>
           )}
 
           {approved && (
             <p className="rounded border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-900">
-              计划已批准{d.plan.approvedBy.length > 0 && `（${d.plan.approvedBy.join('、')}）`}，
-              任务已进入看板开始流动
+              {t('plan.approvedNotice', {
+                by: d.plan.approvedBy.length > 0 ? `（${d.plan.approvedBy.join('、')}）` : '',
+              })}
             </p>
           )}
         </div>
@@ -301,7 +304,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
     <section className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-medium text-amber-900">
-          ⚠ 批准后将自动发生（无需你再次确认）
+          {t('plan.autoAfterApproval')}
         </h2>
         <button
           type="button"
@@ -315,7 +318,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
       <ul className="mt-1 space-y-0.5">
         {d.autoActions.length === 0 && (
           <li className="text-xs text-amber-900">
-            当前规则下没有任何任务会自动执行 —— 每一步都会来找人
+            {t('plan.noAutoActions')}
           </li>
         )}
         {d.autoActions.map((a, i) => (
@@ -332,7 +335,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
       {d.humanGates.length > 0 && (
         <div className="mt-1.5 border-t border-amber-200 pt-1.5">
           <p className="text-[11px] text-amber-900">
-            仍需人确认的（{d.humanGates.length}）：
+            {t('plan.stillNeedsHuman', { count: d.humanGates.length })}
             {!expanded && d.humanGates.map((g) => g.taskTitle).join(' · ')}
           </p>
           {expanded && (
@@ -350,9 +353,10 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
 
       {expanded && stale && (
         <p className="mt-1.5 border-t border-amber-200 pt-1.5 text-[11px] text-amber-700">
-          以上是**计划生成时**按当时的 Policy 算出来的。按当前规则，
-          {d.currentBoundary.auto.length} 类操作自动执行、{d.currentBoundary.human.length} 类需要人确认。
-          批准时以实际生效的规则为准
+          {t('plan.staleBoundary', {
+            auto: d.currentBoundary.auto.length,
+            human: d.currentBoundary.human.length,
+          })}
         </p>
       )}
 
@@ -360,7 +364,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
         to={`/projects/${d.plan.projectId}/settings/policies`}
         className="mt-1 inline-block text-[11px] text-amber-800 underline"
       >
-        调整这些规则 → Policy 配置
+        {t('plan.adjustRules')}
       </Link>
     </section>
   );
@@ -420,10 +424,12 @@ function ApproveDialog({
         <h2 className="text-sm font-semibold text-slate-900">{t('plan.approveTitle')}</h2>
         <div className="mt-2 space-y-1 text-xs text-slate-700">
           <p>
-            · {d.metrics.agentTasks} 个任务将由 Agent 自动执行，预计消耗{' '}
-            {money(String(d.metrics.estimatedCost))}
+            {t('plan.confirmAgentTasks', {
+              count: d.metrics.agentTasks,
+              cost: money(String(d.metrics.estimatedCost)),
+            })}
           </p>
-          <p>· {d.metrics.humanGateCount} 个节点仍会来找人确认</p>
+          <p>{t('plan.confirmHumanGates', { count: d.metrics.humanGateCount })}</p>
           <p>{t('plan.approveStep')}</p>
         </div>
 
@@ -435,13 +441,13 @@ function ApproveDialog({
               onCheckedChange={setAcknowledged}
               className="mt-0.5"
             />
-            我知道这份计划会让项目超出预算，仍然批准
+            {t('plan.acknowledgeOverBudget')}
           </label>
         )}
 
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-            返回
+            {t('common.back')}
           </button>
           <Button variant="neutral" size="sm"
             onClick={onConfirm}
@@ -469,7 +475,7 @@ function ReviseDialog({
     <Modal onClose={onCancel} title={t('plan.requestChangesTitle')}>
       <h2 className="text-sm font-semibold text-slate-900">{t('plan.requestChanges')}</h2>
       <p className="mt-1 text-xs text-slate-500">
-        说清楚要改什么，Agent 会据此重新规划成新的一版。旧版会保留，方便对照
+        {t('plan.requestChangesHint')}
       </p>
       <Textarea
         value={feedback}
@@ -480,7 +486,7 @@ function ReviseDialog({
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(feedback.trim())}

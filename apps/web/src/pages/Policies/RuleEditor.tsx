@@ -116,7 +116,7 @@ export function RuleEditor({
         {template && <p className="mt-0.5 text-xs text-slate-500">{template.purpose}</p>}
 
         <label className="mt-3 block text-xs text-slate-600">
-          规则名称
+          {t('rule.name')}
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -124,14 +124,14 @@ export function RuleEditor({
         </label>
 
         <label className="mt-2 block text-xs text-slate-600">
-          优先级
+          {t('rule.priority')}
           <Input
             type="number"
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
             className="mt-0.5 w-24" />
           <span className="ml-2 text-[11px] text-slate-400">
-            数字越小越先匹配，命中后停止。组织规则占 1–20
+            {t('rule.priorityHint')}
           </span>
         </label>
 
@@ -182,8 +182,7 @@ export function RuleEditor({
             <p className="mt-0.5 text-xs leading-5 text-slate-700">{draft.explanation}</p>
             {editing && (
               <p className="mt-1 text-[11px] text-slate-400">
-                MVP 只支持改名称、优先级与启停。条件与动作要改就重新从模板创建 ——
-                自由条件编辑留到有人真的被模板卡住时再做
+                {t('rule.editLimits')}
               </p>
             )}
           </div>
@@ -204,8 +203,7 @@ export function RuleEditor({
             <SimulationView result={simulation} />
           ) : (
             <p className="mt-1 text-[11px] text-slate-400">
-              拿这条规则到过去 90 天的真实评估上跑一遍，看它会自动处理多少次、
-              其中多少次与人类当时的判断不一致
+              {t('rule.simulationHint')}
             </p>
           )}
         </div>
@@ -216,7 +214,7 @@ export function RuleEditor({
 
         <div className="mt-3 flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-800">
-            取消
+            {t('common.cancel')}
           </button>
           <Button variant="neutral" size="sm"
             onClick={() => save.mutate(needsAck)}
@@ -243,15 +241,17 @@ function SimulationView({ result }: { result: SimulationResponse }) {
   return (
     <div className="mt-1.5 space-y-1.5 text-xs">
       <p className="text-slate-600">
-        过去的 {result.totalSamples} 次评估里，这条规则会自动处理{' '}
-        {t('rule.wouldAutoHandle', { count: result.wouldAutoHandle })}
+        {t('rule.simulationSummary', {
+          total: result.totalSamples,
+          handled: result.wouldAutoHandle,
+        })}
         <span className="ml-1 text-[11px] text-slate-400">（{CONFIDENCE[result.confidence]}）</span>
       </p>
 
       {result.mismatches.length > 0 ? (
         <div className="rounded bg-amber-50 px-2 py-1.5">
           <p className="font-medium text-amber-900">
-            ⚠ 其中 {result.mismatches.length} 个任务，人类当时是驳回或要求修改的
+            {t('rule.mismatchWarning', { count: result.mismatches.length })}
           </p>
           <ul className="mt-1 space-y-0.5">
             {result.mismatches.slice(0, 5).map((m) => (
@@ -263,19 +263,21 @@ function SimulationView({ result }: { result: SimulationResponse }) {
           </ul>
           {result.suggestions.length > 0 && (
             <p className="mt-1 text-[11px] text-amber-900">
-              💡 建议增加排除条件：
+              {t('rule.suggestExclusion')}
               {result.suggestions
                 .map((s) => `${FACT_LABELS[s.addCondition.fact as FactKey] ?? s.addCondition.fact} ≠ ${String(s.addCondition.value)}`)
                 .join('、')}
               <span className="ml-1 text-amber-700">
-                （基于 {result.suggestions[0]!.wouldEliminate} 个案例的统计模式，不是因果结论，请人工确认）
+                {t('rule.suggestionBasis', {
+                  count: result.suggestions[0]!.wouldEliminate,
+                })}
               </span>
             </p>
           )}
         </div>
       ) : (
         <p className="rounded bg-green-50 px-2 py-1 text-[11px] text-green-900">
-          ✓ 没有发现与人类判断不一致的历史案例
+          {t('rule.noMismatches')}
         </p>
       )}
 

@@ -146,7 +146,7 @@ export function RolesPage() {
               to={`/projects/${projectId}/settings/members`}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              ← 成员与角色
+              {t('accounts.backToMembers')}
             </Link>
           )}
           <GatedButton
@@ -158,11 +158,11 @@ export function RolesPage() {
             }}
             className="ml-auto rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
           >
-            新建角色
+            {t('roles.new')}
           </GatedButton>
         </div>
         <p className="mt-0.5 text-[11px] text-slate-400">
-          内置角色就是权限矩阵本身，不可修改。组织自己的分工（研发 / 运营 / 测试…）在这里定义
+          {t('roles.hint')}
         </p>
       </div>
 
@@ -184,7 +184,7 @@ export function RolesPage() {
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}
                 <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                  知道了
+                  {t('common.gotIt')}
                 </button>
               </p>
             )}
@@ -283,7 +283,7 @@ function RoleSection({
                 </span>
                 <span className="text-[11px] text-slate-400">{t('roles.permissionCount', { count: r.permissions.length })}</span>
                 <span className="text-[11px] text-slate-400">
-                  在任 {r.memberCount.human} 人
+                  {t('roles.humanCount', { count: r.memberCount.human })}
                   {r.memberCount.agent > 0 && t('roles.agentCount', { count: r.memberCount.agent })}
                 </span>
               </div>
@@ -301,7 +301,7 @@ function RoleSection({
                     onClick={() => onDelete(r.key)}
                     className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50"
                   >
-                    删除
+                    {t('common.delete')}
                   </GatedButton>
                 )}
               </div>
@@ -396,7 +396,7 @@ function RoleEditor({
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-600">
-            标识
+            {t('roles.key')}
             <span className="ml-1 text-[11px] text-slate-400">{t('roles.referencedByPolicy')}</span>
           </span>
           <Input
@@ -429,17 +429,17 @@ function RoleEditor({
             className="mt-0.5"
           />
           <span className={clsx(!agentAllowed && 'text-slate-400')}>
-            允许 Agent 担任
-            <span className="ml-1 text-[11px] text-slate-400">
-              （人类总是可以担任）
-            </span>
+            {t('roles.allowAgents')}
+            <span className="ml-1 text-[11px] text-slate-400">{t('roles.humansAlways')}</span>
           </span>
         </label>
         {!agentAllowed && (
           <p className="mt-1 text-[11px] text-amber-800">
-            ⚠ 这个角色含有只能由人类行使的权限：
-            {blocking.map((p) => available.find((a) => a.key === p)?.label).join('、')}。
-            它们是「人类始终掌握最终决策权」的落点 —— 去掉它们才能给 Agent。
+            {t('roles.humanOnlyBlocking', {
+              permissions: blocking
+                .map((p) => available.find((a) => a.key === p)?.label)
+                .join('、'),
+            })}
           </p>
         )}
       </div>
@@ -447,11 +447,10 @@ function RoleEditor({
       {/* ── 权限 ── */}
       <div className="mt-3">
         <p className="text-xs font-medium text-slate-700">
-          权限（已选 {draft.permissions.size} 项）
+          {t('roles.permissionsSelected', { count: draft.permissions.size })}
         </p>
         <p className="text-[11px] text-slate-400">
-          组织级权限（身份管理、定义角色、导出审计…）不在这里 ——
-          它们只属于组织管理员，下放会让「能创建角色的角色」一步走到管理员
+          {t('roles.orgPermissionsNote')}
         </p>
         <div className="mt-1.5 space-y-2">
           {groups.map(([group, items]) => (
@@ -473,7 +472,7 @@ function RoleEditor({
                           className="ml-1 text-amber-700"
                           title={t('roles.humanOnlyHint')}
                         >
-                          仅人类
+                          {t('roles.humanOnlyTag')}
                         </span>
                       )}
                     </span>

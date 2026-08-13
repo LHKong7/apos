@@ -61,7 +61,10 @@ export function VersionDiff({ planId }: { planId: string }) {
           </select>
         )}
         <span className="text-[11px] text-slate-400">
-          共 {versions.length} 个版本，当前 v{current?.version}
+          {t('planDiff.versionCount', {
+            count: versions.length,
+            current: current?.version ?? '',
+          })}
         </span>
       </div>
 
@@ -69,7 +72,7 @@ export function VersionDiff({ planId }: { planId: string }) {
           diff 说改了什么，这句说为什么改。 */}
       {q.data.feedback && (
         <p className="border-b border-slate-100 bg-sky-50 px-3 py-1.5 text-[11px] text-sky-900">
-          💬 这一版是基于这条意见重新规划的：{q.data.feedback}
+          {t('planDiff.basedOnFeedback', { feedback: q.data.feedback })}
         </p>
       )}
 
@@ -77,7 +80,7 @@ export function VersionDiff({ planId }: { planId: string }) {
         <p className="px-3 py-2 text-[11px] text-slate-500">{t('planDiff.firstVersion')}</p>
       ) : diff.identical ? (
         <p className="px-3 py-2 text-[11px] text-slate-500">
-          重新规划后产出的是一份内容相同的计划 —— 你上次提的意见可能没有被采纳
+          {t('planDiff.identical')}
         </p>
       ) : (
         <>
@@ -109,12 +112,12 @@ export function VersionDiff({ planId }: { planId: string }) {
               <ul className="mt-0.5 space-y-0.5">
                 {diff.risks.added.map((r) => (
                   <li key={r} className="text-[11px] text-amber-800">
-                    + 新识别：{r}
+                    {t('planDiff.riskAdded', { risk: r })}
                   </li>
                 ))}
                 {diff.risks.removed.map((r) => (
                   <li key={r} className="text-[11px] text-slate-500">
-                    − 不再列出：{r}
+                    {t('planDiff.riskRemoved', { risk: r })}
                   </li>
                 ))}
               </ul>
@@ -142,7 +145,7 @@ function BoundarySection({ boundary }: { boundary: PlanDiff['boundary'] }) {
   if (nothing) {
     return (
       <p className="px-3 py-1.5 text-[11px] text-slate-500">
-        自动化边界没有变化 —— 这一版不会比上一版多做任何未经你同意的事
+        {t('planDiff.boundaryUnchanged')}
       </p>
     );
   }
@@ -167,23 +170,23 @@ function BoundarySection({ boundary }: { boundary: PlanDiff['boundary'] }) {
       <ul className="mt-0.5 space-y-0.5">
         {boundary.autoAdded.map((a) => (
           <li key={`aa-${a}`} className="text-[11px] text-amber-900">
-            + 新增自动执行：{a}
+            {t('planDiff.autoAdded', { action: a })}
             <span className="ml-1 text-amber-700">{t('planDiff.notInPrevious')}</span>
           </li>
         ))}
         {boundary.gatesRemoved.map((g) => (
           <li key={`gr-${g}`} className="text-[11px] text-amber-900">
-            ⚠ 「{g}」不再需要你确认，改为 Agent 直接执行
+            {t('planDiff.gateRemoved', { gate: g })}
           </li>
         ))}
         {boundary.gatesAdded.map((g) => (
           <li key={`ga-${g}`} className="text-[11px] text-slate-600">
-            + 「{g}」新增为需要你确认（更保守）
+            {t('planDiff.gateAdded', { gate: g })}
           </li>
         ))}
         {boundary.autoRemoved.map((a) => (
           <li key={`ar-${a}`} className="text-[11px] text-slate-600">
-            − 不再自动执行：{a}
+            {t('planDiff.autoRemoved', { action: a })}
           </li>
         ))}
       </ul>
@@ -211,7 +214,7 @@ function TaskSection({
     <div className="border-t border-slate-100 px-3 py-1.5">
       <div className="flex flex-wrap items-baseline gap-2">
         <p className="text-[11px] text-slate-500">
-          任务变化（{changed.length}）
+          {t('planDiff.taskChanges', { count: changed.length })}
         </p>
         {unchangedCount > 0 && (
           <button

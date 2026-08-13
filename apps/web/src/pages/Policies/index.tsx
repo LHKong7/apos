@@ -106,14 +106,14 @@ export function PoliciesPage() {
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
 
           <RoleBadge projectId={projectId} />
 
           {/* ★ 自治等级是 Policy 的总开关，放在最显眼处 */}
           <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600">
-            自治等级
+            {t('policy.autonomyLevel')}
             <select
               value={data?.project.autonomyLevel ?? 'agent_led_approval'}
               onChange={(e) => setAutonomyTarget(e.target.value as AutonomyLevel)}
@@ -174,7 +174,7 @@ export function PoliciesPage() {
             {/* ── 摘要：全页最重要的一行 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <p className="text-xs text-slate-700">
-                ℹ 当前配置下：
+                {t('policy.currentConfig')}
                 <span className="font-medium">{data.summary.auto.length}</span> {t('policy.summaryAuto')}
                 <span className="font-medium">{data.summary.human.length}</span> {t('policy.summaryHuman')}
                 {data.summary.depends.length > 0 && (
@@ -192,8 +192,10 @@ export function PoliciesPage() {
                 </button>
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
-                继承自组织的规则 {data.orgPolicies.length} 条（不可删除，可收紧）· 项目自定义{' '}
-                {data.projectPolicies.length} 条
+                {t('policy.ruleCounts', {
+                  org: data.orgPolicies.length,
+                  project: data.projectPolicies.length,
+                })}
               </p>
 
               {expandSummary && (
@@ -221,10 +223,10 @@ export function PoliciesPage() {
             {data.issues.length > 0 && (
               <section className="rounded border border-slate-200 bg-white px-3 py-2">
                 <h2 className="text-xs font-medium text-slate-700">
-                  ⚠ 检测到 {data.issues.length} 个问题
+                  {t('policy.issuesFound', { count: data.issues.length })}
                 </h2>
                 <p className="text-[11px] text-slate-400">
-                  基于常见场景的枚举检查。没报出来不等于没有问题 —— 这是抽样，不是证明
+                  {t('policy.issuesHint')}
                 </p>
                 <ul className="mt-1 space-y-1">
                   {data.issues.map((issue, i) => {
@@ -243,7 +245,7 @@ export function PoliciesPage() {
                               onClick={() => setHighlight(new Set(issue.policyIds))}
                               className="text-[11px] text-slate-500 underline hover:text-slate-800"
                             >
-                              定位到规则
+                              {t('policy.locateRule')}
                             </button>
                           )}
                         </div>
@@ -311,8 +313,12 @@ export function PoliciesPage() {
 
                 {/* ★ 如实说明哪些数据源没接 —— 依赖它们的规则永远不会命中 */}
                 <p className="text-[11px] text-slate-400">
-                  已接入的数据源：{data.wiredFacts.length > 0 ? data.wiredFacts.join('、') : t('policy.none')}。
-                  CI 测试结果与安全扫描尚未接入，条件里用到它们的规则不会命中，体检区会单独标出
+                  {t('policy.wiredFacts', {
+                    facts:
+                      data.wiredFacts.length > 0
+                        ? data.wiredFacts.join('、')
+                        : t('policy.none'),
+                  })}
                 </p>
               </>
             )}
@@ -379,7 +385,7 @@ export function PoliciesPage() {
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
           {toast}
           <button type="button" className="ml-2 underline" onClick={() => setToast(null)}>
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}
@@ -443,7 +449,7 @@ function ToggleDialog({
       </p>
 
       <label className="mt-3 block text-xs text-slate-600">
-        原因
+        {t('policy.reason')}
         <Textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -457,12 +463,12 @@ function ToggleDialog({
 
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onClose} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="neutral" size="sm"
           onClick={() => mut.mutate()}
           disabled={!reason.trim() || mut.isPending}>
-          确认
+          {t('common.confirm')}
         </Button>
       </div>
     </Modal>
@@ -517,12 +523,15 @@ function AutonomyDialog({
         {preview.data && (
           <div className="mt-3 space-y-2 text-xs">
             <p className="text-slate-700">
-              自动执行的操作类型：{preview.data.autoBefore} → {preview.data.autoAfter}
+              {t('policy.autoTypesChange', {
+                before: preview.data.autoBefore,
+                after: preview.data.autoAfter,
+              })}
             </p>
             {preview.data.becomesAuto.length > 0 && (
               <div className="rounded bg-green-50 px-2 py-1.5">
                 <p className="text-[11px] font-medium text-green-900">
-                  这些从此不再找你（{preview.data.becomesAuto.length}）
+                  {t('policy.becomesAuto', { count: preview.data.becomesAuto.length })}
                 </p>
                 <p className="text-[11px] text-green-900">{preview.data.becomesAuto.join('、')}</p>
               </div>
@@ -530,30 +539,30 @@ function AutonomyDialog({
             {preview.data.becomesGated.length > 0 && (
               <div className="rounded bg-amber-50 px-2 py-1.5">
                 <p className="text-[11px] font-medium text-amber-900">
-                  这些反过来会开始找你（{preview.data.becomesGated.length}）
+                  {t('policy.becomesGated', { count: preview.data.becomesGated.length })}
                 </p>
                 <p className="text-[11px] text-amber-900">{preview.data.becomesGated.join('、')}</p>
               </div>
             )}
             {preview.data.becomesAuto.length === 0 && preview.data.becomesGated.length === 0 && (
               <p className="text-slate-500">
-                当前规则已经覆盖了这些场景，切换自治等级不会改变任何操作的判定
+                {t('policy.noChange')}
               </p>
             )}
             <p className="text-[11px] text-slate-400">
-              安全底线不受自治等级影响：删除资源、权限变更、执行付款永远需要人确认
+              {t('policy.safetyFloor')}
             </p>
           </div>
         )}
 
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="text-xs text-slate-500">
-            取消
+            {t('common.cancel')}
           </button>
           <Button variant="neutral" size="sm"
             onClick={() => apply.mutate()}
             disabled={apply.isPending}>
-            确认切换
+            {t('policy.confirmSwitch')}
           </Button>
         </div>
       </div>
@@ -577,7 +586,7 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
         {history.isPending && <p className="mt-2 text-xs text-slate-400">{t('common.loading')}</p>}
         {history.data?.history.length === 0 && (
           <p className="mt-2 text-xs text-slate-400">
-            这条规则自创建以来没有被改动过（组织基线规则不经本页管理，没有变更记录）
+            {t('policy.noHistory')}
           </p>
         )}
 
@@ -602,7 +611,7 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
 
         <div className="mt-3 flex justify-end">
           <button type="button" onClick={onClose} className="text-xs text-slate-500">
-            关闭
+            {t('common.close')}
           </button>
         </div>
       </div>
