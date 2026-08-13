@@ -13,6 +13,7 @@ import { seedAgent } from '../test/agent-fixtures';
 import {
   auth as authFor,
   createMember,
+  createOutsider,
   integrationRegistry,
   resetDb,
   seedFixture,
@@ -166,6 +167,34 @@ describe('存储目标登记', () => {
    * ★ 改类型要拒：两类的必填列完全不重叠，改一半会被库约束整个拒掉，
    *   而报错指向的是约束名不是字段。
    */
+  /**
+   * ★★ PATCH 上没有 superRefine（路由用 innerType().partial()），
+   *   所以「把必填项清空」此前是一路走到库里被 check 约束拒掉的 ——
+   *   回给管理员的是一句 storage_targets_shape_check，看不出该补哪一栏。
+   */
+  it('★ 局部更新清空必填项，要报到具体字段而不是库约束名', async () => {
+    const id = (await create(S3)).json().storageTarget.id;
+
+    const cleared = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/storage-targets/${id}`,
+      headers: auth(),
+      payload: { bucket: null },
+    });
+    expect(cleared.statusCode).toBe(400);
+    expect(cleared.json().error.message).toContain('bucket');
+    expect(cleared.json().error.message).not.toContain('shape_check');
+
+    // ★ 没提到的字段不该被当成「要清空」
+    const kept = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/storage-targets/${id}`,
+      headers: auth(),
+      payload: { name: '改个名字' },
+    });
+    expect(kept.statusCode).toBe(200);
+  });
+
   it('★ 不能修改类型', async () => {
     const id = (await create(S3)).json().storageTarget.id;
     const changed = await app.inject({
@@ -305,6 +334,40 @@ describe('交货目标', () => {
     expect(blocked.json().error.message).toContain('dataset');
   });
 
+  /**
+   * ★★ 保存那一刻拒了只读的目标，可只读是后来也能改的 —— 从这一头关掉，
+   *   等于绕过那道检查：收尾时被跳过，任务照样成功、产物页照样有记录，
+   *   只是东西哪儿都没到。删除那条路早就在挡同一件事。
+   */
+  it('★ 还有登记交货到它时，不能把它改成只读', async () => {
+    const dest = await writableTarget();
+    await create({ ...S3, ref: 'dataset', deliveryTargetId: dest });
+
+    const blocked = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/storage-targets/${dest}`,
+      headers: auth(),
+      payload: { writable: false },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error.message).toContain('dataset');
+
+    // ★ 断言库里没变 —— 「先改再报错」照样能让上面那行通过
+    const [row] = await db.select().from(storageTargets).where(eq(storageTargets.id, dest));
+    expect(row!.writable).toBe(true);
+  });
+
+  it('没有登记指向它时，改成只读是允许的', async () => {
+    const dest = await writableTarget();
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/storage-targets/${dest}`,
+      headers: auth(),
+      payload: { writable: false },
+    });
+    expect(ok.statusCode).toBe(200);
+  });
+
   it('null 清空，回到默认交货', async () => {
     const dest = await writableTarget();
     const id = (await create({ ...S3, ref: 'dataset', deliveryTargetId: dest })).json()
@@ -349,6 +412,90 @@ describe('权限', () => {
       headers: authFor(lead),
     });
     expect(denied.statusCode).toBe(403);
+  });
+});
+
+/**
+ * 租户边界。
+ *
+ * ★★ 这一组测的不是「够不够格」，而是「这条登记是不是你的」—— 两件事，
+ *   而 rbac 那道闸只答得了前一件。
+ *
+ *   `/api/v1/admin/…` 不落在 PROJECT_SCOPED_URL / RESOURCE_SCOPED_URL
+ *   任何一条正则里（见 rbac.ts），所以闸门判的是「调用者在**自己当前组织**里
+ *   有没有 storage_target.manage」。越界的人在自己组织里权限是满的 ——
+ *   于是闸门放行，剩下的全靠 handler 自己按 orgId 收窄。
+ *
+ * ★ 攻击者用 org_admin 而不是普通成员：普通成员在权限矩阵那层就被 403 挡下，
+ *   拿它来断言 404 的话，产品代码查不查组织都是绿的。而自助注册默认开着，
+ *   注册即是新组织的 org_admin —— 这个身份不是假想的，是默认可得的。
+ *
+ * ★ 越界一律 404 而不是 403：403 等于确认「这个 id 存在」，
+ *   把 id 变成可枚举的探针。与 assertProjectAccess 的选择一致。
+ */
+describe('★ 跨组织越界', () => {
+  /** 别的组织里权限拉满的人 —— 自助注册就能得到这个身份 */
+  const attacker = async () =>
+    authFor((await createOutsider(db, fx, { orgRole: 'org_admin' })).userId);
+
+  it('改不动别的组织的登记', async () => {
+    const id = (await create(S3)).json().storageTarget.id;
+
+    const denied = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/storage-targets/${id}`,
+      headers: await attacker(),
+      payload: { endpoint: 'https://attacker.example.com', name: '已被改掉' },
+    });
+    expect(denied.statusCode).toBe(404);
+
+    /**
+     * ★ 断言库里没变，不只断言状态码。少了这一条，一个「先改再报错」的
+     *   实现照样能让上面那行通过 —— 而那正是最坏的情况。
+     */
+    const [row] = await db.select().from(storageTargets).where(eq(storageTargets.id, id));
+    expect(row!.endpoint).toBe(S3.endpoint);
+    expect(row!.name).toBe(S3.name);
+  });
+
+  it('删不掉别的组织的登记', async () => {
+    const id = (await create(S3)).json().storageTarget.id;
+
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/storage-targets/${id}`,
+      headers: await attacker(),
+    });
+    expect(denied.statusCode).toBe(404);
+
+    const rows = await db.select().from(storageTargets).where(eq(storageTargets.id, id));
+    expect(rows).toHaveLength(1);
+  });
+
+  /**
+   * ★ 探测越界比改删更隐蔽：它是只读的，却会拿着**对方的**凭证去连远端，
+   *   并把对象名回给调用者。挡在这里，不能等它连出去。
+   */
+  it('探测不到别的组织的登记', async () => {
+    const id = (await create(S3)).json().storageTarget.id;
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/storage-targets/${id}/probe`,
+      headers: await attacker(),
+    });
+    expect(denied.statusCode).toBe(404);
+  });
+
+  it('列表里也看不见别的组织的登记', async () => {
+    await create(S3);
+
+    const seen = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/storage-targets',
+      headers: await attacker(),
+    });
+    expect(seen.json().storageTargets).toEqual([]);
   });
 });
 

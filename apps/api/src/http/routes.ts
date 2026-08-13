@@ -1603,7 +1603,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
     const subject = await rbac.subjectForAgent(req, userId, id);
-    const result = await updateAgent(db, deps.registry, id, body, userId, (permission) =>
+    const result = await updateAgent(db, deps.registry, orgId, id, body, userId, (permission) =>
       rbac.assertPermission(subject, permission, { agentId: id }),
     );
 
@@ -1630,16 +1630,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.delete('/api/v1/admin/agents/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return deleteAgent(db, id);
+    return deleteAgent(db, orgId, id);
   });
 
   /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
   app.post('/api/v1/admin/agents/:id/probe', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return probeAgent(db, deps.registry, id);
+    return probeAgent(db, deps.registry, orgId, id);
   });
 
   // ── 代码仓库登记 ────────────────────────────────────────────────────
@@ -1657,12 +1657,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.patch('/api/v1/admin/repositories/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     const body = RepositoryInput.partial()
       .extend({ status: z.enum(['active', 'disabled']).optional() })
       .parse(req.body);
-    return updateRepository(db, id, body);
+    return updateRepository(db, orgId, id, body);
   });
 
   /**
@@ -1670,15 +1670,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
    */
   app.post('/api/v1/admin/repositories/:id/probe', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return probeRepository(db, id);
+    return probeRepository(db, orgId, id);
   });
 
   app.delete('/api/v1/admin/repositories/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return deleteRepository(db, id);
+    return deleteRepository(db, orgId, id);
   });
 
   // ── 存储目标登记（非 Git 的工作区来源）──────────────────────────────
@@ -1696,7 +1696,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.patch('/api/v1/admin/storage-targets/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     /**
      * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
@@ -1708,20 +1708,20 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .partial()
       .extend({ status: z.enum(['active', 'disabled']).optional() })
       .parse(req.body);
-    return updateStorageTarget(db, id, body);
+    return updateStorageTarget(db, orgId, id, body);
   });
 
   /** 连通性探测。★ 与仓库那边同理：配错了要在配置页上知道，而不是等第一次派发 */
   app.post('/api/v1/admin/storage-targets/:id/probe', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return probeStorageTarget(db, id);
+    return probeStorageTarget(db, orgId, id);
   });
 
   app.delete('/api/v1/admin/storage-targets/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return deleteStorageTarget(db, id);
+    return deleteStorageTarget(db, orgId, id);
   });
 
   // ── 项目工程约定 ────────────────────────────────────────────────────

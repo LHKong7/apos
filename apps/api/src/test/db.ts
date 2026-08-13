@@ -140,8 +140,22 @@ export async function seedFixture(
   return { orgId: org!.id, userId: user!.id, projectId: project!.id };
 }
 
-/** 造一个「不是本项目成员」的用户，用于验证越权被挡下 */
-export async function createOutsider(db: Database, fx: Fixture) {
+/**
+ * 造一个「不是本项目成员」的用户，用于验证越权被挡下。
+ *
+ * ★★ `orgRole: 'org_admin'` 是测跨组织越权时**必须**传的。
+ *
+ *   默认的 member 在权限矩阵那一层就被挡下了，于是断言 404 的测试
+ *   不管产品代码查不查组织都是绿的 —— 它测的是权限，不是租户边界。
+ *   要证明边界本身成立，越界的那个人得在**自己组织**里权限拉满：
+ *   自助注册默认开着，注册即是新组织的 org_admin，所以这既是最强的
+ *   攻击者，也是最现实的那一个。
+ */
+export async function createOutsider(
+  db: Database,
+  fx: Fixture,
+  opts: { orgRole?: 'org_admin' | 'member' } = {},
+) {
   const [org] = await db
     .insert(organizations)
     .values({ name: 'Other Corp', slug: `other-${randomUUID().slice(0, 8)}` })
@@ -150,7 +164,9 @@ export async function createOutsider(db: Database, fx: Fixture) {
     .insert(users)
     .values({ email: `outsider-${randomUUID()}@other.dev`, name: '外部人员' })
     .returning();
-  await db.insert(organizationMembers).values({ orgId: org!.id, userId: user!.id });
+  await db
+    .insert(organizationMembers)
+    .values({ orgId: org!.id, userId: user!.id, orgRole: opts.orgRole ?? 'member' });
   await syncBuiltinRoles(db, org!.id);
   return { orgId: org!.id, userId: user!.id, projectId: fx.projectId };
 }

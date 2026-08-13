@@ -9,6 +9,7 @@ import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import {
   auth as authFor,
+  createOutsider,
   integrationRegistry,
   resetDb,
   seedFixture,
@@ -686,6 +687,107 @@ describe('Agent 档案与权限', () => {
   it('负责人不存在时拒绝 —— 问责链条不能断', async () => {
     const res = await createAgent({ ownerId: '11111111-1111-4111-8111-111111111111' });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+/**
+ * 租户边界 —— Agent 与仓库登记。
+ *
+ * ★★ 与存储目标那一组同一条纪律（见 storage-targets.test.ts）：
+ *   `/api/v1/admin/…` 不在 rbac 的两条作用域正则里，闸门只答得了
+ *   「够不够格」，答不了「这个资源是谁的」。
+ *
+ * ★ Agent 上这道口子比仓库更要紧：Agent 挂着凭证引用与 resourceScopes，
+ *   越界改一个 Agent 等于改别人的执行主体 —— 把 allowedTools 放开、
+ *   把 resourceScopes 指到自己的仓库，对方那边不会有任何异常。
+ *   `ownsAgent` 比的只是 ownerId，同样不看组织，指望不上。
+ */
+describe('★ 跨组织越界', () => {
+  const attacker = async () =>
+    authFor((await createOutsider(db, fx, { orgRole: 'org_admin' })).userId);
+
+  const seedRepo = async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/repositories',
+      headers: auth(),
+      payload: {
+        ref: 'order-service',
+        name: 'Order Service',
+        remoteUrl: 'https://github.com/acme/order-service.git',
+      },
+    });
+    return created.json().repository.id as string;
+  };
+
+  it('改不动别的组织的 Agent', async () => {
+    const agentId = (await createAgent()).json().agent.id;
+
+    const denied = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: await attacker(),
+      payload: { allowedTools: ['Read', 'Grep', 'Bash'], name: '已被改掉' },
+    });
+    expect(denied.statusCode).toBe(404);
+
+    const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(row!.name).toBe('code-agent-1');
+    expect(row!.allowedTools).toEqual(['Read', 'Grep']);
+  });
+
+  it('删不掉别的组织的 Agent', async () => {
+    const agentId = (await createAgent()).json().agent.id;
+
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: await attacker(),
+    });
+    expect(denied.statusCode).toBe(404);
+    expect(await db.select().from(agents).where(eq(agents.id, agentId))).toHaveLength(1);
+  });
+
+  it('探测不到别的组织的 Agent', async () => {
+    const agentId = (await createAgent()).json().agent.id;
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/agents/${agentId}/probe`,
+      headers: await attacker(),
+    });
+    expect(denied.statusCode).toBe(404);
+  });
+
+  /**
+   * ★ 仓库越界改的破坏力在 remoteUrl 上：把它指向攻击者的地址，
+   *   对方后续的产出就推到攻击者手里，而两边都不会报错。
+   */
+  it('改不动别的组织的仓库登记', async () => {
+    const repoId = await seedRepo();
+
+    const denied = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/repositories/${repoId}`,
+      headers: await attacker(),
+      payload: { remoteUrl: 'https://github.com/attacker/evil.git' },
+    });
+    expect(denied.statusCode).toBe(404);
+
+    const [row] = await db.select().from(repositories).where(eq(repositories.id, repoId));
+    expect(row!.remoteUrl).toBe('https://github.com/acme/order-service.git');
+  });
+
+  it('删不掉别的组织的仓库登记', async () => {
+    const repoId = await seedRepo();
+
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/repositories/${repoId}`,
+      headers: await attacker(),
+    });
+    expect(denied.statusCode).toBe(404);
+    expect(await db.select().from(repositories).where(eq(repositories.id, repoId))).toHaveLength(1);
   });
 });
 

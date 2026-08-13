@@ -266,11 +266,11 @@ export async function createStorageTarget(
 
 export async function updateStorageTarget(
   db: Database,
+  orgId: string,
   targetId: string,
   input: Partial<StorageTargetInputType> & { status?: 'active' | 'disabled' },
 ) {
-  const [existing] = await db.select().from(storageTargets).where(eq(storageTargets.id, targetId));
-  if (!existing) throw notFound('存储目标');
+  const existing = await loadOwned(db, orgId, targetId);
 
   /**
    * ★ 不允许改 kind。object_storage 与 local 的必填列完全不重叠，
@@ -282,6 +282,29 @@ export async function updateStorageTarget(
   }
 
   const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
+
+  assertShapeAfterUpdate(existing, input);
+
+  /**
+   * ★★ 改成只读之前，先看有没有别的登记正把产出交货到它。
+   *
+   *   `resolveDeliveryTarget` 在保存交货目标那一刻拒了只读的目标，理由是
+   *   「配了交货目标但产出没到」最难自己想到。可只读是**后来**也能改的 ——
+   *   从这一头把它关掉，那些登记就绕过了那道检查：收尾时被跳过，
+   *   任务照样成功、产物页照样有记录，只是东西哪儿都没到。
+   *   删除那条路早就在挡同一件事（见 deleteStorageTarget），这里补齐。
+   */
+  if (input.writable === false && existing.writable) {
+    const dependents = await deliveryDependents(db, targetId);
+    if (dependents.length > 0) {
+      throw new ApiError(
+        'VERSION_CONFLICT',
+        `还有 ${dependents.length} 条登记把产出交货到 ${existing.ref}，` +
+          `改成只读会让它们的产出静默落空：${dependents.join('、')}`,
+        { dependents },
+      );
+    }
+  }
 
   const [row] = await db
     .update(storageTargets)
@@ -315,9 +338,8 @@ export async function updateStorageTarget(
   return { storageTarget: row };
 }
 
-export async function deleteStorageTarget(db: Database, targetId: string) {
-  const [row] = await db.select().from(storageTargets).where(eq(storageTargets.id, targetId));
-  if (!row) throw notFound('存储目标');
+export async function deleteStorageTarget(db: Database, orgId: string, targetId: string) {
+  const row = await loadOwned(db, orgId, targetId);
 
   /**
    * ★ 还有 Agent 授权指向它就不能删 —— 删掉之后那些 Agent 的 dataset 范围
@@ -347,17 +369,7 @@ export async function deleteStorageTarget(db: Database, targetId: string) {
    *   会成功，而那些仓库/目标的产出在下一次收尾时静默落回「不交货」——
    *   任务照样成功、产物页照样有记录，只是东西哪儿都没到。
    */
-  const [repoDeps, targetDeps] = await Promise.all([
-    db
-      .select({ ref: repositories.ref })
-      .from(repositories)
-      .where(eq(repositories.deliveryTargetId, targetId)),
-    db
-      .select({ ref: storageTargets.ref })
-      .from(storageTargets)
-      .where(eq(storageTargets.deliveryTargetId, targetId)),
-  ]);
-  const dependents = [...repoDeps, ...targetDeps].map((d) => d.ref);
+  const dependents = await deliveryDependents(db, targetId);
   if (dependents.length > 0) {
     throw new ApiError(
       'VERSION_CONFLICT',
@@ -382,9 +394,8 @@ export async function deleteStorageTarget(db: Database, targetId: string) {
  *
  * ★ 只读：列举前几个对象 / stat 一下目录，不写任何东西、不落盘。
  */
-export async function probeStorageTarget(db: Database, targetId: string) {
-  const [row] = await db.select().from(storageTargets).where(eq(storageTargets.id, targetId));
-  if (!row) throw notFound('存储目标');
+export async function probeStorageTarget(db: Database, orgId: string, targetId: string) {
+  const row = await loadOwned(db, orgId, targetId);
 
   return row.kind === 'local' ? probeLocal(row) : probeObjectStore(row);
 }
@@ -553,6 +564,89 @@ async function probeObjectStore(row: typeof storageTargets.$inferSelect): Promis
 }
 
 // ── 内部 ──────────────────────────────────────────────────────────────
+
+/**
+ * 谁把产出交货到这个目标 —— 仓库与存储目标两张表都要查。
+ *
+ * ★ `delivery_target_id` 刻意没有外键（跨两张表指向同一处，外键要建两条，
+ *   而删除语义又不是级联），所以这道检查是唯一的把关。删除与「改成只读」
+ *   共用它：两种改法让产出落空的方式一模一样，判据不该有两份。
+ */
+async function deliveryDependents(db: Database, targetId: string): Promise<string[]> {
+  const [repoDeps, targetDeps] = await Promise.all([
+    db
+      .select({ ref: repositories.ref })
+      .from(repositories)
+      .where(eq(repositories.deliveryTargetId, targetId)),
+    db
+      .select({ ref: storageTargets.ref })
+      .from(storageTargets)
+      .where(eq(storageTargets.deliveryTargetId, targetId)),
+  ]);
+  return [...repoDeps, ...targetDeps].map((d) => d.ref);
+}
+
+/**
+ * 局部更新之后，这条登记还立不立得住。
+ *
+ * ★★ 登记入口那层 superRefine 在 PATCH 上是**关掉的**（路由用
+ *   `innerType().partial()`，理由见 routes.ts：交叉校验只对完整输入成立）。
+ *   代价是「把 bucket 清空」这类改动一路走到库里，被 check 约束拒掉，
+ *   而抛回调用方的是一句 `storage_targets_shape_check` —— 正是这个文件
+ *   开头那段注释说要避免的东西：管理员看不出该补哪一栏。
+ *
+ * ★ 所以在这里按**改完之后**的形态再判一次，只判必填项这一条
+ *   （kind 不可改，已在上面挡掉），逐栏说清楚。库约束仍留作兜底。
+ */
+function assertShapeAfterUpdate(
+  existing: typeof storageTargets.$inferSelect,
+  input: Partial<StorageTargetInputType>,
+) {
+  /** undefined = 这次没提这个字段，沿用旧值 */
+  const after = (field: 'endpoint' | 'bucket' | 'rootPath') =>
+    input[field] === undefined ? existing[field] : (input[field]?.trim() ?? null);
+
+  if (existing.kind === 'object_storage') {
+    if (!after('endpoint')) throw new ApiError('VALIDATION_FAILED', '对象存储必须填端点地址');
+    if (!after('bucket')) throw new ApiError('VALIDATION_FAILED', '对象存储必须填 bucket');
+  } else if (!after('rootPath')) {
+    throw new ApiError('VALIDATION_FAILED', '本地目录必须填绝对路径');
+  }
+
+  // ★ 相对路径会被 resolve 成服务进程的当前目录，而那通常是代码仓库本身
+  const root = input.rootPath?.trim();
+  if (existing.kind === 'local' && root && !isAbsolute(root)) {
+    throw new ApiError('VALIDATION_FAILED', '必须是绝对路径（以 / 开头）');
+  }
+}
+
+/**
+ * 按 id 取一条登记，**并且**要求它属于调用者的组织。
+ *
+ * ★★ 组织边界必须在这一层收窄，rbac 那道闸拦不住这类路由。
+ *
+ *   `rbac.guard()` 只对 `/api/v1/projects/:id/…` 与 RESOURCE_SCOPED_URL 上
+ *   那几种资源解析归属（见 rbac.ts 的两条正则），`/api/v1/admin/…` 两条都不匹配 ——
+ *   于是它能判的只有「调用者在**自己当前组织**里有没有 storage_target.manage」，
+ *   判不了「这条登记是不是他们组织的」。而自助注册默认开着，注册即是新组织的
+ *   org_admin，也就天然握着这个权限：少了这道收窄，任何人拿一个 UUID 就能
+ *   探测、篡改、删除别的租户的登记。探测会拿着**对方的**凭证列出对象，
+ *   而篡改 endpoint 能把对方后续的产出投递引到自己的 bucket 里。
+ *
+ *   项目那条路上同一条纪律是显式写着的（rbac.ts `assertProjectAccess`:
+ *   「跨组织的不行 —— 管理员的『全部』以组织为界」），这里只是把它补齐。
+ *
+ * ★ 越界一律回 404 而不是 403：403 等于确认「这个 id 存在」，
+ *   把 id 变成可枚举的探针。与 assertProjectAccess 的选择一致。
+ */
+async function loadOwned(db: Database, orgId: string, targetId: string) {
+  const [row] = await db
+    .select()
+    .from(storageTargets)
+    .where(and(eq(storageTargets.id, targetId), eq(storageTargets.orgId, orgId)));
+  if (!row) throw notFound('存储目标');
+  return row;
+}
 
 /** 按 kind 只写属于它的那几列，另一类的列一律留空 */
 function shapeColumns(input: StorageTargetInputType) {

@@ -308,13 +308,37 @@ export async function createRepository(
   return { repository: row };
 }
 
+/**
+ * 按 id 取一条仓库登记，**并且**要求它属于调用者的组织。
+ *
+ * ★★ 组织边界必须在这一层收窄 —— `/api/v1/admin/…` 不在 rbac 那两条
+ *   作用域正则里（见 rbac.ts 的 PROJECT_SCOPED_URL / RESOURCE_SCOPED_URL），
+ *   所以闸门判的只是「调用者在**自己组织**里有没有 repository.manage」，
+ *   判不了「这条登记是谁的」。而自助注册默认开着，注册即是新组织的
+ *   org_admin，也就天然握着这个权限。
+ *
+ *   少了这道收窄，拿到一个 UUID 就能改别的租户的 remoteUrl 与凭证 ——
+ *   把它指向自己的地址，对方后续的产出就推到攻击者手里，而两边都不报错。
+ *   与 storage-targets.ts 的 loadOwned 是同一条纪律。
+ *
+ * ★ 越界回 404 不回 403：403 等于确认这个 id 存在，把 id 变成可枚举的探针。
+ */
+async function loadOwnedRepo(db: Database, orgId: string, repoId: string) {
+  const [row] = await db
+    .select()
+    .from(repositories)
+    .where(and(eq(repositories.id, repoId), eq(repositories.orgId, orgId)));
+  if (!row) throw notFound('仓库');
+  return row;
+}
+
 export async function updateRepository(
   db: Database,
+  orgId: string,
   repoId: string,
   input: Partial<z.infer<typeof RepositoryInput>> & { status?: 'active' | 'disabled' },
 ) {
-  const [existing] = await db.select().from(repositories).where(eq(repositories.id, repoId));
-  if (!existing) throw notFound('仓库');
+  const existing = await loadOwnedRepo(db, orgId, repoId);
 
   const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
   /**
@@ -382,9 +406,8 @@ export async function updateRepository(
  *
  * ★ 只读，不落盘，不建镜像。
  */
-export async function probeRepository(db: Database, repoId: string) {
-  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId));
-  if (!repo) throw notFound('仓库');
+export async function probeRepository(db: Database, orgId: string, repoId: string) {
+  const repo = await loadOwnedRepo(db, orgId, repoId);
 
   const kind = authKindOf(repo.remoteUrl);
   const auth = resolveAuthUsername(repo.remoteUrl, repo.authUsername);
@@ -547,9 +570,8 @@ const SOURCE_LABEL: Record<'explicit' | 'host' | 'default', string> = {
   default: '兜底默认值',
 };
 
-export async function deleteRepository(db: Database, repoId: string) {
-  const [row] = await db.select().from(repositories).where(eq(repositories.id, repoId));
-  if (!row) throw notFound('仓库');
+export async function deleteRepository(db: Database, orgId: string, repoId: string) {
+  const row = await loadOwnedRepo(db, orgId, repoId);
 
   /**
    * ★ 还有 Agent 授权指向它就不能删 —— 删掉之后那些 Agent 的 repo 范围
