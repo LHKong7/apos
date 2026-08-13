@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Insight, InsightAction } from '@apos/domain';
@@ -25,6 +26,7 @@ export function InsightsPanel({
   onAction: (action: InsightAction, insight: Insight) => void;
   lowConfidence: boolean;
 }) {
+  const t = useT();
   const [openEvidence, setOpenEvidence] = useState<number | null>(null);
 
   if (insights.length === 0) {
@@ -38,7 +40,7 @@ export function InsightsPanel({
   return (
     <section className="rounded border border-slate-200 bg-white">
       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5">
-        <h2 className="text-xs font-medium text-slate-700">💡 系统发现（{insights.length}）</h2>
+        <h2 className="text-xs font-medium text-slate-700">{t('insights.title', { count: insights.length })}</h2>
         {lowConfidence && (
           <span className="text-[11px] text-slate-400">
             样本较少，以下结论仅供参考
@@ -76,7 +78,7 @@ export function InsightsPanel({
                     onClick={() => setOpenEvidence(openEvidence === i ? null : i)}
                     className="text-[11px] text-slate-400 underline hover:text-slate-600"
                   >
-                    {openEvidence === i ? '收起判据' : '凭什么这么说'}
+                    {openEvidence === i ? t('insights.hideEvidence') : t('insights.showEvidence')}
                   </button>
                 </div>
 

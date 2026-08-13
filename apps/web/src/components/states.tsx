@@ -1,3 +1,4 @@
+import { useT } from '../lib/i18n';
 import type { ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -50,6 +51,7 @@ export function EmptyState({ icon, message, hint, action }: EmptyStateProps) {
 }
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const t = useT();
   const isApi = error instanceof ApiError;
   return (
     /* ★ role="alert" 由 Alert 提供 —— 加载失败要能被读屏器立刻播报，
@@ -61,9 +63,9 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
       >
         !
       </div>
-      <AlertTitle className="text-sm">{isApi ? error.message : '加载失败'}</AlertTitle>
+      <AlertTitle className="text-sm">{isApi ? error.message : t('states.loadFailed')}</AlertTitle>
       <AlertDescription>
-        {isApi && <p className="mt-1 font-mono text-[11px] opacity-80">错误码 {error.code}</p>}
+        {isApi && <p className="mt-1 font-mono text-[11px] opacity-80">{t('states.errorCode', { code: error.code })}</p>}
         {isApi && Boolean(error.details) && (
           <pre className="mx-auto mt-2 max-w-lg overflow-x-auto rounded-md border border-destructive/20 bg-muted/60 p-2 text-left text-[11px]">
             {JSON.stringify(error.details, null, 2)}

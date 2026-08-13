@@ -29,6 +29,48 @@ import { z } from 'zod';
  *
  * ★ 这里只描述**能配什么**，不描述**怎么用**。怎么用是各适配器的事，
  *   两边靠 key 对齐（见 runtime-factory 的 createAgentAdapter）。
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * Runtime configuration for a headless CLI — a **free-form JSON document**
+ * where the platform only describes which keys it recognises.
+ *
+ * ★★ The document as a whole is free JSON: write or paste one in the UI and
+ *   **keys the platform does not know are stored and kept verbatim**. A schema
+ *   will always lag behind the runtime (a relay's variables, a flag the CLI
+ *   added last week); letting it decide "can this be saved" would make every
+ *   runtime upgrade wait for a platform release — which is precisely what this
+ *   escape hatch exists to avoid.
+ *
+ * ★ But **recognised keys are still validated**. Letting `effort: 'ultra'`
+ *   through means dispatch succeeds and the CLI reports a parameter error
+ *   nobody reads; the right moment to refuse is the moment of saving.
+ *   Validation covers only the keys the platform defines, never the user's own.
+ *
+ * ★ Unrecognised keys must be **reported** (`unknownKeys`) rather than quietly
+ *   accepted: a typo (`modle`) and a deliberately forward-compatible key look
+ *   identical once stored, and the former will never take effect. The caller
+ *   is responsible for surfacing them.
+ *
+ * ★ The field table has two further purposes unrelated to validation, which is
+ *   why it cannot be dropped:
+ *   1. **The UI lists what is configurable from it**: value ranges, defaults,
+ *      and what each runtime cannot do. A JSON text box carries no labels, and
+ *      this table is the only place a user learns what to put in it.
+ *   2. **Impact can be annotated**: which keys drive cost, which widen the
+ *      safety boundary. Someone raising maxTurns from 60 to 500 should see
+ *      "this raises the cost ceiling substantially" right then.
+ *
+ * ★ The `env` field (`type: 'json'` + `jsonShape: 'env'`) is the environment
+ *   variable table handed to the child process — a relay's
+ *   `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` and a proxy's `HTTPS_PROXY`
+ *   all travel through it. Value shapes are still validated (a child process
+ *   environment only accepts strings) and sensitive keys still go through the
+ *   encryption path (see modules/security/secrets.ts).
+ *
+ * ★ This describes **what can be configured**, never **how it is used**. How
+ *   is each adapter's business; the two sides line up by key (see
+ *   `createAgentAdapter` in runtime-factory).
  */
 
 export const ConfigFieldType = z.enum([
@@ -41,18 +83,49 @@ export const ConfigFieldType = z.enum([
 ]);
 export type ConfigFieldType = z.infer<typeof ConfigFieldType>;
 
+/**
+ * 双语文案 / A bilingual piece of copy.
+ *
+ * ★★ 中文是必填、英文可选，而不是反过来。
+ *
+ *   这些说明是随功能一起长出来的，写它们的人手边只有中文那一版；
+ *   把英文设成必填的结果不是「大家都写英文」，而是「随手编一句凑上」——
+ *   编出来的说明比没有更糟，因为它看起来是可信的。
+ *   缺英文时界面回落到中文，并且这件事在界面上看得出来（不是静默的）。
+ *
+ *   Chinese is required, English optional — deliberately that way round.
+ *   Making English mandatory does not produce English, it produces filler,
+ *   and filler reads as authoritative. The UI falls back to Chinese, visibly.
+ */
+export interface Bilingual {
+  zh: string;
+  en?: string;
+}
+
+/** 取当前语言的那一份，缺英文时回落中文 / Pick a language, falling back to zh */
+export function pick(text: Bilingual | string, locale: 'en' | 'zh'): string {
+  if (typeof text === 'string') return text;
+  return locale === 'en' ? (text.en ?? text.zh) : text.zh;
+}
+
 export interface ConfigFieldOption {
   value: string;
   label: string;
+  labelEn?: string;
   help?: string;
+  helpEn?: string;
 }
 
 export interface ConfigField {
   key: string;
   label: string;
+  /** 英文标签；缺省时界面回落到 label / English label, falls back to `label` */
+  labelEn?: string;
   type: ConfigFieldType;
   default: unknown;
   help?: string;
+  /** 英文说明；缺省时界面回落到 help / English help, falls back to `help` */
+  helpEn?: string;
   options?: ConfigFieldOption[];
   min?: number;
   max?: number;
@@ -63,15 +136,23 @@ export interface ConfigField {
    *
    * ★ 用声明式的 shape 而不是在校验函数里按 key 名特判 —— 特判会让
    *   「加一个 json 字段」变成「同时要改校验函数」，schema 就不再是数据了。
+   *
+   * ★ A declarative shape rather than special-casing key names inside the
+   *   validator: special cases turn "add a json field" into "and change the
+   *   validator too", at which point the schema stops being data.
    */
   jsonShape?: 'env' | 'free';
-  /** 界面据此凸显：调这个字段会花更多钱 / 会放宽安全边界 */
+  /**
+   * 界面据此凸显：调这个字段会花更多钱 / 会放宽安全边界。
+   * What the UI highlights: changing this costs more money, or widens the
+   * safety boundary.
+   */
   impact?: 'cost' | 'safety';
-  /** 折叠进「高级」，默认不展示 */
+  /** 折叠进「高级」，默认不展示 / Folded under "advanced", hidden by default */
   advanced?: boolean;
 }
 
-/** 环境变量名的合法形状 */
+/** 环境变量名的合法形状 / What a valid environment variable name looks like */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -84,6 +165,19 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * ★ 按下划线切段匹配，不是子串匹配：`GIT_AUTHOR_NAME` 里的 AUTHOR 不是 AUTH，
  *   `KEYCLOAK_URL` 里的 KEY 也不是 KEY —— 误判成凭证会把一个本该看得见、
  *   改得动的值锁进密文里。
+ *
+ * Does this environment variable name look like a credential?
+ *
+ * ★ The test lives in contracts because **three places** need exactly the same
+ *   one: the server decides whether to encrypt the value, the UI warns "this
+ *   will not be shown again after saving", and validation demands a master key.
+ *   Three separately written regexes eventually produce "the UI said it would
+ *   be encrypted, and it went in as plaintext".
+ *
+ * ★ It matches on underscore-delimited segments, not substrings: the AUTHOR in
+ *   `GIT_AUTHOR_NAME` is not AUTH, and the KEY in `KEYCLOAK_URL` is not KEY.
+ *   A false positive locks a value that should stay visible and editable into
+ *   ciphertext.
  */
 const SECRET_ENV_NAME = /(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|KEY|AUTH)(_|$)/i;
 
@@ -95,18 +189,27 @@ export interface RuntimeKindSpec {
   kind: string;
   label: string;
   description: string;
-  /** null = 该运行时不需要凭证 */
-  credential: { label: string; help: string } | null;
-  /** null = 不支持自定义接入地址 */
-  endpoint: { label: string; help: string } | null;
-  /** 部署环境的前置条件，界面上提前说，而不是等第一次派发才失败 */
+  /** 英文描述；缺省回落中文 / English description, falls back to `description` */
+  descriptionEn?: string;
+  /** null = 该运行时不需要凭证 / null means this runtime needs no credential */
+  credential: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
+  /** null = 不支持自定义接入地址 / null means no custom endpoint is supported */
+  endpoint: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
+  /**
+   * 部署环境的前置条件，界面上提前说，而不是等第一次派发才失败。
+   * A deployment prerequisite, stated up front in the UI rather than surfacing
+   * as a failure on the first dispatch.
+   */
   prerequisite: string | null;
+  /** 英文前置条件 / English prerequisite */
+  prerequisiteEn?: string | null;
   fields: ConfigField[];
 }
 
 const PASSTHROUGH_ENV: ConfigField = {
   key: 'passthroughEnv',
   label: '透传环境变量',
+  labelEn: 'Pass-through environment variables',
   type: 'string_list',
   default: [],
   advanced: true,
@@ -132,10 +235,33 @@ const PASSTHROUGH_ENV: ConfigField = {
  *
  * ★ 它排在最后应用，会盖掉上面所有字段算出来的同名变量。
  *   「我填了却没生效」是配置类功能最坏的失败形态，宁可让它一定生效。
+ *
+ * The environment variable table — the JSON whose values are handed straight
+ * to the child process.
+ *
+ * ★ How it divides from `passthroughEnv`: that one only **passes through
+ *   variables the process already has** (you give a name, the value comes from
+ *   APOS's own environment); this one **gives the value directly in the UI**.
+ *   Only the latter works for a relay — the gateway URL and token belong to
+ *   *this Agent*, not to the APOS process, and configuring one Agent's gateway
+ *   should not mean editing the deployment's environment (which would also hit
+ *   every other Agent sharing that variable name).
+ *
+ * ★ Two forms of value, both supported:
+ *   - a literal: `"https://gw.example.com"`. A literal under a sensitive key
+ *     (see isSecretEnvKey) is encrypted at rest and the API returns only a
+ *     placeholder afterwards — the same discipline as the credential field.
+ *   - `env:VARIABLE_NAME`: the value is read from APOS's process environment
+ *     and nothing is stored.
+ *
+ * ★ It is applied last and overrides same-named variables derived from every
+ *   field above. "I filled it in and it did not take effect" is the worst
+ *   failure mode a configuration feature has; better that it always wins.
  */
 const ENV_OVERRIDES = (examples: string): ConfigField => ({
   key: 'env',
   label: '环境变量（JSON）',
+  labelEn: 'Environment variables (JSON)',
   type: 'json',
   jsonShape: 'env',
   default: {},
@@ -156,19 +282,34 @@ const ENV_OVERRIDES = (examples: string): ConfigField => ({
  * ★ 额外参数是逃生口。这六个 CLI 的 flag 各自演进得很快，
  *   平台的 spec 一定会滞后 —— 有这个口子，用户不用等我们发版
  *   就能用上新加的开关。代价是填错了 CLI 会启动失败，所以标为高级项。
+ *
+ * The two fields every generic headless CLI has.
+ *
+ * ★ The executable path must be overridable: these CLIs install via npm, brew
+ *   or curl and land in different places, so hard-coding "it must be on PATH"
+ *   locks out a share of deployments.
+ *
+ * ★ Extra arguments are the escape hatch. The six CLIs each evolve their flags
+ *   quickly and the platform's spec will always lag; with this hatch a user
+ *   picks up a new switch without waiting for our release. The cost is that a
+ *   wrong value makes the CLI fail to start, which is why it is marked
+ *   advanced.
  */
 const CLI_COMMON_FIELDS = (binary: string): ConfigField[] => [
   {
     key: 'binary',
     label: '可执行文件',
+    labelEn: 'Executable',
     type: 'string',
     default: binary,
     advanced: true,
     help: '不在 PATH 里时填绝对路径。',
+    helpEn: 'Give an absolute path when it is not on PATH.',
   },
   {
     key: 'extraArgs',
     label: '额外命令行参数',
+    labelEn: 'Extra command-line arguments',
     type: 'string_list',
     default: [],
     advanced: true,
@@ -196,6 +337,24 @@ const CLI_COMMON_FIELDS = (binary: string): ConfigField[] => [
  *
  * ★ 权限对这六个**一律是沙箱级**：表达不了「Bash 可用但 rm 不可用」。
  *   映射时统一收紧，表达不了的规则会在 Run 详情里列出来。
+ *
+ * The six generic headless CLIs.
+ *
+ * ★★ They share one adapter (GenericCliRuntime) plus a declarative profile
+ *   table rather than getting an adapter each — the reasoning is at the top of
+ *   agent-runtimes/src/cli/profile.ts.
+ *
+ * ★★ Every `description` states plainly what that runtime **cannot** do.
+ *
+ *   That is not modesty; it is the only useful information on this page. The
+ *   user is here to decide which Agent takes which kind of work. Hide "you
+ *   only get output once it finishes" and they will put Gemini CLI on a long
+ *   task they need to watch, then stare at an event stream that never moves
+ *   and conclude the system is broken.
+ *
+ * ★ Permissions on all six are **sandbox-level**: they cannot express "Bash is
+ *   allowed but rm is not". The mapping tightens uniformly, and rules that
+ *   cannot be expressed are listed in the run detail page.
  */
 const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
   {
@@ -203,11 +362,27 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Pi Coding Agent',
     description:
       '极简 harness（Earendil / MIT）。纯文本输出 —— 看得到它在动，但没有结构化的工具调用与用量统计。',
-    credential: { label: 'API Key', help: '推荐填 `env:变量名`。留空则沿用进程环境里的凭证。' },
+    credential: {
+      label: 'API Key',
+      help: '推荐填 `env:变量名`。留空则沿用进程环境里的凭证。',
+      helpEn:
+        'Prefer `env:VARIABLE_NAME`. Left blank, the credential from the process environment is used.',
+    },
     endpoint: null,
     prerequisite: '需要 pi 已安装：npm i -g --ignore-scripts @earendil-works/pi-coding-agent',
+    prerequisiteEn:
+      'Requires pi: npm i -g --ignore-scripts @earendil-works/pi-coding-agent',
     fields: [
-      { key: 'model', label: '模型', type: 'string', default: '', impact: 'cost', help: '留空用 pi 自己的默认模型。' },
+      {
+        key: 'model',
+        label: '模型',
+        labelEn: 'Model',
+        type: 'string',
+        default: '',
+        impact: 'cost',
+        help: '留空用 pi 自己的默认模型。',
+        helpEn: "Left blank, pi's own default model is used.",
+      },
       ...CLI_COMMON_FIELDS('pi'),
     ],
   },
@@ -217,9 +392,14 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Gemini CLI',
     description:
       'Google 官方 CLI。★ 输出是**一个** JSON 对象而不是事件流 —— 执行过程中界面上不会有任何中间事件，要跑完才一次性出结果。适合短任务，不适合需要盯进度的长任务。',
-    credential: { label: 'Gemini API Key', help: '推荐填 `env:变量名`。' },
+    credential: {
+      label: 'Gemini API Key',
+      help: '推荐填 `env:变量名`。',
+      helpEn: 'Prefer `env:VARIABLE_NAME`.',
+    },
     endpoint: null,
     prerequisite: '需要 gemini 已安装：npm i -g @google/gemini-cli',
+    prerequisiteEn: 'Requires gemini: npm i -g @google/gemini-cli',
     fields: [
       {
         key: 'model',
@@ -228,6 +408,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
         default: 'gemini-2.5-pro',
         impact: 'cost',
         help: '如 gemini-2.5-pro / gemini-2.5-flash。',
+        helpEn: 'e.g. gemini-2.5-pro / gemini-2.5-flash.',
       },
       ...CLI_COMMON_FIELDS('gemini'),
     ],
@@ -238,17 +419,29 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Aider',
     description:
       '成熟的结对编程 CLI（Python）。纯文本输出，没有结构化通道。★ 平台会加 --no-auto-commits：提交由工作区供给统一负责，两边都提交会让一个 Run 产生一堆零碎提交。',
-    credential: { label: 'API Key', help: '按所选模型对应的供应商填；推荐 `env:变量名`。' },
-    endpoint: { label: '接入地址', help: '自建网关才填（注入 OPENAI_API_BASE）。' },
+    credential: {
+      label: 'API Key',
+      help: '按所选模型对应的供应商填；推荐 `env:变量名`。',
+      helpEn: 'Use the provider matching the chosen model; prefer `env:VARIABLE_NAME`.',
+    },
+    endpoint: {
+      label: '接入地址',
+      labelEn: 'Endpoint',
+      help: '自建网关才填（注入 OPENAI_API_BASE）。',
+      helpEn: 'Only for a self-hosted gateway (injected as OPENAI_API_BASE).',
+    },
     prerequisite: '需要 aider 已安装：python -m pip install aider-install && aider-install',
+    prerequisiteEn: 'Requires aider: python -m pip install aider-install && aider-install',
     fields: [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'string',
         default: '',
         impact: 'cost',
         help: 'Aider 的模型名，如 sonnet / gpt-4o / deepseek。留空用它自己的默认。',
+        helpEn: "An Aider model name such as sonnet / gpt-4o / deepseek. Blank uses Aider's default.",
       },
       ...CLI_COMMON_FIELDS('aider'),
     ],
@@ -259,7 +452,11 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Goose',
     description:
       'Block 开源的 on-machine agent。支持 stream-json，能边跑边出事件与工具调用。★ 非交互下只能是 Auto 模式，审批档位不开放（其余档位会被 CLI 显式拒绝）。',
-    credential: { label: 'API Key', help: '按 goose 配置的 provider 填；推荐 `env:变量名`。' },
+    credential: {
+      label: 'API Key',
+      help: '按 goose 配置的 provider 填；推荐 `env:变量名`。',
+      helpEn: 'Use the provider goose is configured with; prefer `env:VARIABLE_NAME`.',
+    },
     endpoint: null,
     prerequisite:
       '需要 goose 已安装并配置好 provider：curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
@@ -271,6 +468,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
         default: '',
         impact: 'cost',
         help: '留空用 goose 自身配置里的模型。',
+        helpEn: "Left blank, the model from goose's own configuration is used.",
       },
       ...CLI_COMMON_FIELDS('goose'),
     ],
@@ -280,9 +478,14 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     kind: 'opencode',
     label: 'OpenCode',
     description: '终端原生编码 agent（sst）。纯文本输出。★ 模型要写成 provider/model 的形式。',
-    credential: { label: 'API Key', help: '按所选 provider 填；推荐 `env:变量名`。' },
+    credential: {
+      label: 'API Key',
+      help: '按所选 provider 填；推荐 `env:变量名`。',
+      helpEn: 'Use the selected provider; prefer `env:VARIABLE_NAME`.',
+    },
     endpoint: null,
     prerequisite: '需要 opencode 已安装：curl -fsSL https://opencode.ai/install | bash',
+    prerequisiteEn: 'Requires opencode: curl -fsSL https://opencode.ai/install | bash',
     fields: [
       {
         key: 'model',
@@ -291,6 +494,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
         default: '',
         impact: 'cost',
         help: '★ 必须是 provider/model 形式，如 anthropic/claude-sonnet-4。只填模型名会被 CLI 拒绝。',
+        helpEn:
+          'Must be provider/model, e.g. anthropic/claude-sonnet-4. A bare model name is rejected by the CLI.',
       },
       ...CLI_COMMON_FIELDS('opencode'),
     ],
@@ -301,9 +506,20 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Qwen Code',
     description:
       '阿里开源的编码 CLI（gemini-cli 的 fork，但多了 stream-json）。能边跑边出事件与工具调用。',
-    credential: { label: 'API Key', help: '推荐填 `env:变量名`。' },
-    endpoint: { label: '接入地址', help: '自建网关或兼容端点才填（注入 OPENAI_BASE_URL）。' },
+    credential: {
+      label: 'API Key',
+      help: '推荐填 `env:变量名`。',
+      helpEn: 'Prefer `env:VARIABLE_NAME`.',
+    },
+    endpoint: {
+      label: '接入地址',
+      labelEn: 'Endpoint',
+      help: '自建网关或兼容端点才填（注入 OPENAI_BASE_URL）。',
+      helpEn:
+        'Only for a self-hosted gateway or compatible endpoint (injected as OPENAI_BASE_URL).',
+    },
     prerequisite: '需要 qwen 已安装：npm i -g @qwen-code/qwen-code',
+    prerequisiteEn: 'Requires qwen: npm i -g @qwen-code/qwen-code',
     fields: [
       {
         key: 'model',
@@ -312,6 +528,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
         default: 'qwen3-coder-plus',
         impact: 'cost',
         help: '如 qwen3-coder-plus。',
+        helpEn: 'e.g. qwen3-coder-plus.',
       },
       ...CLI_COMMON_FIELDS('qwen'),
     ],
@@ -323,8 +540,11 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
     kind: 'claude_code',
     label: 'Claude Code',
     description: '基于 Claude Agent SDK。工具级权限、实时事件流、执行中可注入约束，能力最完整。',
+    descriptionEn:
+      'Built on the Claude Agent SDK. Tool-level permissions, a live event stream, constraints injectable mid-run — the most capable option.',
     credential: {
       label: 'Anthropic 凭证',
+      labelEn: 'Anthropic credential',
       help:
         '推荐填 `env:变量名`，凭证只留在进程环境、不进数据库，且多个 Agent 共用同一变量名时轮换只需改一处。' +
         '走中转站/网关时把下面的「凭证下发变量名」改成 ANTHROPIC_AUTH_TOKEN。',
@@ -335,11 +555,21 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
      *   在此之前 claude_code 的 spec 里这一项是 null，界面上根本不渲染 ——
      *   于是 agents.endpoint 这一列对 Claude Code Agent 写了也不会被消费，
      *   而中转站/自建网关恰恰是最常见的接法。
+     *
+     * ★ Endpoint = ANTHROPIC_BASE_URL.
+     *
+     *   This used to be null in the claude_code spec, so the UI never rendered
+     *   it — meaning the `agents.endpoint` column could be written for a
+     *   Claude Code Agent and never consumed, while a relay or self-hosted
+     *   gateway is the single most common way people connect.
      */
     endpoint: {
       label: '接入地址',
+      labelEn: 'Endpoint',
       help:
         '注入 ANTHROPIC_BASE_URL。中转站、自建网关、Bedrock/Vertex 前置代理才填，留空走官方端点。',
+      helpEn:
+        'Injected as ANTHROPIC_BASE_URL. Only for a relay, self-hosted gateway, or a Bedrock/Vertex fronting proxy; leave blank for the official endpoint.',
     },
     prerequisite: null,
     fields: [
@@ -358,10 +588,13 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'effort',
         label: '推理强度',
+        labelEn: 'Reasoning effort',
         type: 'select',
         default: 'xhigh',
         impact: 'cost',
         help: '直接影响思考的 token 量。评审类 Agent 用 low 通常就够，大重构才需要 max。',
+        helpEn:
+          'Directly drives how many thinking tokens are spent. `low` is usually enough for review Agents; only large refactors need `max`.',
         options: [
           { value: 'low', label: 'low' },
           { value: 'medium', label: 'medium' },
@@ -373,16 +606,20 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'maxTurns',
         label: '最大轮次',
+        labelEn: 'Max turns',
         type: 'number',
         default: 60,
         min: 1,
         max: 500,
         impact: 'cost',
         help: '同时是进度条的分母。调高会显著抬高单次执行的成本上限。',
+        helpEn:
+          'Also the denominator of the progress bar. Raising it raises the cost ceiling of a single run substantially.',
       },
       {
         key: 'onUngrantedTool',
         label: '遇到未授权工具',
+        labelEn: 'On an ungranted tool',
         type: 'select',
         default: 'escalate',
         impact: 'safety',

@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,6 +31,7 @@ const SEVERITY_TONE = {
  *   把权限表放在最上面，这一页就退化成一个 YAML 编辑器了。
  */
 export function AgentDetailPage() {
+  const t = useT();
   const { projectId, agentId } = useParams<{ projectId?: string; agentId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -49,7 +51,7 @@ export function AgentDetailPage() {
       setPausing(false);
       void qc.invalidateQueries({ queryKey: qk.agentDetail(agentId!) });
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '操作失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('agentDetail.actionFailed')),
   });
 
   if (!agentId) return null;
@@ -76,7 +78,7 @@ export function AgentDetailPage() {
           </span>
           {a.model && <span className="text-[11px] text-slate-400">{a.model}</span>}
           <span className={clsx('text-[11px]', paused ? 'text-amber-700' : 'text-green-700')}>
-            ● {paused ? '已暂停' : '正常'}
+            ● {paused ? t('agentDetail.paused') : t('agentDetail.normal')}
           </span>
           <Link
             to={projectId ? `/projects/${projectId}/agents` : '/agents'}
@@ -87,7 +89,7 @@ export function AgentDetailPage() {
           <Button variant="outline" size="sm"
             onClick={() => (paused ? pause.mutate({ paused: false }) : setPausing(true))}
             className="ml-auto">
-            {paused ? '恢复' : '暂停'}
+            {paused ? t('agentDetail.resume') : t('agentDetail.pause')}
           </Button>
         </div>
         {a.description && <p className="mt-0.5 text-xs text-slate-500">{a.description}</p>}
@@ -112,25 +114,25 @@ export function AgentDetailPage() {
           {/* ── 干得怎么样 ── */}
           {d.performance && (
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <Stat label="执行次数" value={String(d.performance.runs)} sub="近 30 天" />
+              <Stat label={t('agentDetail.runs')} value={String(d.performance.runs)} sub={t('agentDetail.last30d')} />
               <Stat
-                label="成功率"
+                label={t('agentDetail.successRate')}
                 value={`${Math.round(d.performance.successRate * 100)}%`}
                 tone={d.performance.successRate < 0.8 ? 'warn' : 'normal'}
               />
               <Stat
-                label="首次成功率"
+                label={t('agentDetail.firstTryRate')}
                 value={`${Math.round(d.performance.firstTrySuccessRate * 100)}%`}
-                sub="重试掩盖的问题看这个"
+                sub={t('agentDetail.firstTryHint')}
                 tone={d.performance.firstTrySuccessRate < 0.6 ? 'warn' : 'normal'}
               />
               <Stat
-                label="平均成本"
+                label={t('agentDetail.avgCost')}
                 value={money(String(d.performance.avgCost))}
-                sub={`合计 ${money(String(d.performance.totalCost))}`}
+                sub={t('agentDetail.totalCost', { amount: money(String(d.performance.totalCost)) })}
               />
               <Stat
-                label="平均耗时"
+                label={t('agentDetail.avgDuration')}
                 value={d.performance.avgMinutes === null ? '—' : `${d.performance.avgMinutes}m`}
               />
             </div>
@@ -151,7 +153,7 @@ export function AgentDetailPage() {
             {d.queue.length === 0 ? (
               <p className="px-3 py-3 text-center text-xs text-slate-400">
                 当前没有在办的任务
-                {d.queueDoneCount > 0 && ` —— 历史上完成过 ${d.queueDoneCount} 个`}
+                {d.queueDoneCount > 0 && t('agentDetail.queueDone', { count: d.queueDoneCount })}
               </p>
             ) : (
               <ul>
@@ -181,28 +183,28 @@ export function AgentDetailPage() {
               Agent 档案，等于没有边界。
           */}
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
-            <h2 className="text-xs font-medium text-slate-700">🔐 权限边界</h2>
+            <h2 className="text-xs font-medium text-slate-700">{t('agentDetail.permissions')}</h2>
             <p className="text-[11px] text-slate-400">
               独立配置，不继承任何人类用户的权限。Agent 自己改不了这里
             </p>
 
             <div className="mt-1.5 grid gap-2 md:grid-cols-2">
               <div>
-                <p className="text-[11px] text-slate-500">允许的工具（{d.permissions.allowedTools.length}）</p>
+                <p className="text-[11px] text-slate-500">{t('agentDetail.allowedTools', { count: d.permissions.allowedTools.length })}</p>
                 <p className="text-xs text-slate-700">
                   {d.permissions.allowedTools.length === 0
-                    ? '（无）'
+                    ? t('agentDetail.none')
                     : d.permissions.allowedTools.join('、')}
                 </p>
               </div>
               <div>
                 <p className="text-[11px] text-slate-500">
                   禁止的工具（{d.permissions.deniedTools.length}）
-                  <span className="ml-1 text-slate-400">黑名单优先，不可被模板或继承覆盖</span>
+                  <span className="ml-1 text-slate-400">{t('agentDetail.denyWins')}</span>
                 </p>
                 <p className="text-xs text-red-700">
                   {d.permissions.deniedTools.length === 0
-                    ? '（无）'
+                    ? t('agentDetail.none')
                     : d.permissions.deniedTools.join('、')}
                 </p>
               </div>
@@ -210,7 +212,7 @@ export function AgentDetailPage() {
 
             {d.permissions.resourceScopes.length > 0 && (
               <div className="mt-1.5">
-                <p className="text-[11px] text-slate-500">资源范围</p>
+                <p className="text-[11px] text-slate-500">{t('agentDetail.resourceScopes')}</p>
                 <ul className="space-y-0.5">
                   {d.permissions.resourceScopes.map((s, i) => (
                     <li key={i} className="text-xs text-slate-700">
@@ -221,7 +223,7 @@ export function AgentDetailPage() {
                           s.access === 'write' ? 'text-amber-700' : 'text-slate-500',
                         )}
                       >
-                        {s.access === 'write' ? '可写' : s.access === 'read' ? '只读' : '无权限'}
+                        {s.access === 'write' ? t('agentDetail.write') : s.access === 'read' ? t('agentDetail.read') : t('agentDetail.noAccess')}
                       </span>
                     </li>
                   ))}
@@ -230,18 +232,18 @@ export function AgentDetailPage() {
             )}
 
             <div className="mt-1.5 flex flex-wrap gap-3 border-t border-slate-100 pt-1.5 text-[11px] text-slate-500">
-              <span>并发上限 {a.maxConcurrency}</span>
-              <span>超时 {Math.round(a.timeoutSeconds / 60)} 分钟</span>
+              <span>{t('agentDetail.maxConcurrency', { n: a.maxConcurrency })}</span>
+              <span>{t('agentDetail.timeoutMinutes', { n: Math.round(a.timeoutSeconds / 60) })}</span>
               <span>
                 单次成本上限{' '}
-                {a.costLimitPerRun === null ? '未设' : money(String(a.costLimitPerRun))}
+                {a.costLimitPerRun === null ? t('agentDetail.unset') : money(String(a.costLimitPerRun))}
               </span>
-              <span>负责人 {a.ownerName}</span>
+              <span>{t('agentDetail.ownerName', { name: a.ownerName })}</span>
             </div>
 
             {d.permissionChanges.length > 0 && (
               <div className="mt-1.5 border-t border-slate-100 pt-1.5">
-                <p className="text-[11px] text-slate-500">权限变更历史</p>
+                <p className="text-[11px] text-slate-500">{t('agentDetail.permissionHistory')}</p>
                 <ul className="space-y-0.5">
                   {d.permissionChanges.map((c, i) => (
                     <li key={i} className="text-[11px] text-slate-600">
@@ -252,7 +254,7 @@ export function AgentDetailPage() {
                           c.direction === 'loosen' ? 'text-amber-700' : 'text-slate-500',
                         )}
                       >
-                        {c.direction === 'loosen' ? '放宽' : '收紧'}
+                        {c.direction === 'loosen' ? t('agentDetail.loosened') : t('agentDetail.tightened')}
                       </span>
                       {c.reason && <span className="ml-1 text-slate-400">{c.reason}</span>}
                     </li>
@@ -264,10 +266,10 @@ export function AgentDetailPage() {
 
           {/* ── 运行时能做什么 ── */}
           {d.capability ? (
-            <CapabilityPanel report={d.capability} runtimeName={a.runtime?.name ?? '未知运行时'} />
+            <CapabilityPanel report={d.capability} runtimeName={a.runtime?.name ?? t('agentDetail.unknownRuntime')} />
           ) : (
             <section className="rounded border border-dashed border-slate-300 bg-white px-3 py-2">
-              <h2 className="text-xs font-medium text-slate-700">⚙ 运行时能力</h2>
+              <h2 className="text-xs font-medium text-slate-700">{t('agentDetail.capabilities')}</h2>
               <p className="mt-0.5 text-[11px] text-slate-500">
                 这个运行时的适配器没有在当前进程注册，拿不到能力清单 ——
                 也就意味着现在派不出任务给它
@@ -281,7 +283,7 @@ export function AgentDetailPage() {
               最近执行（{d.recentRuns.length}）
             </h2>
             {d.recentRuns.length === 0 ? (
-              <p className="px-3 py-3 text-center text-xs text-slate-400">还没有执行记录</p>
+              <p className="px-3 py-3 text-center text-xs text-slate-400">{t('agentDetail.noRuns')}</p>
             ) : (
               <ul>
                 {d.recentRuns.map((r) => (
@@ -301,13 +303,13 @@ export function AgentDetailPage() {
                               : 'text-slate-500',
                         )}
                       >
-                        {r.status === 'completed' ? '✓ 成功' : r.status === 'failed' ? '✗ 失败' : r.status}
+                        {r.status === 'completed' ? t('agentDetail.runOk') : r.status === 'failed' ? t('agentDetail.runFail') : r.status}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-slate-800">
                         {r.workItemTitle}
                       </span>
                       {r.attempt > 1 && (
-                        <span className="text-[11px] text-amber-700">第 {r.attempt} 次尝试</span>
+                        <span className="text-[11px] text-amber-700">{t('agentDetail.attemptN', { n: r.attempt })}</span>
                       )}
                       {r.errorClass && (
                         <span className="text-[11px] text-red-600">{r.errorClass}</span>
@@ -325,8 +327,8 @@ export function AgentDetailPage() {
 
           <p className="text-[11px] text-slate-400">
             工具的副作用等级见运行时能力清单；
-            <span className={SEVERITY_TONE.destructive}>破坏性</span>与
-            <span className={SEVERITY_TONE.external}>对外</span>两类即使在白名单里，
+            <span className={SEVERITY_TONE.destructive}>{t('agentDetail.destructive')}</span>{' '}{t('agentDetail.andJoin')}{' '}
+            <span className={SEVERITY_TONE.external}>{t('agentDetail.external')}</span>{t('agentDetail.effectNote')}
             仍然会被 Policy 与安全底线二次拦截
           </p>
         </div>
@@ -383,10 +385,11 @@ function PauseDialog({
   onCancel: () => void;
   onConfirm: (reason: string) => void;
 }) {
+  const t = useT();
   const [reason, setReason] = useState('');
   return (
-    <Modal onClose={onCancel} title="暂停 Agent">
-      <h2 className="text-sm font-semibold text-slate-900">暂停「{name}」</h2>
+    <Modal onClose={onCancel} title={t('agentDetail.pauseTitle')}>
+      <h2 className="text-sm font-semibold text-slate-900">{t('agentDetail.pauseTitleName', { name })}</h2>
       <p className="mt-1 text-xs text-slate-500">
         暂停后不再给它派新任务，进行中的 Run 不受影响。
         原因会记入事件 —— 三周后没人记得「这个 Agent 为什么一直是停的」
@@ -395,7 +398,7 @@ function PauseDialog({
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={3}
-        placeholder="例如：连续三次把测试写错，先停掉查配置"
+        placeholder={t('agentDetail.pausePlaceholder')}
         className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">

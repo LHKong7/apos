@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -12,10 +13,10 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
-const ESCALATE_LABELS: Record<string, string> = {
-  assignee: '提醒责任人',
-  project_owner: '提醒项目负责人',
-  manager: '提醒上级',
+const ESCALATE_KEYS: Record<string, MessageKey> = {
+  assignee: 'notify.remindOwner',
+  project_owner: 'notify.remindLead',
+  manager: 'notify.remindManager',
 };
 
 /**
@@ -38,6 +39,7 @@ export function NotificationPanel({
   projectId: string;
   canEdit: boolean;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const saved = integration.notificationConfig!;
   const [draft, setDraft] = useState<NotificationConfigRow | null>(null);
@@ -64,8 +66,8 @@ export function NotificationPanel({
   return (
     <div className="border-t border-slate-100 px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="text-xs font-medium text-slate-700">发送什么</h3>
-        <span className="text-[11px] text-slate-400">默认只发「需要行动」的事</span>
+        <h3 className="text-xs font-medium text-slate-700">{t('notify.whatToSend')}</h3>
+        <span className="text-[11px] text-slate-400">{t('notify.actionableOnly')}</span>
       </div>
 
       <div className="mt-1 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -83,7 +85,7 @@ export function NotificationPanel({
               onCheckedChange={() => toggle(e.key)}
             />
             {e.label}
-            {e.noisy && <span className="text-slate-400">← 默认关</span>}
+            {e.noisy && <span className="text-slate-400">{t('notify.offByDefault')}</span>}
           </label>
         ))}
       </div>
@@ -146,13 +148,13 @@ export function NotificationPanel({
 
       {/* 升级规则（产品文档十一）*/}
       <div className="mt-1.5">
-        <p className="text-[11px] text-slate-500">决策等太久时逐级找人</p>
+        <p className="text-[11px] text-slate-500">{t('notify.escalate')}</p>
         <ul className="mt-0.5 space-y-0.5">
           {config.escalation.map((e, i) => (
             <li key={i} className="text-[11px] text-slate-600">
-              · 等待 {e.afterHours} 小时 → {ESCALATE_LABELS[e.notify] ?? e.notify}
+              · 等待 {e.afterHours} 小时 → {ESCALATE_KEYS[e.notify] ?? e.notify}
               {e.pauseCriticalPath && (
-                <span className="ml-1 text-amber-700">并暂停关键路径</span>
+                <span className="ml-1 text-amber-700">{t('notify.pauseCriticalPath')}</span>
               )}
             </li>
           ))}
@@ -178,7 +180,7 @@ export function NotificationPanel({
             <Button variant="neutral" size="xs"
               disabled={save.isPending}
               onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '保存通知配置'}
+              {save.isPending ? t('common.saving') : t('notify.save')}
             </Button>
             <button
               type="button"
@@ -197,7 +199,7 @@ export function NotificationPanel({
 
       {save.error && (
         <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {save.error instanceof ApiError ? save.error.message : '保存失败'}
+          {save.error instanceof ApiError ? save.error.message : t('notify.saveFailed')}
         </p>
       )}
     </div>

@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -30,6 +31,7 @@ export function DecisionCardView({
   /** 整个队列一条都不能批量时就不留这一列 —— 一排空占位比没有更碍眼 */
   showSelectColumn: boolean;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const [mode, setMode] = useState<null | 'approve' | 'reject'>(null);
   const [note, setNote] = useState('');
@@ -70,12 +72,12 @@ export function DecisionCardView({
               <Checkbox
                 checked={selected}
                 onCheckedChange={onSelect}
-                aria-label={`选择「${card.title}」`}
+                aria-label={t('decision.selectOne', { title: card.title })}
               />
             ) : (
               <span
                 className="cursor-help text-[11px] text-slate-400"
-                title="不可逆或高风险，必须逐条确认"
+                title={t('decision.gateHint')}
                 aria-hidden
               >
                 ·
@@ -100,7 +102,7 @@ export function DecisionCardView({
             >
               {riskLabel(card.riskLevel)}
             </span>
-            {!card.reversible && <span className="text-[11px] text-red-700">不可逆</span>}
+            {!card.reversible && <span className="text-[11px] text-red-700">{t('decision.irreversible')}</span>}
             {/* ★ 时限是这一页的主排序依据，所以它必须一眼可见 */}
             {overdue ? (
               <span className="text-[11px] font-medium text-red-700">
@@ -116,7 +118,7 @@ export function DecisionCardView({
                 ⏰ {duration(card.dueInMinutes)} 内
               </span>
             ) : (
-              <span className="text-[11px] text-slate-400">无时限</span>
+              <span className="text-[11px] text-slate-400">{t('decision.noDeadline')}</span>
             )}
             <span className="text-[11px] text-slate-400">
               已等 {duration(card.waitingMinutes)}
@@ -147,13 +149,13 @@ export function DecisionCardView({
                 </Link>
               </>
             )}
-            {card.assigneeName && <> · 责任人 {card.assigneeName}</>}
+            {card.assigneeName && <>{t('decision.assignee', { name: card.assigneeName })}</>}
           </p>
 
           {/* 为什么需要人 —— 指明触发的规则，而不是「系统要求」 */}
           <p className="mt-1 text-xs text-slate-700">{card.whyHuman}</p>
           {card.consequence && (
-            <p className="mt-0.5 text-xs text-amber-800">不处理：{card.consequence}</p>
+            <p className="mt-0.5 text-xs text-amber-800">{t('decision.consequence', { consequence: card.consequence })}</p>
           )}
           {card.agentSelfReport && (
             <p className="mt-0.5 text-[11px] text-slate-500">
@@ -181,7 +183,7 @@ export function DecisionCardView({
                   </p>
                   {o.description && <p className="text-[11px] text-slate-600">{o.description}</p>}
                   {o.rationale && (
-                    <p className="text-[11px] text-emerald-800">理由：{o.rationale}</p>
+                    <p className="text-[11px] text-emerald-800">{t('decision.rationale', { rationale: o.rationale })}</p>
                   )}
                   {/* ★ 不确定性和理由一样重要：只给理由的建议看起来永远是对的 */}
                   {o.uncertainties.length > 0 && (
@@ -197,11 +199,11 @@ export function DecisionCardView({
           {/* ── 就地处理 ── */}
           {approve.isSuccess || reject.isSuccess ? (
             <p className="mt-1 text-xs text-slate-500">
-              已{approve.isSuccess ? '批准' : '驳回'}
+              已{approve.isSuccess ? t('decision.approve') : t('decision.reject')}
             </p>
           ) : !card.canAct ? (
             <p className="mt-1 text-[11px] text-amber-800">
-              责任人是 {card.assigneeName ?? '他人'}，决策责任不可代行 —— 你只能查看
+              {t('decision.cannotDelegate', { name: card.assigneeName ?? t('decision.others') })}
             </p>
           ) : mode === null ? (
             <div className="mt-1.5 flex gap-1.5">
@@ -223,7 +225,7 @@ export function DecisionCardView({
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="备注（可选）" />
+                placeholder={t('decision.noteOptional')} />
               <div className="flex gap-1.5">
                 <button
                   type="button"
@@ -231,7 +233,7 @@ export function DecisionCardView({
                   onClick={() => approve.mutate()}
                   className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700 disabled:opacity-40"
                 >
-                  {approve.isPending ? '提交中…' : '确认批准'}
+                  {approve.isPending ? t('decision.submitting') : t('decision.confirmApprove')}
                 </button>
                 <button
                   type="button"
@@ -250,12 +252,12 @@ export function DecisionCardView({
                 type="text"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="驳回原因（必填）" />
+                placeholder={t('decision.rejectReason')} />
               <div className="flex gap-1.5">
                 <Button variant="destructive" size="sm"
                   disabled={!reason.trim() || reject.isPending}
                   onClick={() => reject.mutate()}>
-                  {reject.isPending ? '提交中…' : '确认驳回（任务将被取消）'}
+                  {reject.isPending ? t('decision.submitting') : t('decision.confirmReject')}
                 </Button>
                 <button
                   type="button"
@@ -270,7 +272,7 @@ export function DecisionCardView({
 
           {error && (
             <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-              {error instanceof ApiError ? error.message : '操作失败'}
+              {error instanceof ApiError ? error.message : t('decision.actionFailed')}
             </p>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -25,27 +26,36 @@ import { BenefitTab } from './BenefitTab';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 
-const RANGE_LABELS: Record<AnalyticsRange, string> = {
-  '7d': '近 7 天',
-  '30d': '近 30 天',
-  '90d': '近 90 天',
+const RANGE_KEYS: Record<AnalyticsRange, MessageKey> = {
+  '7d': 'analytics.last7d',
+  '30d': 'analytics.last30d',
+  '90d': 'analytics.last90d',
 };
 
-const TAB_LABELS: Record<AnalyticsTab, string> = {
+/** ★ 前三个是专有名词，两种语言一样；后三个走词条 */
+const TAB_LITERALS: Partial<Record<AnalyticsTab, string>> = {
   flow: 'Flow',
   agent: 'Agent',
   hitl: 'Human-in-the-Loop',
-  cost: '成本',
-  quality: '质量',
-  benefit: '成本效益',
 };
+
+const TAB_KEYS: Partial<Record<AnalyticsTab, MessageKey>> = {
+  cost: 'analytics.tab.cost',
+  quality: 'analytics.tab.quality',
+  benefit: 'analytics.tab.costBenefit',
+};
+
+function tabLabel(tab: AnalyticsTab, tr: (k: MessageKey) => string): string {
+  const key = TAB_KEYS[tab];
+  return key ? tr(key) : (TAB_LITERALS[tab] ?? tab);
+}
 
 type Drill = 'rework' | 'wip' | 'slow';
 
-const DRILL_TITLES: Record<Drill, string> = {
-  rework: '返工过的任务',
-  wip: '在制任务',
-  slow: '耗时最长的任务',
+const DRILL_KEYS: Record<Drill, MessageKey> = {
+  rework: 'analytics.reworked',
+  wip: 'analytics.inProgress',
+  slow: 'analytics.slowest',
 };
 
 /**
@@ -57,6 +67,7 @@ const DRILL_TITLES: Record<Drill, string> = {
  *   下面四个 Tab 是论据。用户可以只看结论就走。
  */
 export function AnalyticsPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -109,7 +120,7 @@ export function AnalyticsPage() {
         setParam('tab', 'hitl');
         break;
       case 'view_items':
-        setDrill(action.label.includes('返工') ? 'rework' : 'wip');
+        setDrill(action.label.includes(t('analytics.rework')) ? 'rework' : 'wip');
         break;
       case 'create_policy':
         // ★ 「分析 → 规则」是产品持续降低人类负担的飞轮。
@@ -131,7 +142,7 @@ export function AnalyticsPage() {
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold text-slate-900">
-            {data?.project.name ?? '项目'} / Analytics
+            {data?.project.name ?? t('policy.scope.project')} / Analytics
           </h1>
           <Link
             to={`/projects/${projectId}/board`}
@@ -144,11 +155,11 @@ export function AnalyticsPage() {
             value={range}
             onChange={(e) => setParam('range', e.target.value)}
             className="ml-2 rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label="时间范围"
+            aria-label={t('analytics.timeRange')}
           >
             {ANALYTICS_RANGES.map((r) => (
               <option key={r} value={r}>
-                {RANGE_LABELS[r]}
+                {RANGE_KEYS[r]}
               </option>
             ))}
           </select>
@@ -171,17 +182,18 @@ export function AnalyticsPage() {
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {ANALYTICS_TABS.map((t) => (
+          {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+          {ANALYTICS_TABS.map((key) => (
             <button
-              key={t}
+              key={key}
               type="button"
-              onClick={() => setParam('tab', t)}
+              onClick={() => setParam('tab', key)}
               className={clsx(
                 'rounded px-2 py-0.5 text-xs',
-                tab === t ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
+                tab === key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
-              {TAB_LABELS[t]}
+              {tabLabel(key, t)}
             </button>
           ))}
         </div>
@@ -250,7 +262,7 @@ export function AnalyticsPage() {
       {drill && (
         <aside className="fixed inset-y-0 right-0 z-40 flex w-[28rem] max-w-full flex-col border-l border-slate-200 bg-white shadow-xl">
           <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-            <h2 className="text-sm font-medium text-slate-800">{DRILL_TITLES[drill]}</h2>
+            <h2 className="text-sm font-medium text-slate-800">{DRILL_KEYS[drill]}</h2>
             <button
               type="button"
               onClick={() => setDrill(null)}
@@ -262,7 +274,7 @@ export function AnalyticsPage() {
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {drillItems.isPending && <CardSkeleton />}
             {drillItems.data?.items.length === 0 && (
-              <EmptyState icon="✓" message="没有符合条件的任务" />
+              <EmptyState icon="✓" message={t('analytics.noMatching')} />
             )}
             <ul className="space-y-1">
               {drillItems.data?.items.map((item) => (
@@ -273,7 +285,7 @@ export function AnalyticsPage() {
                     <span className="block truncate text-slate-800">{item.title}</span>
                     <span className="mt-0.5 block text-[11px] text-slate-500">
                       {statusLabel(item.status)} · {riskLabel(item.riskLevel)}
-                      {item.elapsedHours !== null && ` · 耗时 ${item.elapsedHours}h`}
+                      {item.elapsedHours !== null && t('analytics.elapsed', { hours: item.elapsedHours })}
                     </span>
                   </Button>
                 </li>

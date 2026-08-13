@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /**
- * 角色定义（docs/tech/09-security.md §2.2）。
+ * {t('roles.title')}（docs/tech/09-security.md §2.2）。
  *
  * ★★ 超管在这里造出「研发」「运营」「测试」。内置的六个覆盖
  *   「项目怎么运转」，覆盖不了「这个组织怎么分工」—— 每家的切法都不一样。
@@ -27,19 +28,26 @@ import { Input } from '@/components/ui/input';
  *   而不是等提交后被服务端驳回。
  */
 
-const GROUP_LABELS: Record<string, string> = {
-  project: '项目',
-  requirement: '需求',
-  clarification: '需求',
-  plan: '计划',
-  work_item: '任务',
-  run: 'Agent Run',
-  decision: '决策',
-  policy: '规则',
-  agent: 'Agent',
-  convention: '工程约定',
-  integration: '集成',
+/** 权限前缀 → 词条键。模块级常量存键不存译文 */
+const GROUP_KEYS: Record<string, MessageKey> = {
+  project: 'roles.group.project',
+  requirement: 'roles.group.requirement',
+  clarification: 'roles.group.requirement',
+  plan: 'roles.group.plan',
+  work_item: 'roles.group.workItem',
+  decision: 'roles.group.decision',
+  policy: 'roles.group.policy',
+  convention: 'roles.group.convention',
+  integration: 'roles.group.integration',
 };
+
+/** 这几个前缀在两种语言里写法一样，不进词条表 */
+const GROUP_LITERALS: Record<string, string> = { run: 'Agent Run', agent: 'Agent' };
+
+function groupLabel(prefix: string, tr: (k: MessageKey) => string): string {
+  const key = GROUP_KEYS[prefix];
+  return key ? tr(key) : (GROUP_LITERALS[prefix] ?? prefix);
+}
 
 interface Draft {
   key: string;
@@ -60,6 +68,7 @@ const emptyDraft = (): Draft => ({
 });
 
 export function RolesPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Draft | null>(null);
@@ -101,7 +110,7 @@ export function RolesPage() {
       setError(null);
       refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '保存失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('roles.saveFailed')),
   });
 
   const remove = useMutation({
@@ -110,7 +119,7 @@ export function RolesPage() {
       setError(null);
       refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '删除失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('roles.deleteFailed')),
   });
 
   const openEdit = (r: RoleRow) => {
@@ -131,7 +140,7 @@ export function RolesPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">角色定义</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('roles.title')}</h1>
           {projectId && (
             <Link
               to={`/projects/${projectId}/settings/members`}
@@ -181,8 +190,8 @@ export function RolesPage() {
             )}
 
             <RoleSection
-              title="内置角色"
-              hint="权限矩阵本身（09-security §2.3），不可修改也不可删除。要不一样就新建一个"
+              title={t('roles.builtin')}
+              hint={t('roles.builtinHint')}
               roles={data.roles.filter((r) => r.builtin)}
               canManage={canManage}
               onEdit={openEdit}
@@ -190,13 +199,13 @@ export function RolesPage() {
             />
 
             <RoleSection
-              title="组织自定义角色"
-              hint="按你们的分工定义。带 Human Gate 权限的角色不能给 Agent 担任"
+              title={t('roles.custom')}
+              hint={t('roles.customHint')}
               roles={data.roles.filter((r) => !r.builtin)}
               canManage={canManage}
               onEdit={openEdit}
               onDelete={(k) => remove.mutate(k)}
-              empty="还没有自定义角色。「研发」「运营」「测试」这类岗位在这里定义"
+              empty={t('roles.customEmpty')}
             />
           </div>
         </div>
@@ -205,7 +214,7 @@ export function RolesPage() {
       {editing && data && (
         // ★ 宽度归 Modal 管：写在里层的 w-[560px] 超过弹层自己的 max-w-md，
         //   结果是横向溢出，而调用方看到的现象是「我设了宽度但没变宽」。
-        <Modal onClose={() => setEditing(null)} title="角色编辑" width="lg">
+        <Modal onClose={() => setEditing(null)} title={t('roles.editor')} width="lg">
           <RoleEditor
             draft={editing}
             isNew={editingKey === null}
@@ -239,6 +248,7 @@ function RoleSection({
   onEdit: (r: RoleRow) => void;
   onDelete: (key: string) => void;
 }) {
+  const t = useT();
   return (
     <section className="rounded border border-slate-200 bg-white">
       <div className="border-b border-slate-100 px-3 py-1.5">
@@ -248,7 +258,7 @@ function RoleSection({
         <p className="text-[11px] text-slate-400">{hint}</p>
       </div>
       {roles.length === 0 ? (
-        <p className="px-3 py-3 text-center text-xs text-slate-400">{empty ?? '（空）'}</p>
+        <p className="px-3 py-3 text-center text-xs text-slate-400">{empty ?? t('roles.empty')}</p>
       ) : (
         <ul>
           {roles.map((r) => (
@@ -269,12 +279,12 @@ function RoleSection({
                       : 'bg-slate-100 text-slate-600',
                   )}
                 >
-                  {r.appliesTo.includes('agent') ? '👤 人 + 🤖 Agent' : '👤 仅人类'}
+                  {r.appliesTo.includes('agent') ? t('roles.holderBoth') : t('roles.holderHumanOnly')}
                 </span>
-                <span className="text-[11px] text-slate-400">{r.permissions.length} 项权限</span>
+                <span className="text-[11px] text-slate-400">{t('roles.permissionCount', { count: r.permissions.length })}</span>
                 <span className="text-[11px] text-slate-400">
                   在任 {r.memberCount.human} 人
-                  {r.memberCount.agent > 0 && ` · ${r.memberCount.agent} 个 Agent`}
+                  {r.memberCount.agent > 0 && t('roles.agentCount', { count: r.memberCount.agent })}
                 </span>
               </div>
               <p className="mt-0.5 text-[11px] text-slate-500">{r.description}</p>
@@ -283,7 +293,7 @@ function RoleSection({
                 {/* 查看权限谁都可以 —— 「我为什么做不了这个」的答案就在这里 */}
                 <Button variant="outline"
                   onClick={() => onEdit(r)}>
-                  {r.builtin || !canManage ? '查看权限' : '编辑'}
+                  {r.builtin || !canManage ? t('roles.view') : t('common.edit')}
                 </Button>
                 {!r.builtin && (
                   <GatedButton
@@ -323,11 +333,17 @@ function RoleEditor({
   onCancel: () => void;
   onSave: () => void;
 }) {
+  const t = useT();
+  /**
+   * ★ 按**原始前缀**分组，渲染时才译。用译文当 map 的键的话，切语言会
+   *   让分组重排（甚至因为两个前缀译成同一个词而合并）—— 那不是本意。
+   *   Group by the raw prefix and translate at render time: keying the map by
+   *   translated text would reorder (or merge) groups when the locale changes.
+   */
   const groups = useMemo(() => {
     const map = new Map<string, AvailablePermission[]>();
     for (const p of available) {
-      const key = GROUP_LABELS[p.group] ?? p.group;
-      map.set(key, [...(map.get(key) ?? []), p]);
+      map.set(p.group, [...(map.get(p.group) ?? []), p]);
     }
     return [...map.entries()];
   }, [available]);
@@ -358,30 +374,30 @@ function RoleEditor({
   return (
     <div>
       <h2 className="text-sm font-semibold text-slate-900">
-        {isNew ? '新建角色' : `${locked ? '' : '编辑'}「${draft.name}」`}
+        {isNew ? t('roles.new') : `${locked ? '' : t('common.edit')}「${draft.name}」`}
       </h2>
       {locked && (
         <p className="mt-0.5 text-[11px] text-slate-500">
           {draft.builtin
-            ? '内置角色就是权限矩阵本身，不可修改 —— 要不一样请新建一个角色'
-            : '你没有定义角色的权限，这里只能看'}
+            ? t('roles.builtinReadOnly')
+            : t('roles.readOnlyHint')}
         </p>
       )}
 
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
         <label className="flex flex-col gap-1">
-          <span className="text-slate-600">显示名</span>
+          <span className="text-slate-600">{t('roles.displayName')}</span>
           <Input
             value={draft.name}
             disabled={locked}
             onChange={(e) => onChange({ ...draft, name: e.target.value })}
-            placeholder="研发"
+            placeholder={t('roles.displayNamePlaceholder')}
             className="disabled:bg-slate-50 disabled:text-slate-500" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-600">
             标识
-            <span className="ml-1 text-[11px] text-slate-400">Policy 规则里引用它</span>
+            <span className="ml-1 text-[11px] text-slate-400">{t('roles.referencedByPolicy')}</span>
           </span>
           <Input
             value={draft.key}
@@ -393,18 +409,18 @@ function RoleEditor({
       </div>
 
       <label className="mt-2 flex flex-col gap-1 text-xs">
-        <span className="text-slate-600">这个角色是做什么的</span>
+        <span className="text-slate-600">{t('roles.whatFor')}</span>
         <Input
           value={draft.description}
           disabled={locked}
           onChange={(e) => onChange({ ...draft, description: e.target.value })}
-          placeholder="写代码、跑测试、接管任务；不参与需求与计划审批"
+          placeholder={t('roles.whatForPlaceholder')}
           className="disabled:bg-slate-50 disabled:text-slate-500" />
       </label>
 
       {/* ── 谁来担任 ── */}
       <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
-        <p className="text-xs font-medium text-slate-700">谁来担任这个角色</p>
+        <p className="text-xs font-medium text-slate-700">{t('roles.whoHolds')}</p>
         <label className="mt-1 flex items-start gap-2 text-xs">
           <Checkbox
             checked={draft.agents && agentAllowed}
@@ -440,7 +456,7 @@ function RoleEditor({
         <div className="mt-1.5 space-y-2">
           {groups.map(([group, items]) => (
             <fieldset key={group} className="rounded border border-slate-200 px-2 py-1.5">
-              <legend className="px-1 text-[11px] text-slate-500">{group}</legend>
+              <legend className="px-1 text-[11px] text-slate-500">{groupLabel(group, t)}</legend>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                 {items.map((p) => (
                   <label key={p.key} className="flex items-start gap-1.5 text-[11px]">
@@ -455,7 +471,7 @@ function RoleEditor({
                       {p.humanOnly && (
                         <span
                           className="ml-1 text-amber-700"
-                          title="只能由人类行使 —— 勾上之后这个角色就不能给 Agent 了"
+                          title={t('roles.humanOnlyHint')}
                         >
                           仅人类
                         </span>
@@ -471,13 +487,13 @@ function RoleEditor({
 
       <div className="mt-3 flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          {locked ? '关闭' : '取消'}
+          {locked ? t('roles.close') : t('common.cancel')}
         </button>
         {!locked && (
           <Button variant="neutral" size="sm"
             onClick={onSave}
             disabled={pending || !draft.name || (isNew && !draft.key)}>
-            {pending ? '保存中…' : '保存'}
+            {pending ? t('common.saving') : t('common.save')}
           </Button>
         )}
       </div>

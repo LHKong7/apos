@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import { useMutation } from '@tanstack/react-query';
@@ -8,18 +9,18 @@ import type { ScenarioTestResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-const RISKS = [
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'critical', label: '极高' },
+const RISKS: { value: string; labelKey: MessageKey }[] = [
+  { value: 'low', labelKey: 'scenario.riskLow' },
+  { value: 'medium', labelKey: 'scenario.riskMedium' },
+  { value: 'high', labelKey: 'scenario.riskHigh' },
+  { value: 'critical', labelKey: 'scenario.riskCritical' },
 ];
 
 const STATE_META = {
-  matched: { icon: '✓', label: '命中', className: 'text-green-800 font-medium' },
-  missed: { icon: '·', label: '未命中', className: 'text-slate-500' },
-  not_evaluated: { icon: '⊘', label: '未评估', className: 'text-slate-400' },
-} as const;
+  matched: { icon: '✓', labelKey: 'scenario.hit', className: 'text-green-800 font-medium' },
+  missed: { icon: '·', labelKey: 'scenario.miss', className: 'text-slate-500' },
+  not_evaluated: { icon: '⊘', labelKey: 'scenario.notEvaluated', className: 'text-slate-400' },
+} as const satisfies Record<string, { icon: string; labelKey: MessageKey; className: string }>;
 
 /**
  * 构造场景测试（页面文档 13 §5.7）。
@@ -31,6 +32,7 @@ const STATE_META = {
  *   用户自己就看懂了机制，下次不用再来问。
  */
 export function ScenarioTester({ projectId }: { projectId: string }) {
+  const t = useT();
   const [ctx, setCtx] = useState<Record<string, unknown>>({
     operationType: 'deploy',
     riskLevel: 'low',
@@ -41,7 +43,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
 
   const test = useMutation({
     mutationFn: () => api.testScenario(projectId, ctx),
-    onError: (e) => setError(e instanceof ApiError ? e.message : '测试失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('scenario.testFailed')),
   });
 
   const set = (key: string, value: unknown) => setCtx((c) => ({ ...c, [key]: value }));
@@ -49,13 +51,13 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-3">
       <section className="rounded border border-slate-200 bg-white px-3 py-2">
-        <h2 className="text-xs font-medium text-slate-700">构造一个场景，看系统会怎么判</h2>
+        <h2 className="text-xs font-medium text-slate-700">{t('scenario.intro')}</h2>
         <p className="text-[11px] text-slate-400">
           排查「为什么这个操作还要找我」最快的路径
         </p>
 
         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-          <Field label="操作类型">
+          <Field label={t('scenario.operationType')}>
             <select
               value={String(ctx.operationType)}
               onChange={(e) => set('operationType', e.target.value)}
@@ -69,7 +71,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
             </select>
           </Field>
 
-          <Field label="风险等级">
+          <Field label={t('scenario.riskLevel')}>
             <select
               value={String(ctx.riskLevel)}
               onChange={(e) => set('riskLevel', e.target.value)}
@@ -77,19 +79,19 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
             >
               {RISKS.map((r) => (
                 <option key={r.value} value={r.value}>
-                  {r.label}
+                  {t(r.labelKey)}
                 </option>
               ))}
             </select>
           </Field>
 
-          <Field label="操作环境">
+          <Field label={t('scenario.environment')}>
             <select
               value={String(ctx.environment ?? '')}
               onChange={(e) => set('environment', e.target.value || null)}
               className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
             >
-              <option value="">不涉及</option>
+              <option value="">{t('scenario.notApplicable')}</option>
               {['dev', 'test', 'staging', 'production'].map((v) => (
                 <option key={v} value={v}>
                   {ENV_LABELS[v] ?? v}
@@ -98,7 +100,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
             </select>
           </Field>
 
-          <Field label="本次成本（USD）">
+          <Field label={t('scenario.cost')}>
             <Input
               type="number"
               value={Number(ctx.runCost)}
@@ -110,7 +112,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
           onClick={() => test.mutate()}
           disabled={test.isPending}
           className="mt-2">
-          {test.isPending ? '判定中…' : '运行测试'}
+          {test.isPending ? t('scenario.judging') : t('scenario.runTest')}
         </Button>
         {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
       </section>
@@ -121,6 +123,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
 }
 
 function Result({ result }: { result: ScenarioTestResponse }) {
+  const t = useT();
   const matchedIndex = result.trace.findIndex((t) => t.state === 'matched');
   const skipped = result.trace.filter((t) => t.state === 'not_evaluated').length;
 
@@ -132,7 +135,7 @@ function Result({ result }: { result: ScenarioTestResponse }) {
           result.requiresHuman ? 'text-amber-800' : 'text-green-800',
         )}
       >
-        {result.requiresHuman ? '⚠ 需要人类确认' : '✓ 自动执行'}
+        {result.requiresHuman ? t('scenario.needsHuman') : t('scenario.automatic')}
         {result.matchedPolicyName && (
           <span className="ml-2 font-normal text-slate-600">
             命中规则「{result.matchedPolicyName}」
@@ -152,30 +155,41 @@ function Result({ result }: { result: ScenarioTestResponse }) {
       <div className="mt-2">
         <p className="text-[11px] text-slate-500">
           匹配过程（按优先级从上到下，命中即停）
-          {skipped > 0 && <span className="ml-1">· 后面 {skipped} 条根本没被评估</span>}
+          {skipped > 0 && <span className="ml-1">{t('scenario.skipped', { count: skipped })}</span>}
         </p>
         <ul className="mt-1 space-y-0.5">
-          {result.trace.map((t, i) => {
-            const meta = STATE_META[t.state];
+          {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+          {result.trace.map((row, i) => {
+            const meta = STATE_META[row.state];
+            const fact = FACT_LABELS[row.failedAt?.fact as FactKey] ?? row.failedAt?.fact ?? '';
             return (
-              <li key={t.policyId} className={clsx('flex items-center gap-2 text-[11px]', meta.className)}>
+              <li
+                key={row.policyId}
+                className={clsx('flex items-center gap-2 text-[11px]', meta.className)}
+              >
                 <span className="w-4" aria-hidden>
                   {meta.icon}
                 </span>
-                <span className="w-10 tabular-nums">#{t.priority}</span>
-                <span className="w-12 text-slate-400">{t.scope === 'org' ? '组织级' : '项目级'}</span>
-                <span className="min-w-0 flex-1 truncate">{t.name}</span>
-                <span className="w-14 text-right">{meta.label}</span>
-                {t.state === 'missed' && t.failedAt && (
+                <span className="w-10 tabular-nums">#{row.priority}</span>
+                <span className="w-12 text-slate-400">
+                  {row.scope === 'org' ? t('scenario.orgLevel') : t('scenario.projectLevel')}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                <span className="w-14 text-right">{t(meta.labelKey)}</span>
+                {row.state === 'missed' && row.failedAt && (
                   <span
                     className="w-44 truncate text-slate-400"
-                    title={`${FACT_LABELS[t.failedAt.fact as FactKey] ?? t.failedAt.fact} 实际是 ${String(t.failedAt.actual)}，规则要求 ${JSON.stringify(t.failedAt.expected)}`}
+                    title={t('scenario.diffDetail', {
+                      fact,
+                      actual: String(row.failedAt.actual),
+                      expected: JSON.stringify(row.failedAt.expected),
+                    })}
                   >
-                    差在{FACT_LABELS[t.failedAt.fact as FactKey] ?? t.failedAt.fact}
+                    {t('scenario.diffOn', { fact })}
                   </span>
                 )}
                 {i === matchedIndex && (
-                  <span className="w-20 text-right text-slate-500">← 到此为止</span>
+                  <span className="w-20 text-right text-slate-500">{t('scenario.stopsHere')}</span>
                 )}
               </li>
             );

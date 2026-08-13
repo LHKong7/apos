@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,7 +12,7 @@ import { DecisionCardView } from './Card';
 import { Checkbox } from '@/components/ui/checkbox';
 
 /**
- * 决策中心（页面文档 10）。
+ * {t('decisions.title')}（页面文档 10）。
  *
  * ★ 这是整个产品最核心承诺的兑现处：
  *   *你不需要盯着 Agent，需要你的时候我会来找你。*
@@ -23,6 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
  *   顺序由系统给（超时 → 剩余时间 → 风险），用户只管从上往下拍。
  */
 export function DecisionsPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId?: string }>();
   const qc = useQueryClient();
 
@@ -89,7 +91,7 @@ export function DecisionsPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">决策中心</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('decisions.title')}</h1>
           {projectId && (
             <Link
               to={`/projects/${projectId}`}
@@ -111,12 +113,12 @@ export function DecisionsPage() {
         {stats && (
           <p className="mt-1 text-[11px] text-slate-500">
             {stats.overdue > 0 && (
-              <span className="font-medium text-red-700">超时 {stats.overdue} 条 · </span>
+              <span className="font-medium text-red-700">{t('decisions.overdueCount', { count: stats.overdue })}</span>
             )}
-            {stats.dueSoon > 0 && <span className="text-amber-700">4 小时内到期 {stats.dueSoon} 条 · </span>}
+            {stats.dueSoon > 0 && <span className="text-amber-700">{t('decisions.dueSoon', { count: stats.dueSoon })}</span>}
             可处理 {stats.actionable} 条
             {mustReadOne > 0 && (
-              <span className="text-slate-400"> · 其中 {mustReadOne} 条不可逆或高风险，需逐条确认</span>
+              <span className="text-slate-400">{t('decisions.mustConfirmOne', { count: mustReadOne })}</span>
             )}
           </p>
         )}
@@ -132,8 +134,8 @@ export function DecisionsPage() {
           {inbox.data && cards.length === 0 && (
             <EmptyState
               icon="✅"
-              message={scope === 'mine' ? '没有等你拍板的决策' : '当前没有待处理决策'}
-              hint="队列空了就说明系统在自己跑 —— 这是常态，不是异常"
+              message={scope === 'mine' ? t('decisions.noneForYou') : t('decisions.noneAtAll')}
+              hint={t('decisions.emptyHint')}
             />
           )}
 
@@ -167,14 +169,14 @@ export function DecisionsPage() {
 
           {selected.length > 0 && (
             <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs text-white">
-              <span>已选 {selected.length} 条</span>
+              <span>{t('decisions.selectedCount', { count: selected.length })}</span>
               <button
                 type="button"
                 disabled={batch.isPending}
                 onClick={() => batch.mutate(selected)}
                 className="rounded bg-emerald-600 px-2 py-0.5 hover:bg-emerald-700 disabled:opacity-40"
               >
-                {batch.isPending ? '处理中…' : '批量批准'}
+                {batch.isPending ? t('decisions.processing') : t('decisions.bulkApprove')}
               </button>
               <button
                 type="button"
@@ -185,13 +187,13 @@ export function DecisionsPage() {
               </button>
               {/* ★ 没有「批量驳回」：驳回必须写原因，而每条的原因各不相同。
                   批量驳回要么逼用户写一句放之四海皆准的废话，要么干脆不写。 */}
-              <span className="ml-auto text-[11px] text-slate-400">驳回需逐条写明原因</span>
+              <span className="ml-auto text-[11px] text-slate-400">{t('decisions.rejectNeedsReason')}</span>
             </div>
           )}
 
           {batch.isError && (
             <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
-              {batch.error instanceof ApiError ? batch.error.message : '批量批准失败'}
+              {batch.error instanceof ApiError ? batch.error.message : t('decisions.bulkApproveFailed')}
             </p>
           )}
           {batch.data && batch.data.failed.length > 0 && (
@@ -202,7 +204,7 @@ export function DecisionsPage() {
               <ul className="mt-0.5 space-y-0.5">
                 {batch.data.failed.map((f) => (
                   <li key={f.id} className="text-[11px]">
-                    · {f.error ?? '处理失败'}
+                    · {f.error ?? t('decisions.actionFailed')}
                   </li>
                 ))}
               </ul>

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { AnalyticsRange, LayoutKind } from '@apos/domain';
 import type {
   AgentDetail,
@@ -125,7 +126,7 @@ async function request<T>(
       ?.error;
     throw new ApiError(
       envelope?.code ?? 'UNKNOWN',
-      envelope?.message ?? `请求失败（${res.status}）`,
+      envelope?.message ?? t('api.requestFailed', { status: res.status }),
       envelope?.details,
       res.status,
     );

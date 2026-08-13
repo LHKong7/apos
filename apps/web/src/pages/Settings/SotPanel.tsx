@@ -1,3 +1,4 @@
+import { useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -6,16 +7,27 @@ import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 
-const SOT_LABELS: Record<string, string> = {
-  apos: 'APOS',
-  external: '外部系统',
-  merge: '双向合并',
+/**
+ * SoT 取值 → 显示。
+ * ★ `apos` 是产品名，两种语言写法一样，不进词条表；另外两个走词条。
+ *   `apos` is a product name and reads the same in both languages.
+ */
+const SOT_KEYS: Record<string, MessageKey | null> = {
+  apos: null,
+  external: 'sot.external',
+  merge: 'sot.twoWayMerge',
 };
+
+function sotLabel(value: string, tr: (k: MessageKey) => string): string {
+  const key = SOT_KEYS[value];
+  if (key === undefined) return value;
+  return key === null ? 'APOS' : tr(key);
+}
 
 /**
  * Source of Truth 配置（页面文档 14 §5.3）。
  *
- * ★ 这是整个集成设置里唯一带「⚠ 关键配置」角标的一块，因为它决定的是
+ * ★ 这是整个集成设置里唯一带「{t('sot.criticalTag')}」角标的一块，因为它决定的是
  *   *以后哪一边的修改会被丢掉*。而它有一个别的配置都没有的特性：
  *   改错之后不会立刻报错，要等到某天有人发现两边数字对不上。
  *   所以这一屏做了三件别处不做的事 ——
@@ -34,6 +46,8 @@ export function SotPanel({
   meta: IntegrationsResponse;
   canEdit: boolean;
 }) {
+  const t = useT();
+  const sx = useSpecText();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Record<string, string> | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -75,12 +89,17 @@ export function SotPanel({
   return (
     <div className="border-t border-slate-100 px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="text-xs font-medium text-slate-700">Source of Truth 设置</h3>
-        <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">⚠ 关键配置</span>
-        <span className="text-[11px] text-slate-400">决定以后哪一边的修改会被丢掉</span>
+        <h3 className="text-xs font-medium text-slate-700">{t('sot.title')}</h3>
+        <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">{t('sot.criticalTag')}</span>
+        <span className="text-[11px] text-slate-400">{t('sot.criticalHint')}</span>
         {integration.sotPreset && (
           <span className="ml-auto text-[11px] text-slate-500">
-            当前：{meta.presets.find((p) => p.key === integration.sotPreset)?.label ?? '自定义'}
+            {t('sot.currentPreset', {
+              preset: (() => {
+                const hit = meta.presets.find((p) => p.key === integration.sotPreset);
+                return hit ? sx(hit.label, hit.labelEn) : t('sot.custom');
+              })(),
+            })}
           </span>
         )}
       </div>
@@ -91,7 +110,7 @@ export function SotPanel({
             <button
               key={p.key}
               type="button"
-              title={p.description}
+              title={sx(p.description, p.descriptionEn)}
               onClick={() => applyPreset(p.key)}
               className={clsx(
                 'rounded px-1.5 py-0.5 text-[11px]',
@@ -100,7 +119,7 @@ export function SotPanel({
                   : 'border border-slate-300 text-slate-600 hover:bg-slate-50',
               )}
             >
-              {p.label}
+              {sx(p.label, p.labelEn)}
             </button>
           ))}
         </div>
@@ -112,13 +131,13 @@ export function SotPanel({
             const changed = value[m.field] !== m.sourceOfTruth;
             return (
               <tr key={m.field} className="border-b border-slate-50 last:border-0">
-                <td className="w-20 py-1 text-slate-700">{m.fieldLabel}</td>
+                <td className="w-20 py-1 text-slate-700">{sx(m.fieldLabel, m.fieldLabelEn)}</td>
                 <td className="w-28 py-1">
                   {canEdit ? (
                     <select
                       value={value[m.field] ?? m.sourceOfTruth}
                       onChange={(e) => setField(m.field, e.target.value)}
-                      aria-label={`${m.fieldLabel}的 Source of Truth`}
+                      aria-label={t('sot.fieldAria', { field: sx(m.fieldLabel, m.fieldLabelEn) })}
                       className={clsx(
                         'w-full rounded border px-1 py-0.5 text-[11px]',
                         changed ? 'border-amber-400 bg-amber-50' : 'border-slate-300',
@@ -126,22 +145,22 @@ export function SotPanel({
                     >
                       {m.options.map((o) => (
                         <option key={o} value={o}>
-                          {SOT_LABELS[o] ?? o}
+                          {sotLabel(o, t)}
                         </option>
                       ))}
                     </select>
                   ) : (
-                    <span className="text-slate-700">{SOT_LABELS[m.sourceOfTruth]}</span>
+                    <span className="text-slate-700">{sotLabel(m.sourceOfTruth, t)}</span>
                   )}
                 </td>
                 {/* ★ 每格都说明为什么默认是这个。看不懂默认值道理的用户
                     只会照抄或乱改 —— 两种都通向「哪边数据都不敢信」 */}
-                <td className="py-1 text-slate-400">{m.why}</td>
-                <td className="w-24 py-1 text-right text-slate-500" title="非 SoT 端被改动时怎么办">
-                  {m.strategyLabel}
+                <td className="py-1 text-slate-400">{sx(m.why, m.whyEn)}</td>
+                <td className="w-24 py-1 text-right text-slate-500" title={t('sot.onNonSotEdit')}>
+                  {sx(m.strategyLabel, m.strategyLabelEn)}
                 </td>
                 {m.customized && (
-                  <td className="w-8 py-1 text-right text-[10px] text-amber-700" title="已偏离默认值">
+                  <td className="w-8 py-1 text-right text-[10px] text-amber-700" title={t('sot.deviated')}>
                     改过
                   </td>
                 )}
@@ -153,10 +172,13 @@ export function SotPanel({
 
       {integration.autoRules.length > 0 && (
         <p className="mt-1 text-[11px] text-slate-500">
-          自动处理规则：
-          {integration.autoRules
-            .map((r) => `${r.fieldLabel}冲突一律以${SOT_LABELS[r.winner]}为准`)
-            .join('；')}
+          {t('sot.autoRules', {
+            rules: integration.autoRules
+              .map((r) =>
+                t('sot.autoRule', { field: sx(r.fieldLabel, r.fieldLabelEn), winner: sotLabel(r.winner, t) }),
+              )
+              .join('; '),
+          })}
         </p>
       )}
 
@@ -164,14 +186,14 @@ export function SotPanel({
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <Button variant="neutral" size="xs"
             onClick={() => setConfirming(true)}>
-            保存 {dirty.length} 项修改
+            {t('sot.saveCount', { count: dirty.length })}
           </Button>
           <button
             type="button"
             onClick={() => setDraft(null)}
             className="text-[11px] text-slate-500 hover:text-slate-700"
           >
-            撤销
+            {t('sot.revert')}
           </button>
         </div>
       )}
@@ -182,23 +204,24 @@ export function SotPanel({
        *   用户点确定之前，得知道自己刚刚把谁的修改判了死刑。
        */}
       {confirming && (
-        <Modal onClose={() => setConfirming(false)} title="确认修改 Source of Truth">
-          <h2 className="mb-1.5 text-sm font-semibold text-slate-900">确认修改 Source of Truth</h2>
+        <Modal onClose={() => setConfirming(false)} title={t('sot.confirmTitle')}>
+          <h2 className="mb-1.5 text-sm font-semibold text-slate-900">{t('sot.confirmTitle')}</h2>
           <p className="text-xs text-slate-600">
-            这些字段以后由谁说了算会改变。非 SoT 一端的修改将按下面的策略处理，
-            改动即刻对之后所有同步生效：
+            {t('sot.confirmIntro')}
           </p>
           <ul className="mt-1.5 space-y-1">
             {dirty.map((m) => (
               <li key={m.field} className="rounded bg-slate-50 px-2 py-1 text-xs">
-                <span className="text-slate-800">{m.fieldLabel}</span>
+                <span className="text-slate-800">{sx(m.fieldLabel, m.fieldLabelEn)}</span>
                 <span className="ml-1.5 text-slate-500">
-                  {SOT_LABELS[m.sourceOfTruth]} → {SOT_LABELS[value[m.field] ?? '']}
+                  {sotLabel(m.sourceOfTruth, t)} → {sotLabel(value[m.field] ?? '', t)}
                 </span>
                 <span className="mt-0.5 block text-[11px] text-amber-800">
-                  以后{SOT_LABELS[value[m.field] ?? '']}
-                  改了会被采纳；{SOT_LABELS[value[m.field] === 'apos' ? 'external' : 'apos']}
-                  改了按「{m.strategyLabel}」处理
+                  {t('sot.effect', {
+                    winner: sotLabel(value[m.field] ?? '', t),
+                    loser: sotLabel(value[m.field] === 'apos' ? 'external' : 'apos', t),
+                    strategy: sx(m.strategyLabel, m.strategyLabelEn),
+                  })}
                 </span>
               </li>
             ))}
@@ -206,7 +229,7 @@ export function SotPanel({
 
           {save.error && (
             <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-              {save.error instanceof ApiError ? save.error.message : '保存失败'}
+              {save.error instanceof ApiError ? save.error.message : t('sot.saveFailed')}
             </p>
           )}
 
@@ -214,7 +237,7 @@ export function SotPanel({
             <Button variant="neutral" size="sm"
               disabled={save.isPending}
               onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '确认修改'}
+              {save.isPending ? t('sot.saving') : t('sot.confirm')}
             </Button>
             <button
               type="button"

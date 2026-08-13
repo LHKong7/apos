@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useEffect, useState } from 'react';
 import { useBoardStore } from '../../stores/board';
 
@@ -10,6 +11,7 @@ import { useBoardStore } from '../../stores/board';
  *   系统的更新不能抢走用户的注意力控制权。
  */
 export function MovedToast() {
+  const t = useT();
   const unseen = useBoardStore((s) => s.unseenMoves);
   const acknowledge = useBoardStore((s) => s.acknowledgeMoves);
   const [visible, setVisible] = useState(false);
@@ -35,8 +37,8 @@ export function MovedToast() {
   return (
     <div className="pointer-events-none fixed bottom-4 right-4 z-40 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
       {unseen.length === 1
-        ? `↑ 1 张卡片已移动到 ${last.to}`
-        : `↑ ${unseen.length} 张卡片状态已更新`}
+        ? t('toast.oneMoved', { to: last.to })
+        : t('toast.manyMoved', { count: unseen.length })}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { t, useT } from '../../lib/i18n';
 import { useId, useState } from 'react';
 import clsx from 'clsx';
 import type { Point } from '@apos/domain';
@@ -32,7 +33,7 @@ export interface BarDatum {
 export function BarChart({
   data,
   legend,
-  emptyHint = '这段时间没有数据',
+  emptyHint = t('chart.noData'),
 }: {
   data: BarDatum[];
   legend?: { label: string; tone: 'primary' | 'waiting' }[];
@@ -138,7 +139,7 @@ export function TrendChart({
   format = (v) => String(v),
   height = 96,
   tone = 'primary',
-  emptyHint = '这段时间没有数据',
+  emptyHint = t('chart.noData'),
 }: {
   points: Point[];
   format?: (v: number) => string;
@@ -146,6 +147,7 @@ export function TrendChart({
   tone?: 'primary' | 'waiting';
   emptyHint?: string;
 }) {
+  const t = useT();
   const [hover, setHover] = useState<number | null>(null);
   const [table, setTable] = useState(false);
   const clipId = useId();
@@ -179,7 +181,7 @@ export function TrendChart({
           preserveAspectRatio="none"
           className="h-24 w-full"
           role="img"
-          aria-label={`趋势，峰值 ${format(points[peakIdx]!.value)}`}
+          aria-label={t('chart.trendPeak', { value: format(points[peakIdx]!.value) })}
           onMouseLeave={() => setHover(null)}
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -257,7 +259,7 @@ export function TrendChart({
         onClick={() => setTable((v) => !v)}
         className="mt-0.5 text-[11px] text-slate-400 underline hover:text-slate-600"
       >
-        {table ? '收起数据' : '看数据'}
+        {table ? t('chart.hideData') : t('chart.showData')}
       </button>
       {table && (
         <div className="mt-1 max-h-32 overflow-y-auto">
@@ -341,10 +343,11 @@ export function StatTile({
 
 /** 数据源没接通时的占位。★ 显示 0 会被当成「真的是 0」，那是误导。 */
 export function NotWired({ label, why }: { label: string; why: string }) {
+  const t = useT();
   return (
     <div className="min-w-0 flex-1 rounded border border-dashed border-slate-200 px-3 py-2">
       <p className="truncate text-[11px] text-slate-500">{label}</p>
-      <p className="mt-0.5 text-sm text-slate-400">未接入</p>
+      <p className="mt-0.5 text-sm text-slate-400">{t('chart.notConnected')}</p>
       <p className="mt-0.5 text-[11px] text-slate-400">{why}</p>
     </div>
   );

@@ -2,7 +2,10 @@ import { z } from 'zod';
 import { ActorType } from '../common/actor';
 import { RiskLevel } from '../common/enums';
 
-/** 产品文档 6.3：统一工作对象，13 种可配置类型 */
+/**
+ * 产品文档 6.3：统一工作对象，13 种可配置类型。
+ * Product doc 6.3: one unified work object with 13 configurable types.
+ */
 export const WorkItemType = z.enum([
   'requirement',
   'feature',
@@ -20,7 +23,10 @@ export const WorkItemType = z.enum([
 ]);
 export type WorkItemType = z.infer<typeof WorkItemType>;
 
-/** 六阶段（产品文档五、8.4.1） */
+/**
+ * 六阶段（产品文档五、8.4.1）。
+ * The six stages (product doc part five, 8.4.1).
+ */
 export const Stage = z.enum(['intake', 'planning', 'execution', 'review', 'release', 'done']);
 export type Stage = z.infer<typeof Stage>;
 
@@ -59,6 +65,16 @@ export type WorkItemStatus = z.infer<typeof WorkItemStatus>;
  *   （比如决策卡片上的「不处理会怎样」）。各写一份的下场已经见过：
  *   决策类型的标签表就是这么和运行时的取值走散的。
  * ★ Record<WorkItemStatus, string> 会在新增状态时直接编译不过 —— 这是故意的。
+ *
+ * Chinese status names — one copy for the whole system.
+ *
+ * ★ They live in contracts rather than the frontend because the server also
+ *   builds human-readable sentences (such as "what happens if you do nothing"
+ *   on a decision card). We have already seen what separate copies cost: the
+ *   decision-type label table drifted away from the runtime values exactly
+ *   that way.
+ * ★ `Record<WorkItemStatus, string>` fails to compile when a status is added,
+ *   which is the point.
  */
 export const STATUS_LABELS: Record<WorkItemStatus, string> = {
   draft: '草稿',
@@ -81,7 +97,45 @@ export const STATUS_LABELS: Record<WorkItemStatus, string> = {
   cancelled: '已取消',
 };
 
-/** status → stage 的映射。看板列由此决定。 */
+/**
+ * 状态的英文名 / English status names.
+ *
+ * ★★ 与 STATUS_LABELS 同为 `Record<WorkItemStatus, string>`：新增状态时
+ *   两张表都编译不过。少了这一条，英文表会悄悄漏掉新状态，而漏掉的表现
+ *   是界面上冒出一个原始的下划线枚举值。
+ *
+ *   Both tables are `Record<WorkItemStatus, string>`, so adding a status
+ *   breaks the build in both places. Without that, the English table would
+ *   silently miss new statuses and leak a raw enum value into the UI.
+ *
+ * ★ 前端不直接读这两张表，它走 i18n 词条（lib/i18n 的 workItemStatus.*）——
+ *   这里保留是给**服务端**拼人类可读的句子用的。
+ */
+export const STATUS_LABELS_EN: Record<WorkItemStatus, string> = {
+  draft: 'Draft',
+  clarifying: 'Clarifying',
+  awaiting_requirement_approval: 'Awaiting requirement approval',
+  planning: 'Planning',
+  awaiting_plan_approval: 'Awaiting plan approval',
+  ready: 'Ready',
+  executing: 'Executing',
+  blocked: 'Blocked',
+  failed: 'Failed',
+  reviewing: 'In review',
+  changes_requested: 'Changes requested',
+  awaiting_decision: 'Awaiting decision',
+  waiting_for_release: 'Waiting for release',
+  releasing: 'Releasing',
+  released: 'Released',
+  acceptance: 'Acceptance',
+  done: 'Done',
+  cancelled: 'Cancelled',
+};
+
+/**
+ * status → stage 的映射。看板列由此决定。
+ * The status → stage mapping; it decides which board column a card lands in.
+ */
 export const STATUS_STAGE: Record<WorkItemStatus, Stage> = {
   draft: 'intake',
   clarifying: 'intake',
@@ -119,6 +173,16 @@ export const TERMINAL_STATUSES: readonly WorkItemStatus[] = ['done', 'cancelled'
  *
  *   页面文档 05 §5.4：Human Gate 通过卡片徽标体现，不展开为独立看板列。
  *   因此这里让卡片留在它本来要去的阶段。
+ *
+ * Which board column a card belongs to.
+ *
+ * ★ `awaiting_decision` is not a stage but a cross-cutting state: a work item
+ *   can be waiting on a human call before execution, after it, or before
+ *   release. Filing it under the review column would make "waiting for
+ *   approval to start" look like "finished and under review".
+ *
+ *   Page doc 05 §5.4: a Human Gate shows as a badge on the card rather than
+ *   its own column, so the card stays in the stage it was actually heading to.
  */
 export function stageFor(
   status: WorkItemStatus,
@@ -130,7 +194,10 @@ export function stageFor(
   return STATUS_STAGE[status];
 }
 
-/** 依赖类型（产品文档 8.6.2） */
+/**
+ * 依赖类型（产品文档 8.6.2）。
+ * Dependency types (product doc 8.6.2).
+ */
 export const DependencyType = z.enum([
   'finish_to_start',
   'start_to_start',

@@ -1,5 +1,7 @@
 # 开发指南
 
+*[English version / 英文版本](CONTRIBUTING.en.md)*
+
 ## 环境准备
 
 需要 Node 22+ 与 pnpm 10+。

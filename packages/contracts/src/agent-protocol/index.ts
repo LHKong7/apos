@@ -5,6 +5,13 @@ import { z } from 'zod';
  *
  * 核心设计不是「规定所有 Agent 必须做什么」，而是协商每个 Agent 能做什么，
  * 并对缺失能力定义明确的降级行为。
+ *
+ * The unified Agent Protocol — product doc 9.3 /
+ * docs/tech/06-agent-protocol.md
+ *
+ * The design is not "dictate what every Agent must do" but "negotiate what
+ * each Agent can do", with an explicit degradation defined for every missing
+ * capability.
  */
 
 export const PROTOCOL_VERSION = '1.0';
@@ -35,83 +42,119 @@ export type FeatureKey = keyof RuntimeFeatures;
 
 export interface Degradation {
   behavior: string;
+  /** 英文对照；缺省时界面回落中文 / English counterpart, falls back to `behavior` */
+  behaviorEn?: string;
   userImpact: string;
+  /** 英文对照；缺省时界面回落中文 / English counterpart, falls back to `userImpact` */
+  userImpactEn?: string;
   severity: 'info' | 'warning' | 'critical';
 }
 
 /**
  * 降级矩阵 —— docs/tech/06-agent-protocol.md §3.1
  * 页面文档 14 §5.4 直接展示这张表，不静默降级。
+ *
+ * The degradation matrix — docs/tech/06-agent-protocol.md §3.1
+ * Page doc 14 §5.4 shows this table verbatim: nothing degrades silently.
  */
 export const DEGRADATION_MATRIX: Record<FeatureKey, Degradation> = {
   streamingEvents: {
     behavior: '仅在 Run 结束时写一条汇总事件',
+    behaviorEn: 'Writes one summary event when the run ends',
     userImpact: 'Run 详情页无实时执行流，卡片无进度条',
+    userImpactEn: 'No live event stream on the run detail page, and no progress bar on the card',
     severity: 'warning',
   },
   toolCallVisibility: {
     behavior: '执行流只记录开始与结束',
+    behaviorEn: 'The event stream records only the start and the end',
     userImpact: '排障困难，页面提示「该 Agent 不上报执行细节」',
+    userImpactEn: 'Hard to diagnose; the page says "this Agent does not report execution detail"',
     severity: 'warning',
   },
   reasoningVisibility: {
     behavior: '不记录推理过程',
+    behaviorEn: 'Reasoning is not recorded',
     userImpact: '无法查看 Agent 的判断依据',
+    userImpactEn: 'You cannot see what the Agent based its judgement on',
     severity: 'info',
   },
   costReporting: {
     behavior: '按 token × 单价估算；无 token 则按时长粗估',
+    behaviorEn: 'Estimated as tokens × unit price; without tokens, roughly by duration',
     userImpact: '成本标注为「估算值」',
+    userImpactEn: 'Cost is labelled "estimated"',
     severity: 'warning',
   },
   tokenReporting: {
     behavior: '不记录 token 明细',
+    behaviorEn: 'No token breakdown is recorded',
     userImpact: '成本构成不可下钻',
+    userImpactEn: 'Cost cannot be drilled into',
     severity: 'info',
   },
   progressReporting: {
     behavior: '不显示百分比，只显示已耗时',
+    behaviorEn: 'No percentage, only elapsed time',
     userImpact: '卡片显示「执行中 12m」而非进度条',
+    userImpactEn: 'The card shows "running 12m" instead of a progress bar',
     severity: 'info',
   },
   runtimeConstraints: {
     behavior: '「增加约束」不可用',
+    behaviorEn: '"Add a constraint" is unavailable',
     userImpact: '需改用「终止并补充上下文重跑」',
+    userImpactEn: 'Use "terminate and rerun with more context" instead',
     severity: 'warning',
   },
   interventionRequest: {
     behavior: 'Agent 无法主动求助，靠超时与失败检测兜底',
+    behaviorEn: 'The Agent cannot ask for help; timeouts and failure detection are the fallback',
     userImpact: '卡住的任务发现更晚',
+    userImpactEn: 'A stuck work item is noticed later',
     severity: 'warning',
   },
   selfReportOnFailure: {
     behavior: '错误信息只有原始报错',
+    behaviorEn: 'The error is only the raw message',
     userImpact: '排障效率降低',
+    userImpactEn: 'Diagnosis is slower',
     severity: 'warning',
   },
   pause: {
     behavior: '暂停降级为终止',
+    behaviorEn: 'Pause degrades into terminate',
     userImpact: '会丢失执行中的进度，操作前需二次确认',
+    userImpactEn:
+      'In-flight progress is lost, so the action needs a second confirmation',
     severity: 'warning',
   },
   terminate: {
     behavior: '只能标记本地状态，外部可能仍在运行',
+    behaviorEn: 'Only the local state can be marked; the external side may still be running',
     userImpact: '存在成本泄漏风险，禁止用于高风险任务',
+    userImpactEn: 'Risk of cost leaking away — not allowed for high-risk work',
     severity: 'critical',
   },
   statusQuery: {
     behavior: '孤儿 Run 无法探测真实状态，超时后直接判失败',
+    behaviorEn: 'An orphaned run cannot be probed for its real state and is failed once it times out',
     userImpact: '可能误判仍在运行的 Run',
+    userImpactEn: 'A run that is still going may be judged failed',
     severity: 'warning',
   },
   subAgentDelegation: {
     behavior: '不支持委派子 Agent',
+    behaviorEn: 'Delegating to a sub-Agent is not supported',
     userImpact: '复杂任务需人工拆分',
+    userImpactEn: 'Complex work has to be split by hand',
     severity: 'info',
   },
   artifactUpload: {
     behavior: '产物需通过外部链接引用',
+    behaviorEn: 'Artifacts must be referenced by an external link',
     userImpact: '产物不能内联预览',
+    userImpactEn: 'Artifacts cannot be previewed inline',
     severity: 'info',
   },
 };

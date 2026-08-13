@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import { GatedButton } from '../../components/Gated';
 import type { Permission, PolicyRow } from '../../lib/api/types';
@@ -34,11 +35,12 @@ export function RuleList({
   onViewHits: (p: PolicyRow) => void;
   highlightIds: Set<string>;
 }) {
+  const t = useT();
   if (policies.length === 0) {
     return (
       <section className="rounded border border-slate-200 bg-white px-3 py-2">
         <h2 className="text-xs font-medium text-slate-700">{title}</h2>
-        <p className="mt-2 text-center text-xs text-slate-400">还没有项目级规则</p>
+        <p className="mt-2 text-center text-xs text-slate-400">{t('ruleList.empty')}</p>
       </section>
     );
   }
@@ -63,11 +65,11 @@ export function RuleList({
             )}
           >
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-slate-400">{p.projectId === null ? '⛓ 组织级' : '📁 项目级'}</span>
+              <span className="text-slate-400">{p.projectId === null ? t('ruleList.orgLevel') : t('ruleList.projectLevel')}</span>
               <span className="font-medium text-slate-900">{p.name}</span>
-              <span className="text-[11px] text-slate-400">优先级 {p.priority}</span>
+              <span className="text-[11px] text-slate-400">{t('ruleList.priority', { n: p.priority })}</span>
               <span className={clsx('text-[11px]', p.enabled ? 'text-green-700' : 'text-slate-400')}>
-                {p.enabled ? '● 启用' : '○ 已停用'}
+                {p.enabled ? t('ruleList.enabled') : t('ruleList.disabled')}
               </span>
             </div>
 
@@ -103,14 +105,14 @@ export function RuleList({
                     permission={p.enabled ? 'policy.loosen' : 'policy.tighten'}
                     onClick={() => onToggle(p)}
                   >
-                    {p.enabled ? '停用' : '启用'}
+                    {p.enabled ? t('policy.disable') : t('policy.enable')}
                   </Action>
                   <Action permission="policy.loosen" onClick={() => onDelete(p)}>
                     删除
                   </Action>
                 </>
               ) : (
-                <span className="text-slate-400">组织级规则，项目内不可修改</span>
+                <span className="text-slate-400">{t('ruleList.orgReadOnly')}</span>
               )}
               {/* 变更历史是只读的 —— 谁都该看得到规则怎么变成今天这样 */}
               <Action permission="policy.view" onClick={() => onHistory(p)}>

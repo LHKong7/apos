@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { useLocaleStore } from '../../lib/i18n';
 import userEvent from '@testing-library/user-event';
 import { JsonInput } from './AgentConfig';
 
@@ -58,6 +59,13 @@ function Host({
     </div>
   );
 }
+
+/**
+ * ★ 钉住中文：下面断言的是具体那句校验提示。默认语言是英文。
+ *   Pinned to Chinese: these assertions match exact validation wording,
+ *   while the app default is English.
+ */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
 
 describe('运行时配置的 JSON 输入框', () => {
   it('合法 JSON 对象往上抛解析结果', async () => {

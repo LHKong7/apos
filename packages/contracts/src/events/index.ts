@@ -3,7 +3,11 @@ import { ActorType } from '../common/actor';
 import { PolicyContext } from '../policy/index';
 
 export const SubjectType = z.enum([
-  /** 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace，这里不用那个词，见 db schema） */
+  /**
+   * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace，这里不用那个词，见 db schema）。
+   * The organisation: top-level container for everything. Plane calls this a
+   * Workspace; we deliberately do not — see the db schema.
+   */
   'organization',
   'project',
   'requirement',
@@ -15,9 +19,16 @@ export const SubjectType = z.enum([
   'artifact',
   'policy',
   'integration',
-  /** 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）*/
+  /**
+   * 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）。
+   * Identity and authorisation changes take the person being changed as the
+   * subject (docs/tech/09-security.md §6.3).
+   */
   'user',
-  /** 角色定义的变更 —— 定义角色就是定义权限本身 */
+  /**
+   * 角色定义的变更 —— 定义角色就是定义权限本身。
+   * Role definition changes: defining a role *is* defining the permissions.
+   */
   'role',
 ]);
 export type SubjectType = z.infer<typeof SubjectType>;
@@ -30,6 +41,12 @@ export type EventLevel = z.infer<typeof EventLevel>;
  *
  * 与 run_events 分层：领域事件是业务事实（单 Work Item 数十条），
  * run_events 是执行细节（单 Run 可达数千条）。Analytics 与审计只扫描前者。
+ *
+ * Domain events — docs/tech/03-event-model.md
+ *
+ * Layered apart from run_events: a domain event is a business fact (tens per
+ * work item), while a run_event is execution detail (thousands per run).
+ * Analytics and the audit trail read only the former.
  */
 export interface DomainEvent {
   id: string;
@@ -47,24 +64,44 @@ export interface DomainEvent {
 
   payload: Record<string, unknown>;
 
-  /** Policy 模拟回放所需。仅在会触发 Policy 评估的事件上记录。 */
+  /**
+   * Policy 模拟回放所需。仅在会触发 Policy 评估的事件上记录。
+   * What policy simulation replays from. Recorded only on events that trigger
+   * a policy evaluation — and it cannot be filled in afterwards.
+   */
   contextSnapshot: PolicyContext | null;
 
-  /** 直接触发本事件的事件 —— 回答「为什么这样做」 */
+  /**
+   * 直接触发本事件的事件 —— 回答「为什么这样做」。
+   * The event that directly caused this one — it answers "why did this happen".
+   */
   causationId: string | null;
-  /** 同一业务流程的所有事件共享 */
+  /**
+   * 同一业务流程的所有事件共享。
+   * Shared by every event in one business flow.
+   */
   correlationId: string;
 
   occurredAt: string;
 }
 
-/** 事件类型目录 —— docs/tech/03-event-model.md §7。命名规范 {subject}.{过去式动词} */
+/**
+ * 事件类型目录 —— docs/tech/03-event-model.md §7。命名规范 {subject}.{过去式动词}
+ * The event type catalogue — docs/tech/03-event-model.md §7.
+ * Naming convention: {subject}.{past-tense verb}
+ */
 export const DOMAIN_EVENT_TYPES = [
   /**
    * organization —— 顶层容器的生命周期与归属变更。
    *
    * ★ 归属变更必须记审计：「谁把谁加进了哪个组织」是提权路径的第一步，
    *   查不到它，跨租户的权限累积就无从追溯。
+   *
+   * organization — lifecycle and membership changes of the top-level container.
+   *
+   * ★ Membership changes must be audited: "who added whom to which
+   *   organisation" is the first step of a privilege-escalation path, and
+   *   without it cross-tenant accumulation of permissions cannot be traced.
    */
   'organization.created',
   'organization.updated',
@@ -79,7 +116,10 @@ export const DOMAIN_EVENT_TYPES = [
   'project.resumed',
   'project.budget_threshold_reached',
   'project.completed',
-  /** 授权变更（09-security §6.3 强制记审计）*/
+  /**
+   * 授权变更（09-security §6.3 强制记审计）。
+   * Authorisation changes — auditing is mandatory per 09-security §6.3.
+   */
   'project.member_added',
   'project.member_role_changed',
   'project.member_removed',
@@ -93,6 +133,10 @@ export const DOMAIN_EVENT_TYPES = [
   /**
    * ★ 实体已经不在了，这条事件是它存在过的唯一痕迹 ——
    *   payload 因此要带标题与原文摘要，只留 subjectId 等于什么都没留。
+   *
+   * ★ The entity is gone, so this event is the only trace it ever existed.
+   *   The payload therefore carries the title and a snippet of the original
+   *   text; keeping only a subjectId keeps nothing.
    */
   'requirement.deleted',
   'requirement.assumption_invalidated',
@@ -116,9 +160,16 @@ export const DOMAIN_EVENT_TYPES = [
   'work_item.dependency_removed',
   'work_item.split',
   'work_item.merged',
-  /** 恢复策略被 recovery-worker 执行（自动重试 / 改派 / 转人工 / 升级为决策） */
+  /**
+   * 恢复策略被 recovery-worker 执行（自动重试 / 改派 / 转人工 / 升级为决策）。
+   * The recovery worker applied a strategy (auto retry / reassign / hand to a
+   * person / escalate into a decision).
+   */
   'work_item.recovery_applied',
-  /** 质量门禁自动核验的结果（reviewing 阶段） */
+  /**
+   * 质量门禁自动核验的结果（reviewing 阶段）。
+   * Result of the automated quality gate, during the reviewing stage.
+   */
   'work_item.quality_checked',
   // agent run
   'agent_run.dispatched',

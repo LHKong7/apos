@@ -1,3 +1,4 @@
+import { t, useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
@@ -10,10 +11,10 @@ import { Input } from '@/components/ui/input';
 
 /** 原因分类进 Analytics 的「人工覆盖率」，自由文本没法聚合 */
 const REASONS = [
-  { value: 'review_found_issue', label: '审核发现问题，需返工' },
-  { value: 'requirement_changed', label: '需求变更' },
-  { value: 'system_misjudged', label: '系统状态判断有误' },
-  { value: 'other', label: '其他' },
+  { value: 'review_found_issue', labelKey: 'move.reviewIssue' as MessageKey },
+  { value: 'requirement_changed', labelKey: 'move.requirementChanged' as MessageKey },
+  { value: 'system_misjudged', labelKey: 'move.systemMisjudged' as MessageKey },
+  { value: 'other', labelKey: 'move.other' as MessageKey },
 ] as const;
 
 interface Props {
@@ -43,17 +44,19 @@ export function ManualMoveDialog({
   pending,
   error,
 }: Props) {
+  const t = useT();
   const [category, setCategory] = useState<string>(REASONS[0].value);
   const [other, setOther] = useState('');
   const [terminateRun, setTerminateRun] = useState(false);
 
-  const label = REASONS.find((r) => r.value === category)?.label ?? '';
+  const key = REASONS.find((r) => r.value === category)?.labelKey;
+  const label = key ? t(key) : '';
   const reason = category === 'other' ? other.trim() : label;
   const canSubmit = reason.length > 0 && !pending;
   const hasRunningRun = card.runStatus === 'running' || card.status === 'executing';
 
   return (
-    <Modal onClose={onCancel} title="手动调整任务状态">
+    <Modal onClose={onCancel} title={t('move.title')}>
       <h2 className="text-sm font-semibold text-slate-900">
         将「{card.title}」从 {stageLabel(card.stage)} 移到 {stageLabel(toStage)}
       </h2>
@@ -62,7 +65,7 @@ export function ManualMoveDialog({
       </p>
 
       <fieldset className="mt-3 space-y-1.5">
-        <legend className="text-xs font-medium text-slate-700">原因</legend>
+        <legend className="text-xs font-medium text-slate-700">{t('move.reason')}</legend>
         {REASONS.map((r) => (
           <label key={r.value} className="flex items-center gap-2 text-xs text-slate-700">
             <Input
@@ -73,7 +76,7 @@ export function ManualMoveDialog({
               onChange={() => setCategory(r.value)}
               className="accent-slate-900"
             />
-            {r.label}
+            {t(r.labelKey)}
             {r.value === 'other' && (
               <Input
                 type="text"
@@ -82,7 +85,7 @@ export function ManualMoveDialog({
                   setOther(e.target.value);
                   setCategory('other');
                 }}
-                placeholder="请说明"
+                placeholder={t('move.explain')}
                 className="ml-1 flex-1" />
             )}
           </label>
@@ -108,7 +111,7 @@ export function ManualMoveDialog({
         <Button variant="neutral" size="sm"
           disabled={!canSubmit}
           onClick={() => onConfirm({ reason, reasonCategory: category, terminateRun })}>
-          {pending ? '提交中…' : '确认'}
+          {pending ? t('decision.submitting') : t('common.confirm')}
         </Button>
       </div>
     </Modal>
@@ -150,7 +153,7 @@ const MODAL_WIDTH = {
 export function Modal({
   children,
   onClose,
-  title = '对话框',
+  title = t('move.dialogFallback'),
   footer,
   width = 'md',
 }: {

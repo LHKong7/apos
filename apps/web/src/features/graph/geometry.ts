@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import type { DependencyType } from '@apos/contracts';
 
 /** 与服务端布局用的尺寸必须一致，否则连线会对不上节点边框 */
@@ -43,22 +44,22 @@ export function edgeStyle(type: DependencyType, critical: boolean, dim: boolean)
     stroke: critical ? 'var(--graph-edge-critical)' : 'var(--graph-edge)',
     strokeWidth: critical ? 2.5 : 1.25,
     double: false,
-    label: '前置依赖',
+    label: t('edge.prerequisite'),
   };
 
   const styled: EdgeStyle = (() => {
     switch (type) {
       case 'data':
-        return { ...base, strokeDasharray: '4 3', label: '数据依赖' };
+        return { ...base, strokeDasharray: '4 3', label: t('edge.data') };
       case 'artifact':
-        return { ...base, strokeDasharray: '6 2', label: '产物依赖' };
+        return { ...base, strokeDasharray: '6 2', label: t('edge.artifact') };
       case 'decision':
       case 'permission':
-        return { ...base, double: true, label: type === 'decision' ? '审批依赖' : '权限依赖' };
+        return { ...base, double: true, label: type === 'decision' ? t('edge.approval') : t('edge.permission') };
       case 'external':
-        return { ...base, strokeDasharray: '2 3', label: '外部依赖' };
+        return { ...base, strokeDasharray: '2 3', label: t('edge.external') };
       case 'start_to_start':
-        return { ...base, label: '同步开始' };
+        return { ...base, label: t('edge.syncStart') };
       case 'finish_to_start':
       default:
         return base;

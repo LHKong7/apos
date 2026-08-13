@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { useLocaleStore } from '../../lib/i18n';
 import userEvent from '@testing-library/user-event';
 import { StructuredEditor } from './StructuredEditor';
 import type { RequirementDetail } from '../../lib/api/types';
@@ -36,6 +37,13 @@ function requirement(over: Partial<RequirementDetail['requirement']> = {}) {
     ...over,
   } as RequirementDetail['requirement'];
 }
+
+/**
+ * ★ 钉住中文：下面按占位符和标签文字定位控件，而默认语言是英文。
+ *   Pinned to Chinese: these queries locate controls by their Chinese
+ *   placeholder and label text, while the app default is English.
+ */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
 
 describe('人工填写结构化需求', () => {
   it('把一份手填的需求按结构提交，列表字段按行拆开', async () => {

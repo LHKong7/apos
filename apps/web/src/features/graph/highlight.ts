@@ -1,13 +1,14 @@
+import { t } from '../../lib/i18n';
 import type { GraphEdge, GraphNode } from '@apos/domain';
 
 export const HIGHLIGHT_MODES = ['critical', 'blocked', 'mine', 'risk'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
 export const MODE_LABELS: Record<HighlightMode, string> = {
-  critical: '关键路径',
-  blocked: '阻塞链',
-  mine: '我的任务',
-  risk: '高风险',
+  critical: t('highlight.critical'),
+  blocked: t('highlight.blocked'),
+  mine: t('highlight.mine'),
+  risk: t('highlight.risk'),
 };
 
 export interface HighlightResult {

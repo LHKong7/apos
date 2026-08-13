@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import type { DiagnosticAction } from '@apos/domain';
 
 /**
@@ -54,7 +55,7 @@ export function resolveDiagnosticAction(
       // 所以给的不是「尚未实现」，而是改依赖真正该走的那条路
       return {
         kind: 'explain',
-        message: 'MVP 阶段执行图只读。调整依赖请回到计划页重新规划，改动需走计划批准',
+        message: t('graph.readOnlyMvp'),
       };
   }
 }

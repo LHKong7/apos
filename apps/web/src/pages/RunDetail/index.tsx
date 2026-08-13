@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -43,6 +44,7 @@ function isLive(detail: RunDetail | undefined): boolean {
 }
 
 function RunDetailView({ detail }: { detail: RunDetail }) {
+  const t = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const live = isLive(detail);
@@ -68,7 +70,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       }),
     onSuccess: (_r, input) => {
       setDialog(null);
-      setToast(input.action === 'terminate' ? '已终止' : '约束已下发，Agent 会在当前步骤后应用');
+      setToast(input.action === 'terminate' ? t('runDetail.terminated') : t('runDetail.constraintSent'));
       void qc.invalidateQueries({ queryKey: qk.run(detail.run.id) });
     },
   });
@@ -79,13 +81,13 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       void qc.invalidateQueries({ queryKey: qk.run(detail.run.id) });
       navigate(`/runs/${r.runId}`);
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '重试失败'),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('runDetail.retryFailed')),
   });
 
   const takeover = useMutation({
-    mutationFn: () => api.takeover(detail.workItem!.id, '从 Run 详情接管'),
-    onSuccess: () => setToast('已接管，执行主体切换为你'),
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '接管失败'),
+    mutationFn: () => api.takeover(detail.workItem!.id, t('runDetail.takeoverReason')),
+    onSuccess: () => setToast(t('runDetail.takenOver')),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('runDetail.takeoverFailed')),
   });
 
   const controlError = control.error instanceof ApiError ? control.error : null;
@@ -96,12 +98,18 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
   }, [detail.run]);
 
   const TABS: { key: Tab; label: string; hidden?: boolean }[] = [
-    { key: 'timeline', label: `执行流${events.length ? ` (${events.length})` : ''}` },
-    { key: 'input', label: '输入' },
-    { key: 'artifacts', label: `产物 (${detail.artifacts.length})` },
-    { key: 'cost', label: '成本' },
+    {
+      key: 'timeline',
+      label: events.length
+        ? t('runDetail.tab.streamCount', { count: events.length })
+        : t('runDetail.tab.stream'),
+    },
+    { key: 'input', label: t('runDetail.tab.input') },
+    { key: 'artifacts', label: t('runDetail.tab.artifacts', { count: detail.artifacts.length }) },
+    { key: 'cost', label: t('runDetail.tab.cost') },
     // 错误 Tab 只在真的失败时出现，不给一个永远空着的入口
-    { key: 'error', label: '错误', hidden: !detail.error },
+    // The error tab appears only on a real failure — no permanently empty entry
+    { key: 'error', label: t('runDetail.tab.error'), hidden: !detail.error },
   ];
 
   return (
@@ -145,14 +153,14 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           <span className="tabular-nums text-slate-500">
             {(detail.metrics.tokens.total / 1000).toFixed(1)}k tok
             {detail.metrics.tokens.cacheHitRate > 0 && (
-              <> · 缓存命中 {(detail.metrics.tokens.cacheHitRate * 100).toFixed(0)}%</>
+              <>{t('runDetail.cacheHit', { percent: (detail.metrics.tokens.cacheHitRate * 100).toFixed(0) })}</>
             )}
           </span>
 
           <div className="ml-auto flex gap-1">
             {live && (
               <>
-                <HeaderButton onClick={() => setDialog('add_constraint')}>增加约束</HeaderButton>
+                <HeaderButton onClick={() => setDialog('add_constraint')}>{t('runDetail.addConstraint')}</HeaderButton>
                 <HeaderButton onClick={() => setDialog('terminate')} tone="danger">
                   终止
                 </HeaderButton>
@@ -160,8 +168,8 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             )}
             {detail.workItem && (
               <>
-                <HeaderButton onClick={() => takeover.mutate()}>接管</HeaderButton>
-                <HeaderButton onClick={() => retry.mutate()}>重试</HeaderButton>
+                <HeaderButton onClick={() => takeover.mutate()}>{t('runDetail.takeOver')}</HeaderButton>
+                <HeaderButton onClick={() => retry.mutate()}>{t('runDetail.retry')}</HeaderButton>
               </>
             )}
           </div>
@@ -215,7 +223,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           <div className="min-h-0 flex-1 overflow-y-auto pt-2">
             {tab === 'timeline' &&
               (loading ? (
-                <p className="py-6 text-center text-xs text-slate-400">加载事件…</p>
+                <p className="py-6 text-center text-xs text-slate-400">{t('runDetail.loadingEvents')}</p>
               ) : (
                 <EventTimeline
                   events={events}

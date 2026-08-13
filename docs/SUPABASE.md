@@ -1,5 +1,7 @@
 # 接 Supabase
 
+*[English version / 英文版本](SUPABASE.en.md)*
+
 把数据库换成 Supabase（或其他托管 Postgres），后端与前端不动。
 
 本机开发见[运行指南](RUNNING.md)，整套自托管见[单机部署](DEPLOYMENT.md)。

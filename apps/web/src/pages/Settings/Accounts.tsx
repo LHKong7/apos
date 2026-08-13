@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,6 +22,7 @@ import { Input } from '@/components/ui/input';
  *   但没人知道口令 —— 一个建完就没法用的功能。
  */
 export function AccountsPage() {
+  const t = useT();
   const qc = useQueryClient();
   const { projectId } = useParams<{ projectId: string }>();
   /** 与「成员与角色」共用同一个 key —— 那边加完人也要让这份名单跟着变 */
@@ -44,13 +46,13 @@ export function AccountsPage() {
   });
 
   const error =
-    create.error instanceof ApiError ? create.error.message : create.error ? '建号失败' : null;
+    create.error instanceof ApiError ? create.error.message : create.error ? t('accounts.createFailed') : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">账号</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('accounts.title')}</h1>
           <Link
             to={`/projects/${projectId}/settings/members`}
             className="text-xs text-slate-500 hover:text-slate-700"
@@ -124,7 +126,7 @@ export function AccountsPage() {
 
             {open && (
               <section className="rounded border border-slate-300 bg-white px-3 py-2">
-                <h2 className="text-xs font-medium text-slate-700">开一个新账号</h2>
+                <h2 className="text-xs font-medium text-slate-700">{t('accounts.new')}</h2>
                 <form
                   className="mt-2 space-y-2"
                   onSubmit={(e) => {
@@ -134,30 +136,30 @@ export function AccountsPage() {
                 >
                   <div className="grid grid-cols-2 gap-2">
                     <Field
-                      label="姓名"
+                      label={t('accounts.name')}
                       value={form.name}
                       onChange={(name) => setForm((f) => ({ ...f, name }))}
                     />
                     <Field
-                      label="邮箱"
+                      label={t('accounts.email')}
                       type="email"
                       value={form.email}
                       onChange={(email) => setForm((f) => ({ ...f, email }))}
                     />
                     <Field
-                      label="初始口令（至少 8 位）"
+                      label={t('accounts.initialPassword')}
                       value={form.password}
                       onChange={(password) => setForm((f) => ({ ...f, password }))}
                     />
                     <label className="block">
-                      <span className="text-[11px] text-slate-500">组织角色</span>
+                      <span className="text-[11px] text-slate-500">{t('accounts.orgRole')}</span>
                       <select
                         value={form.orgRole}
                         onChange={(e) => setForm((f) => ({ ...f, orgRole: e.target.value }))}
                         className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
                       >
-                        <option value="member">成员</option>
-                        <option value="org_admin">组织管理员</option>
+                        <option value="member">{t('accounts.member')}</option>
+                        <option value="org_admin">{t('accounts.orgAdmin')}</option>
                       </select>
                     </label>
                   </div>
@@ -168,7 +170,7 @@ export function AccountsPage() {
                     <Button variant="neutral" size="sm"
                       type="submit"
                       disabled={create.isPending}>
-                      {create.isPending ? '创建中…' : '创建'}
+                      {create.isPending ? t('project.creating') : t('project.create')}
                     </Button>
                     <Button variant="outline" size="sm"
                       onClick={() => setOpen(false)}>

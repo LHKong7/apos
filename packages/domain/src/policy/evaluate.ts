@@ -13,7 +13,11 @@ import {
   type TraceEntry,
 } from '@apos/contracts';
 
-/** 编译后的规则：condition 变成闭包，避免每次评估遍历 JSON */
+/**
+ * 编译后的规则：condition 变成闭包，避免每次评估遍历 JSON。
+ * A compiled rule: the condition becomes a closure so evaluation does not walk
+ * the JSON every time.
+ */
 export interface CompiledRule {
   id: string;
   name: string;
@@ -28,15 +32,26 @@ export type ConditionMatchResult =
 
 const RISK_LEVELS = new Set(Object.keys(RISK_ORDER));
 
-/** 风险等级要按序比较而不是字典序 */
 /**
- * 把可比较的枚举换成序号，让 `riskLevel >= 'high'` 这类比较成立。
+ * 把可比较的枚举换成序号，让 `riskLevel >= 'high'` 这类比较成立
+ * —— 风险等级要按序比较而不是字典序。
  *
  * ★ 数组也要逐项换。
  *   漏掉这一步的后果非常隐蔽：`riskLevel in ['medium','high']` 里
  *   actual 被换成了数字、expected 还是字符串数组，`includes` 恒为 false ——
  *   规则在界面上看着完全正确、保存也不报错，却**永远不会命中**。
  *   一条以为在保护自己的治理规则实际是死的，比没有这条规则更危险。
+ *
+ * Turn comparable enums into ordinals so `riskLevel >= 'high'` means what it
+ * looks like — risk levels compare by rank, not alphabetically.
+ *
+ * ★ Arrays must be converted element by element.
+ *   Missing that fails very quietly: in `riskLevel in ['medium','high']` the
+ *   actual becomes a number while the expected stays an array of strings, so
+ *   `includes` is permanently false. The rule looks entirely correct in the
+ *   UI, saves without complaint, and **never matches**. A governance rule
+ *   someone believes is protecting them, but which is dead, is more dangerous
+ *   than not having the rule at all.
  */
 function comparable(fact: FactKey, value: unknown): unknown {
   if (Array.isArray(value)) return value.map((v) => comparable(fact, v));
@@ -132,7 +147,9 @@ export function requiresHuman(action: Action): boolean {
 }
 
 /**
- * 无规则命中时的默认动作，按项目自治等级决定（产品文档 8.9.4）
+ * 无规则命中时的默认动作，按项目自治等级决定（产品文档 8.9.4）。
+ * The action taken when no rule matches, decided by the project's autonomy
+ * level (product doc 8.9.4).
  */
 export function defaultAction(ctx: PolicyContext): Action {
   switch (ctx.autonomyLevel) {
@@ -158,6 +175,12 @@ export function defaultAction(ctx: PolicyContext): Action {
 /**
  * ★ 安全底线：无论自治等级与项目规则如何，这三类操作永远不自动放行。
  * docs/tech/09-security.md §9 —— 硬编码而非依赖 Policy 配置正确。
+ *
+ * ★ The safety floor: whatever the autonomy level or the project's own rules
+ * say, these three operation classes are never auto-approved.
+ * docs/tech/09-security.md §9 — hard-coded rather than trusting the policy
+ * configuration to be right. `evaluate.test.ts` asserts this exhaustively and
+ * blocks CI: if it goes red, governance has been bypassed.
  */
 function enforceSafetyFloor(action: Action, ctx: PolicyContext): Action {
   if (!isAutoApprove(action)) return action;
@@ -206,7 +229,11 @@ export function evaluate(ctx: PolicyContext, rules: CompiledRule[]): PolicyVerdi
   };
 }
 
-/** 动作严格程度比较，用于「项目规则只能收紧」的静态检查 */
+/**
+ * 动作严格程度比较，用于「项目规则只能收紧」的静态检查。
+ * Compares how strict two actions are, for the static check that a project
+ * rule may only tighten an organisation rule.
+ */
 export function isStricterOrEqual(a: Action, b: Action): boolean {
   return ACTION_STRICTNESS[a.type] >= ACTION_STRICTNESS[b.type];
 }

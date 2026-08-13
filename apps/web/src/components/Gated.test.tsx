@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { useLocaleStore } from '../lib/i18n';
 import { Gated, GatedButton, RoleBadge } from './Gated';
 import { api } from '../lib/api/client';
 import { useAuthStore } from '../stores/auth';
@@ -42,6 +43,9 @@ beforeEach(() => {
   useAuthStore.setState({ token: 't', userId: 'u-1', user: null, resolving: false });
   vi.spyOn(api, 'permissions').mockResolvedValue(PERMS());
 });
+
+/** ★ 钉住中文：这条断言查的是「技术负责人」四个字，默认语言是英文 */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
 
 describe('GatedButton', () => {
   it('有权限时正常可点', async () => {

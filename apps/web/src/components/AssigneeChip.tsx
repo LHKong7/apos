@@ -1,3 +1,4 @@
+import { t, useT } from '../lib/i18n';
 import clsx from 'clsx';
 
 export type ActorState = 'idle' | 'running' | 'blocked' | 'failed';
@@ -19,6 +20,7 @@ interface Props {
  * 「人还是 Agent 在做」这条产品最核心的视觉差异就会不一致。
  */
 export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Props) {
+  const t = useT();
   const isAgent = actor.type === 'agent';
   const text = size === 'sm' ? 'text-[11px]' : 'text-xs';
   const Wrapper = onClick ? 'button' : 'span';
@@ -27,7 +29,7 @@ export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Pr
     <Wrapper
       type={onClick ? 'button' : undefined}
       onClick={onClick}
-      title={`${isAgent ? 'Agent' : '人类'}：${actor.name}`}
+      title={t('chip.agentOrHuman', { kind: isAgent ? 'Agent' : t('chip.human'), name: actor.name })}
       className={clsx(
         'inline-flex max-w-full items-center gap-1 truncate align-middle transition',
         text,
@@ -68,10 +70,10 @@ const DOT_STYLES: Record<ActorState, string> = {
 };
 
 const DOT_LABELS: Record<ActorState, string> = {
-  idle: '空闲',
-  running: '执行中',
-  blocked: '阻塞',
-  failed: '失败',
+  idle: t('chip.idle'),
+  running: t('chip.running'),
+  blocked: t('chip.blocked'),
+  failed: t('chip.failed'),
 };
 
 export function StatusDot({ state }: { state: ActorState }) {

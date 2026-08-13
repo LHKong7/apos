@@ -715,7 +715,16 @@ export interface CapabilityReport {
   limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
   tools: { name: string; description: string; sideEffects: string }[];
   supported: { feature: string; label: string }[];
-  missing: { feature: string; label: string; behavior: string; userImpact: string; severity: string }[];
+  missing: {
+    feature: string;
+    label: string;
+    behavior: string;
+    /** 与 contracts 的 Degradation 一致；缺省时界面回落中文 */
+    behaviorEn?: string;
+    userImpact: string;
+    userImpactEn?: string;
+    severity: string;
+  }[];
   restricted: boolean;
 }
 
@@ -826,12 +835,19 @@ export interface RuntimeRow {
 export interface SyncMappingRow {
   field: string;
   fieldLabel: string;
+  /** 服务端一起给的英文；前端按当前语言挑 / English sent alongside; client picks */
+  fieldLabelEn?: string;
   sourceOfTruth: 'apos' | 'external' | 'merge';
   strategy: 'writeback' | 'record_conflict' | 'accept_and_warn';
   strategyLabel: string;
+  strategyLabelEn?: string;
   why: string;
+  whyEn?: string;
   options: ('apos' | 'external' | 'merge')[];
-  /** 偏离默认值 —— 用户改过的地方下次读这一页时要一眼看见 */
+  /**
+   * 偏离默认值 —— 用户改过的地方下次读这一页时要一眼看见。
+   * Deviates from the default: what a user changed must be obvious next time.
+   */
   customized: boolean;
 }
 
@@ -858,7 +874,7 @@ export interface IntegrationRow {
   transportReady: boolean;
   syncMappings: SyncMappingRow[];
   sotPreset: string | null;
-  autoRules: { field: string; fieldLabel: string; winner: string }[];
+  autoRules: { field: string; fieldLabel: string; fieldLabelEn?: string; winner: string }[];
   conflictCount: number;
   linkedItems: number;
   notificationConfig: NotificationConfigRow | null;
@@ -898,15 +914,30 @@ export interface IntegrationsResponse {
     categoryLabel: string;
     transportReady: boolean;
   }[];
+  /**
+   * ★ `*En` 是服务端一起给的，前端按当前语言挑 —— 服务端不知道调用方
+   *   的界面语言。见 apps/api/src/http/integrations.ts。
+   *   The `*En` variants arrive alongside; the client picks by locale because
+   *   the server has no idea which one the caller is showing.
+   */
   fieldCatalog: {
     field: string;
     label: string;
+    labelEn?: string;
     sourceOfTruth: string;
     options: string[];
     why: string;
+    whyEn?: string;
   }[];
-  presets: { key: string; label: string; description: string }[];
+  presets: {
+    key: string;
+    label: string;
+    labelEn?: string;
+    description: string;
+    descriptionEn?: string;
+  }[];
   strategyLabels: Record<string, string>;
+  strategyLabelsEn?: Record<string, string>;
   notifyEvents: { key: string; label: string; noisy: boolean }[];
   permissions: Record<IntegrationAction, boolean>;
 }
@@ -1016,18 +1047,28 @@ export interface BenefitLineRow {
 
 // ── Agent 配置（页面文档 08 §5.5）────────────────────────────────────
 
+/**
+ * ★ 这几个 `*En` 字段与 `@apos/contracts` 的同名类型保持一致。
+ *   服务端原样透传 spec，缺英文时前端回落中文（见 lib/i18n/spec.ts）。
+ *   Mirrors the `*En` fields on the contracts types; the server passes specs
+ *   through untouched and the UI falls back to Chinese when English is absent.
+ */
 export interface ConfigFieldOption {
   value: string;
   label: string;
+  labelEn?: string;
   help?: string;
+  helpEn?: string;
 }
 
 export interface ConfigField {
   key: string;
   label: string;
+  labelEn?: string;
   type: 'string' | 'number' | 'boolean' | 'select' | 'string_list' | 'json';
   default: unknown;
   help?: string;
+  helpEn?: string;
   options?: ConfigFieldOption[];
   min?: number;
   max?: number;
@@ -1042,9 +1083,11 @@ export interface RuntimeKindSpec {
   kind: string;
   label: string;
   description: string;
-  credential: { label: string; help: string } | null;
-  endpoint: { label: string; help: string } | null;
+  descriptionEn?: string;
+  credential: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
+  endpoint: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
   prerequisite: string | null;
+  prerequisiteEn?: string | null;
   fields: ConfigField[];
 }
 
@@ -1055,7 +1098,14 @@ export interface AgentCapability {
   limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
   tools: { name: string; description: string; sideEffects: string }[];
   supported: string[];
-  missing: { feature: string; behavior: string; userImpact: string; severity: string }[];
+  missing: {
+    feature: string;
+    behavior: string;
+    behaviorEn?: string;
+    userImpact: string;
+    userImpactEn?: string;
+    severity: string;
+  }[];
   restricted: boolean;
 }
 

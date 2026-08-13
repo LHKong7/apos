@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useMemo } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
@@ -22,6 +23,7 @@ export function DecisionView({
   columns: BoardColumn[];
   actions: CardActions;
 }) {
+  const t = useT();
   const rows = useMemo(() => {
     const cards = columns.flatMap((c) => c.items).filter((c) => c.humanGate && c.humanGateRef);
     return cards.sort((a, b) => {
@@ -37,9 +39,9 @@ export function DecisionView({
       <div className="p-6">
         <EmptyState
           icon="✅"
-          message="当前没有等待决策的任务"
-          hint="有任务需要人工拍板时会自动出现在这里"
-          action={{ label: '回到 Kanban', onClick: () => history.back() }}
+          message={t('decisionView.empty')}
+          hint={t('decisionView.emptyHint')}
+          action={{ label: t('decisionView.backToKanban'), onClick: () => history.back() }}
         />
       </div>
     );

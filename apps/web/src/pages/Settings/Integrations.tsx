@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,7 +28,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 const CATEGORY_ORDER = ['code', 'project_management', 'communication'];
 
 /**
- * 项目集成设置（页面文档 14）。
+ * 项目{t('integ.title')}（页面文档 14）。
  *
  * ★ 要回答四个问题：连了哪些系统、数据往哪个方向同步、通知发到哪里、
  *   连接授予了什么权限。前三个是功能，第四个是这一页存在的理由 ——
@@ -38,6 +39,7 @@ const CATEGORY_ORDER = ['code', 'project_management', 'communication'];
  *   「这个连接**不能**合并我的代码」，而只列允许项的清单回答不了这个问题。
  */
 export function IntegrationsPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const userId = useAuthStore((s) => s.userId);
 
@@ -58,7 +60,7 @@ export function IntegrationsPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">集成设置</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('integ.title')}</h1>
           <Link
             to={`/projects/${projectId}`}
             className="text-xs text-slate-500 hover:text-slate-700"
@@ -74,7 +76,7 @@ export function IntegrationsPage() {
                 </span>
               )}
               {data.conflictBacklog > 0 && (
-                <span className="ml-1 text-amber-700">· 冲突 {data.conflictBacklog}</span>
+                <span className="ml-1 text-amber-700">{t('integ.conflicts', { count: data.conflictBacklog })}</span>
               )}
             </span>
           )}
@@ -91,8 +93,8 @@ export function IntegrationsPage() {
           {data && data.integrations.length === 0 && (
             <EmptyState
               icon="🔌"
-              message="还没有连接任何外部系统"
-              hint="先连一个代码仓库和一个通知渠道，Agent 才有地方干活、你才收得到需要决策的提醒"
+              message={t('integ.empty')}
+              hint={t('integ.emptyHint')}
             />
           )}
 
@@ -126,7 +128,7 @@ export function IntegrationsPage() {
 
           {/* ── Agent 与模型（§5.4）── */}
           <section className="space-y-2">
-            <h2 className="text-xs font-medium text-slate-600">🤖 Agent 与模型</h2>
+            <h2 className="text-xs font-medium text-slate-600">{t('integ.agentsSection')}</h2>
             {runtimes.data?.runtimes.length === 0 && (
               <p className="rounded border border-dashed border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500">
                 还没有配置 Agent 运行时
@@ -146,7 +148,7 @@ export function IntegrationsPage() {
                         rt.registered && rt.reachable ? 'text-green-700' : 'text-amber-700',
                       )}
                     >
-                      ● {rt.registered && rt.reachable ? '可派发' : rt.registered ? '不可达' : '未注册'}
+                      ● {rt.registered && rt.reachable ? t('integ.dispatchable') : rt.registered ? t('integ.unreachable') : t('integ.unregistered')}
                     </span>
                     <Link
                       to={`/projects/${projectId}/agents`}
@@ -157,8 +159,8 @@ export function IntegrationsPage() {
                   </div>
                   <p className="mt-0.5 text-[11px] text-slate-500">
                     {rt.agentCount === 0
-                      ? '没有 Agent 使用这个运行时'
-                      : `${rt.agentCount} 个 Agent 在用：${rt.agentNames.join('、')}`}
+                      ? t('integ.noAgentUses')
+                      : t('integ.agentsUsing', { count: rt.agentCount, names: rt.agentNames.join('、') })}
                   </p>
                   {!rt.registered && (
                     <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
@@ -176,7 +178,7 @@ export function IntegrationsPage() {
            *   这里只做占位说明与组织级引导，不放一个能点的「连接」按钮。
            */}
           <section className="space-y-2">
-            <h2 className="text-xs font-medium text-slate-600">🗄 企业数据系统</h2>
+            <h2 className="text-xs font-medium text-slate-600">{t('integ.dataSection')}</h2>
             <div className="rounded border border-dashed border-slate-300 bg-white px-3 py-2">
               <p className="text-[11px] text-slate-500">
                 数据库、数据仓库、CRM 等要通过受控连接器接入，而连接器必须由组织管理员
@@ -207,6 +209,7 @@ function IntegrationCard({
   projectId: string;
   perms: IntegrationsResponse['permissions'];
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const [disconnecting, setDisconnecting] = useState(false);
 
@@ -236,13 +239,13 @@ function IntegrationCard({
             row.status === 'active' ? 'text-green-700' : 'text-red-700',
           )}
         >
-          ● {row.status === 'active' ? '正常' : row.status === 'paused' ? '已暂停' : '异常'}
+          ● {row.status === 'active' ? t('integ.status.ok') : row.status === 'paused' ? t('integ.status.paused') : t('integ.status.error')}
         </span>
         {row.conflictCount > 0 && (
-          <span className="text-[11px] text-amber-700">⚠ 同步冲突 {row.conflictCount}</span>
+          <span className="text-[11px] text-amber-700">{t('integ.syncConflicts', { count: row.conflictCount })}</span>
         )}
         <span className="text-[11px] text-slate-400">
-          {row.lastSyncAt ? `最后同步 ${relativeTime(row.lastSyncAt)}` : '尚未同步'}
+          {row.lastSyncAt ? t('integ.lastSync', { time: relativeTime(row.lastSyncAt) }) : t('integ.notSynced')}
         </span>
 
         <div className="ml-auto flex gap-1.5">
@@ -253,7 +256,7 @@ function IntegrationCard({
             <Button variant="outline" size="xs"
               disabled={sync.isPending || !row.transportReady}
               onClick={() => sync.mutate()}>
-              {sync.isPending ? '同步中…' : '立即同步'}
+              {sync.isPending ? t('integ.syncing') : t('integ.syncNow')}
             </Button>
           )}
           {perms.disconnect && (
@@ -285,7 +288,7 @@ function IntegrationCard({
       <div className="border-t border-slate-100 px-3 py-1.5">
         {/* ★ 允许项与禁止项都要列（§5.1）*/}
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
-          <span className="text-slate-500">权限</span>
+          <span className="text-slate-500">{t('integ.permissions')}</span>
           {row.scopes.allowed.map((s) => (
             <span key={s} className="text-slate-700">
               ✓ {s}
@@ -308,23 +311,25 @@ function IntegrationCard({
         <p className="mt-0.5 text-[11px] text-slate-400">
           禁止项由集成层写死，不是「这次没勾」——
           {row.category === 'code'
-            ? '合并代码这类操作必须经过 Policy 判定，不能由集成层直接放开'
+            ? t('integ.denyMerge')
             : row.category === 'project_management'
-              ? '删除工单、改项目配置这类操作不交给自动化'
-              : '管理工作区这类操作不在集成层的授权范围里'}
+              ? t('integ.denyDestructive')
+              : t('integ.denyWorkspace')}
         </p>
 
         <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-slate-500">
-          {row.credentialHint && <span>凭证 {row.credentialHint}</span>}
+          {row.credentialHint && <span>{t('integ.credential', { hint: row.credentialHint })}</span>}
           {row.credentialExpiringSoon && (
-            <span className="text-amber-700">⚠ 凭证 7 天内过期，请提前重新授权</span>
+            <span className="text-amber-700">{t('integ.credentialExpiring')}</span>
           )}
-          <span>关联任务 {row.linkedItems}</span>
-          {typeof stats['syncRuns'] === 'number' && <span>同步 {stats['syncRuns']} 轮</span>}
+          <span>{t('integ.linkedItems', { count: row.linkedItems })}</span>
+          {typeof stats['syncRuns'] === 'number' && (
+            <span>{t('integ.syncRuns', { count: stats['syncRuns'] })}</span>
+          )}
           {/* ★ §11「页面显示已阻止 N 次循环同步」*/}
           {typeof stats['echoesBlocked'] === 'number' && stats['echoesBlocked'] > 0 && (
-            <span title="双向同步造成的循环更新已被来源标记挡住">
-              已阻止 {stats['echoesBlocked']} 次循环同步
+            <span title={t('integ.loopGuarded')}>
+              {t('integ.echoesBlocked', { count: String(stats['echoesBlocked']) })}
             </span>
           )}
         </div>
@@ -344,7 +349,7 @@ function IntegrationCard({
       )}
       {sync.error && (
         <p className="mx-3 mb-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {sync.error instanceof ApiError ? sync.error.message : '同步失败'}
+          {sync.error instanceof ApiError ? sync.error.message : t('integ.syncFailed')}
         </p>
       )}
 
@@ -384,6 +389,7 @@ function DisconnectDialog({
   projectId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const impact = useQuery({
     queryKey: ['disconnectImpact', row.id],
@@ -400,12 +406,12 @@ function DisconnectDialog({
   });
 
   return (
-    <Modal onClose={onClose} title="断开集成">
-      <h2 className="mb-1.5 text-sm font-semibold text-slate-900">断开 {row.providerLabel}</h2>
-      {impact.isPending && <p className="text-xs text-slate-500">正在确认影响…</p>}
+    <Modal onClose={onClose} title={t('integ.disconnect')}>
+      <h2 className="mb-1.5 text-sm font-semibold text-slate-900">{t('integ.disconnectNamed', { provider: row.providerLabel })}</h2>
+      {impact.isPending && <p className="text-xs text-slate-500">{t('integ.checkingImpact')}</p>}
       {impact.data && (
         <>
-          <p className="text-xs text-slate-600">断开后会发生：</p>
+          <p className="text-xs text-slate-600">{t('integ.afterDisconnect')}</p>
           <ul className="mt-1 space-y-0.5">
             {impact.data.effects.map((e) => (
               <li key={e} className="text-xs text-amber-800">
@@ -418,7 +424,7 @@ function DisconnectDialog({
 
       {cut.error && (
         <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {cut.error instanceof ApiError ? cut.error.message : '断开失败'}
+          {cut.error instanceof ApiError ? cut.error.message : t('integ.disconnectFailed')}
         </p>
       )}
 
@@ -426,7 +432,7 @@ function DisconnectDialog({
         <Button variant="destructive" size="sm"
           disabled={cut.isPending || impact.isPending}
           onClick={() => cut.mutate()}>
-          {cut.isPending ? '断开中…' : '确认断开'}
+          {cut.isPending ? t('integ.disconnecting') : t('integ.confirmDisconnect')}
         </Button>
         <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700">
           取消
@@ -445,6 +451,7 @@ function AddRow({
   projectId: string;
   canConnect: boolean;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
@@ -483,17 +490,17 @@ function AddRow({
           className="rounded border border-dashed border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:border-slate-400"
         >
           + {o.label}
-          {!o.transportReady && <span className="ml-1 text-slate-400">（无传输层）</span>}
+          {!o.transportReady && <span className="ml-1 text-slate-400">{t('integ.noTransport')}</span>}
         </button>
       ))}
 
       {open && (
-        <Modal onClose={() => setOpen(null)} title="连接集成">
+        <Modal onClose={() => setOpen(null)} title={t('integ.connect')}>
           <h2 className="mb-1.5 text-sm font-semibold text-slate-900">
             连接 {options.find((o) => o.provider === open)?.label}
           </h2>
           <label className="block">
-            <span className="mb-0.5 block text-[11px] text-slate-500">连接对象（仓库 / 项目 / 群组）</span>
+            <span className="mb-0.5 block text-[11px] text-slate-500">{t('integ.target')}</span>
             <Input
               type="text"
               value={displayName}
@@ -527,7 +534,7 @@ function AddRow({
 
           {connect.error && (
             <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-              {connect.error instanceof ApiError ? connect.error.message : '连接失败'}
+              {connect.error instanceof ApiError ? connect.error.message : t('integ.connectFailed')}
             </p>
           )}
 
@@ -535,7 +542,7 @@ function AddRow({
             <Button variant="neutral" size="sm"
               disabled={!displayName.trim() || connect.isPending}
               onClick={() => connect.mutate()}>
-              {connect.isPending ? '测试连接中…' : '测试连接并保存'}
+              {connect.isPending ? t('integ.testing') : t('integ.testAndSave')}
             </Button>
             <button
               type="button"

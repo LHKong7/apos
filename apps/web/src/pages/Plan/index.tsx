@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,6 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
  *   一个只列任务不说边界的计划页，等于让用户闭着眼睛签字。
  */
 export function PlanPage() {
+  const t = useT();
   const { projectId, planId } = useParams<{ projectId: string; planId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -42,7 +44,7 @@ export function PlanPage() {
     onSuccess: () => navigate(`/projects/${projectId}/board`),
     onError: (e) => {
       setApproving(false);
-      setError(e instanceof ApiError ? e.message : '批准失败');
+      setError(e instanceof ApiError ? e.message : t('plan.approveFailed'));
     },
   });
 
@@ -53,7 +55,7 @@ export function PlanPage() {
       void qc.invalidateQueries({ queryKey: qk.plan(planId!) });
       navigate(`/projects/${projectId}/plans/${next.planId}`);
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '重新规划失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('plan.replanFailed')),
   });
 
   if (!projectId || !planId) return null;
@@ -74,7 +76,7 @@ export function PlanPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">执行计划 v{d.plan.version}</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('plan.titleVersion', { version: d.plan.version })}</h1>
           <span
             className={clsx(
               'rounded px-1.5 py-0.5 text-[11px]',
@@ -85,7 +87,7 @@ export function PlanPage() {
                   : 'bg-amber-100 text-amber-800',
             )}
           >
-            {approved ? '已批准' : superseded ? '已被新版本取代' : '待批准'}
+            {approved ? t('plan.status.approved') : superseded ? t('plan.status.superseded') : t('plan.status.pending')}
           </span>
           <Link
             to={`/projects/${projectId}/board`}
@@ -94,7 +96,7 @@ export function PlanPage() {
             ← 回到看板
           </Link>
           <span className="ml-auto text-[11px] text-slate-400">
-            由 Project Agent 生成 · {d.plan.model ?? '未知模型'} ·{' '}
+            由 Project Agent 生成 · {d.plan.model ?? t('plan.unknownModel')} ·{' '}
             {d.plan.generationMs ? `${Math.round(d.plan.generationMs / 1000)}s` : '—'} ·{' '}
             {money(String(d.plan.generationCost))}
           </span>
@@ -116,7 +118,7 @@ export function PlanPage() {
               「这一版是怎么来的」在下面的版本对比里，取自上一版的同一个字段。 */}
           {d.plan.revisionFeedback && (
             <p className="rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-              💬 这一版被要求修改：{d.plan.revisionFeedback}
+              💬 这一版被{t('plan.requestChanges')}：{d.plan.revisionFeedback}
             </p>
           )}
 
@@ -127,30 +129,30 @@ export function PlanPage() {
           {/* ── 五个概览指标（§5.2）── */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
             <Metric
-              label="任务"
-              value={`${d.metrics.taskCount} 个`}
+              label={t('plan.metric.tasks')}
+              value={t('plan.countItems', { count: d.metrics.taskCount })}
               sub={`🤖 ${d.metrics.agentTasks}　👤 ${d.metrics.humanTasks}`}
             />
-            <Metric label="工期" value={`${d.metrics.estimatedHours} h`} sub="预估合计" />
+            <Metric label={t('plan.metric.duration')} value={`${d.metrics.estimatedHours} h`} sub={t('plan.metric.estimateTotal')} />
             <Metric
-              label="成本预估"
+              label={t('plan.metric.cost')}
               value={money(String(d.metrics.estimatedCost))}
               sub={
                 d.metrics.budget === null
-                  ? '未设预算'
-                  : `预算 ${money(String(d.metrics.budget))}`
+                  ? t('plan.noBudget')
+                  : t('plan.budgetOf', { amount: money(String(d.metrics.budget)) })
               }
               tone={d.metrics.overBudget ? 'danger' : 'normal'}
             />
             <Metric
-              label="人类参与"
-              value={`${d.metrics.humanGateCount} 个`}
-              sub="需要你或同事确认的节点"
+              label={t('plan.metric.humanInvolved')}
+              value={t('plan.countItems', { count: d.metrics.humanGateCount })}
+              sub={t('plan.humanInvolvedHint')}
             />
             <Metric
-              label="高风险任务"
-              value={`${d.metrics.highRiskTasks} 个`}
-              sub={d.metrics.highRiskTasks > 0 ? '下面已标出' : '无'}
+              label={t('plan.metric.highRisk')}
+              value={t('plan.countItems', { count: d.metrics.highRiskTasks })}
+              sub={d.metrics.highRiskTasks > 0 ? t('plan.markedBelow') : t('plan.noneShort')}
               tone={d.metrics.highRiskTasks > 0 ? 'warn' : 'normal'}
             />
           </div>
@@ -172,27 +174,27 @@ export function PlanPage() {
               任务拆解（{d.tasks.length}）
             </h2>
             <ul>
-              {d.tasks.map((t) => (
+              {d.tasks.map((task) => (
                 <li
-                  key={t.id}
+                  key={task.id}
                   className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-xs last:border-0"
                 >
-                  <span aria-hidden>{typeIcon(t.type)}</span>
-                  <span className="min-w-0 flex-1 truncate text-slate-800">{t.title}</span>
+                  <span aria-hidden>{typeIcon(task.type)}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-800">{task.title}</span>
                   {/* 批准前执行主体还没绑定，只能说「会不会来找人」 */}
                   <span className="text-slate-500">
-                    {t.requiresHuman ? '👤 需要人' : '🤖 Agent'}
-                    {t.executorName && <span className="ml-1">{t.executorName}</span>}
+                    {task.requiresHuman ? t('plan.needsHuman') : '🤖 Agent'}
+                    {task.executorName && <span className="ml-1">{task.executorName}</span>}
                   </span>
                   <span className="w-12 text-right tabular-nums text-slate-500">
-                    {t.estimatedHours ?? '—'}h
+                    {task.estimatedHours ?? '—'}h
                   </span>
                   <span className="w-14 text-right tabular-nums text-slate-500">
-                    {t.estimatedCost === null ? '—' : money(String(t.estimatedCost))}
+                    {task.estimatedCost === null ? '—' : money(String(task.estimatedCost))}
                   </span>
-                  {(t.riskLevel === 'high' || t.riskLevel === 'critical') && (
+                  {(task.riskLevel === 'high' || task.riskLevel === 'critical') && (
                     <span className="w-20 shrink-0 text-right text-[11px] text-red-700">
-                      🔴 {riskLabel(t.riskLevel)}
+                      🔴 {riskLabel(task.riskLevel)}
                     </span>
                   )}
                 </li>
@@ -214,7 +216,7 @@ export function PlanPage() {
                   <li key={a.id} className="text-xs text-slate-600">
                     · {a.answer ?? a.question}
                     {!a.confirmed && (
-                      <span className="ml-1 text-[11px] text-amber-700">未经二次确认</span>
+                      <span className="ml-1 text-[11px] text-amber-700">{t('plan.noSecondConfirm')}</span>
                     )}
                   </li>
                 ))}
@@ -238,9 +240,9 @@ export function PlanPage() {
                 onClick={() => setRevising(true)}
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
               >
-                要求修改
+                {t('plan.requestChanges')}
               </GatedButton>
-              {/* ★ 批准计划要 tech_lead（§2.3）—— 要求修改不用，那只是打回去重做 */}
+              {/* ★ 批准计划要 tech_lead（§2.3）—— {t('plan.requestChanges')}不用，那只是打回去重做 */}
               <GatedButton
                 permission="plan.approve"
                 projectId={d.plan.projectId}
@@ -291,6 +293,7 @@ export function PlanPage() {
  *   静默用新规则替换掉快照，等于事后修改了用户签过字的东西。
  */
 function AutoActions({ detail: d }: { detail: PlanDetail }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const stale = d.plan.status !== 'approved' && d.autoActions.length > 0;
 
@@ -305,7 +308,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
           onClick={() => setExpanded((v) => !v)}
           className="ml-auto text-[11px] text-amber-800 underline"
         >
-          {expanded ? '收起' : '逐条查看'}
+          {expanded ? t('plan.collapse') : t('plan.viewEach')}
         </button>
       </div>
 
@@ -319,9 +322,9 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
           <li key={i} className="text-xs leading-5 text-amber-900">
             · {a.description}
             {a.externalVisible && (
-              <span className="ml-1 text-[11px] text-amber-700">（对外可见）</span>
+              <span className="ml-1 text-[11px] text-amber-700">{t('plan.externallyVisible')}</span>
             )}
-            {!a.reversible && <span className="ml-1 text-[11px] text-red-700">（不可逆）</span>}
+            {!a.reversible && <span className="ml-1 text-[11px] text-red-700">{t('plan.irreversible')}</span>}
           </li>
         ))}
       </ul>
@@ -407,20 +410,21 @@ function ApproveDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   const [acknowledged, setAcknowledged] = useState(false);
   const needsAck = d.metrics.overBudget;
 
   return (
-    <Modal onClose={onCancel} title="批准这份计划">
+    <Modal onClose={onCancel} title={t('plan.approveTitle')}>
       <div className="w-[28rem] max-w-full">
-        <h2 className="text-sm font-semibold text-slate-900">批准这份计划</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t('plan.approveTitle')}</h2>
         <div className="mt-2 space-y-1 text-xs text-slate-700">
           <p>
             · {d.metrics.agentTasks} 个任务将由 Agent 自动执行，预计消耗{' '}
             {money(String(d.metrics.estimatedCost))}
           </p>
           <p>· {d.metrics.humanGateCount} 个节点仍会来找人确认</p>
-          <p>· 批准后任务立即进入看板开始流动</p>
+          <p>{t('plan.approveStep')}</p>
         </div>
 
         {needsAck && (
@@ -442,7 +446,7 @@ function ApproveDialog({
           <Button variant="neutral" size="sm"
             onClick={onConfirm}
             disabled={pending || (needsAck && !acknowledged)}>
-            {pending ? '批准中…' : '批准并开始执行'}
+            {pending ? t('plan.approving') : t('plan.approveAndStart')}
           </Button>
         </div>
       </div>
@@ -459,10 +463,11 @@ function ReviseDialog({
   onCancel: () => void;
   onConfirm: (feedback: string) => void;
 }) {
+  const t = useT();
   const [feedback, setFeedback] = useState('');
   return (
-    <Modal onClose={onCancel} title="要求修改计划">
-      <h2 className="text-sm font-semibold text-slate-900">要求修改</h2>
+    <Modal onClose={onCancel} title={t('plan.requestChangesTitle')}>
+      <h2 className="text-sm font-semibold text-slate-900">{t('plan.requestChanges')}</h2>
       <p className="mt-1 text-xs text-slate-500">
         说清楚要改什么，Agent 会据此重新规划成新的一版。旧版会保留，方便对照
       </p>
@@ -470,7 +475,7 @@ function ReviseDialog({
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         rows={3}
-        placeholder="例如：前端可以并行开工，不用等后端完成"
+        placeholder={t('plan.requestPlaceholder')}
         className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
@@ -480,7 +485,7 @@ function ReviseDialog({
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(feedback.trim())}
           disabled={!feedback.trim() || pending}>
-          {pending ? '重新规划中…' : '重新规划'}
+          {pending ? t('plan.replanning') : t('plan.replan')}
         </Button>
       </div>
     </Modal>

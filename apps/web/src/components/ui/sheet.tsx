@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import * as React from 'react';
 import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -117,7 +118,7 @@ function SheetCloseButton({ className }: { className?: string }) {
       )}
     >
       <X className="h-4 w-4" />
-      <span className="sr-only">关闭</span>
+      <span className="sr-only">{t('ui.close')}</span>
     </SheetPrimitive.Close>
   );
 }

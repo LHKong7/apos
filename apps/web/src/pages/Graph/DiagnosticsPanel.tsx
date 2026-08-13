@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Diagnostic, DiagnosticAction } from '@apos/domain';
@@ -28,6 +29,7 @@ export function DiagnosticsPanel({
   onAction: (action: DiagnosticAction) => void;
   onFocus: (nodeId: string) => void;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
 
   if (diagnostics.length === 0) {
@@ -52,7 +54,7 @@ export function DiagnosticsPanel({
             onClick={() => setExpanded((v) => !v)}
             className="text-[11px] text-slate-500 underline"
           >
-            {expanded ? '收起' : `展开其余 ${diagnostics.length - COLLAPSED} 条`}
+            {expanded ? t('timeline.collapse') : t('graph.expandRest', { count: diagnostics.length - COLLAPSED })}
           </button>
         )}
       </div>

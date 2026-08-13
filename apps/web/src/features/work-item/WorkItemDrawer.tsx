@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
+  const t = useT();
   const qc = useQueryClient();
   const setOpenedCard = useBoardStore((s) => s.setOpenedCard);
 
@@ -40,7 +42,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
     mutationFn: (context: string) =>
       api.retry(workItemId, {
         additionalContext: context.trim()
-          ? [{ title: '人工补充的上下文', content: context.trim() }]
+          ? [{ title: t('itemDrawer.addedContext'), content: context.trim() }]
           : undefined,
       }),
     onSuccess: () => {
@@ -50,7 +52,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
   });
 
   return (
-    <Drawer title="任务详情" onClose={onClose} width="w-[min(34rem,100vw)]">
+    <Drawer title={t('itemDrawer.title')} onClose={onClose} width="w-[min(34rem,100vw)]">
       <QueryBoundary query={query}>
         {({ item, runs, artifacts, timeline }) => (
           <div className="space-y-3 text-sm">
@@ -64,9 +66,9 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                   {statusLabel(item.status)}
                 </span>
                 <span>{riskLabel(item.riskLevel)}</span>
-                <span>成本 {money(item.actualCost)}</span>
-                {item.estimatedCost && <span>预估 {money(item.estimatedCost)}</span>}
-                <span>更新于 {relativeTime(item.updatedAt)}</span>
+                <span>{t('itemDrawer.cost', { amount: money(item.actualCost) })}</span>
+                {item.estimatedCost && <span>{t('itemDrawer.estimated', { amount: money(item.estimatedCost) })}</span>}
+                <span>{t('itemDrawer.updatedAt', { time: relativeTime(item.updatedAt) })}</span>
               </div>
               {item.humanGate && (
                 <Button variant="gate" size="sm"
@@ -82,19 +84,24 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
             </header>
 
             <nav className="flex gap-1 border-b border-slate-200">
-              {(['overview', 'runs', 'timeline'] as const).map((t) => (
+              {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+              {(['overview', 'runs', 'timeline'] as const).map((key) => (
                 <button
-                  key={t}
+                  key={key}
                   type="button"
-                  onClick={() => setTab(t)}
+                  onClick={() => setTab(key)}
                   className={clsx(
                     'px-2 py-1 text-xs',
-                    tab === t
+                    tab === key
                       ? 'border-b-2 border-brand font-medium text-slate-900'
                       : 'text-slate-500',
                   )}
                 >
-                  {t === 'overview' ? '概览' : t === 'runs' ? `执行 (${runs.length})` : '时间线'}
+                  {key === 'overview'
+                    ? t('itemDrawer.tab.overview')
+                    : key === 'runs'
+                      ? t('itemDrawer.tab.runs', { count: runs.length })
+                      : t('itemDrawer.tab.timeline')}
                 </button>
               ))}
             </nav>
@@ -140,7 +147,14 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                         <li key={i}>
                           · {c.description}
                           <span className="ml-1 text-[10px] text-slate-400">
-                            （{c.enforcement === 'system' ? '系统强制' : c.enforcement === 'agent' ? 'Agent 自律' : '人工检查'}）
+                            {t('itemDrawer.enforcement', {
+                              how:
+                                c.enforcement === 'system'
+                                  ? t('itemDrawer.verifyAuto')
+                                  : c.enforcement === 'agent'
+                                    ? t('itemDrawer.verifyAgent')
+                                    : t('itemDrawer.verifyHuman'),
+                            })}
                           </span>
                         </li>
                       ))}
@@ -210,7 +224,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                   </li>
                 ))}
                 {timeline.length === 0 && (
-                  <p className="text-xs text-slate-400">暂无事件</p>
+                  <p className="text-xs text-slate-400">{t('itemDrawer.noEvents')}</p>
                 )}
               </ul>
             )}
@@ -247,6 +261,7 @@ function RunsTab({
   pending: boolean;
   error: unknown;
 }) {
+  const t = useT();
   const [context, setContext] = useState('');
   const { startEdit, endEdit, conflictOf } = useEditingStore();
   const conflict = conflictOf(workItemId, 'retryContext');
@@ -287,11 +302,11 @@ function RunsTab({
         </article>
       ))}
 
-      {runs.length === 0 && <p className="text-xs text-slate-400">还没有执行记录</p>}
+      {runs.length === 0 && <p className="text-xs text-slate-400">{t('itemDrawer.noRuns')}</p>}
 
       <section className="border-t border-slate-200 pt-3">
         <h4 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-          {failed ? '补充上下文后重试' : '重新派发'}
+          {failed ? t('itemDrawer.retryWithContext') : t('itemDrawer.redispatch')}
         </h4>
         {conflict && (
           <p className="mb-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
@@ -304,21 +319,21 @@ function RunsTab({
           onFocus={() => startEdit(workItemId, 'retryContext')}
           onBlur={() => endEdit(workItemId, 'retryContext')}
           rows={3}
-          placeholder="上次失败是因为找不到 schema，这里补上表结构说明…"
+          placeholder={t('itemDrawer.contextPlaceholder')}
         />
         {/* 重新派发要花钱、会改代码 —— 只读角色不该点得动（§2.3 执行任务） */}
         <GatedButton
           permission="work_item.execute"
           disabled={pending}
-          disabledReason="正在派发中"
+          disabledReason={t('itemDrawer.dispatching')}
           onClick={() => onRetry(context)}
           className="mt-1.5 w-full rounded bg-slate-900 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40"
         >
-          {pending ? '派发中…' : '重试'}
+          {pending ? t('itemDrawer.dispatchingShort') : t('itemDrawer.retry')}
         </GatedButton>
         {error !== null && error !== undefined && (
           <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-            {error instanceof ApiError ? error.message : '派发失败'}
+            {error instanceof ApiError ? error.message : t('itemDrawer.dispatchFailed')}
           </p>
         )}
       </section>

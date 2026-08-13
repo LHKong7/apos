@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { groupEvents, isNoise } from './group-events';
+import { useLocaleStore } from '../../lib/i18n';
 import type { RunEventRow } from '../../lib/api/types';
 
 function ev(seq: number, type: string, summary: string, payload?: Record<string, unknown>): RunEventRow {
@@ -20,6 +21,9 @@ function ev(seq: number, type: string, summary: string, payload?: Record<string,
  * Agent 连读六个文件只有一个信息量：它在找东西。
  * 六行占满屏幕会把真正的转折点（推理、写文件、失败）挤出视野。
  */
+/** ★ 钉住中文：断言查的是「调用 X ×N」这句摘要，默认语言是英文 */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
+
 describe('简明模式的事件合并', () => {
   it('连续的同名工具调用折叠成一行并计数', () => {
     const entries = groupEvents(

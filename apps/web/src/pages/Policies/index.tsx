@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,16 +18,20 @@ import { HitsPanel } from './HitsPanel';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
-const AUTONOMY: { value: AutonomyLevel; label: string; desc: string }[] = [
-  { value: 'human_led', label: 'Human-led', desc: '大部分操作默认需要人审批' },
-  { value: 'agent_led_approval', label: 'Agent-led + Approval', desc: '中低风险自动，关键节点审批' },
-  { value: 'agent_autonomous', label: 'Agent-autonomous', desc: '默认自动，仅异常时询问' },
+const AUTONOMY: { value: AutonomyLevel; label: string; descKey: MessageKey }[] = [
+  { value: 'human_led', label: 'Human-led', descKey: 'policy.autonomy.assisted' },
+  {
+    value: 'agent_led_approval',
+    label: 'Agent-led + Approval',
+    descKey: 'policy.autonomy.supervised',
+  },
+  { value: 'agent_autonomous', label: 'Agent-autonomous', descKey: 'policy.autonomy.autonomous' },
 ];
 
 const TABS = [
-  { key: 'rules', label: '规则列表' },
-  { key: 'test', label: '模拟测试' },
-] as const;
+  { key: 'rules', labelKey: 'policy.tab.rules' },
+  { key: 'test', labelKey: 'policy.tab.simulate' },
+] as const satisfies readonly { key: string; labelKey: MessageKey }[];
 
 const SEVERITY = {
   critical: { icon: '🔴', className: 'text-red-800' },
@@ -46,6 +51,7 @@ const SEVERITY = {
  *   用户不会去读 12 条规则再自己推导边界 —— 他要的就是这一句。
  */
 export function PoliciesPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
@@ -80,10 +86,10 @@ export function PoliciesPage() {
   const remove = useMutation({
     mutationFn: (p: PolicyRow) => api.deletePolicy(projectId!, p.id),
     onSuccess: () => {
-      setToast('规则已删除');
+      setToast(t('policy.deleted'));
       void refresh();
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '删除失败'),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('policy.deleteFailed')),
   });
 
   if (!projectId) return null;
@@ -94,7 +100,7 @@ export function PoliciesPage() {
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold text-slate-900">
-            {data?.project.name ?? '项目'} / 设置 / Policy
+            {t('policy.breadcrumb', { project: data?.project.name ?? t('policy.scope.project') })}
           </h1>
           <Link
             to={`/projects/${projectId}/board`}
@@ -117,7 +123,7 @@ export function PoliciesPage() {
               disabled={!perms.can('project.autonomy.change')}
               title={perms.why('project.autonomy.change')}
               className="rounded border border-slate-300 px-1.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="自治等级"
+              aria-label={t('policy.autonomyLevel')}
             >
               {AUTONOMY.map((a) => (
                 <option key={a.value} value={a.value}>
@@ -129,21 +135,22 @@ export function PoliciesPage() {
         </div>
 
         <div className="mt-1.5 flex items-center gap-1">
-          {TABS.map((t) => (
+          {/* ★ 参数别叫 t —— 会遮住 i18n 的 t，而报错只说「不可调用」 */}
+          {TABS.map((item) => (
             <button
-              key={t.key}
+              key={item.key}
               type="button"
               onClick={() => {
                 const next = new URLSearchParams(params);
-                next.set('tab', t.key);
+                next.set('tab', item.key);
                 setParams(next, { replace: true });
               }}
               className={clsx(
                 'rounded px-2 py-0.5 text-xs',
-                tab === t.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
+                tab === item.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
-              {t.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
@@ -168,12 +175,12 @@ export function PoliciesPage() {
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <p className="text-xs text-slate-700">
                 ℹ 当前配置下：
-                <span className="font-medium">{data.summary.auto.length}</span> 类操作自动执行，
-                <span className="font-medium">{data.summary.human.length}</span> 类需要人类确认
+                <span className="font-medium">{data.summary.auto.length}</span> {t('policy.summaryAuto')}
+                <span className="font-medium">{data.summary.human.length}</span> {t('policy.summaryHuman')}
                 {data.summary.depends.length > 0 && (
                   <>
                     ，
-                    <span className="font-medium">{data.summary.depends.length}</span> 类视情况而定
+                    <span className="font-medium">{data.summary.depends.length}</span> {t('policy.summaryDepends')}
                   </>
                 )}
                 <button
@@ -181,7 +188,7 @@ export function PoliciesPage() {
                   onClick={() => setExpandSummary((v) => !v)}
                   className="ml-2 text-[11px] text-slate-500 underline hover:text-slate-800"
                 >
-                  {expandSummary ? '收起' : '查看完整清单'}
+                  {expandSummary ? t('policy.collapse') : t('policy.showFullList')}
                 </button>
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
@@ -191,9 +198,9 @@ export function PoliciesPage() {
 
               {expandSummary && (
                 <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 md:grid-cols-3">
-                  <SummaryColumn title="自动执行" icon="✓" items={data.summary.auto.map((o) => o.label)} />
+                  <SummaryColumn title={t('policy.auto')} icon="✓" items={data.summary.auto.map((o) => o.label)} />
                   <SummaryColumn
-                    title="需要人类确认"
+                    title={t('policy.needsHuman')}
                     icon="⚠"
                     items={data.summary.human.map((o) => `${o.label}${o.by ? ` → ${o.by}` : ''}`)}
                   />
@@ -202,7 +209,7 @@ export function PoliciesPage() {
                       只写「看情况」的摘要还不如不给 —— 用户仍然得自己去读规则。
                   */}
                   <SummaryColumn
-                    title="视情况而定"
+                    title={t('policy.dependsOn')}
                     icon="~"
                     items={data.summary.depends.map((o) => `${o.label}：${o.when}`)}
                   />
@@ -228,7 +235,7 @@ export function PoliciesPage() {
                         <div className="min-w-0 flex-1">
                           <p className={meta.className}>{issue.message}</p>
                           {issue.example && (
-                            <p className="text-[11px] text-slate-400">反例场景：{issue.example}</p>
+                            <p className="text-[11px] text-slate-400">{t('policy.counterExample', { example: issue.example })}</p>
                           )}
                           {issue.policyIds.length > 0 && (
                             <button
@@ -252,7 +259,7 @@ export function PoliciesPage() {
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-slate-500">从模板新建：</span>
+                  <span className="text-xs text-slate-500">{t('policy.fromTemplate')}</span>
                   {/*
                     ★ 模板自己就标了方向，正好对上 §2.3 的两档权限：
                       放宽类模板对 pm 是灰的，收紧类不是。这一排按钮
@@ -276,8 +283,8 @@ export function PoliciesPage() {
                 </div>
 
                 <RuleList
-                  title="项目自定义规则"
-                  hint="完全可编辑，但不能放宽组织规则"
+                  title={t('policy.projectRules')}
+                  hint={t('policy.projectRulesHint')}
                   policies={data.projectPolicies}
                   highlightIds={highlight}
                   onEdit={(p) => {
@@ -291,20 +298,20 @@ export function PoliciesPage() {
                 />
 
                 <RuleList
-                  title="继承自组织的规则"
-                  hint="⛓ 项目内不可删除、不可放宽，只能收紧"
+                  title={t('policy.orgRules')}
+                  hint={t('policy.orgRulesHint')}
                   policies={data.orgPolicies}
                   highlightIds={highlight}
-                  onEdit={() => setToast('组织级规则需要组织管理员修改')}
-                  onToggle={() => setToast('组织级规则不能在项目内停用')}
-                  onDelete={() => setToast('组织级规则不能在项目内删除')}
+                  onEdit={() => setToast(t('policy.orgEditDenied'))}
+                  onToggle={() => setToast(t('policy.orgDisableDenied'))}
+                  onDelete={() => setToast(t('policy.orgDeleteDenied'))}
                   onHistory={setHistory}
                   onViewHits={(p) => setHits({ id: p.id, name: p.name })}
                 />
 
                 {/* ★ 如实说明哪些数据源没接 —— 依赖它们的规则永远不会命中 */}
                 <p className="text-[11px] text-slate-400">
-                  已接入的数据源：{data.wiredFacts.length > 0 ? data.wiredFacts.join('、') : '（无）'}。
+                  已接入的数据源：{data.wiredFacts.length > 0 ? data.wiredFacts.join('、') : t('policy.none')}。
                   CI 测试结果与安全扫描尚未接入，条件里用到它们的规则不会命中，体检区会单独标出
                 </p>
               </>
@@ -327,7 +334,7 @@ export function PoliciesPage() {
             setCreating(false);
             setEditing(null);
             setTemplate(null);
-            setToast('规则已保存');
+            setToast(t('policy.saved'));
             void refresh();
           }}
         />
@@ -381,13 +388,14 @@ export function PoliciesPage() {
 }
 
 function SummaryColumn({ title, icon, items }: { title: string; icon: string; items: string[] }) {
+  const t = useT();
   return (
     <div>
       <p className="text-[11px] font-medium text-slate-600">
         {title}（{items.length}）
       </p>
       <ul className="mt-0.5 space-y-0.5">
-        {items.length === 0 && <li className="text-[11px] text-slate-400">（无）</li>}
+        {items.length === 0 && <li className="text-[11px] text-slate-400">{t('policy.none')}</li>}
         {items.map((t) => (
           <li key={t} className="text-[11px] leading-4 text-slate-600">
             <span aria-hidden className="mr-1">
@@ -413,24 +421,25 @@ function ToggleDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const mut = useMutation({
     mutationFn: () => api.togglePolicy(projectId, policy.id, !policy.enabled, reason),
     onSuccess: onDone,
-    onError: (e) => setError(e instanceof ApiError ? e.message : '操作失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('policy.actionFailed')),
   });
 
   return (
-    <Modal onClose={onClose} title="启用/停用规则">
+    <Modal onClose={onClose} title={t('policy.toggleRule')}>
       <h2 className="text-sm font-semibold text-slate-900">
-        {policy.enabled ? '停用' : '启用'}规则「{policy.name}」
+        {t('policy.toggleNamed', { action: policy.enabled ? t('policy.disable') : t('policy.enable'), name: policy.name })}
       </h2>
       <p className="mt-1 text-xs text-slate-500">
         {policy.enabled
-          ? '停用等于放宽治理。原因会记入变更历史，之后没人需要猜「这条为什么被关掉了」'
-          : '重新启用这条规则'}
+          ? t('policy.disableHint')
+          : t('policy.enableHint')}
       </p>
 
       <label className="mt-3 block text-xs text-slate-600">
@@ -440,7 +449,7 @@ function ToggleDialog({
           onChange={(e) => setReason(e.target.value)}
           rows={3}
           className="mt-0.5"
-          placeholder={policy.enabled ? '例如：发现回归未拦截，先关掉再补条件' : ''}
+          placeholder={policy.enabled ? t('policy.disableReasonPlaceholder') : ''}
         />
       </label>
 
@@ -479,6 +488,7 @@ function AutonomyDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const preview = useQuery({
     queryKey: ['autonomyPreview', projectId, to],
     queryFn: () => api.autonomyPreview(projectId, to),
@@ -493,14 +503,16 @@ function AutonomyDialog({
   const toMeta = AUTONOMY.find((a) => a.value === to);
 
   return (
-    <Modal onClose={onClose} title="调整自治等级">
+    <Modal onClose={onClose} title={t('policy.adjustAutonomy')}>
       <div className="w-[28rem] max-w-full">
         <h2 className="text-sm font-semibold text-slate-900">
-          把自治等级从 {fromLabel} 改成 {toMeta?.label}
+          {t('policy.autonomyChange', { from: fromLabel, to: toMeta?.label ?? '' })}
         </h2>
-        <p className="mt-0.5 text-xs text-slate-500">{toMeta?.desc}</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {toMeta ? t(toMeta.descKey) : ''}
+        </p>
 
-        {preview.isPending && <p className="mt-3 text-xs text-slate-400">正在计算影响…</p>}
+        {preview.isPending && <p className="mt-3 text-xs text-slate-400">{t('policy.computingImpact')}</p>}
 
         {preview.data && (
           <div className="mt-3 space-y-2 text-xs">
@@ -551,17 +563,18 @@ function AutonomyDialog({
 
 /** 变更历史（§5.11）—— Policy 变更是高敏感操作，必须完整审计 */
 function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => void }) {
+  const t = useT();
   const history = useQuery({
     queryKey: qk.policyHistory(policy.id),
     queryFn: () => api.policyHistory(policy.id),
   });
 
   return (
-    <Modal onClose={onClose} title="策略详情">
+    <Modal onClose={onClose} title={t('policy.detail')}>
       <div className="w-[28rem] max-w-full">
-        <h2 className="text-sm font-semibold text-slate-900">「{policy.name}」的变更历史</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t('policy.historyOf', { name: policy.name })}</h2>
 
-        {history.isPending && <p className="mt-2 text-xs text-slate-400">加载中…</p>}
+        {history.isPending && <p className="mt-2 text-xs text-slate-400">{t('common.loading')}</p>}
         {history.data?.history.length === 0 && (
           <p className="mt-2 text-xs text-slate-400">
             这条规则自创建以来没有被改动过（组织基线规则不经本页管理，没有变更记录）
@@ -580,7 +593,7 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
                     h.direction === 'loosen' ? 'text-amber-700' : 'text-slate-500',
                   )}
                 >
-                  {h.direction === 'loosen' ? '放宽' : '收紧'}
+                  {h.direction === 'loosen' ? t('policy.loosen') : t('policy.tighten')}
                 </span>
               )}
             </li>

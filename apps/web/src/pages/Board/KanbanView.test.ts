@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateDrop } from './KanbanView';
 import { card } from '../../test/fixtures';
+import { useLocaleStore } from '../../lib/i18n';
 
 /**
  * 拖拽合法性。
@@ -9,6 +10,14 @@ import { card } from '../../test/fixtures';
  * 比不让拖更糟。所以规则必须同源于 WORK_ITEM_MACHINE。
  */
 describe('拖拽落点判定', () => {
+  /**
+   * ★ 显式钉住语言。默认是英文，而下面几条断言的是**具体那句话**；
+   *   不钉的话，改默认语言会让这些用例莫名其妙地红。
+   *   Pin the locale: the default is English and these assertions check the
+   *   exact sentence, so an unpinned test would break on a default change.
+   */
+  beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
+
   it('允许 reviewing → Release（审核通过）', () => {
     const r = evaluateDrop(card({ status: 'reviewing', stage: 'review' }), 'release');
     expect(r.allowed).toBe(true);
@@ -23,11 +32,20 @@ describe('拖拽落点判定', () => {
     expect(r.allowed).toBe(true);
   });
 
-  it('拒绝不符合状态机的落点，并用中文状态名说明原因', () => {
+  it('拒绝不符合状态机的落点，并用可读的状态名说明原因（不是原始枚举）', () => {
     const r = evaluateDrop(card({ status: 'ready', stage: 'execution' }), 'release');
     expect(r.allowed).toBe(false);
     expect(r.reason).toContain('待执行');
     expect(r.reason).toContain('不能直接进入');
+  });
+
+  /** ★ 默认英文：这条锁住「切了默认语言，拒绝原因也跟着走」 */
+  it('★ 英文界面下同一条拒绝给出英文状态名', () => {
+    useLocaleStore.setState({ locale: 'en' });
+    const r = evaluateDrop(card({ status: 'ready', stage: 'execution' }), 'release');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain('Ready');
+    expect(r.reason).toContain('cannot move straight into');
   });
 
   it('★ 依赖未满足时不许进入 Execution，原因写清楚有几个依赖', () => {

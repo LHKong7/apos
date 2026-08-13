@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -50,7 +51,7 @@ export function usePermissions(projectIdArg?: string): PermissionView {
      */
     can: (permission) => data?.permissions[permission] ?? false,
     why: (permission) => {
-      if (!data) return '正在确认权限…';
+      if (!data) return t('perm.checking');
       return data.denyReasons[permission];
     },
     projectRole: data?.projectRole ?? null,

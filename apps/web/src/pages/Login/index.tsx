@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api, ApiError } from '../../lib/api/client';
 import { useAuthStore } from '../../stores/auth';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { BrandMark } from '../../components/BrandMark';
 import { Input } from '@/components/ui/input';
 
@@ -23,6 +24,7 @@ type Mode = 'login' | 'register';
  */
 export function LoginPage() {
   const signIn = useAuthStore((s) => s.signIn);
+  const t = useT();
   const [mode, setMode] = useState<Mode>('login');
 
   /**
@@ -67,7 +69,9 @@ export function LoginPage() {
     submit.error instanceof ApiError
       ? submit.error.message
       : submit.error
-        ? `${active === 'login' ? '登录' : '注册'}失败，请确认后端是否可达`
+        ? t('login.failed', {
+            action: active === 'login' ? t('login.tab.login') : t('login.tab.register'),
+          })
         : null;
 
   /** ★ 换模式要清掉上一次的报错：「邮箱或口令不正确」留在注册表单上纯属误导 */
@@ -110,22 +114,23 @@ export function LoginPage() {
           </div>
 
           <h1 className="mt-7 max-w-md text-2xl font-semibold leading-snug tracking-tight text-slate-800">
-            让项目<span className="text-gradient-brand">自主向前流动</span>，
+            {t('login.hero.line1')}
+            <span className="text-gradient-brand">{t('login.hero.highlight')}</span>
             <br />
-            关键节点上始终有人。
+            {t('login.hero.line2')}
           </h1>
 
           <ul className="mt-6 space-y-2.5">
             {HIGHLIGHTS.map((h) => (
-              <li key={h.title} className="flex items-start gap-2.5">
+              <li key={h.titleKey} className="flex items-start gap-2.5">
                 <span
                   aria-hidden
                   className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-br from-brand-alt to-brand-far"
                 />
                 <p className="text-xs leading-relaxed text-slate-500">
-                  <span className="font-medium text-slate-700">{h.title}</span>
+                  <span className="font-medium text-slate-700">{t(h.titleKey)}</span>
                   <span className="mx-1.5 text-slate-300">·</span>
-                  {h.body}
+                  {t(h.bodyKey)}
                 </p>
               </li>
             ))}
@@ -160,42 +165,40 @@ export function LoginPage() {
             <div className="mt-4 flex rounded-lg border border-slate-200 bg-slate-100/60 p-0.5 md:mt-0">
               {(
                 [
-                  { key: 'login', label: '登录' },
-                  { key: 'register', label: '注册' },
+                  { key: 'login', labelKey: 'login.tab.login' },
+                  { key: 'register', labelKey: 'login.tab.register' },
                 ] as const
-              ).map((t) => (
+              ).map((tab) => (
                 <button
-                  key={t.key}
+                  key={tab.key}
                   type="button"
-                  onClick={() => switchTo(t.key)}
-                  aria-pressed={active === t.key}
+                  onClick={() => switchTo(tab.key)}
+                  aria-pressed={active === tab.key}
                   className={clsx(
                     'flex-1 rounded-md py-1.5 text-xs transition',
-                    active === t.key
+                    active === tab.key
                       ? 'bg-white font-medium text-slate-900 shadow-sm'
                       : 'text-slate-500 hover:text-slate-800',
                   )}
                 >
-                  {t.label}
+                  {t(tab.labelKey)}
                 </button>
               ))}
             </div>
           ) : (
             <h2 className="mt-4 text-base font-semibold tracking-tight text-slate-900 md:mt-0">
-              登录
+              {t('login.tab.login')}
             </h2>
           )}
 
           <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-            {active === 'login'
-              ? '用你的账号进入'
-              : '注册会为你创建一个属于你的新组织，你是它的管理员'}
+            {active === 'login' ? t('login.intro.login') : t('login.intro.register')}
           </p>
 
           {active === 'register' && (
             <>
               <label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
-                姓名
+                {t('login.field.name')}
               </label>
               <Input
                 id="register-name"
@@ -203,13 +206,13 @@ export function LoginPage() {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="李娜"
+                placeholder={t('login.field.namePlaceholder')}
                 className="mt-1.5" />
             </>
           )}
 
           <label className="mt-4 block text-xs text-slate-600" htmlFor="login-email">
-            邮箱
+            {t('login.field.email')}
           </label>
           <Input
             id="login-email"
@@ -221,7 +224,7 @@ export function LoginPage() {
             className="mt-1.5" />
 
           <label className="mt-3.5 block text-xs text-slate-600" htmlFor="login-password">
-            口令
+            {t('login.field.password')}
           </label>
           <Input
             id="login-password"
@@ -234,20 +237,24 @@ export function LoginPage() {
           {/* ★ 把长度要求写在前面，而不是等服务端把表单打回来才说
               —— 服务端那条规则见 modules/auth/password.ts */}
           {active === 'register' && (
-            <p className="mt-1 text-[11px] text-slate-400">至少 8 位</p>
+            <p className="mt-1 text-[11px] text-slate-400">{t('login.field.passwordHint')}</p>
           )}
 
           {active === 'register' && (
             <>
               <label className="mt-3.5 block text-xs text-slate-600" htmlFor="register-org">
-                组织名
-                <span className="ml-1 text-slate-400">选填</span>
+                {t('login.field.orgName')}
+                <span className="ml-1 text-slate-400">{t('login.field.optional')}</span>
               </label>
               <Input
                 id="register-org"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
-                placeholder={name.trim() ? `${name.trim()} 的组织` : '留空按姓名生成'}
+                placeholder={
+                  name.trim()
+                    ? t('login.field.orgPlaceholderFrom', { name: name.trim() })
+                    : t('login.field.orgPlaceholder')
+                }
                 className="mt-1.5" />
             </>
           )}
@@ -273,11 +280,11 @@ export function LoginPage() {
           >
             {submit.isPending
               ? active === 'login'
-                ? '登录中…'
-                : '创建中…'
+                ? t('login.submit.signingIn')
+                : t('login.submit.creating')
               : active === 'login'
-                ? '登录'
-                : '创建账号与组织'}
+                ? t('login.submit.login')
+                : t('login.submit.register')}
           </button>
 
           <p className="mt-4 border-t border-slate-200/70 pt-3 text-[11px] leading-relaxed text-slate-500">
@@ -286,28 +293,26 @@ export function LoginPage() {
                 {/* ★ 关着注册的实例要明说，否则用户会一直在找那个不存在的注册入口 */}
                 {!allowSignup && !config.isPending && (
                   <>
-                    这个实例没有开放自助注册，账号由管理员开通。
+                    {t('login.note.noSignup')}
                     <br />
                   </>
                 )}
-                首次部署时，超级管理员来自 <code className="text-slate-600">.env</code> 里的{' '}
-                <code className="text-slate-600">APOS_SUPERADMIN_EMAIL</code> 与{' '}
-                <code className="text-slate-600">APOS_SUPERADMIN_PASSWORD</code>。
+                {t('login.note.bootstrap')}
                 {allowSignup && (
                   <>
                     <br />
-                    要加入同事已有的组织，请找那个组织的管理员把你加进去 —— 注册只会新开一个组织。
+                    {t('login.note.joinExisting')}
                   </>
                 )}
               </>
             ) : (
               <>
-                新组织是空的：项目、成员、Agent 都要你自己建。
+                {t('login.note.newOrgEmpty')}
                 <br />
                 <strong className="font-medium text-slate-600">
-                  想加入同事已有的组织，不要注册
+                  {t('login.note.doNotRegister')}
                 </strong>
-                —— 找那个组织的管理员把你加进去，注册只会给你另开一个互相看不见的组织。
+                {t('login.note.doNotRegisterWhy')}
               </>
             )}
           </p>
@@ -317,9 +322,12 @@ export function LoginPage() {
   );
 }
 
-/** 三句话说清这个系统和一块普通看板的差别 —— 再多就没人读了 */
-const HIGHLIGHTS = [
-  { title: '需求进来自己往下走', body: '澄清、计划、拆解、调度，由 Flow Engine 推动' },
-  { title: '要你决定时才来找你', body: 'Human Gate 拦在风险处，超时会升级，不会静默通过' },
-  { title: '人和 Agent 同一块板', body: '谁在做、卡在哪、花了多少，一眼看得到' },
+/**
+ * 三句话说清这个系统和一块普通看板的差别 —— 再多就没人读了。
+ * Three lines on what separates this from an ordinary board; any more goes unread.
+ */
+const HIGHLIGHTS: { titleKey: MessageKey; bodyKey: MessageKey }[] = [
+  { titleKey: 'login.highlight.1.title', bodyKey: 'login.highlight.1.body' },
+  { titleKey: 'login.highlight.2.title', bodyKey: 'login.highlight.2.body' },
+  { titleKey: 'login.highlight.3.title', bodyKey: 'login.highlight.3.body' },
 ];

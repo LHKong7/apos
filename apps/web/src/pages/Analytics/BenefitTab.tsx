@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -28,6 +29,7 @@ export function BenefitTab({
   data: AnalyticsResponse;
   projectId: string;
 }) {
+  const t = useT();
   const b = data.benefit;
   const qc = useQueryClient();
   const [draft, setDraft] = useState(b.laborHourlyCost === null ? '' : String(b.laborHourlyCost));
@@ -58,8 +60,8 @@ export function BenefitTab({
       </div>
 
       <Card
-        title="人力成本基准"
-        subtitle="这个数只有你知道。系统不替你填一个 —— 编出来的「省了多少」经不起一次追问"
+        title={t('benefit.laborBaseline')}
+        subtitle={t('benefit.baselineSubtitle')}
       >
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1 text-[11px] text-slate-600">
@@ -70,15 +72,15 @@ export function BenefitTab({
               step={1}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="未填"
-              aria-label="人力小时成本"
+              placeholder={t('benefit.notSet')}
+              aria-label={t('benefit.hourlyCost')}
               className="w-24" />
             / 小时
           </label>
           <Button variant="neutral" size="xs"
             disabled={save.isPending}
             onClick={() => save.mutate()}>
-            {save.isPending ? '保存中…' : '保存'}
+            {save.isPending ? t('common.saving') : t('common.save')}
           </Button>
           {draft.trim() !== '' && (
             <button
@@ -95,36 +97,36 @@ export function BenefitTab({
         </div>
         {save.error && (
           <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-            {save.error instanceof ApiError ? save.error.message : '保存失败'}
+            {save.error instanceof ApiError ? save.error.message : t('benefit.saveFailed')}
           </p>
         )}
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <Card title="收益侧">
+        <Card title={t('benefit.gains')}>
           <Lines lines={benefits} currency={b.currency} />
         </Card>
-        <Card title="代价侧" subtitle="不减掉这些就是在自欺">
+        <Card title={t('benefit.costs')} subtitle={t('benefit.costsHint')}>
           <Lines lines={costs} currency={b.currency} />
         </Card>
       </div>
 
       {b.hasBaseline && b.net !== null && (
-        <Card title="算式" subtitle="每一步都摊开，好让你能对着追问">
+        <Card title={t('benefit.formula')} subtitle={t('benefit.formulaHint')}>
           <p className="text-[11px] text-slate-600">
             {b.agentHours} 小时 × {b.currency}
             {b.laborHourlyCost}/h
-            <span className="text-slate-400"> （Agent 承担的执行工时，按实际时长不按估算）</span>
+            <span className="text-slate-400">{t('benefit.agentHours')}</span>
           </p>
           <p className="text-[11px] text-slate-600">
             − {b.humanOverheadHours} 小时 × {b.currency}
             {b.laborHourlyCost}/h
-            <span className="text-slate-400"> （人工覆盖占用的时间）</span>
+            <span className="text-slate-400">{t('benefit.overrideHours')}</span>
           </p>
           <p className="text-[11px] text-slate-600">
             − {b.currency}
             {b.agentSpend}
-            <span className="text-slate-400"> （Agent 的实际花费）</span>
+            <span className="text-slate-400">{t('benefit.agentSpend')}</span>
           </p>
           <p className="mt-1 border-t border-slate-100 pt-1 text-xs font-medium text-slate-800">
             = {b.currency}

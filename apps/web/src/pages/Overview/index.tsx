@@ -11,9 +11,15 @@ import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
+import { useT } from '../../lib/i18n';
 import { Button } from '@/components/ui/button';
 
-const DELAY_LABELS = { low: '低', medium: '中', high: '高' } as const;
+/** 延期档位 → 词条键 / Delay level → message key */
+const DELAY_KEYS = {
+  low: 'overview.delay.low',
+  medium: 'overview.delay.medium',
+  high: 'overview.delay.high',
+} as const;
 
 /**
  * 项目总览（页面文档 02）—— 项目负责人的指挥台。
@@ -24,6 +30,7 @@ const DELAY_LABELS = { low: '低', medium: '中', high: '高' } as const;
  *   一个只能看不能点的数字在这一页上没有位置。
  */
 export function OverviewPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [expand, setExpand] = useState<'health' | 'delay' | null>(null);
@@ -70,7 +77,9 @@ export function OverviewPage() {
       */}
       <div className="relative z-10 shrink-0 border-b border-slate-200/80 px-4 py-3 glass">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold tracking-tight text-slate-900">总览</h1>
+          <h1 className="text-sm font-semibold tracking-tight text-slate-900">
+            {t('overview.title')}
+          </h1>
           {d.project.goal && (
             <span className="truncate text-xs text-slate-500">{d.project.goal}</span>
           )}
@@ -82,48 +91,66 @@ export function OverviewPage() {
           {/* ── 五个指标卡 ── */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
             <MetricCard
-              label="健康度"
+              label={t('overview.metric.health')}
               value={String(d.health.score)}
-              sub={d.health.level === 'good' ? '良好' : d.health.level === 'fair' ? '一般' : '较差'}
+              sub={
+                d.health.level === 'good'
+                  ? t('overview.health.good')
+                  : d.health.level === 'fair'
+                    ? t('overview.health.fair')
+                    : t('overview.health.poor')
+              }
               tone={d.health.level === 'good' ? 'good' : d.health.level === 'fair' ? 'warn' : 'bad'}
               onClick={() => setExpand(expand === 'health' ? null : 'health')}
-              hint="点开看扣分明细"
+              hint={t('overview.health.hint')}
             />
             <MetricCard
-              label="进度"
+              label={t('overview.metric.progress')}
               value={`${d.progress.pct}%`}
               sub={`${d.progress.done}/${d.progress.total}`}
               onClick={() => navigate(`/projects/${projectId}/board`)}
             />
             <MetricCard
-              label="延期风险"
-              value={DELAY_LABELS[d.delay.level]}
+              label={t('overview.metric.delayRisk')}
+              value={t(DELAY_KEYS[d.delay.level])}
               sub={
                 d.delay.estimatedSlipDays !== null
-                  ? `${Math.round(d.delay.probability * 100)}% · 预计 +${d.delay.estimatedSlipDays} 天`
-                  : `${Math.round(d.delay.probability * 100)}% · 无排期基准`
+                  ? t('overview.delay.withSlip', {
+                      pct: Math.round(d.delay.probability * 100),
+                      days: d.delay.estimatedSlipDays,
+                    })
+                  : t('overview.delay.noBaseline', {
+                      pct: Math.round(d.delay.probability * 100),
+                    })
               }
               tone={d.delay.level === 'high' ? 'bad' : d.delay.level === 'medium' ? 'warn' : 'good'}
               onClick={() => setExpand(expand === 'delay' ? null : 'delay')}
-              hint="点开看预测怎么来的"
+              hint={t('overview.delay.hint')}
             />
             <MetricCard
-              label="待决策"
+              label={t('overview.metric.decisions')}
               value={String(d.decisions.pending)}
               sub={
                 d.decisions.overdue > 0
-                  ? `${d.decisions.overdue} 项已超时`
+                  ? t('overview.decisions.overdue', { count: d.decisions.overdue })
                   : d.decisions.unassigned > 0
-                    ? `${d.decisions.unassigned} 项无人认领`
-                    : '无超时'
+                    ? t('overview.decisions.unassigned', { count: d.decisions.unassigned })
+                    : t('overview.decisions.none')
               }
               tone={d.decisions.overdue > 0 ? 'bad' : 'normal'}
               onClick={() => navigate(`/projects/${projectId}/decisions`)}
             />
             <MetricCard
-              label="成本"
+              label={t('overview.metric.cost')}
               value={money(String(d.cost.spent))}
-              sub={d.cost.budget === null ? '未设预算' : `预算 ${money(String(d.cost.budget))} · ${budgetPct}%`}
+              sub={
+                d.cost.budget === null
+                  ? t('overview.cost.noBudget')
+                  : t('overview.cost.ofBudget', {
+                      budget: money(String(d.cost.budget)),
+                      pct: budgetPct ?? 0,
+                    })
+              }
               tone={budgetPct !== null && budgetPct > 90 ? 'bad' : 'normal'}
               onClick={() => navigate(`/projects/${projectId}/analytics?tab=cost`)}
             />
@@ -135,30 +162,32 @@ export function OverviewPage() {
           */}
           {expand === 'health' && (
             <Breakdown
-              title={`健康度 ${d.health.score} 分是这么来的（100 分起扣）`}
+              title={t('overview.health.breakdownTitle', { score: d.health.score })}
               items={d.health.contributions}
-              empty="没有扣分项 —— 各项指标都在正常范围"
+              empty={t('overview.health.empty')}
               sign="minus"
             />
           )}
           {expand === 'delay' && (
             <Breakdown
-              title={`延期概率 ${Math.round(d.delay.probability * 100)}% 是这么来的（基础风险 10% 起）`}
+              title={t('overview.delay.breakdownTitle', {
+                pct: Math.round(d.delay.probability * 100),
+              })}
               items={d.delay.contributions}
-              empty="没有识别到明显的延期风险来源"
+              empty={t('overview.delay.empty')}
               sign="plus"
-              note="这不是统计模型，是一组显式的经验规则。知道它怎么算的，你才知道什么时候该忽略它"
+              note={t('overview.delay.note')}
             />
           )}
 
           {/* ── 需要你处理 ── */}
           <section className="rounded border border-slate-200 bg-white">
             <h2 className="border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-              ⚡ 需要你处理（{d.actionItems.length}）
+              {t('overview.actionItems', { count: d.actionItems.length })}
             </h2>
             {d.actionItems.length === 0 ? (
               <p className="px-3 py-3 text-center text-xs text-slate-400">
-                当前没有等着你的事 —— 这正是这个产品该有的常态
+                {t('overview.actionItems.empty')}
               </p>
             ) : (
               <ul>
@@ -168,9 +197,13 @@ export function OverviewPage() {
                     className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-xs last:border-0"
                   >
                     {a.overdueMinutes !== null ? (
-                      <span className="text-red-700">⏰ 超时 {duration(a.overdueMinutes)}</span>
+                      <span className="text-red-700">
+                          {t('overview.item.overdue', { time: duration(a.overdueMinutes) })}
+                        </span>
                     ) : a.dueInMinutes !== null ? (
-                      <span className="text-amber-700">⚠ {duration(a.dueInMinutes)} 内到期</span>
+                      <span className="text-amber-700">
+                          {t('overview.item.dueIn', { time: duration(a.dueInMinutes) })}
+                        </span>
                     ) : (
                       <span className="text-slate-400">—</span>
                     )}
@@ -182,7 +215,7 @@ export function OverviewPage() {
                           ? navigate(`/projects/${projectId}/plans/${a.id}`)
                           : setOpenDecision(a.id)
                       }>
-                      处理 →
+                      {t('overview.item.handle')}
                     </Button>
                   </li>
                 ))}
@@ -194,10 +227,12 @@ export function OverviewPage() {
             {/* ── 阻塞与风险 ── */}
             <section className="rounded border border-slate-200 bg-white">
               <h2 className="border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-                ⛔ 阻塞与风险（{d.blocked.length}）
+                {t('overview.blocked', { count: d.blocked.length })}
               </h2>
               {d.blocked.length === 0 ? (
-                <p className="px-3 py-3 text-center text-xs text-slate-400">没有阻塞的任务</p>
+                <p className="px-3 py-3 text-center text-xs text-slate-400">
+                  {t('overview.blocked.empty')}
+                </p>
               ) : (
                 <ul>
                   {d.blocked.map((b) => (
@@ -215,7 +250,9 @@ export function OverviewPage() {
                           <span className="mt-0.5 block text-[11px] text-slate-500">{b.reason}</span>
                         )}
                         {b.ownerName && (
-                          <span className="text-[11px] text-slate-400">负责人 {b.ownerName}</span>
+                          <span className="text-[11px] text-slate-400">
+                            {t('overview.item.owner', { name: b.ownerName })}
+                          </span>
                         )}
                       </button>
                     </li>
@@ -227,16 +264,18 @@ export function OverviewPage() {
             {/* ── Agent 团队 ── */}
             <section className="rounded border border-slate-200 bg-white">
               <h2 className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-                🤖 Agent 团队（{d.agents.length}）
+                {t('overview.agents', { count: d.agents.length })}
                 <Link
                   to={`/projects/${projectId}/agents`}
                   className="ml-auto text-[11px] font-normal text-slate-500 underline"
                 >
-                  全部 →
+                  {t('overview.agents.all')}
                 </Link>
               </h2>
               {d.agents.length === 0 ? (
-                <p className="px-3 py-3 text-center text-xs text-slate-400">还没有 Agent 执行过任务</p>
+                <p className="px-3 py-3 text-center text-xs text-slate-400">
+                  {t('overview.agents.empty')}
+                </p>
               ) : (
                 <ul>
                   {d.agents.map((a) => (
@@ -256,7 +295,12 @@ export function OverviewPage() {
                                 : 'text-slate-400',
                           )}
                         >
-                          ● {a.status === 'running' ? '执行中' : a.status === 'paused' ? '已暂停' : '空闲'}
+                          ●{' '}
+                          {a.status === 'running'
+                            ? t('overview.agent.running')
+                            : a.status === 'paused'
+                              ? t('overview.agent.paused')
+                              : t('overview.agent.idle')}
                         </span>
                         {a.currentTask && (
                           <span className="mt-0.5 block truncate text-[11px] text-slate-500">
@@ -264,8 +308,8 @@ export function OverviewPage() {
                           </span>
                         )}
                         <span className="text-[11px] text-slate-400">
-                          {a.runs} 次执行
-                          {a.successRate !== null && ` · 成功率 ${Math.round(a.successRate * 100)}%`}
+                          {t('overview.agent.runs', { count: a.runs })}
+                          {a.successRate !== null && t('overview.agentSuccess', { percent: Math.round(a.successRate * 100) })}
                           {' · '}
                           {money(String(a.cost))}
                         </span>
@@ -279,7 +323,7 @@ export function OverviewPage() {
 
           {/* ── 人类成员 ── */}
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
-            <h2 className="text-xs font-medium text-slate-700">👥 人类成员（{d.members.length}）</h2>
+            <h2 className="text-xs font-medium text-slate-700">{t('overview.humanMembers', { count: d.members.length })}</h2>
             <ul className="mt-1 space-y-0.5">
               {d.members.map((m) => (
                 <li key={m.id} className="text-xs text-slate-700">
@@ -288,7 +332,7 @@ export function OverviewPage() {
                   <span className="ml-2 text-slate-500">
                     {m.pendingDecisions} 项决策
                     {m.overdueDecisions > 0 && (
-                      <span className="ml-1 text-red-700">（{m.overdueDecisions} 超时）</span>
+                      <span className="ml-1 text-red-700">{t('overview.overdueDecisions', { count: m.overdueDecisions })}</span>
                     )}
                   </span>
                 </li>
@@ -307,7 +351,7 @@ export function OverviewPage() {
 
           {/* ── 最近活动 ── */}
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
-            <h2 className="text-xs font-medium text-slate-700">🕐 最近活动</h2>
+            <h2 className="text-xs font-medium text-slate-700">{t('overview.recentActivity')}</h2>
             <ul className="mt-1 space-y-0.5">
               {d.recentActivity.map((e) => (
                 <li key={e.id} className="flex items-baseline gap-2 text-[11px]">

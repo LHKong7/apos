@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -82,6 +83,7 @@ function ConflictRow({
   canResolve: boolean;
   onResolved: () => void;
 }) {
+  const t = useT();
   const [applyToSimilar, setApplyToSimilar] = useState(false);
 
   const resolve = useMutation({
@@ -112,7 +114,7 @@ function ConflictRow({
         <tbody>
           <Side label="APOS" side={conflict.apos} winner={conflict.sourceOfTruth === 'apos'} />
           <Side
-            label="外部系统"
+            label={t('conflict.externalSystem')}
             side={conflict.external}
             winner={conflict.sourceOfTruth === 'external'}
           />
@@ -143,12 +145,12 @@ function ConflictRow({
           </label>
         </>
       ) : (
-        <p className="mt-1 text-[11px] text-slate-400">需要项目成员权限才能处理</p>
+        <p className="mt-1 text-[11px] text-slate-400">{t('conflict.needMembership')}</p>
       )}
 
       {resolve.error && (
         <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {resolve.error instanceof ApiError ? resolve.error.message : '处理失败'}
+          {resolve.error instanceof ApiError ? resolve.error.message : t('conflict.handleFailed')}
         </p>
       )}
     </li>
