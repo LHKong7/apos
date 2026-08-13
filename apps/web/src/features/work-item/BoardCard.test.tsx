@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { BoardCard, type CardActions } from './BoardCard';
 import { useBoardStore } from '../../stores/board';
 import { card } from '../../test/fixtures';
+import { useLocaleStore } from '../../lib/i18n';
 
 function actions(): CardActions {
   return {
@@ -18,6 +19,13 @@ function actions(): CardActions {
 
 beforeEach(() => {
   useBoardStore.setState({ moves: new Map(), unseenMoves: [], openedCardId: null, quiet: false });
+  /**
+   * ★ 钉住中文：下面的断言查的是具体那几个词（「高风险」「待决策」）。
+   *   默认语言是英文，不钉的话这些用例会随默认值一起红。
+   *   Pinned to Chinese because these assertions match specific wording;
+   *   the app default is English.
+   */
+  useLocaleStore.setState({ locale: 'zh' });
 });
 
 /**

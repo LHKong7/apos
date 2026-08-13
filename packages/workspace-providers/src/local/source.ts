@@ -124,27 +124,35 @@ export class LocalMaterializer implements SourceMaterializer {
     }
   }
 
-  /**
-   * 白名单校验。
-   *
-   * ★ 比的是**解析后**的绝对路径，且要求边界对齐 —— 否则
-   *   `/data/public` 这条白名单会连 `/data/public-secrets` 一起放行。
-   */
   private assertAllowed(source: string): void {
     const roots = this.options.allowedRoots;
-    if (!roots || roots.length === 0) return;
-
-    const ok = roots.some((raw) => {
-      const allowed = resolve(raw);
-      if (source === allowed) return true;
-      const rel = relative(allowed, source);
-      return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
-    });
-
-    if (!ok) {
-      throw new LocalMountError(
-        `本地目录 ${source} 不在允许挂载的范围内（APOS_LOCAL_MOUNT_ROOTS=${roots.join(sep === '/' ? ':' : ';')}）`,
-      );
-    }
+    if (isMountRootAllowed(source, roots)) return;
+    throw new LocalMountError(
+      `本地目录 ${source} 不在允许挂载的范围内（APOS_LOCAL_MOUNT_ROOTS=${(roots ?? []).join(sep === '/' ? ':' : ';')}）`,
+    );
   }
+}
+
+/**
+ * 白名单校验。
+ *
+ * ★ 比的是**解析后**的绝对路径，且要求边界对齐 —— 否则
+ *   `/data/public` 这条白名单会连 `/data/public-secrets` 一起放行。
+ *
+ * ★ 空 / 不传 = 没配 = 不限制。与宿主注入侧保持一致，
+ *   免得「配了个空值」变成「全部拒绝挂载」。
+ *
+ * ★★ 导出它是为了让配置页的探测复用**同一套判据**。抄第二遍的代价是
+ *   界面上说「可以挂」而派发时报「不在允许范围内」—— 而管理员看着那条
+ *   绿色的探测结果，根本不会想到去查环境变量。
+ */
+export function isMountRootAllowed(source: string, roots: readonly string[] | undefined): boolean {
+  if (!roots || roots.length === 0) return true;
+  const target = resolve(source);
+  return roots.some((raw) => {
+    const allowed = resolve(raw);
+    if (target === allowed) return true;
+    const rel = relative(allowed, target);
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  });
 }

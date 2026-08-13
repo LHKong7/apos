@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +14,7 @@ import { RunSummary } from '../../features/run/RunSummary';
 import { useRunEvents } from '../../features/run/useRunEvents';
 import { ArtifactsTab, CostTab, ErrorTab, InputTab } from '../../features/run/tabs';
 import type { RunDetail } from '../../lib/api/types';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const ACTIVE = ['queued', 'dispatching', 'running', 'paused'];
 
@@ -42,6 +44,7 @@ function isLive(detail: RunDetail | undefined): boolean {
 }
 
 function RunDetailView({ detail }: { detail: RunDetail }) {
+  const t = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const live = isLive(detail);
@@ -67,7 +70,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       }),
     onSuccess: (_r, input) => {
       setDialog(null);
-      setToast(input.action === 'terminate' ? '已终止' : '约束已下发，Agent 会在当前步骤后应用');
+      setToast(input.action === 'terminate' ? t('runDetail.terminated') : t('runDetail.constraintSent'));
       void qc.invalidateQueries({ queryKey: qk.run(detail.run.id) });
     },
   });
@@ -78,13 +81,13 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       void qc.invalidateQueries({ queryKey: qk.run(detail.run.id) });
       navigate(`/runs/${r.runId}`);
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '重试失败'),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('runDetail.retryFailed')),
   });
 
   const takeover = useMutation({
-    mutationFn: () => api.takeover(detail.workItem!.id, '从 Run 详情接管'),
-    onSuccess: () => setToast('已接管，执行主体切换为你'),
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '接管失败'),
+    mutationFn: () => api.takeover(detail.workItem!.id, t('runDetail.takeoverReason')),
+    onSuccess: () => setToast(t('runDetail.takenOver')),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('runDetail.takeoverFailed')),
   });
 
   const controlError = control.error instanceof ApiError ? control.error : null;
@@ -95,12 +98,18 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
   }, [detail.run]);
 
   const TABS: { key: Tab; label: string; hidden?: boolean }[] = [
-    { key: 'timeline', label: `执行流${events.length ? ` (${events.length})` : ''}` },
-    { key: 'input', label: '输入' },
-    { key: 'artifacts', label: `产物 (${detail.artifacts.length})` },
-    { key: 'cost', label: '成本' },
+    {
+      key: 'timeline',
+      label: events.length
+        ? t('runDetail.tab.streamCount', { count: events.length })
+        : t('runDetail.tab.stream'),
+    },
+    { key: 'input', label: t('runDetail.tab.input') },
+    { key: 'artifacts', label: t('runDetail.tab.artifacts', { count: detail.artifacts.length }) },
+    { key: 'cost', label: t('runDetail.tab.cost') },
     // 错误 Tab 只在真的失败时出现，不给一个永远空着的入口
-    { key: 'error', label: '错误', hidden: !detail.error },
+    // The error tab appears only on a real failure — no permanently empty entry
+    { key: 'error', label: t('runDetail.tab.error'), hidden: !detail.error },
   ];
 
   return (
@@ -117,20 +126,15 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             </Link>
           )}
           <h1 className="text-sm font-semibold text-slate-900">
-            Run · 第 {detail.run.attempt} 次
+            {t('runDetail.heading', { n: detail.run.attempt })}
           </h1>
           <StatusPill status={detail.run.status} />
 
           <div className="ml-auto flex items-center gap-2">
             {/* ★ 本页最重要的开关：两类用户，两种深度（页面文档 09 §2） */}
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={detailed}
-                onChange={(e) => setDetailed(e.target.checked)}
-                className="h-3.5 w-3.5 accent-slate-900"
-              />
-              详细模式
+              <Checkbox tone="neutral" checked={detailed} onCheckedChange={setDetailed} />
+              {t('runDetail.detailedMode')}
             </label>
           </div>
         </div>
@@ -149,23 +153,23 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           <span className="tabular-nums text-slate-500">
             {(detail.metrics.tokens.total / 1000).toFixed(1)}k tok
             {detail.metrics.tokens.cacheHitRate > 0 && (
-              <> · 缓存命中 {(detail.metrics.tokens.cacheHitRate * 100).toFixed(0)}%</>
+              <>{t('runDetail.cacheHit', { percent: (detail.metrics.tokens.cacheHitRate * 100).toFixed(0) })}</>
             )}
           </span>
 
           <div className="ml-auto flex gap-1">
             {live && (
               <>
-                <HeaderButton onClick={() => setDialog('add_constraint')}>增加约束</HeaderButton>
+                <HeaderButton onClick={() => setDialog('add_constraint')}>{t('runDetail.addConstraint')}</HeaderButton>
                 <HeaderButton onClick={() => setDialog('terminate')} tone="danger">
-                  终止
+                  {t('runDetail.terminate')}
                 </HeaderButton>
               </>
             )}
             {detail.workItem && (
               <>
-                <HeaderButton onClick={() => takeover.mutate()}>接管</HeaderButton>
-                <HeaderButton onClick={() => retry.mutate()}>重试</HeaderButton>
+                <HeaderButton onClick={() => takeover.mutate()}>{t('runDetail.takeOver')}</HeaderButton>
+                <HeaderButton onClick={() => retry.mutate()}>{t('runDetail.retry')}</HeaderButton>
               </>
             )}
           </div>
@@ -180,7 +184,10 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
               />
             </span>
             <span className="shrink-0 text-[11px] tabular-nums text-slate-500">
-              步骤 {detail.run.stepCurrent}/{detail.run.stepTotal}
+              {t('runDetail.step', {
+                current: detail.run.stepCurrent ?? 0,
+                total: detail.run.stepTotal ?? 0,
+              })}
               {detail.run.stepDescription && ` · ${detail.run.stepDescription}`}
             </span>
           </div>
@@ -189,7 +196,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
         {/* 事件流中断的提示（页面文档 09 §11） */}
         {live && isStale(detail) && (
           <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            事件流已 {duration(staleMinutes(detail))} 没有更新，运行时可能已经断开
+            {t('runDetail.staleStream', { time: duration(staleMinutes(detail)) })}
           </p>
         )}
       </header>
@@ -219,7 +226,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           <div className="min-h-0 flex-1 overflow-y-auto pt-2">
             {tab === 'timeline' &&
               (loading ? (
-                <p className="py-6 text-center text-xs text-slate-400">加载事件…</p>
+                <p className="py-6 text-center text-xs text-slate-400">{t('runDetail.loadingEvents')}</p>
               ) : (
                 <EventTimeline
                   events={events}
@@ -277,7 +284,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

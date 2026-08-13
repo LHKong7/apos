@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
@@ -14,6 +15,7 @@ import type { RunDetail } from '../../lib/api/types';
  * 眼睛不用离开时间线就能在右边确认它确实是调用最多的那个。
  */
 export function RunSummary({ detail }: { detail: RunDetail }) {
+  const t = useT();
   const { run, metrics, related } = detail;
   const spent = Number(metrics.cost);
   const limit = metrics.costLimit ? Number(metrics.costLimit) : null;
@@ -21,48 +23,54 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
 
   return (
     <aside className="w-64 shrink-0 space-y-4 overflow-y-auto border-l border-slate-200 p-3 text-xs">
-      <Section title="概要">
+      <Section title={t('runSum.summary')}>
         <dl className="grid grid-cols-[3.5rem_1fr] gap-y-1 text-slate-700">
-          <dt className="text-slate-400">状态</dt>
+          <dt className="text-slate-400">{t('runSum.status')}</dt>
           <dd>{statusLabel(run.status)}</dd>
-          <dt className="text-slate-400">尝试</dt>
+          <dt className="text-slate-400">{t('runSum.attempt')}</dt>
           <dd>
-            第 {run.attempt} 次
+            {t('runSum.attemptNo', { n: run.attempt })}
             {related.previousRun && (
-              <span className="ml-1 text-slate-400">（上次 {related.previousRun.status}）</span>
+              <span className="ml-1 text-slate-400">{t('runSum.previousStatus', { status: related.previousRun.status })}</span>
             )}
           </dd>
-          <dt className="text-slate-400">任务</dt>
+          <dt className="text-slate-400">{t('runSum.workItem')}</dt>
           <dd className="truncate">{detail.workItem?.title ?? '—'}</dd>
-          <dt className="text-slate-400">项目</dt>
+          <dt className="text-slate-400">{t('runSum.project')}</dt>
           <dd className="truncate">{detail.project?.name ?? '—'}</dd>
-          <dt className="text-slate-400">开始</dt>
+          <dt className="text-slate-400">{t('runSum.started')}</dt>
           <dd>{relativeTime(run.startedAt)}</dd>
-          <dt className="text-slate-400">已运行</dt>
+          <dt className="text-slate-400">{t('runSum.elapsed')}</dt>
           <dd>
             {duration(metrics.durationMs / 60_000)}
             {run.timeoutAt && !run.endedAt && (
               <span className="text-slate-400">
                 {' '}
-                / 超时 {duration((new Date(run.timeoutAt).getTime() - new Date(run.startedAt).getTime()) / 60_000)}
+                {t('runSum.timeoutAfter', {
+                  duration: duration(
+                    (new Date(run.timeoutAt).getTime() - new Date(run.startedAt).getTime()) / 60_000,
+                  ),
+                })}
               </span>
             )}
           </dd>
         </dl>
       </Section>
 
-      <Section title="成本">
+      <Section title={t('runSum.cost')}>
         <dl className="grid grid-cols-[3.5rem_1fr] gap-y-1 tabular-nums text-slate-700">
-          <dt className="text-slate-400">当前</dt>
+          <dt className="text-slate-400">{t('runSum.current')}</dt>
           <dd>{money(spent)}</dd>
           {estimated !== null && (
             <>
-              <dt className="text-slate-400">预估</dt>
+              <dt className="text-slate-400">{t('runSum.estimated')}</dt>
               <dd className={spent > estimated ? 'text-amber-700' : undefined}>
                 {money(estimated)}
                 {spent > estimated && estimated > 0 && (
                   <span className="ml-1">
-                    ⚠ 超出 {(((spent - estimated) / estimated) * 100).toFixed(0)}%
+                    {t('runSum.overBy', {
+                      percent: (((spent - estimated) / estimated) * 100).toFixed(0),
+                    })}
                   </span>
                 )}
               </dd>
@@ -70,7 +78,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
           )}
           {limit !== null && (
             <>
-              <dt className="text-slate-400">上限</dt>
+              <dt className="text-slate-400">{t('runSum.cap')}</dt>
               <dd>
                 <div className="flex items-center gap-1">
                   <span className="h-1 w-14 overflow-hidden rounded-full bg-slate-200">
@@ -90,9 +98,9 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
         </dl>
       </Section>
 
-      <Section title={`工具调用（${metrics.toolCalls.total} 次）`}>
+      <Section title={t('runSum.toolCalls', { count: metrics.toolCalls.total })}>
         {metrics.toolCalls.total === 0 ? (
-          <p className="text-slate-400">没有工具调用</p>
+          <p className="text-slate-400">{t('runSum.noToolCalls')}</p>
         ) : (
           <ul className="space-y-0.5 tabular-nums text-slate-700">
             {Object.entries(metrics.toolCalls.byTool).map(([tool, n]) => (
@@ -106,13 +114,14 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
       </Section>
 
       {detail.interventions.length > 0 && (
-        <Section title={`人类干预（${detail.interventions.length}）`}>
+        <Section title={t('runSum.interventions', { count: detail.interventions.length })}>
           <ul className="space-y-1">
             {detail.interventions.map((e) => (
               <li key={e.id} className="text-slate-700">
                 <AssigneeChip actor={{ type: 'human', id: e.actorId ?? '', name: e.actorName }} size="sm" />
                 <span className="ml-1 text-[11px] text-slate-500">
-                  {INTERVENTION_LABELS[e.type] ?? e.type}
+                  {/* ★ 认不出的类型回落到原始值，而不是渲染词条键本身 */}
+                  {INTERVENTION_KEYS[e.type] ? t(INTERVENTION_KEYS[e.type]!) : e.type}
                 </span>
                 {typeof e.payload['reason'] === 'string' && (
                   <p className="mt-0.5 text-[11px] text-slate-500">「{e.payload['reason']}」</p>
@@ -124,7 +133,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
       )}
 
       {related.attempts.length > 1 && (
-        <Section title="历次尝试">
+        <Section title={t('runSum.attempts')}>
           <ul className="space-y-0.5">
             {related.attempts.map((a) => (
               <li key={a.id}>
@@ -135,7 +144,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
                     a.id === run.id && 'bg-slate-100 font-medium',
                   )}
                 >
-                  <span>第 {a.attempt} 次 · {statusLabel(a.status)}</span>
+                  <span>{t('runSum.attemptStatus', { n: a.attempt, status: statusLabel(a.status) })}</span>
                   <span className="tabular-nums text-slate-500">{money(a.cost)}</span>
                 </Link>
               </li>
@@ -145,7 +154,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
       )}
 
       {related.policies.length > 0 && (
-        <Section title="命中的 Policy">
+        <Section title={t('runSum.policyHits')}>
           <ul className="space-y-0.5 text-slate-700">
             {related.policies.map((p) => (
               <li key={p.eventId} className="truncate">
@@ -157,7 +166,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
       )}
 
       {related.decisions.length > 0 && (
-        <Section title="触发的决策">
+        <Section title={t('runSum.decisions')}>
           <ul className="space-y-0.5 text-slate-700">
             {related.decisions.map((d) => (
               <li key={d.id} className="truncate">
@@ -171,12 +180,13 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
   );
 }
 
-const INTERVENTION_LABELS: Record<string, string> = {
-  'work_item.taken_over': '人工接管',
-  'work_item.force_passed': '强制放行',
-  'work_item.status_changed': '手动调整状态',
-  'agent_run.terminated': '终止了执行',
-  'agent_run.constraint_added': '追加约束',
-  'decision.approved': '批准了决策',
-  'decision.rejected': '驳回了决策',
+/** 人工干预类型 → 词条键 / Intervention type → message key */
+const INTERVENTION_KEYS: Record<string, MessageKey> = {
+  'work_item.taken_over': 'runSum.tookOver',
+  'work_item.force_passed': 'runSum.forcePassed',
+  'work_item.status_changed': 'runSum.manualStatus',
+  'agent_run.terminated': 'runSum.terminated',
+  'agent_run.constraint_added': 'runSum.addedConstraint',
+  'decision.approved': 'runSum.approvedDecision',
+  'decision.rejected': 'runSum.rejectedDecision',
 };

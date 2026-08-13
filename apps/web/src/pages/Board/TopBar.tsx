@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { BoardSummary } from '../../lib/api/types';
 import type { BoardView } from '../../stores/board';
@@ -5,11 +6,12 @@ import { useBoardStore } from '../../stores/board';
 import type { BoardFilters } from '../../lib/api/client';
 import { GatedButton } from '../../components/Gated';
 
-const VIEWS: { key: BoardView; label: string }[] = [
+/** ★ Kanban / List 两种语言写法一样，直接给字面量；另两个走词条 */
+const VIEWS: { key: BoardView; label?: string; labelKey?: MessageKey }[] = [
   { key: 'kanban', label: 'Kanban' },
   { key: 'list', label: 'List' },
-  { key: 'agent', label: 'Agent 视图' },
-  { key: 'decision', label: '待决策' },
+  { key: 'agent', labelKey: 'board.view.agent' },
+  { key: 'decision', labelKey: 'board.view.decisions' },
 ];
 
 interface Props {
@@ -55,6 +57,7 @@ export function TopBar({
   onFilters,
   onClearFilters,
 }: Props) {
+  const t = useT();
   const quiet = useBoardStore((s) => s.quiet);
   const toggleQuiet = useBoardStore((s) => s.toggleQuiet);
   const hasFilters =
@@ -62,6 +65,7 @@ export function TopBar({
     filters.blocked ||
     filters.humanGate ||
     filters.executorType ||
+    filters.unclaimed ||
     (filters.risk?.length ?? 0) > 0;
 
   return (
@@ -69,7 +73,7 @@ export function TopBar({
       {/* ── 第一行：看哪个视图、要新建什么 ─────────────────────────── */}
       <div className="flex items-center gap-3">
         {/* 项目名不再重复：侧栏顶上就写着，而且它一直在 */}
-        <h1 className="shrink-0 text-sm font-semibold tracking-tight text-slate-900">看板</h1>
+        <h1 className="shrink-0 text-sm font-semibold tracking-tight text-slate-900">{t('board.title')}</h1>
 
         <div className="flex min-w-0 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100/60 p-0.5">
           {VIEWS.map((v) => (
@@ -85,7 +89,7 @@ export function TopBar({
                   : 'text-slate-500 hover:text-slate-800',
               )}
             >
-              {v.label}
+              {v.labelKey ? t(v.labelKey) : v.label}
             </button>
           ))}
         </div>
@@ -103,7 +107,7 @@ export function TopBar({
             onClick={onNewWorkItem}
             className="rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1 text-xs font-medium text-white shadow-sm hover:brightness-110"
           >
-            + 新建任务
+            {t('board.newWorkItem')}
           </GatedButton>
 
           {/*
@@ -120,7 +124,7 @@ export function TopBar({
         <SummaryStat
           icon="⚡"
           count={summary?.pendingDecisions ?? 0}
-          label="项待决策"
+          label={t('board.pendingDecisions')}
           active={Boolean(filters.humanGate)}
           tone={summary?.overdueDecisions ? 'danger' : 'warn'}
           onClick={() => onFilters({ humanGate: !filters.humanGate })}
@@ -128,7 +132,7 @@ export function TopBar({
         <SummaryStat
           icon="⛔"
           count={summary?.blocked ?? 0}
-          label="项阻塞"
+          label={t('board.blocked')}
           active={Boolean(filters.blocked)}
           tone="warn"
           onClick={() => onFilters({ blocked: !filters.blocked })}
@@ -136,7 +140,7 @@ export function TopBar({
         <SummaryStat
           icon="🤖"
           count={summary?.executing ?? 0}
-          label="个 Agent 执行中"
+          label={t('board.agentsRunning')}
           active={filters.executorType === 'agent'}
           tone="neutral"
           onClick={() =>
@@ -146,11 +150,11 @@ export function TopBar({
         {/* 超时与失败是对上面三个数字的补注，跟着它们走，不进右边的筛选组 */}
         {(summary?.overdueDecisions ?? 0) > 0 && (
           <span className="font-medium text-red-700">
-            其中 {summary?.overdueDecisions} 项已超时
+            {t('board.overdueOfWhich', { count: summary?.overdueDecisions ?? 0 })}
           </span>
         )}
         {(summary?.failed ?? 0) > 0 && (
-          <span className="text-red-700">❌ {summary?.failed} 项失败</span>
+          <span className="text-red-700">{t('board.failedCount', { count: summary?.failed ?? 0 })}</span>
         )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -158,24 +162,24 @@ export function TopBar({
             value={filters.executorType ?? ''}
             onChange={(e) => onFilters({ executorType: e.target.value || undefined })}
             className="rounded-full border border-slate-200 bg-slate-100/50 px-2.5 py-1 text-xs text-slate-600"
-            aria-label="执行者"
+            aria-label={t('board.executor')}
           >
-            <option value="">全部执行者</option>
-            <option value="agent">仅 Agent</option>
-            <option value="human">仅人类</option>
+            <option value="">{t('board.allExecutors')}</option>
+            <option value="agent">{t('board.agentsOnly')}</option>
+            <option value="human">{t('board.humansOnly')}</option>
           </select>
 
           <select
             value={filters.risk?.[0] ?? ''}
             onChange={(e) => onFilters({ risk: e.target.value ? [e.target.value] : [] })}
             className="rounded-full border border-slate-200 bg-slate-100/50 px-2.5 py-1 text-xs text-slate-600"
-            aria-label="风险"
+            aria-label={t('board.risk')}
           >
-            <option value="">全部风险</option>
-            <option value="critical">极高</option>
-            <option value="high">高</option>
-            <option value="medium">中</option>
-            <option value="low">低</option>
+            <option value="">{t('board.allRisks')}</option>
+            <option value="critical">{t('board.riskCritical')}</option>
+            <option value="high">{t('board.riskHigh')}</option>
+            <option value="medium">{t('board.riskMedium')}</option>
+            <option value="low">{t('board.riskLow')}</option>
           </select>
 
           {/*
@@ -187,7 +191,19 @@ export function TopBar({
             active={Boolean(filters.onlyMine)}
             onClick={() => onFilters({ onlyMine: !filters.onlyMine })}
           >
-            只看需我处理
+            {t('board.onlyMine')}
+          </FilterToggle>
+
+          {/*
+            ★ 待认领：标为人工执行但没人接的任务。批准计划时可以确认放行它们，
+              没有这个入口的话，它们在看板上和别的卡片长得一模一样，
+              而调度器又永远不会碰它们。
+          */}
+          <FilterToggle
+            active={Boolean(filters.unclaimed)}
+            onClick={() => onFilters({ unclaimed: !filters.unclaimed })}
+          >
+            {t('board.unclaimed')}
           </FilterToggle>
 
           {hasFilters && (
@@ -196,7 +212,7 @@ export function TopBar({
               onClick={onClearFilters}
               className="rounded-full px-2 py-1 text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
             >
-              清除筛选
+              {t('kanban.clearFilters')}
             </button>
           )}
         </div>
@@ -216,12 +232,13 @@ export function TopBar({
  *   开着的时候整颗按钮点亮，关掉的路就在他刚才看的地方。
  */
 function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void }) {
+  const t = useT();
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-pressed={quiet}
-      title="安静模式：只更新数据，不做卡片移动动画"
+      title={t('board.quietMode')}
       className={clsx(
         'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition',
         quiet
@@ -242,7 +259,7 @@ function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void
         <path d="M2.5 5h8M2.5 8h6M2.5 11h9" />
         {quiet && <path d="M13.5 3.5l-11 9" />}
       </svg>
-      安静模式
+      {t('board.quietMode')}
     </button>
   );
 }

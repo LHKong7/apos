@@ -769,3 +769,134 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     await expect(stat(join(root, 'runs', runId))).rejects.toThrow();
   });
 });
+
+/**
+ * 产出交货到哪 —— 由登记上的 deliveryTargetId 决定，而不是只能由主挂载推断。
+ *
+ * ★★ 这一组兑现的是抽象里「铺料与交货两头独立可选」那半边。
+ *   在 deliveryTargetId 出现之前，一个 git 主挂载的产出只能推分支，
+ *   「从 Git 拉代码、把生成的报告投递到别处」表达不了 —— 而那正是
+ *   docs/tech/11 §2 用来说明这个设计的例子。
+ */
+describe.skipIf(!gitReady.ok)('产出交货目标', () => {
+  async function registerTarget(over: Partial<typeof storageTargets.$inferInsert> = {}) {
+    const [row] = await db
+      .insert(storageTargets)
+      .values({
+        orgId: fx.orgId,
+        ref: 'reports',
+        name: '报告归档',
+        kind: 'local',
+        rootPath: join(root, 'delivered'),
+        writable: true,
+        createdBy: fx.userId,
+        ...over,
+      })
+      .returning();
+    return row!;
+  }
+
+  it('★ 配了交货目标的 git 仓库：产出投递过去，不推分支', async () => {
+    const p = new WorkspaceService(db, { root });
+    const target = await registerTarget();
+    await registerRepo({ deliveryTargetId: target.id });
+
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    const ws = result.workspace!;
+    await writeFile(join(ws.path, 'report.md'), '# 调研结论\n');
+
+    const release = await p.release({
+      runId,
+      outcome: 'completed',
+      summary: '写完了',
+      agentName: 'code-agent-1',
+    });
+
+    // 产出真的落到了目标目录里
+    expect(await readFile(join(root, 'delivered', runId, 'report.md'), 'utf8')).toBe('# 调研结论\n');
+    expect(release.published.kind).toBe('local');
+    if (release.published.kind === 'local') expect(release.published.persisted).toBe(true);
+
+    // ★ 覆盖不是追加：选了交货目标就不推分支了
+    expect(release.pushed).toBe(false);
+    const remoteBranches = await git.run(['branch', '--list', ws.vcs!.branch], { cwd: remote });
+    expect(remoteBranches.trim()).toBe('');
+  });
+
+  it('不配交货目标时维持原样 —— 照旧推分支', async () => {
+    const p = new WorkspaceService(db, { root });
+    await registerRepo();
+
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'fix.ts'), 'export const a = 1;\n');
+
+    const release = await p.release({
+      runId,
+      outcome: 'completed',
+      summary: 's',
+      agentName: 'code-agent-1',
+    });
+    expect(release.published.kind).toBe('git');
+    expect(release.pushed).toBe(true);
+  });
+
+  /**
+   * ★★ 配了却没生效时必须说出**原因**。
+   *   不说的话，收尾说明与「本来就没配交货目标」一模一样 ——
+   *   而这两种情况一个是配置没生效、一个是符合预期。
+   */
+  it('★ 目标被改成只读后，产出不投递并说明原因', async () => {
+    const p = new WorkspaceService(db, { root });
+    const target = await registerTarget();
+    await registerRepo({ deliveryTargetId: target.id });
+    // 登记之后才被改成只读（保存时那道校验拦的是保存那一刻）
+    await db.update(storageTargets).set({ writable: false }).where(eq(storageTargets.id, target.id));
+
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'report.md'), '# r\n');
+
+    const release = await p.release({
+      runId,
+      outcome: 'completed',
+      summary: 's',
+      agentName: 'code-agent-1',
+    });
+
+    expect(release.published.kind).toBe('none');
+    expect(release.note).toContain('只读');
+    await expect(stat(join(root, 'delivered', runId))).rejects.toThrow();
+  });
+
+  /**
+   * ★★ 投递到宿主机目录同样要过 APOS_LOCAL_MOUNT_ROOTS。
+   *
+   *   那道闸此前只挡「挂进来」，而「写出去」的破坏力只大不小 ——
+   *   一条指向 /etc 的登记，挂进来是泄露，写出去是覆盖。
+   */
+  it('★ 投递路径被挂载白名单挡住时不写出去', async () => {
+    const p = new WorkspaceService(db, {
+      root,
+      localMountRoots: [join(root, 'allowed')],
+    });
+    const target = await registerTarget({ rootPath: join(root, 'not-allowed') });
+    await registerRepo({ deliveryTargetId: target.id });
+
+    const { runId, result } = await acquireFor(p, scopes('write'));
+    if (!result.ok) throw new Error('acquire failed');
+    await writeFile(join(result.workspace!.path, 'report.md'), '# r\n');
+
+    const release = await p.release({
+      runId,
+      outcome: 'completed',
+      summary: 's',
+      agentName: 'code-agent-1',
+    });
+
+    expect(release.published.kind).toBe('none');
+    expect(release.note).toContain('APOS_LOCAL_MOUNT_ROOTS');
+    await expect(stat(join(root, 'not-allowed'))).rejects.toThrow();
+  });
+});

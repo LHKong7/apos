@@ -30,6 +30,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { BrandMark } from './components/BrandMark';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { useThemeStore } from './stores/theme';
+import { useLocaleStore, useT } from './lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -43,6 +44,22 @@ import { Input } from '@/components/ui/input';
  */
 export function App() {
   const token = useAuthStore((s) => s.token);
+  /**
+   * ★★ 订阅语言，并把它当成内容区的 key —— 切换语言时整棵树重挂。
+   *
+   *   `lib/format` 里那些格式化函数（statusLabel / eventLabel / relativeTime）
+   *   是**普通函数**，不是 hook：它们取不到订阅，切了语言不会自己重算。
+   *   而它们散在几十个组件里，逐个改成 hook 是一次大范围重构。
+   *
+   *   重挂是钝但确定的办法：语言切换是低频的显式动作，丢掉瞬时 UI 状态
+   *   （展开的面板、输入到一半的框）在这个动作下是可接受的，而「切了语言
+   *   有几处还是旧的」不可接受 —— 后者会让人以为翻译漏了。
+   *
+   *   Formatters in lib/format are plain functions, not hooks, so they cannot
+   *   subscribe to the locale. Remounting on switch is blunt but certain;
+   *   a partial switch would read as missing translations.
+   */
+  const locale = useLocaleStore((s) => s.locale);
   const resolving = useAuthStore((s) => s.resolving);
   const setUser = useAuthStore((s) => s.setUser);
   const signOut = useAuthStore((s) => s.signOut);
@@ -120,7 +137,7 @@ export function App() {
           而 flex 子项默认 min-width:auto 会被内容撑开 —— 少了它，
           横滚会跑到整个页面上去，连顶栏和侧栏一起滚走。
       */}
-      <main className="flex min-h-0 flex-1">
+      <main key={locale} className="flex min-h-0 flex-1">
         {orgSynced && <ProjectSidebar />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/*
@@ -170,12 +187,13 @@ export function App() {
 
 /** 身份就绪之前的占位。用户几乎不会看到它 —— 除非 /auth/me 拿不到 */
 function IdentityGate({ error }: { error: unknown }) {
+  const t = useT();
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
         <div className="max-w-md rounded-xl border border-red-200 bg-red-50/60 px-6 py-5 text-center">
-          <p className="text-sm font-medium text-red-800">确认不了当前身份，页面无法加载</p>
-          <p className="mt-1 text-xs text-red-600">后端可能没起来。确认 API 可达后刷新重试。</p>
+          <p className="text-sm font-medium text-red-800">{t('identity.failed')}</p>
+          <p className="mt-1 text-xs text-red-600">{t('identity.failedHint')}</p>
         </div>
       </div>
     );
@@ -183,7 +201,7 @@ function IdentityGate({ error }: { error: unknown }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
       <BrandMark className="h-8 w-8 animate-breathe" />
-      <p className="text-xs text-slate-400">正在确认身份…</p>
+      <p className="text-xs text-slate-400">{t('identity.checking')}</p>
     </div>
   );
 }
@@ -195,6 +213,7 @@ function RuntimesRedirect() {
 }
 
 function TopNav() {
+  const t = useT();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
@@ -212,7 +231,7 @@ function TopNav() {
           type="button"
           onClick={() => navigate('/')}
           className="group flex items-center gap-2 rounded-md py-0.5 pr-1"
-          title="回到项目列表"
+          title={t('shell.backToProjects')}
         >
           <BrandMark className="h-6 w-6 transition group-hover:scale-105" />
           <span className="text-[13px] font-semibold tracking-tight text-slate-900">APOS</span>
@@ -232,6 +251,7 @@ function TopNav() {
             换人看只能退出再登录，这也正是它本来该有的样子。
         */}
         <div className="ml-auto flex items-center gap-2">
+          <LocaleToggle />
           <ThemeToggle />
           <span
             className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100/60 py-0.5 pl-0.5 pr-2.5"
@@ -245,7 +265,7 @@ function TopNav() {
           <Button variant="outline" size="sm"
             onClick={signOut}
             className="border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-800">
-            退出登录
+            {t('shell.signOut')}
           </Button>
         </div>
       </div>
@@ -263,18 +283,54 @@ function TopNav() {
 function ThemeToggle() {
   const theme = useThemeStore((s) => s.theme);
   const toggle = useThemeStore((s) => s.toggle);
+  const t = useT();
+  const label = theme === 'dark' ? t('theme.switchToLight') : t('theme.switchToDark');
 
   return (
     <button
       type="button"
       onClick={toggle}
-      aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
-      title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+      aria-label={label}
+      title={label}
       className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-brand/50 hover:text-brand"
     >
       <span aria-hidden className="text-[13px] leading-none">
         {theme === 'dark' ? '☾' : '☀'}
       </span>
+    </button>
+  );
+}
+
+/**
+ * 界面语言切换 / UI language switcher.
+ *
+ * ★★ 按钮上写的是**要切过去的那个语言**，而且用那个语言自己的写法：
+ *   英文界面上显示「中文」，中文界面上显示「EN」。
+ *
+ *   写成「切换语言」这种当前语言的说法，等于要求用户先看懂当前语言 ——
+ *   而看不懂正是他要点它的原因。这也是默认英文的同一条理由
+ *   （见 lib/i18n/locale.ts）。
+ *
+ *   The button always shows the language you'd switch **to**, written in
+ *   that language. Labelling it "Switch language" in the current language
+ *   assumes you can read the current language — which is exactly what a
+ *   person reaching for this button cannot do.
+ */
+function LocaleToggle() {
+  const locale = useLocaleStore((s) => s.locale);
+  const toggle = useLocaleStore((s) => s.toggle);
+  const t = useT();
+  const label = locale === 'en' ? t('locale.switchToZh') : t('locale.switchToEn');
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={label}
+      title={label}
+      className="flex h-7 items-center justify-center rounded-full border border-slate-200 px-2 text-[11px] font-medium text-slate-500 transition hover:border-brand/50 hover:text-brand"
+    >
+      {locale === 'en' ? '中文' : 'EN'}
     </button>
   );
 }
@@ -290,6 +346,7 @@ function ThemeToggle() {
  *   留在原地的表现是一屏 404，而用户刚做的动作是"换个组织看看"。
  */
 function OrgSwitcher() {
+  const t = useT();
   const navigate = useNavigate();
   const { org, orgId, organizations, switchOrg } = useOrgStore();
   const [creating, setCreating] = useState(false);
@@ -299,9 +356,9 @@ function OrgSwitcher() {
   return (
     <>
       <div className="ml-1 flex items-center gap-1.5 border-l border-slate-200 pl-3">
-        <span className="hidden text-[11px] text-slate-400 sm:inline">组织</span>
+        <span className="hidden text-[11px] text-slate-400 sm:inline">{t('org.label')}</span>
         <select
-          aria-label="切换组织"
+          aria-label={t('org.switch')}
           value={orgId ?? ''}
           onChange={(e) => {
             if (e.target.value === '__new__') {
@@ -318,7 +375,7 @@ function OrgSwitcher() {
               {o.name}
             </option>
           ))}
-          <option value="__new__">+ 新建组织…</option>
+          <option value="__new__">{t('org.new')}</option>
         </select>
         {org && (
           <code className="hidden font-mono text-[10px] text-slate-400 md:inline">{org.slug}</code>
@@ -342,6 +399,7 @@ function OrgSwitcher() {
  *   而无人认领恰恰是最该被看见的一类。
  */
 function DecisionBadge() {
+  const t = useT();
   const userId = useAuthStore((s) => s.userId);
   const inbox = useQuery({
     queryKey: qk.decisionInbox('mine'),
@@ -377,8 +435,14 @@ function DecisionBadge() {
           className={clsx('relative h-1.5 w-1.5 rounded-full', overdue ? 'bg-overdue' : 'bg-gate')}
         />
       </span>
-      <span className="tabular-nums">{stats.mine} 条待你决策</span>
-      {overdue && <span className="font-medium tabular-nums">· {stats.overdue} 条已超时</span>}
+      <span className="tabular-nums">
+        {t('shell.pendingDecisions', { count: stats.mine })}
+      </span>
+      {overdue && (
+        <span className="font-medium tabular-nums">
+          {t('shell.overdue', { count: stats.overdue })}
+        </span>
+      )}
     </Link>
   );
 }
@@ -393,6 +457,7 @@ function DecisionBadge() {
  *   英文短名，是把实现细节变成了他的问题。
  */
 function CreateOrgModal({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const qc = useQueryClient();
@@ -412,36 +477,31 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal onClose={onClose} title="新建组织">
+    <Modal onClose={onClose} title={t('org.create.title')}>
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">新建组织</h2>
-        <p className="text-[11px] text-slate-500">
-          组织是一切数据的顶层容器：项目、Agent、代码仓库、成员都属于某一个组织，
-          彼此之间完全隔离。
-        </p>
+        <h2 className="text-sm font-semibold text-slate-900">{t('org.create.title')}</h2>
+        <p className="text-[11px] text-slate-500">{t('org.create.intro')}</p>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">组织名</span>
+          <span className="text-xs font-medium text-slate-700">{t('org.create.name')}</span>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Acme 科技"
+            placeholder={t('org.create.namePlaceholder')}
             className="mt-1" />
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
             slug
-            <span className="ml-1 font-normal text-slate-400">选填</span>
+            <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
           </span>
           <Input
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
             placeholder={slugPreview(name)}
             className="mt-1 font-mono" />
-          <p className="mt-1 text-[11px] text-slate-500">
-            出现在链接里，全局唯一。留空按组织名推断。
-          </p>
+          <p className="mt-1 text-[11px] text-slate-500">{t('org.create.slugHint')}</p>
         </label>
 
         {create.error instanceof ApiError && (
@@ -451,12 +511,12 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}
             onClick={() => create.mutate()}>
-            {create.isPending ? '创建中…' : '创建'}
+            {create.isPending ? t('org.create.creating') : t('org.create.submit')}
           </Button>
         </div>
       </div>

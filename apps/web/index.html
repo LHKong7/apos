@@ -1,5 +1,6 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<!-- lang 由下面的内联脚本按 localStorage 改写；这里的 en 是默认值 -->
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,11 +12,25 @@
     <title>Autonomous Project OS</title>
     <!--
       ★★ 主题必须在**首帧之前**定下来。
+          The theme must be settled before the first frame.
 
         等 React 挂载再设 data-theme，中间会有一整帧按 CSS 默认值（深色）
         画出来 —— 选了浅色的人每次刷新都被闪一下白→黑→白。
         所以这段同步内联脚本必须留在这里，且必须在 <body> 之前跑完。
         判据和 src/stores/theme.ts 的 readTheme 保持一致。
+
+        Waiting for React means one full frame painted with the CSS default,
+        so anyone on the light theme gets flashed on every reload. This
+        synchronous inline script has to stay here, and has to run before
+        <body>. Keep the rule in sync with readTheme in src/stores/theme.ts.
+
+      ★ 语言只影响 <html lang>，不影响首帧配色，所以它没有同样的紧迫性 ——
+        但放在一起处理，免得两个「首帧前要定的东西」散在两处。
+        判据和 src/lib/i18n/locale.ts 的 readLocale 保持一致。
+
+        Language only drives <html lang>, so it carries no repaint risk — it
+        lives here so that both "settle before first frame" concerns stay in
+        one place. Keep in sync with readLocale in src/lib/i18n/locale.ts.
     -->
     <script>
       (function () {
@@ -25,8 +40,13 @@
           document
             .querySelector('meta[name="theme-color"]')
             .setAttribute('content', t === 'light' ? '#f5f7fb' : '#070b14');
+
+          var l = localStorage.getItem('apos.locale') === 'zh' ? 'zh-CN' : 'en';
+          document.documentElement.lang = l;
         } catch (e) {
-          /* 隐私模式下读不到 localStorage：按默认的深色走，不该让页面起不来 */
+          /* 隐私模式下读不到 localStorage：按默认值走，不该让页面起不来
+             Private mode can throw on localStorage — fall back to defaults
+             rather than taking the page down. */
         }
       })();
     </script>

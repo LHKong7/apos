@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../lib/i18n';
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { usePermissions } from '../lib/permissions/usePermissions';
@@ -83,23 +84,25 @@ export function Gated({
 
 /** 当前身份在这个项目里的角色，放在页头让人一眼知道自己是谁 */
 export function RoleBadge({ projectId }: { projectId?: string }) {
+  const t = useT();
   const perms = usePermissions(projectId);
   if (!perms.projectRole) return null;
 
   return (
     <span
       className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
-      title={`当前身份在本项目的角色：${perms.projectRole}`}
+      title={t('gated.roleTitle', { role: perms.projectRole ?? '' })}
     >
-      {ROLE_LABEL[perms.projectRole] ?? perms.projectRole}
+      {ROLE_KEYS[perms.projectRole] ? t(ROLE_KEYS[perms.projectRole]!) : perms.projectRole}
     </span>
   );
 }
 
-const ROLE_LABEL: Record<string, string> = {
-  sponsor: '业务负责人',
-  tech_lead: '技术负责人',
-  pm: '项目经理',
-  member: '成员',
-  viewer: '只读',
+/** 项目角色 → 词条键 / Project role → message key */
+const ROLE_KEYS: Record<string, MessageKey> = {
+  sponsor: 'role.sponsor',
+  tech_lead: 'role.tech_lead',
+  pm: 'role.pm',
+  member: 'role.member',
+  viewer: 'role.viewer',
 };

@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { FactKey } from '@apos/contracts';
@@ -33,6 +34,7 @@ export function RuleEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const [name, setName] = useState(editing?.name ?? template?.name ?? '');
   const [priority, setPriority] = useState(editing?.priority ?? 100);
   const [values, setValues] = useState<Record<string, string | number>>(() =>
@@ -62,7 +64,7 @@ export function RuleEditor({
 
   const simulateMut = useMutation({
     mutationFn: () => {
-      if (!draft) throw new Error('规则还没准备好');
+      if (!draft) throw new Error(t('rule.notReady'));
       return api.simulatePolicy(projectId, {
         condition: draft.condition,
         action: draft.action,
@@ -70,12 +72,12 @@ export function RuleEditor({
       });
     },
     onSuccess: setSimulation,
-    onError: (e) => setError(e instanceof ApiError ? e.message : '模拟失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('rule.simulateFailed')),
   });
 
   const save = useMutation({
     mutationFn: (acknowledge: boolean) => {
-      if (!draft) throw new Error('规则还没准备好');
+      if (!draft) throw new Error(t('rule.notReady'));
       return api.savePolicy(
         projectId,
         {
@@ -98,7 +100,7 @@ export function RuleEditor({
         setError(e.message);
         return;
       }
-      setError(e instanceof ApiError ? e.message : '保存失败');
+      setError(e instanceof ApiError ? e.message : t('rule.saveFailed'));
     },
   });
 
@@ -106,15 +108,15 @@ export function RuleEditor({
 
   return (
     // 宽度与滚动都归 Modal 管：自己再套一层会长出第二根滚动条
-    <Modal onClose={onClose} title="规则编辑" width="lg">
+    <Modal onClose={onClose} title={t('rule.editor')} width="lg">
       <div>
         <h2 className="text-sm font-semibold text-slate-900">
-          {editing ? `编辑规则「${editing.name}」` : `新建规则 · ${template?.name}`}
+          {editing ? t('rule.editing', { name: editing.name }) : t('rule.creating', { template: template?.name ?? '' })}
         </h2>
         {template && <p className="mt-0.5 text-xs text-slate-500">{template.purpose}</p>}
 
         <label className="mt-3 block text-xs text-slate-600">
-          规则名称
+          {t('rule.name')}
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -122,20 +124,20 @@ export function RuleEditor({
         </label>
 
         <label className="mt-2 block text-xs text-slate-600">
-          优先级
+          {t('rule.priority')}
           <Input
             type="number"
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
             className="mt-0.5 w-24" />
           <span className="ml-2 text-[11px] text-slate-400">
-            数字越小越先匹配，命中后停止。组织规则占 1–20
+            {t('rule.priorityHint')}
           </span>
         </label>
 
         {params.length > 0 && (
           <fieldset className="mt-3 rounded border border-slate-200 p-2">
-            <legend className="px-1 text-xs font-medium text-slate-700">参数</legend>
+            <legend className="px-1 text-xs font-medium text-slate-700">{t('rule.params')}</legend>
             <div className="space-y-2">
               {params.map((p) => (
                 <label key={p.key} className="block text-xs text-slate-600">
@@ -176,12 +178,11 @@ export function RuleEditor({
         */}
         {draft && (
           <div className="mt-3 rounded bg-slate-50 px-2 py-1.5">
-            <p className="text-[11px] text-slate-500">📝 这条规则的意思是</p>
+            <p className="text-[11px] text-slate-500">{t('rule.meaning')}</p>
             <p className="mt-0.5 text-xs leading-5 text-slate-700">{draft.explanation}</p>
             {editing && (
               <p className="mt-1 text-[11px] text-slate-400">
-                MVP 只支持改名称、优先级与启停。条件与动作要改就重新从模板创建 ——
-                自由条件编辑留到有人真的被模板卡住时再做
+                {t('rule.editLimits')}
               </p>
             )}
           </div>
@@ -190,11 +191,11 @@ export function RuleEditor({
         {/* ── 模拟：本页最重要的功能 ── */}
         <div className="mt-3 rounded border border-slate-200 p-2">
           <div className="flex items-center gap-2">
-            <h3 className="text-xs font-medium text-slate-700">🧪 用历史数据验证</h3>
+            <h3 className="text-xs font-medium text-slate-700">{t('rule.validate')}</h3>
             <Button variant="outline" size="xs"
               onClick={() => simulateMut.mutate()}
               disabled={simulateMut.isPending || !draft}>
-              {simulateMut.isPending ? '模拟中…' : '运行模拟'}
+              {simulateMut.isPending ? t('rule.simulating') : t('rule.runSimulation')}
             </Button>
           </div>
 
@@ -202,8 +203,7 @@ export function RuleEditor({
             <SimulationView result={simulation} />
           ) : (
             <p className="mt-1 text-[11px] text-slate-400">
-              拿这条规则到过去 90 天的真实评估上跑一遍，看它会自动处理多少次、
-              其中多少次与人类当时的判断不一致
+              {t('rule.simulationHint')}
             </p>
           )}
         </div>
@@ -214,12 +214,12 @@ export function RuleEditor({
 
         <div className="mt-3 flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-800">
-            取消
+            {t('common.cancel')}
           </button>
           <Button variant="neutral" size="sm"
             onClick={() => save.mutate(needsAck)}
             disabled={!name || save.isPending || !draft}>
-            {needsAck ? '我知道风险，仍然启用' : save.isPending ? '保存中…' : '启用规则'}
+            {needsAck ? t('rule.enableAnyway') : save.isPending ? t('common.saving') : t('rule.enable')}
           </Button>
         </div>
       </div>
@@ -235,20 +235,23 @@ export function RuleEditor({
  *   而不是先报一串「会自动处理 47 次」的好消息。
  */
 function SimulationView({ result }: { result: SimulationResponse }) {
-  const CONFIDENCE = { high: '样本充足', medium: '样本一般', low: '样本偏少' } as const;
+  const t = useT();
+  const CONFIDENCE = { high: 'rule.sampleAmple', medium: 'rule.sampleFair', low: 'rule.sampleThin' } as const;
 
   return (
     <div className="mt-1.5 space-y-1.5 text-xs">
       <p className="text-slate-600">
-        过去的 {result.totalSamples} 次评估里，这条规则会自动处理{' '}
-        <span className="font-medium">{result.wouldAutoHandle}</span> 次
+        {t('rule.simulationSummary', {
+          total: result.totalSamples,
+          handled: result.wouldAutoHandle,
+        })}
         <span className="ml-1 text-[11px] text-slate-400">（{CONFIDENCE[result.confidence]}）</span>
       </p>
 
       {result.mismatches.length > 0 ? (
         <div className="rounded bg-amber-50 px-2 py-1.5">
           <p className="font-medium text-amber-900">
-            ⚠ 其中 {result.mismatches.length} 个任务，人类当时是驳回或要求修改的
+            {t('rule.mismatchWarning', { count: result.mismatches.length })}
           </p>
           <ul className="mt-1 space-y-0.5">
             {result.mismatches.slice(0, 5).map((m) => (
@@ -260,19 +263,21 @@ function SimulationView({ result }: { result: SimulationResponse }) {
           </ul>
           {result.suggestions.length > 0 && (
             <p className="mt-1 text-[11px] text-amber-900">
-              💡 建议增加排除条件：
+              {t('rule.suggestExclusion')}
               {result.suggestions
                 .map((s) => `${FACT_LABELS[s.addCondition.fact as FactKey] ?? s.addCondition.fact} ≠ ${String(s.addCondition.value)}`)
                 .join('、')}
               <span className="ml-1 text-amber-700">
-                （基于 {result.suggestions[0]!.wouldEliminate} 个案例的统计模式，不是因果结论，请人工确认）
+                {t('rule.suggestionBasis', {
+                  count: result.suggestions[0]!.wouldEliminate,
+                })}
               </span>
             </p>
           )}
         </div>
       ) : (
         <p className="rounded bg-green-50 px-2 py-1 text-[11px] text-green-900">
-          ✓ 没有发现与人类判断不一致的历史案例
+          {t('rule.noMismatches')}
         </p>
       )}
 

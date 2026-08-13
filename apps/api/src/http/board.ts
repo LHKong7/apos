@@ -135,6 +135,14 @@ export interface BoardFilters {
   executorType?: string;
   humanGateOnly?: boolean;
   blockedOnly?: boolean;
+  /**
+   * 待认领：标为人工执行、但没有执行者的任务。
+   *
+   * ★★ 这一档必须能筛出来，否则「批准时确认让它们先没人接」就成了一句空话 ——
+   *   那些任务会进 ready 然后停在那里：调度器不碰人工任务，而没有人被通知过
+   *   它是自己的。没有这个入口，它们在看板上和别的卡片长得一模一样。
+   */
+  unclaimedOnly?: boolean;
 }
 
 export async function getBoard(
@@ -154,6 +162,18 @@ export async function getBoard(
     conditions.push(eq(workItems.executorType, filters.executorType as never));
   }
   if (filters.blockedOnly) conditions.push(sql`${workItems.blockedSince} IS NOT NULL`);
+  if (filters.unclaimedOnly) {
+    /**
+     * ★ 兼容旧数据：executionMode 是从 requiresHuman 拆出来的，
+     *   老工作项的 typeData 里只有后者。两个都认，与 executionModeOf 同一条口径。
+     */
+    conditions.push(
+      sql`${workItems.executorId} IS NULL
+          AND (${workItems.typeData}->>'executionMode' = 'human'
+               OR (${workItems.typeData}->>'executionMode' IS NULL
+                   AND ${workItems.typeData}->>'requiresHuman' = 'true'))`,
+    );
+  }
   if (filters.humanGateOnly) conditions.push(sql`${workItems.humanGate} IS NOT NULL`);
   if (filters.onlyMine) {
     conditions.push(
@@ -334,7 +354,11 @@ async function enrich(
     .where(inArray(agentRuns.workItemId, ids))
     .orderBy(desc(agentRuns.attempt));
   const latestRun = new Map<string, (typeof runs)[number]>();
-  for (const r of runs) if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+  for (const r of runs) {
+    // ★ 规划 Run 没有工作项，不进这张按工作项索引的表
+    if (!r.workItemId) continue;
+    if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+  }
 
   const agentRows = await db.select().from(agents);
   const agentName = new Map(agentRows.map((a) => [a.id, a.name]));

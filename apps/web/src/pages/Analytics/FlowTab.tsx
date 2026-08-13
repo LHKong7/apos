@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { BUCKET_LABELS, formatHours, type Analytics } from '@apos/domain';
 import { BarChart, NotWired, StatTile, TrendChart, type BarDatum } from '../../features/analytics/charts';
 import { Card } from './Card';
@@ -16,6 +17,7 @@ export function FlowTab({
   data: Analytics;
   onDrill: (kind: 'rework' | 'wip' | 'slow') => void;
 }) {
+  const t = useT();
   const { flow, deltas } = data;
 
   const breakdown: BarDatum[] = flow.breakdown
@@ -33,7 +35,7 @@ export function FlowTab({
     .sort((a, b) => b.hours - a.hours)[0];
   if (worstWait && worstWait.hours > 0) {
     const row = breakdown.find((r) => r.label === BUCKET_LABELS[worstWait.bucket]);
-    if (row) row.flag = { icon: '⛔', text: '最大瓶颈', tone: 'critical' };
+    if (row) row.flag = { icon: '⛔', text: t('flow.biggestBottleneck'), tone: 'critical' };
   }
 
   const efficiency = flow.activeHours + flow.waitingHours;
@@ -42,81 +44,81 @@ export function FlowTab({
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <StatTile
-          label="流动效率"
+          label={t('flow.efficiency')}
           value={flow.flowEfficiency === null ? '—' : `${Math.round(flow.flowEfficiency * 100)}%`}
           sub={
             efficiency > 0
-              ? `有效 ${formatHours(flow.activeHours)} · 等待 ${formatHours(flow.waitingHours)}`
+              ? t('flow.activeWaiting', { active: formatHours(flow.activeHours), waiting: formatHours(flow.waitingHours) })
               : undefined
           }
           delta={deltas?.flowEfficiency}
-          hint="有效工作时间 ÷ 总周期时间。有效 = 有人或 Agent 正在推进（执行/评审/计划/发布）；排队、阻塞、等批准都算等待。"
+          hint={t('flow.efficiencyHelp')}
         />
         <StatTile
-          label="前置时间"
+          label={t('flow.leadTime')}
           value={flow.leadTime.count > 0 ? formatHours(flow.leadTime.median) : '—'}
           sub={
             flow.leadTime.count > 0
-              ? `中位数 · 均值 ${formatHours(flow.leadTime.mean)}`
-              : '窗口内没有完成项'
+              ? t('flow.medianMean', { mean: formatHours(flow.leadTime.mean) })
+              : t('flow.noCompleted')
           }
           delta={deltas?.leadTime}
           higherIsBetter={false}
-          hint="任务创建 → 交付完成。展示中位数，因为个别超长任务会把均值抬高一倍；均值同时给出，两者差得远说明有拖尾。"
+          hint={t('flow.leadTimeHelp')}
           onClick={() => onDrill('slow')}
         />
         <StatTile
-          label="周期时间"
+          label={t('flow.cycleTime')}
           value={flow.cycleTime.count > 0 ? formatHours(flow.cycleTime.median) : '—'}
-          sub={`${flow.completed} 项完成`}
+          sub={t('flow.completedCount', { count: flow.completed })}
           delta={deltas?.cycleTime}
           higherIsBetter={false}
-          hint="开始执行 → 完成。比前置时间少了「排在队里等」的那一段。"
+          hint={t('flow.cycleTimeHelp')}
         />
         <StatTile
-          label="吞吐"
+          label={t('flow.throughput')}
           value={`${flow.throughputPerWeek}`}
-          sub="项 / 周"
+          sub={t('flow.perWeek')}
           delta={deltas?.throughput}
-          hint="窗口内完成数换算成周速率。"
+          hint={t('flow.throughputHelp')}
         />
         <StatTile
-          label="在制品"
+          label={t('flow.wip')}
           value={`${flow.wipNow}`}
-          sub="稳定优于高"
-          hint="当前非草稿、未终结的任务数。持续上升说明进得比出得快。"
+          sub={t('flow.wipHint')}
+          hint={t('flow.wipHelp')}
           onClick={() => onDrill('wip')}
         />
       </div>
 
       <div className="flex flex-wrap gap-2">
         <StatTile
-          label="返工率"
+          label={t('flow.reworkRate')}
           value={flow.reworkRate === null ? '—' : `${Math.round(flow.reworkRate * 100)}%`}
-          sub={`${flow.reworkedItems} 项被打回或失败过`}
+          sub={t('flow.reworkedCount', { count: flow.reworkedItems })}
           higherIsBetter={false}
-          hint="窗口内进过「需修改」或「失败」的任务 ÷ 有过流转的任务。返工通常指向验收标准不清，而不是执行问题。"
+          hint={t('flow.reworkRateHelp')}
           onClick={() => onDrill('rework')}
         />
         <StatTile
-          label="阻塞时长"
+          label={t('flow.blockedTime')}
           value={formatHours(flow.blockedHours)}
-          hint="窗口内处于阻塞状态的累计时长，跨窗口的阻塞只算落在窗口内的部分。"
+          hint={t('flow.blockedTimeHelp')}
         />
         <StatTile
-          label="等待决策"
+          label={t('flow.awaitingDecision')}
           value={formatHours(flow.decisionWaitHours)}
           delta={deltas?.decisionWaitHours}
           higherIsBetter={false}
-          hint="窗口内处于「等待人类决策」的累计时长。本产品特有的损耗，单独计量。"
+          hint={t('flow.awaitingDecisionHelp')}
         />
         {flow.onTimeRate === null ? (
-          <NotWired label="按时交付率" why="计划里没有排期字段" />
+          <NotWired label={t('flow.onTimeRate')} why={t('flow.noSchedule')} />
         ) : (
           <StatTile
-            label="按时交付率"
+            label={t('flow.onTimeRate')}
             value={`${Math.round(flow.onTimeRate * 100)}%`}
-            hint="窗口内完成且有计划完成时间的任务中，未超期的比例。没有排期的任务不计入分母。"
+            hint={t('flow.onTimeRateHelp')}
           />
         )}
       </div>
@@ -127,21 +129,21 @@ export function FlowTab({
           它把「我们很忙」和「我们在等」这两件事分开了。
       */}
       <Card
-        title="周期时间分解"
-        subtitle="时间到底花在哪。等待决策单独成条，不并入所处阶段"
+        title={t('flow.cycleBreakdown')}
+        subtitle={t('flow.cycleBreakdownHint')}
       >
         <BarChart
           data={breakdown}
           legend={[
-            { label: '有人/Agent 在推进', tone: 'primary' },
-            { label: '在等待', tone: 'waiting' },
+            { label: t('flow.active'), tone: 'primary' },
+            { label: t('flow.waiting'), tone: 'waiting' },
           ]}
         />
         {efficiency > 0 && (
           <p className="mt-2 border-t border-slate-100 pt-1.5 text-xs text-slate-700">
-            有效工作时间{' '}
+            {t('flow.activeTime')}{' '}
             <span className="font-semibold">{Math.round((flow.activeHours / efficiency) * 100)}%</span>
-            {' · '}等待时间{' '}
+            {' · '}{t('flow.waitTime')}{' '}
             <span className="font-semibold text-orange-700">
               {Math.round((flow.waitingHours / efficiency) * 100)}%
             </span>
@@ -150,11 +152,11 @@ export function FlowTab({
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <Card title="在制品趋势" subtitle="稳定优于高。持续上升 = 进得比出得快">
-          <TrendChart points={flow.wipTrend} format={(v) => `${v} 项`} />
+        <Card title={t('flow.wipTrend')} subtitle={t('flow.wipSubtitle')}>
+          <TrendChart points={flow.wipTrend} format={(v) => t('flow.wipUnit', { count: v })} />
         </Card>
-        <Card title="阻塞时长趋势" subtitle="峰值那天发生了什么，通常就是问题所在">
-          <TrendChart points={flow.blockedTrend} tone="waiting" format={formatHours} emptyHint="这段时间没有任务被阻塞" />
+        <Card title={t('flow.blockedTrend')} subtitle={t('flow.blockedSubtitle')}>
+          <TrendChart points={flow.blockedTrend} tone="waiting" format={formatHours} emptyHint={t('flow.noBlocked')} />
         </Card>
       </div>
     </div>

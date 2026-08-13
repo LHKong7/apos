@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
@@ -11,13 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
-const AUTONOMY_LABELS: Record<string, string> = {
-  human_led: '人主导',
-  agent_led_approval: 'Agent 主导 + 人审批',
-  agent_autonomous: 'Agent 自主',
+const AUTONOMY_KEYS: Record<string, MessageKey> = {
+  human_led: 'project.autonomy.humanLed',
+  agent_led_approval: 'project.autonomy.agentApproval',
+  agent_autonomous: 'project.autonomy.agentAutonomous',
 };
 
 export function ProjectListPage() {
+  const t = useT();
   const projects = useQuery({ queryKey: qk.projects(), queryFn: api.projects });
   const org = useOrgStore((s) => s.org);
   const [creating, setCreating] = useState(false);
@@ -26,8 +28,8 @@ export function ProjectListPage() {
     <div className="mx-auto w-full max-w-4xl overflow-y-auto p-6">
       <div className="mb-5 flex items-center gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">项目</h1>
-          <p className="mt-0.5 text-xs text-slate-400">进项目先看总览：现在什么情况、要不要你管</p>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">{t('project.title')}</h1>
+          <p className="mt-0.5 text-xs text-slate-400">{t('project.subtitle')}</p>
         </div>
         {org && (
           <span className="self-start rounded-full border border-slate-200 bg-slate-100/60 px-2 py-0.5 text-[11px] text-slate-500">
@@ -44,7 +46,7 @@ export function ProjectListPage() {
           onClick={() => setCreating(true)}
           className="ml-auto self-start rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:brightness-110"
         >
-          + 新建项目
+          + {t('project.new')}
         </button>
       </div>
 
@@ -53,9 +55,9 @@ export function ProjectListPage() {
         isEmpty={(d) => d.projects.length === 0}
         empty={{
           icon: '📁',
-          message: org ? `「${org.name}」下还没有项目` : '还没有项目',
-          hint: '项目是需求、任务、Agent 与代码仓库的容器。也可以切换到别的组织看看。',
-          action: { label: '新建项目', onClick: () => setCreating(true) },
+          message: org ? t('project.emptyInOrg', { org: org.name }) : t('project.empty'),
+          hint: t('project.emptyHint'),
+          action: { label: t('project.new'), onClick: () => setCreating(true) },
         }}
       >
         {(data) => (
@@ -78,7 +80,9 @@ export function ProjectListPage() {
                     {p.goal && <p className="mt-0.5 truncate text-xs text-slate-500">{p.goal}</p>}
                   </div>
                   <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100/70 px-2 py-0.5 text-[11px] text-slate-600">
-                    {AUTONOMY_LABELS[p.autonomyLevel] ?? p.autonomyLevel}
+                    {AUTONOMY_KEYS[p.autonomyLevel]
+                      ? t(AUTONOMY_KEYS[p.autonomyLevel]!)
+                      : p.autonomyLevel}
                   </span>
                   <span className="shrink-0 font-mono text-xs tabular-nums text-slate-500">
                     {money(p.costSpent)}
@@ -102,6 +106,7 @@ export function ProjectListPage() {
 }
 
 function CreateProjectModal({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [goal, setGoal] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState('agent_led_approval');
@@ -125,46 +130,46 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal onClose={onClose} title="新建项目">
+    <Modal onClose={onClose} title={t('project.new')}>
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">新建项目</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t('project.new')}</h2>
         <p className="text-[11px] text-slate-500">
-          项目建在**当前组织**下，创建者自动成为 tech_lead。
+          {t('project.newHint')}
         </p>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">项目名</span>
+          <span className="text-xs font-medium text-slate-700">{t('project.name')}</span>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="订单系统重构"
+            placeholder={t('project.namePlaceholder')}
             className="mt-1" />
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            目标
-            <span className="ml-1 font-normal text-slate-400">选填</span>
+            {t('project.goal')}
+            <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
           </span>
           <Textarea
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
             rows={2}
-            placeholder="把订单查询从 8s 降到 1s 以内"
+            placeholder={t('project.goalPlaceholder')}
             className="mt-1"
           />
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">自治等级</span>
+          <span className="text-xs font-medium text-slate-700">{t('project.autonomyLevel')}</span>
           <select
             value={autonomyLevel}
             onChange={(e) => setAutonomyLevel(e.target.value)}
             className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
           >
-            {Object.entries(AUTONOMY_LABELS).map(([value, label]) => (
+            {Object.entries(AUTONOMY_KEYS).map(([value, labelKey]) => (
               <option key={value} value={value}>
-                {label}
+                {t(labelKey)}
               </option>
             ))}
           </select>
@@ -173,14 +178,14 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
               一眼看见的设置。默认取中间那档，而不是最自主的那档。
           */}
           <p className="mt-1 text-[11px] text-slate-500">
-            建完之后可以在项目设置里改，改动会记审计。
+            {t('project.autonomyHint')}
           </p>
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            预算上限
-            <span className="ml-1 font-normal text-slate-400">选填 · 美元</span>
+            {t('project.budgetCap')}
+            <span className="ml-1 font-normal text-slate-400">{t('project.budgetHint')}</span>
           </span>
           <Input
             value={budget}
@@ -197,12 +202,12 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}
             onClick={() => create.mutate()}>
-            {create.isPending ? '创建中…' : '创建'}
+            {create.isPending ? t('project.creating') : t('project.create')}
           </Button>
         </div>
       </div>

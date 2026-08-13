@@ -6,8 +6,10 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
+import { AnalysisRuns } from './AnalysisRuns';
 import { Clarifications } from './Clarifications';
 import { StructuredEditor, type RequirementPatch } from './StructuredEditor';
 import { Button } from '@/components/ui/button';
@@ -38,6 +40,7 @@ export function RequirementPage() {
   const { projectId, reqId } = useParams<{ projectId: string; reqId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const t = useT();
   /**
    * ★ 列表页选了「自己填写」就带着 ?edit=1 进来，直接落在编辑态。
    *   否则用户刚表达完「我要自己填」，看到的还是一个「让 AI 分析」的空面板 ——
@@ -74,7 +77,7 @@ export function RequirementPage() {
       setKeptFields(res.keptHumanFields ?? []);
       void refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '分析失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.detail.analyzeFailed')),
   });
 
   /**
@@ -91,7 +94,7 @@ export function RequirementPage() {
       setEditError(null);
       void refresh();
     },
-    onError: (e) => setEditError(e instanceof ApiError ? e.message : '保存失败'),
+    onError: (e) => setEditError(e instanceof ApiError ? e.message : t('requirement.detail.saveFailed')),
   });
 
   const answer = useMutation({
@@ -100,7 +103,7 @@ export function RequirementPage() {
     onMutate: (v) => setAnswering(v.id),
     onSettled: () => setAnswering(null),
     onSuccess: () => void refresh(),
-    onError: (e) => setError(e instanceof ApiError ? e.message : '提交失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.detail.answerFailed')),
   });
 
   /**
@@ -110,18 +113,34 @@ export function RequirementPage() {
    * 而不是回到一个列表再自己找。
    */
   const approve = useMutation({
-    mutationFn: async () => {
-      await api.approveRequirement(reqId!);
-      return api.generatePlan(reqId!);
+    /**
+     * ★★ 一次调用，不再是前端连发两个请求。
+     *
+     *   以前中间断掉留下的是「需求已确认但没有计划」——
+     *   状态变了，而界面上是一句报错。
+     */
+    mutationFn: () => api.approveAndPlan(reqId!),
+    onSuccess: (result) => {
+      if (result.plan) {
+        navigate(`/projects/${projectId}/plans/${result.plan.planId}`);
+        return;
+      }
+      /**
+       * ★ 确认成功、生成失败：如实说出来，并留在需求页 ——
+       *   跳去一个不存在的计划页是最坏的处理。重试的是「生成计划」，
+       *   不是「再确认一次」。
+       */
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: qk.requirement(reqId!) });
+      setError(t('requirement.detail.approvedButPlanFailed', { reason: result.planError ?? '' }));
     },
-    onSuccess: (plan) => navigate(`/projects/${projectId}/plans/${plan.planId}`),
     onError: (e) => {
       setConfirming(false);
       if (e instanceof ApiError && e.code === 'UNANSWERED_MUST_CONFIRM') {
-        setError(`${e.message} —— 下面标🔴的问题必须先回答`);
+        setError(t('requirement.detail.mustAnswerFirst', { message: e.message }));
         return;
       }
-      setError(e instanceof ApiError ? e.message : '确认失败');
+      setError(e instanceof ApiError ? e.message : t('requirement.detail.approveFailed'));
     },
   });
 
@@ -131,7 +150,7 @@ export function RequirementPage() {
       setRejecting(false);
       void refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '驳回失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.detail.rejectFailed')),
   });
 
   /**
@@ -149,7 +168,7 @@ export function RequirementPage() {
     },
     onError: (e) => {
       setDeleting(false);
-      setError(e instanceof ApiError ? e.message : '删除失败');
+      setError(e instanceof ApiError ? e.message : t('requirement.delete.failed'));
     },
   });
 
@@ -182,7 +201,7 @@ export function RequirementPage() {
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold text-slate-900">
-            {r.title ?? '新建需求'}
+            {r.title ?? t('requirement.detail.untitled')}
           </h1>
           <span
             className={clsx(
@@ -194,13 +213,13 @@ export function RequirementPage() {
                   : 'bg-slate-100 text-slate-600',
             )}
           >
-            {STATUS_LABELS[r.status] ?? r.status}
+            {STATUS_KEYS[r.status] ? t(STATUS_KEYS[r.status]!) : r.status}
           </span>
           <Link
             to={`/projects/${projectId}/requirements`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 需求列表
+            {t('requirement.detail.backToList')}
           </Link>
         </div>
 
@@ -214,33 +233,41 @@ export function RequirementPage() {
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
               <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                知道了
+                {t('common.gotIt')}
               </button>
             </p>
           )}
 
           {r.status === 'rejected' && r.rejectReason && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
-              已驳回：{r.rejectReason}
+              {t('requirement.detail.rejectedWith', { reason: r.rejectReason })}
             </p>
           )}
+
+          {/*
+            ★ 历次分析 / 规划执行。规划 Run 落库之后这一块才有内容 ——
+              在此之前那些调用只活在内存里，事后什么都查不到。
+          */}
+          <AnalysisRuns requirementId={reqId!} />
 
           <div className="grid gap-3 md:grid-cols-2">
             {/* ── 原始输入：永不覆盖 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
-              <h2 className="text-xs font-medium text-slate-700">📄 原始输入</h2>
+              <h2 className="text-xs font-medium text-slate-700">{t('requirement.detail.rawInput')}</h2>
               <p className="mt-1 whitespace-pre-wrap text-xs leading-6 text-slate-700">
                 {r.rawInput}
               </p>
               <p className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] text-slate-400">
-                原文永不被结构化结果覆盖 —— 你随时可以对照它检查 AI 有没有理解错
+                {t('requirement.detail.rawInputNote')}
               </p>
             </section>
 
             {/* ── 结构化需求：AI 分析与人工填写共用这一块 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <div className="flex flex-wrap items-baseline gap-2">
-                <h2 className="text-xs font-medium text-slate-700">📋 结构化需求</h2>
+                <h2 className="text-xs font-medium text-slate-700">
+                  {t('requirement.detail.structured')}
+                </h2>
                 {analyzed && <AnalysisSource model={r.analysisModel} />}
                 {!editing && !readOnly && (
                   <div className="ml-auto flex items-center gap-2">
@@ -250,7 +277,11 @@ export function RequirementPage() {
                       disabled={analyze.isPending}
                       className="text-[11px] text-slate-500 underline disabled:opacity-50"
                     >
-                      {analyze.isPending ? '分析中…' : analyzed ? '重新分析' : 'AI 分析'}
+                      {analyze.isPending
+                        ? t('requirement.detail.analyzing')
+                        : analyzed
+                          ? t('requirement.detail.reanalyze')
+                          : t('requirement.detail.analyze')}
                     </button>
                     <button
                       type="button"
@@ -260,7 +291,7 @@ export function RequirementPage() {
                       }}
                       className="text-[11px] text-slate-500 underline hover:text-slate-700"
                     >
-                      {structured ? '人工修改' : '自己填写'}
+                      {structured ? t('requirement.detail.editManually') : t('requirement.detail.fillManually')}
                     </button>
                   </div>
                 )}
@@ -268,15 +299,15 @@ export function RequirementPage() {
 
               {keptFields.length > 0 && !editing && (
                 <p className="mt-1 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-800">
-                  这几项是你改过的，重新分析没有覆盖它们：
-                  {keptFields.map((f) => FIELD_LABELS[f] ?? f).join('、')}。
-                  想让 AI 重写其中某一项，改回空白再分析即可。
+                  {t('requirement.detail.keptFields', {
+                    fields: keptFields.map((f) => (FIELD_KEYS[f] ? t(FIELD_KEYS[f]!) : f)).join('、'),
+                  })}
                   <button
                     type="button"
                     className="ml-1 underline"
                     onClick={() => setKeptFields([])}
                   >
-                    知道了
+                    {t('common.gotIt')}
                   </button>
                 </p>
               )}
@@ -299,7 +330,7 @@ export function RequirementPage() {
                     而那时他已经等过一轮超时了。
                 */
                 <div className="py-6 text-center">
-                  <p className="text-xs text-slate-500">这条需求还没有结构化内容</p>
+                  <p className="text-xs text-slate-500">{t('requirement.detail.notStructured')}</p>
                   <div className="mt-2 flex justify-center gap-2">
                     <Button
                       variant="neutral"
@@ -307,7 +338,9 @@ export function RequirementPage() {
                       onClick={() => analyze.mutate()}
                       disabled={analyze.isPending || readOnly}
                     >
-                      {analyze.isPending ? '分析中…' : '让 AI 分析'}
+                      {analyze.isPending
+                        ? t('requirement.detail.analyzing')
+                        : t('requirement.detail.letAiAnalyze')}
                     </Button>
                     <Button
                       variant="outline"
@@ -315,24 +348,24 @@ export function RequirementPage() {
                       onClick={() => setEditing(true)}
                       disabled={readOnly}
                     >
-                      自己填写
+                      {t('requirement.detail.fillManually')}
                     </Button>
                   </div>
                   <p className="mt-2 text-[11px] text-slate-400">
-                    两条路都能走到确认。需求本身已经写清楚了，或者 AI 分析用不了时，直接自己填
+                    {t('requirement.detail.bothPathsNote')}
                   </p>
                 </div>
               ) : (
                 <dl className="mt-1 space-y-1.5 text-xs">
-                  <Field label="业务背景" value={r.businessContext} source={sourceOf(r, 'businessContext')} />
-                  <Field label="用户问题" value={r.userProblem} source={sourceOf(r, 'userProblem')} />
-                  <Field label="业务目标" value={r.businessGoal} source={sourceOf(r, 'businessGoal')} />
+                  <Field label={t('requirement.field.businessContext')} value={r.businessContext} source={sourceOf(r, 'businessContext')} />
+                  <Field label={t('requirement.field.userProblem')} value={r.userProblem} source={sourceOf(r, 'userProblem')} />
+                  <Field label={t('requirement.field.businessGoal')} value={r.businessGoal} source={sourceOf(r, 'businessGoal')} />
                   <div>
                     <dt className="text-[11px] text-slate-500">
-                      功能范围
+                      {t('requirement.field.scope')}
                       <SourceTag source={sourceOf(r, 'scope')} />
                       {(r.scope.inScope?.length ?? 0) === 0 && (
-                        <span className="ml-1 text-amber-700">⚠ 未识别</span>
+                        <span className="ml-1 text-amber-700">{t('requirement.detail.unrecognized')}</span>
                       )}
                     </dt>
                     <dd className="text-slate-700">
@@ -349,10 +382,14 @@ export function RequirementPage() {
                         它后续会成为 Review 阶段的自动校验依据。
                     */}
                     <dt className="text-[11px] text-slate-500">
-                      验收标准（{r.acceptanceCriteria.length}）
+                      {t('requirement.detail.acceptanceCriteria', {
+                        count: r.acceptanceCriteria.length,
+                      })}
                       <SourceTag source={sourceOf(r, 'acceptanceCriteria')} />
                       {r.acceptanceCriteria.length < 3 && (
-                        <span className="ml-1 text-amber-700">⚠ 偏少，Review 阶段可校验的点不多</span>
+                        <span className="ml-1 text-amber-700">
+                          {t('requirement.detail.fewCriteria')}
+                        </span>
                       )}
                     </dt>
                     <dd>
@@ -383,16 +420,18 @@ export function RequirementPage() {
           {assumptions.length > 0 && (
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <h2 className="text-xs font-medium text-slate-700">
-                📌 已记录假设（{assumptions.length}）
+                {t('requirement.detail.assumptions', { count: assumptions.length })}
               </h2>
               <p className="text-[11px] text-slate-400">
-                这些假设会传给 Project Agent 和后续所有执行 Agent。执行中被证伪时会回到这里生成一条决策
+                {t('requirement.detail.assumptionsNote')}
               </p>
               <ul className="mt-1 space-y-0.5">
                 {assumptions.map((a) => (
                   <li key={a.id} className="text-xs text-slate-600">
                     · {a.answer ?? a.agentSuggestion ?? a.question}
-                    {!a.answer && <span className="ml-1 text-[11px] text-slate-400">（未经确认）</span>}
+                    {!a.answer && <span className="ml-1 text-[11px] text-slate-400">
+                      {t('requirement.detail.unconfirmed')}
+                    </span>}
                   </li>
                 ))}
               </ul>
@@ -418,7 +457,7 @@ export function RequirementPage() {
                 onClick={() => setDeleting(true)}
                 className="mr-auto text-xs text-red-600 hover:text-red-800"
               >
-                删除
+                {t('common.delete')}
               </GatedButton>
               {structured && !readOnly && (
                 <>
@@ -427,14 +466,14 @@ export function RequirementPage() {
                     onClick={() => setRejecting(true)}
                     className="text-xs text-slate-500 hover:text-slate-800"
                   >
-                    驳回
+                    {t('requirement.detail.reject')}
                   </GatedButton>
                   <GatedButton
                     permission="requirement.approve"
                     onClick={() => setConfirming(true)}
                     className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
                   >
-                    确认需求 →
+                    {t('requirement.detail.approve')}
                   </GatedButton>
                 </>
               )}
@@ -443,7 +482,7 @@ export function RequirementPage() {
 
           {r.status === 'approved' && (
             <p className="rounded border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-900">
-              需求已确认。Project Agent 会据此生成执行计划，计划仍需批准才会开始执行
+              {t('requirement.detail.approvedNote')}
             </p>
           )}
         </div>
@@ -479,29 +518,33 @@ export function RequirementPage() {
   );
 }
 
-/** 字段名 → 界面上的说法。提示语里出现 businessGoal 这种词等于没说 */
-const FIELD_LABELS: Record<string, string> = {
-  title: '标题',
-  businessContext: '业务背景',
-  userProblem: '用户问题',
-  businessGoal: '业务目标',
-  userStories: '用户故事',
-  scope: '功能范围',
-  nonFunctional: '非功能要求',
-  successMetrics: '成功指标',
-  constraints: '约束',
-  risks: '潜在风险',
-  acceptanceCriteria: '验收标准',
+/**
+ * 字段名 → 词条键。提示语里出现 businessGoal 这种词等于没说。
+ * Field name → message key; a hint that says "businessGoal" says nothing.
+ */
+const FIELD_KEYS: Record<string, MessageKey> = {
+  title: 'requirement.field.title',
+  businessContext: 'requirement.field.businessContext',
+  userProblem: 'requirement.field.userProblem',
+  businessGoal: 'requirement.field.businessGoal',
+  userStories: 'requirement.field.userStories',
+  scope: 'requirement.field.scope',
+  nonFunctional: 'requirement.field.nonFunctional',
+  successMetrics: 'requirement.field.successMetrics',
+  constraints: 'requirement.field.constraints',
+  risks: 'requirement.field.risks',
+  acceptanceCriteria: 'requirement.field.acceptanceCriteria',
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
-  analyzing: '分析中',
-  clarifying: '待澄清',
-  awaiting_approval: '待确认',
-  approved: '已确认',
-  rejected: '已驳回',
-  on_hold: '暂缓',
+/** 状态 → 词条键。同 List.tsx：模块级常量存键不存译文 */
+const STATUS_KEYS: Record<string, MessageKey> = {
+  draft: 'requirement.status.draft',
+  analyzing: 'requirement.status.analyzing',
+  clarifying: 'requirement.status.clarifying',
+  awaiting_approval: 'requirement.status.awaiting_approval',
+  approved: 'requirement.status.approved',
+  rejected: 'requirement.status.rejected',
+  on_hold: 'requirement.status.on_hold',
 };
 
 /**
@@ -516,21 +559,40 @@ const STATUS_LABELS: Record<string, string> = {
  *   全部信息（比如「组织内没有可用的规划 Agent」）。藏起来只会变成一张工单。
  */
 function AnalysisSource({ model }: { model: string | null }) {
+  const t = useT();
   if (!model) return null;
 
   // 回退时 model 形如 `stub（规则占位，未走 Agent：原因）`，见 agent-provider.ts
+  // On fallback the model reads `stub（…未走 Agent：<reason>）` — see agent-provider.ts
   const degraded = model.startsWith('stub');
   if (!degraded) {
-    return <span className="text-[11px] text-slate-400">由 {model} 生成</span>;
+    return (
+      <span className="text-[11px] text-slate-400">
+        {t('requirement.detail.generatedBy', { model })}
+      </span>
+    );
   }
 
+  /**
+   * ★ reason 来自服务端，目前只有中文 —— 界面切成英文时它仍是中文。
+   *   包裹它的那句话已经本地化了，所以英文用户至少知道「这是回退，
+   *   下面那段是原因」。要彻底解决得让服务端返回结构化的原因码而不是
+   *   一句现成的话，那是另一处改动（见 modules/planning/agent-provider.ts）。
+   *
+   *   The reason string still comes from the server in Chinese. The wrapper
+   *   around it is localized, so an English reader can at least tell this is
+   *   a fallback and that the tail is the cause. Fixing it properly means
+   *   returning a reason code instead of a sentence — a separate change.
+   */
   const reason = model.match(/未走 Agent：(.+?)）\s*$/)?.[1] ?? null;
   return (
     <span
       className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800"
       title={reason ?? undefined}
     >
-      ⚠ 规则占位，未接入模型{reason ? ` —— ${reason}` : ''}
+      {reason
+        ? t('requirement.detail.stubFallbackWhy', { reason })
+        : t('requirement.detail.stubFallback')}
     </span>
   );
 }
@@ -544,12 +606,15 @@ function Field({
   value: string | null;
   source: FieldSource;
 }) {
+  const t = useT();
   return (
     <div>
       <dt className="text-[11px] text-slate-500">
         {label}
         <SourceTag source={source} />
-        {!value && <span className="ml-1 text-amber-700">⚠ 未识别</span>}
+        {!value && (
+          <span className="ml-1 text-amber-700">{t('requirement.detail.unrecognized')}</span>
+        )}
       </dt>
       <dd className="leading-5 text-slate-700">{value ?? '—'}</dd>
     </div>
@@ -579,6 +644,7 @@ function sourceOf(
 }
 
 function SourceTag({ source }: { source: FieldSource }) {
+  const t = useT();
   if (source === 'unknown') return null;
   return (
     <span
@@ -586,9 +652,11 @@ function SourceTag({ source }: { source: FieldSource }) {
         'ml-1 rounded px-1 text-[10px]',
         source === 'human' ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500',
       )}
-      title={source === 'human' ? '这一项由人填写或修改过' : '这一项来自 AI 分析'}
+      title={
+        source === 'human' ? t('requirement.detail.fromHuman') : t('requirement.detail.fromAi')
+      }
     >
-      {source === 'human' ? '👤 人工' : '🤖 AI'}
+      {source === 'human' ? t('requirement.detail.byHuman') : '🤖 AI'}
     </span>
   );
 }
@@ -612,35 +680,35 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   return (
-    <Modal onClose={onCancel} title="确认这条需求">
-      <h2 className="text-sm font-semibold text-slate-900">确认这条需求</h2>
+    <Modal onClose={onCancel} title={t('requirement.approve.title')}>
+      <h2 className="text-sm font-semibold text-slate-900">{t('requirement.approve.title')}</h2>
       <div className="mt-2 space-y-1 text-xs text-slate-700">
-        <p>确认后，Project Agent 将：</p>
-        <p>· 拆解任务并生成执行计划</p>
-        <p>· 计划生成后仍需你或技术负责人批准，才会真正开始执行</p>
+        <p>{t('requirement.approve.intro')}</p>
+        <p>{t('requirement.approve.step1')}</p>
+        <p>{t('requirement.approve.step2')}</p>
       </div>
 
       {mustConfirmLeft > 0 && (
         <p className="mt-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
-          还有 {mustConfirmLeft} 个必答问题没回答，确认会被拒绝。先回答它们
+          {t('requirement.approve.mustConfirmLeft', { count: mustConfirmLeft })}
         </p>
       )}
       {mustConfirmLeft === 0 && completeness < 60 && (
         <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-          完整度只有 {completeness} 分。可以确认，但 Agent 大概率会产生较多返工 ——
-          现在花两分钟补一下，比之后花三小时返工划算
+          {t('requirement.approve.lowCompleteness', { score: completeness })}
         </p>
       )}
 
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          返回修改
+          {t('requirement.approve.backToEdit')}
         </button>
         <Button variant="neutral" size="sm"
           onClick={onConfirm}
           disabled={pending}>
-          {pending ? '生成计划中…' : '确认'}
+          {pending ? t('requirement.approve.generating') : t('requirement.approve.confirm')}
         </Button>
       </div>
     </Modal>
@@ -664,22 +732,26 @@ function DeleteDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   return (
-    <Modal onClose={onCancel} title="删除需求">
-      <h2 className="text-sm font-semibold text-slate-900">删除需求</h2>
+    <Modal onClose={onCancel} title={t('requirement.delete.one.title')}>
+      <h2 className="text-sm font-semibold text-slate-900">
+        {t('requirement.delete.one.title')}
+      </h2>
       <p className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
         {title}
       </p>
       <p className="mt-2 text-xs text-slate-500">
-        记录连同它的澄清项与假设一并删除，<span className="text-red-600">无法恢复</span>。
-        如果这条需求是「不成立」而不是「录错了」，请改用驳回 —— 那会留下结论和原因。
+        {t('requirement.delete.warning')}{' '}
+        <span className="text-red-600">{t('requirement.delete.irreversible')}</span>{' '}
+        {t('requirement.delete.notRejection')}
       </p>
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="destructive" size="sm" onClick={onConfirm} disabled={pending}>
-          {pending ? '删除中…' : '确认删除'}
+          {pending ? t('common.deleting') : t('requirement.delete.confirm')}
         </Button>
       </div>
     </Modal>
@@ -696,11 +768,12 @@ function RejectDialog({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
+  const t = useT();
   return (
-    <Modal onClose={onCancel} title="驳回需求">
-      <h2 className="text-sm font-semibold text-slate-900">驳回需求</h2>
+    <Modal onClose={onCancel} title={t('requirement.reject.title')}>
+      <h2 className="text-sm font-semibold text-slate-900">{t('requirement.reject.title')}</h2>
       {/* ★ 必填原因：提出人要知道为什么，否则只会原样再提一遍 */}
-      <p className="mt-1 text-xs text-slate-500">原因会通知提出人，请写清楚问题在哪</p>
+      <p className="mt-1 text-xs text-slate-500">{t('requirement.reject.help')}</p>
       <Textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
@@ -709,12 +782,12 @@ function RejectDialog({
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
           disabled={!reason.trim() || pending}>
-          确认驳回
+          {t('requirement.reject.confirm')}
         </Button>
       </div>
     </Modal>

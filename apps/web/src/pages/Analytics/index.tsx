@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -7,6 +8,7 @@ import {
   ANALYTICS_TABS,
   type AnalyticsRange,
   type AnalyticsTab,
+  type Insight,
   type InsightAction,
 } from '@apos/domain';
 import { api } from '../../lib/api/client';
@@ -23,28 +25,38 @@ import { CostTab } from './CostTab';
 import { QualityTab } from './QualityTab';
 import { BenefitTab } from './BenefitTab';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
-const RANGE_LABELS: Record<AnalyticsRange, string> = {
-  '7d': '近 7 天',
-  '30d': '近 30 天',
-  '90d': '近 90 天',
+const RANGE_KEYS: Record<AnalyticsRange, MessageKey> = {
+  '7d': 'analytics.last7d',
+  '30d': 'analytics.last30d',
+  '90d': 'analytics.last90d',
 };
 
-const TAB_LABELS: Record<AnalyticsTab, string> = {
+/** ★ 前三个是专有名词，两种语言一样；后三个走词条 */
+const TAB_LITERALS: Partial<Record<AnalyticsTab, string>> = {
   flow: 'Flow',
   agent: 'Agent',
   hitl: 'Human-in-the-Loop',
-  cost: '成本',
-  quality: '质量',
-  benefit: '成本效益',
 };
+
+const TAB_KEYS: Partial<Record<AnalyticsTab, MessageKey>> = {
+  cost: 'analytics.tab.cost',
+  quality: 'analytics.tab.quality',
+  benefit: 'analytics.tab.costBenefit',
+};
+
+function tabLabel(tab: AnalyticsTab, tr: (k: MessageKey) => string): string {
+  const key = TAB_KEYS[tab];
+  return key ? tr(key) : (TAB_LITERALS[tab] ?? tab);
+}
 
 type Drill = 'rework' | 'wip' | 'slow';
 
-const DRILL_TITLES: Record<Drill, string> = {
-  rework: '返工过的任务',
-  wip: '在制任务',
-  slow: '耗时最长的任务',
+const DRILL_KEYS: Record<Drill, MessageKey> = {
+  rework: 'analytics.reworked',
+  wip: 'analytics.inProgress',
+  slow: 'analytics.slowest',
 };
 
 /**
@@ -56,6 +68,7 @@ const DRILL_TITLES: Record<Drill, string> = {
  *   下面四个 Tab 是论据。用户可以只看结论就走。
  */
 export function AnalyticsPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -93,7 +106,11 @@ export function AnalyticsPage() {
     setParams(next, { replace: true });
   };
 
-  const handleAction = (action: InsightAction) => {
+  /**
+   * ★ `insight` 可选：HitlTab 那条「按建议建规则」的入口只发 create_policy，
+   *   手上没有 Insight。只有 view_items 会读它。
+   */
+  const handleAction = (action: InsightAction, insight?: Insight) => {
     switch (action.kind) {
       case 'view_tab':
         if (action.tab) setParam('tab', action.tab);
@@ -108,7 +125,17 @@ export function AnalyticsPage() {
         setParam('tab', 'hitl');
         break;
       case 'view_items':
-        setDrill(action.label.includes('返工') ? 'rework' : 'wip');
+        /**
+         * ★★ 按 insight.type 分流，不能拿 label 去匹配文字。
+         *
+         *   label 是**服务端**生成的中文句子（「看返工的任务」），而这里能拿到的
+         *   只有译文 —— 英文（默认语言）下两边永远对不上，于是返工的下钻
+         *   会静默落到在制品那一栏。这类 bug 不报错，只是给错答案。
+         *
+         *   type 是枚举，跟语言无关。同一条纪律：跨语言的判定要落在结构上，
+         *   不落在句子上。
+         */
+        setDrill(insight?.type === 'rework_high' ? 'rework' : 'wip');
         break;
       case 'create_policy':
         // ★ 「分析 → 规则」是产品持续降低人类负担的飞轮。
@@ -130,58 +157,58 @@ export function AnalyticsPage() {
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold text-slate-900">
-            {data?.project.name ?? '项目'} / Analytics
+            {data?.project.name ?? t('policy.scope.project')} / Analytics
           </h1>
           <Link
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
 
           <select
             value={range}
             onChange={(e) => setParam('range', e.target.value)}
             className="ml-2 rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label="时间范围"
+            aria-label={t('analytics.timeRange')}
           >
             {ANALYTICS_RANGES.map((r) => (
               <option key={r} value={r}>
-                {RANGE_LABELS[r]}
+                {t(RANGE_KEYS[r])}
               </option>
             ))}
           </select>
 
           {/* ★ 默认开启：绝对值不重要，趋势才重要（页面文档 §5.8） */}
           <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
-            <input
-              type="checkbox"
+            <Checkbox
+              tone="neutral"
               checked={compare}
-              onChange={(e) => setParam('compare', String(e.target.checked))}
-              className="h-3.5 w-3.5 accent-slate-900"
+              onCheckedChange={(v) => setParam('compare', String(v))}
             />
-            对比上一周期
+            {t('analytics.comparePrevious')}
           </label>
 
           {data && (
             <span className="ml-auto text-[11px] text-slate-400">
-              数据实时计算 · {relativeTime(data.generatedAt)}
+              {t('analytics.computedLive', { time: relativeTime(data.generatedAt) })}
             </span>
           )}
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {ANALYTICS_TABS.map((t) => (
+          {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+          {ANALYTICS_TABS.map((key) => (
             <button
-              key={t}
+              key={key}
               type="button"
-              onClick={() => setParam('tab', t)}
+              onClick={() => setParam('tab', key)}
               className={clsx(
                 'rounded px-2 py-0.5 text-xs',
-                tab === t ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
+                tab === key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
-              {TAB_LABELS[t]}
+              {tabLabel(key, t)}
             </button>
           ))}
         </div>
@@ -209,15 +236,17 @@ export function AnalyticsPage() {
             */}
             {data.confidence.level === 'low' && (
               <p className="rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-                数据积累中：近 {data.confidence.days} 天完成 {data.confidence.completed} 项，
-                还需约 {Math.max(0, data.confidence.needed - data.confidence.completed)} 项
-                才能产出可靠分析。以下数字仅供参考，不建议据此下强结论。
+                {t('analytics.lowConfidence', {
+                  days: data.confidence.days,
+                  completed: data.confidence.completed,
+                  needed: Math.max(0, data.confidence.needed - data.confidence.completed),
+                })}
               </p>
             )}
 
             {!compare && (
               <p className="text-[11px] text-slate-400">
-                已关闭环比。首个周期或数据不足时，绝对值参考价值有限
+                {t('analytics.compareOff')}
               </p>
             )}
 
@@ -250,19 +279,19 @@ export function AnalyticsPage() {
       {drill && (
         <aside className="fixed inset-y-0 right-0 z-40 flex w-[28rem] max-w-full flex-col border-l border-slate-200 bg-white shadow-xl">
           <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-            <h2 className="text-sm font-medium text-slate-800">{DRILL_TITLES[drill]}</h2>
+            <h2 className="text-sm font-medium text-slate-800">{t(DRILL_KEYS[drill])}</h2>
             <button
               type="button"
               onClick={() => setDrill(null)}
               className="text-xs text-slate-500 hover:text-slate-800"
             >
-              关闭
+              {t('common.close')}
             </button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {drillItems.isPending && <CardSkeleton />}
             {drillItems.data?.items.length === 0 && (
-              <EmptyState icon="✓" message="没有符合条件的任务" />
+              <EmptyState icon="✓" message={t('analytics.noMatching')} />
             )}
             <ul className="space-y-1">
               {drillItems.data?.items.map((item) => (
@@ -273,7 +302,7 @@ export function AnalyticsPage() {
                     <span className="block truncate text-slate-800">{item.title}</span>
                     <span className="mt-0.5 block text-[11px] text-slate-500">
                       {statusLabel(item.status)} · {riskLabel(item.riskLevel)}
-                      {item.elapsedHours !== null && ` · 耗时 ${item.elapsedHours}h`}
+                      {item.elapsedHours !== null && t('analytics.elapsed', { hours: item.elapsedHours })}
                     </span>
                   </Button>
                 </li>
@@ -287,7 +316,7 @@ export function AnalyticsPage() {
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
           {toast}
           <button type="button" className="ml-2 underline" onClick={() => setToast(null)}>
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

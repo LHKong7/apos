@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +8,7 @@ import { qk } from '../../lib/query/keys';
 import { duration, riskLabel } from '../../lib/format';
 import type { DecisionCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /**
@@ -29,6 +31,7 @@ export function DecisionCardView({
   /** 整个队列一条都不能批量时就不留这一列 —— 一排空占位比没有更碍眼 */
   showSelectColumn: boolean;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const [mode, setMode] = useState<null | 'approve' | 'reject'>(null);
   const [note, setNote] = useState('');
@@ -66,17 +69,15 @@ export function DecisionCardView({
         {showSelectColumn && (
           <div className="w-4 shrink-0 pt-0.5">
             {onSelect ? (
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected}
-                onChange={(e) => onSelect(e.target.checked)}
-                aria-label={`选择「${card.title}」`}
-                className="h-3.5 w-3.5"
+                onCheckedChange={onSelect}
+                aria-label={t('decision.selectOne', { title: card.title })}
               />
             ) : (
               <span
                 className="cursor-help text-[11px] text-slate-400"
-                title="不可逆或高风险，必须逐条确认"
+                title={t('decision.gateHint')}
                 aria-hidden
               >
                 ·
@@ -101,11 +102,11 @@ export function DecisionCardView({
             >
               {riskLabel(card.riskLevel)}
             </span>
-            {!card.reversible && <span className="text-[11px] text-red-700">不可逆</span>}
+            {!card.reversible && <span className="text-[11px] text-red-700">{t('decision.irreversible')}</span>}
             {/* ★ 时限是这一页的主排序依据，所以它必须一眼可见 */}
             {overdue ? (
               <span className="text-[11px] font-medium text-red-700">
-                ⏰ 超时 {duration(card.overdueMinutes)}
+                {t('decision.overdueBy', { time: duration(card.overdueMinutes) })}
               </span>
             ) : card.dueInMinutes !== null ? (
               <span
@@ -114,13 +115,13 @@ export function DecisionCardView({
                   card.dueInMinutes <= 240 ? 'text-amber-700' : 'text-slate-500',
                 )}
               >
-                ⏰ {duration(card.dueInMinutes)} 内
+                {t('decision.dueWithin', { time: duration(card.dueInMinutes) })}
               </span>
             ) : (
-              <span className="text-[11px] text-slate-400">无时限</span>
+              <span className="text-[11px] text-slate-400">{t('decision.noDeadline')}</span>
             )}
             <span className="text-[11px] text-slate-400">
-              已等 {duration(card.waitingMinutes)}
+              {t('decision.waited', { time: duration(card.waitingMinutes) })}
             </span>
           </div>
 
@@ -144,21 +145,21 @@ export function DecisionCardView({
                   to={`/runs/${card.runId}`}
                   className="underline-offset-2 hover:underline"
                 >
-                  执行记录
+                  {t('decision.runRecord')}
                 </Link>
               </>
             )}
-            {card.assigneeName && <> · 责任人 {card.assigneeName}</>}
+            {card.assigneeName && <>{t('decision.assignee', { name: card.assigneeName })}</>}
           </p>
 
           {/* 为什么需要人 —— 指明触发的规则，而不是「系统要求」 */}
           <p className="mt-1 text-xs text-slate-700">{card.whyHuman}</p>
           {card.consequence && (
-            <p className="mt-0.5 text-xs text-amber-800">不处理：{card.consequence}</p>
+            <p className="mt-0.5 text-xs text-amber-800">{t('decision.consequence', { consequence: card.consequence })}</p>
           )}
           {card.agentSelfReport && (
             <p className="mt-0.5 text-[11px] text-slate-500">
-              Agent 自述：{card.agentSelfReport}
+              {t('itemDrawer.agentSelfReport', { report: card.agentSelfReport })}
             </p>
           )}
 
@@ -176,18 +177,18 @@ export function DecisionCardView({
                     <span className="text-slate-800">{o.name}</span>
                     {o.isRecommended && (
                       <span className="ml-1 rounded bg-emerald-600 px-1 text-[10px] text-white">
-                        Agent 倾向
+                        {t('decision.agentPrefers')}
                       </span>
                     )}
                   </p>
                   {o.description && <p className="text-[11px] text-slate-600">{o.description}</p>}
                   {o.rationale && (
-                    <p className="text-[11px] text-emerald-800">理由：{o.rationale}</p>
+                    <p className="text-[11px] text-emerald-800">{t('decision.rationale', { rationale: o.rationale })}</p>
                   )}
                   {/* ★ 不确定性和理由一样重要：只给理由的建议看起来永远是对的 */}
                   {o.uncertainties.length > 0 && (
                     <p className="text-[11px] text-amber-700">
-                      不确定：{o.uncertainties.join('；')}
+                      {t('decision.uncertainties', { list: o.uncertainties.join('；') })}
                     </p>
                   )}
                 </li>
@@ -198,11 +199,11 @@ export function DecisionCardView({
           {/* ── 就地处理 ── */}
           {approve.isSuccess || reject.isSuccess ? (
             <p className="mt-1 text-xs text-slate-500">
-              已{approve.isSuccess ? '批准' : '驳回'}
+              {approve.isSuccess ? t('decision.approved') : t('decision.rejected')}
             </p>
           ) : !card.canAct ? (
             <p className="mt-1 text-[11px] text-amber-800">
-              责任人是 {card.assigneeName ?? '他人'}，决策责任不可代行 —— 你只能查看
+              {t('decision.cannotDelegate', { name: card.assigneeName ?? t('decision.others') })}
             </p>
           ) : mode === null ? (
             <div className="mt-1.5 flex gap-1.5">
@@ -211,11 +212,11 @@ export function DecisionCardView({
                 onClick={() => setMode('approve')}
                 className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700"
               >
-                批准
+                {t('decDrawer.approve')}
               </button>
               <Button variant="outline" size="sm"
                 onClick={() => setMode('reject')}>
-                驳回
+                {t('decDrawer.reject')}
               </Button>
             </div>
           ) : mode === 'approve' ? (
@@ -224,7 +225,7 @@ export function DecisionCardView({
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="备注（可选）" />
+                placeholder={t('decision.noteOptional')} />
               <div className="flex gap-1.5">
                 <button
                   type="button"
@@ -232,14 +233,14 @@ export function DecisionCardView({
                   onClick={() => approve.mutate()}
                   className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700 disabled:opacity-40"
                 >
-                  {approve.isPending ? '提交中…' : '确认批准'}
+                  {approve.isPending ? t('decision.submitting') : t('decision.confirmApprove')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setMode(null)}
                   className="text-xs text-slate-500 hover:text-slate-700"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
@@ -251,19 +252,19 @@ export function DecisionCardView({
                 type="text"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="驳回原因（必填）" />
+                placeholder={t('decision.rejectReason')} />
               <div className="flex gap-1.5">
                 <Button variant="destructive" size="sm"
                   disabled={!reason.trim() || reject.isPending}
                   onClick={() => reject.mutate()}>
-                  {reject.isPending ? '提交中…' : '确认驳回（任务将被取消）'}
+                  {reject.isPending ? t('decision.submitting') : t('decision.confirmReject')}
                 </Button>
                 <button
                   type="button"
                   onClick={() => setMode(null)}
                   className="text-xs text-slate-500 hover:text-slate-700"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
@@ -271,7 +272,7 @@ export function DecisionCardView({
 
           {error && (
             <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-              {error instanceof ApiError ? error.message : '操作失败'}
+              {error instanceof ApiError ? error.message : t('decision.actionFailed')}
             </p>
           )}
         </div>

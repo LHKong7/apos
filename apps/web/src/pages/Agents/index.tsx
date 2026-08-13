@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -14,6 +15,7 @@ import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
  *   跟看一个团队的工作情况一样，而不是看一堆进程的健康检查。
  */
 export function AgentListPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
 
   const list = useQuery({
@@ -25,20 +27,22 @@ export function AgentListPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">Agent 团队</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('agents.title')}</h1>
           {projectId && (
             <Link
               to={`/projects/${projectId}`}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              ← 项目总览
+              {t('agents.backToOverview')}
             </Link>
           )}
         </div>
         {list.data && list.data.agents.length > 0 && (
           <p className="mt-1 text-[11px] text-slate-500">
-            近 30 天总成本 {money(String(list.data.totals.cost))} · 执行 {list.data.totals.runs} 次 ·
-            平均成功率{' '}
+            {t('agents.totals30d', {
+              cost: money(String(list.data.totals.cost)),
+              runs: list.data.totals.runs,
+            })}{' '}
             {list.data.totals.successRate === null
               ? '—'
               : `${Math.round(list.data.totals.successRate * 100)}%`}
@@ -51,7 +55,7 @@ export function AgentListPage() {
           {list.isPending && <CardSkeleton />}
           {list.isError && <ErrorState error={list.error} onRetry={() => void list.refetch()} />}
           {list.data && list.data.agents.length === 0 && (
-            <EmptyState icon="🤖" message="还没有注册任何 Agent" />
+            <EmptyState icon="🤖" message={t('agents.empty')} />
           )}
 
           {list.data && list.data.agents.length > 0 && (
@@ -59,20 +63,20 @@ export function AgentListPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-[11px] text-slate-500">
-                    <th className="px-3 py-1.5 font-medium">名称</th>
-                    <th className="px-2 py-1.5 font-medium">类型</th>
-                    <th className="px-2 py-1.5 font-medium">状态</th>
-                    <th className="px-2 py-1.5 text-right font-medium">负载</th>
-                    <th className="px-2 py-1.5 text-right font-medium">执行</th>
-                    <th className="px-2 py-1.5 text-right font-medium">成功率</th>
-                    <th className="px-2 py-1.5 text-right font-medium" title="只看第一次尝试">
-                      首次成功
+                    <th className="px-3 py-1.5 font-medium">{t('agents.col.name')}</th>
+                    <th className="px-2 py-1.5 font-medium">{t('agents.col.type')}</th>
+                    <th className="px-2 py-1.5 font-medium">{t('agents.col.status')}</th>
+                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.load')}</th>
+                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.runs')}</th>
+                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.successRate')}</th>
+                    <th className="px-2 py-1.5 text-right font-medium" title={t('agentTab.firstTryOnly')}>
+                      {t('agents.col.firstTry')}
                     </th>
-                    <th className="px-2 py-1.5 text-right font-medium" title="任务被人手动改过状态的比例">
-                      人工覆盖
+                    <th className="px-2 py-1.5 text-right font-medium" title={t('agentTab.overrideHelp')}>
+                      {t('agents.col.override')}
                     </th>
-                    <th className="px-2 py-1.5 text-right font-medium">成本</th>
-                    <th className="px-3 py-1.5 font-medium">负责人</th>
+                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.cost')}</th>
+                    <th className="px-3 py-1.5 font-medium">{t('agents.col.owner')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -99,7 +103,7 @@ export function AgentListPage() {
                           )}
                           title={a.pausedReason ?? undefined}
                         >
-                          ● {a.status === 'paused' ? '已暂停' : '正常'}
+                          ● {a.status === 'paused' ? t('agents.paused') : t('agents.normal')}
                         </span>
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">

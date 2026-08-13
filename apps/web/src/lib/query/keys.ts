@@ -44,6 +44,7 @@ export const qk = {
   runtimes: () => ['runtimes'] as const,
   adminAgents: () => ['adminAgents'] as const,
   repositories: (projectId?: string) => ['repositories', projectId ?? 'all'] as const,
+  storageTargets: (projectId?: string) => ['storageTargets', projectId ?? 'all'] as const,
   conventions: (projectId: string) => ['conventions', projectId] as const,
   integrations: (projectId: string) => ['integrations', projectId] as const,
   syncConflicts: (projectId: string) => ['syncConflicts', projectId] as const,
@@ -63,6 +64,12 @@ export const qk = {
   analyticsItems: (projectId: string, kind: string, range: string) =>
     ['analyticsItems', projectId, kind, range] as const,
   workItem: (id: string) => ['workItem', id] as const,
+  workItemCandidates: (id: string) => ['workItem', id, 'candidates'] as const,
+  projectAgents: (projectId: string) => ['project', projectId, 'agents'] as const,
+  requirementRuns: (id: string) => ['requirement', id, 'runs'] as const,
+  artifactFiles: (artifactId: string) => ['artifact', artifactId, 'files'] as const,
+  artifactFile: (artifactId: string, path: string) =>
+    ['artifact', artifactId, 'file', path] as const,
   decisions: (scope: string) => ['decisions', scope] as const,
   decisionsAll: () => ['decisions'] as const,
   decision: (id: string) => ['decision', id] as const,
@@ -79,5 +86,7 @@ function normalizeFilters(f: BoardFilters) {
     executorType: f.executorType ?? '',
     humanGate: f.humanGate ?? false,
     blocked: f.blocked ?? false,
+    // ★ 漏一项的表现是「两组不同筛选共用一份缓存」—— 切换筛选界面不动
+    unclaimed: f.unclaimed ?? false,
   };
 }

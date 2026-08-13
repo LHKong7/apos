@@ -620,6 +620,20 @@ export const repositories = pgTable(
     checkCommand: text(),
     checkTimeoutSeconds: integer().notNull().default(900),
 
+    /**
+     * 产出交货到哪个存储目标。为空 = 按主挂载的种类推断（git 就推分支）。
+     *
+     * ★★ 这一列兑现的是抽象里「两头独立可选」那半边：铺料与交货本来就
+     *   不该 1:1 绑定，而在它出现之前，交货后端**只能**由主挂载的种类决定
+     *   （见 modules/workspace 的 publisherFor）。于是「从 Git 拉代码、
+     *   把生成的报告传对象存储」这种最常见的组合表达不了 ——
+     *   而那正是 docs/tech/11 §2 用来说明这个设计的例子。
+     *
+     * ★ 指向 storage_targets 而不是自由填一个 URL：交货要用凭证，
+     *   而凭证只以引用入库、只在登记表里。填 URL 就得在这一行再存一份凭证。
+     */
+    deliveryTargetId: uuid(),
+
     status: text().notNull().default('active'),
     createdBy: uuid().notNull().references(() => users.id),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
@@ -687,6 +701,15 @@ export const storageTargets = pgTable(
 
     /** 只读挂载时为 false —— 交货阶段据此拒绝写回 */
     writable: boolean().notNull().default(false),
+
+    /**
+     * 产出交货到哪个存储目标。为空 = 写回自己（sync 语义）。
+     *
+     * ★ 与 repositories 上那一列同义。指向别处时语义变成**投递**
+     *   （deliver）：只上传变更集里新增/修改的文件，落在 `{前缀}{runId}/` 下，
+     *   **不删除**目标里的任何东西 —— 那些 key 跟本次变更集毫无关系。
+     */
+    deliveryTargetId: uuid(),
 
     status: text().notNull().default('active'),
     createdBy: uuid().notNull().references(() => users.id),
@@ -804,6 +827,69 @@ export const agents = pgTable(
   (t) => [index('agents_org_status_idx').on(t.orgId, t.status)],
 );
 
+/**
+ * 项目 Agent 绑定 —— 「这个项目的规划 / 协调 / 评审交给哪个 Agent」。
+ *
+ * ★★ 这张表补的是「Project Agent 到底是谁」这个一直没有答案的问题。
+ *
+ *   在它出现之前，规划 Agent 是**现算出来的**：从组织里找第一个
+ *   `status='active'` 且 applicableTypes 含 requirement 的 Agent
+ *   （见 modules/planning/agent-provider.ts 的 pickAgent）。三个后果：
+ *   用户指定不了；换一个 Agent 的唯一办法是改另一个 Agent 的配置或
+ *   建号顺序；而且它压根不看项目成员关系 —— 组织里任何一个 Agent
+ *   都可能被拉来读这个项目的需求。
+ *
+ * ★ 绑的是**已配置好的 Agent**，不是运行时。选 Claude Code 还是 Codex
+ *   是 AgentDefinition 那一层的事，到这一层只剩「哪个 Agent 干这个角色」。
+ *   这条分层是这次拆分的要点：配置身份与分派角色不该在同一个下拉框里。
+ *
+ * ★ (project_id, role) 唯一：一个角色同一时刻只有一个主 Agent。
+ *   fallback / 多 Agent 优先级是后话（P2），先把「是谁」定下来。
+ */
+export const projectAgentBindings = pgTable(
+  'project_agent_bindings',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    projectId: uuid().notNull().references(() => projects.id),
+    /** planner / coordinator / reviewer */
+    role: text().notNull(),
+    agentId: uuid().notNull().references(() => agents.id),
+    /**
+     * 同一角色内的优先级，0 是主 Agent，往后是备选。
+     *
+     * ★★ 只有主 Agent 时，绑定的 Agent 一停用，整个项目的规划就断了 ——
+     *   而唯一的补救是管理员去改绑定。备选让它能自己往下退一格。
+     *
+     * ★ 显式一列而不是靠 created_at 排：靠时间排的话，「换一下优先级」
+     *   要靠删了重建，而那会丢掉 createdBy 与 createdAt 这两条问责线索。
+     */
+    priority: integer().notNull().default(0),
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    /**
+     * ★ 唯一性从 (project, role) 放宽到 (project, role, priority)：
+     *   一个角色可以有主 + 备选，但同一优先级只能有一个 ——
+     *   否则「谁是主」在两条 priority=0 的记录之间无从判定。
+     */
+    uniqueIndex('project_agent_bindings_project_role_idx').on(t.projectId, t.role, t.priority),
+    /** ★ 同一个 Agent 不该在同一角色里占两格 */
+    uniqueIndex('project_agent_bindings_project_role_agent_idx').on(
+      t.projectId,
+      t.role,
+      t.agentId,
+    ),
+    index('project_agent_bindings_agent_idx').on(t.agentId),
+    check(
+      'project_agent_bindings_role_check',
+      sql`${t.role} in ('planner', 'coordinator', 'reviewer')`,
+    ),
+  ],
+);
+
 export const agentPermissionChanges = pgTable('agent_permission_changes', {
   id: uuid().primaryKey().defaultRandom(),
   agentId: uuid().notNull().references(() => agents.id),
@@ -821,8 +907,42 @@ export const agentRuns = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     orgId: uuid().notNull(),
     projectId: uuid().notNull(),
-    workItemId: uuid().notNull().references(() => workItems.id),
+    /**
+     * ★★ 可空，因为规划 Run 发生在工作项**存在之前**。
+     *
+     *   在此之前这一列是 NOT NULL，于是规划（需求结构化、生成计划）根本
+     *   进不了这张表 —— AgentPlanningProvider 只好自己开工作区、自己收事件、
+     *   自己管超时，代价写在那个类的文档里：不出现在 Run 详情页与 Agent 视图、
+     *   supervisor / recovery 管不着、成本不进统计。
+     *   也就是说，产品里最贵、最影响后续所有产出的那次 Agent 调用，
+     *   是唯一一次没有留痕的调用。
+     *
+     *   放开它不影响既有查询：那 8 处消费点全是
+     *   `where work_item_id = <某个真实 id>`，NULL 行永远不匹配 ——
+     *   规划 Run 因此不会串进看板、执行图与工作项的 Run 列表里。
+     */
+    workItemId: uuid().references(() => workItems.id),
     agentId: uuid().notNull().references(() => agents.id),
+    /**
+     * 这次 Run 是干什么的。
+     *
+     * ★ 显式一列，而不是靠「workItemId 为空就是规划」去推。
+     *   推断出来的分类在查询里读不出意图，加第三种用途（比如评审）时
+     *   还要再发明一条隐含规则。
+     */
+    kind: text().notNull().default('execution'),
+    /**
+     * 规划 Run 是给哪条需求做的。
+     *
+     * ★★ 没有它，规划 Run 就是一批查得到却**找不回来**的记录：
+     *   agent_runs 里躺着一条 kind='planning'，而需求页上没有任何入口
+     *   指向它 —— 用户想看「刚才那次分析到底做了什么」无从下手。
+     *
+     * ★ 执行 Run 不用它（它们靠 work_item_id 找回去）；只在 kind='planning'
+     *   时有值。不加 check 约束是因为历史规划 Run（这一列出现之前的）
+     *   本来就没有，卡死会让它们变成不合法的行。
+     */
+    requirementId: uuid().references(() => requirements.id),
     attempt: integer().notNull().default(1),
     previousRunId: uuid(),
 
@@ -936,6 +1056,23 @@ export const agentRuns = pgTable(
     index('agent_runs_heartbeat_idx').on(t.status, t.lastHeartbeatAt),
     index('agent_runs_item_idx').on(t.workItemId, t.attempt),
     index('agent_runs_agent_idx').on(t.agentId, t.createdAt),
+    /** 规划 Run 列表按项目查（需求页的「历次分析」） */
+    index('agent_runs_kind_idx').on(t.kind, t.projectId, t.createdAt),
+    /** 需求页的「历次分析」按这个查 */
+    index('agent_runs_requirement_idx').on(t.requirementId, t.createdAt),
+    check('agent_runs_kind_check', sql`${t.kind} in ('execution', 'planning')`),
+    /**
+     * ★★ 执行 Run 必须有工作项，规划 Run 必须没有。
+     *
+     *   放开 NOT NULL 之后，「执行 Run 的 work_item_id 为空」会静默地
+     *   变成一种可能 —— 而那种行不会出现在任何按工作项查的界面上，
+     *   等于凭空消失。库里卡住比事后查为什么少了一条便宜得多。
+     */
+    check(
+      'agent_runs_shape_check',
+      sql`(${t.kind} = 'execution' and ${t.workItemId} is not null)
+          or (${t.kind} = 'planning' and ${t.workItemId} is null)`,
+    ),
   ],
 );
 

@@ -46,6 +46,12 @@ export async function runRecoveryRound(
     .where(
       and(
         inArray(agentRuns.status, ['failed', 'timeout']),
+        /**
+         * ★ 恢复策略全部围绕工作项展开（改派、转人工、升级为决策），
+         *   规划 Run 没有工作项，一条都不适用。此前是靠下面那句
+         *   `if (!item) continue` 意外挡住的 —— 现在写明白。
+         */
+        eq(agentRuns.kind, 'execution'),
         isNull(agentRuns.recoveryAppliedAt),
         // 退避未到点的先放着
         or(isNull(agentRuns.recoveryNotBefore), lte(agentRuns.recoveryNotBefore, now)),
@@ -66,6 +72,8 @@ export async function runRecoveryRound(
       .returning({ id: agentRuns.id });
     if (claimed.length === 0) continue;
 
+    // ★ 上面已按 kind='execution' 过滤，workItemId 必然非空
+    if (!run.workItemId) continue;
     const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
     if (!item) continue;
 

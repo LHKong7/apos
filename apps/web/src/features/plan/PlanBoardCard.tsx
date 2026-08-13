@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
 import { duration } from '../../lib/format';
@@ -28,6 +29,7 @@ function waitingTone(minutes: number): string {
  *   会开始处理一个永远不成立的形态。
  */
 export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan: PlanCard) => void }) {
+  const t = useT();
   return (
     <article
       onClick={() => onOpen(plan)}
@@ -70,7 +72,7 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
               「批下去会发生什么」，而那正是批准前唯一要判断的事。
           */}
           <span className="truncate">
-            <span className="font-medium text-slate-700">+{plan.taskCount} 任务</span>
+            <span className="font-medium text-slate-700">{t('planCard.taskCount', { count: plan.taskCount })}</span>
             {plan.estimatedHours && (
               <span className="ml-1.5 tabular-nums">{Number(plan.estimatedHours)}h</span>
             )}
@@ -85,7 +87,7 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
           */}
           <span
             className={clsx('shrink-0 whitespace-nowrap tabular-nums', waitingTone(plan.waitingMinutes))}
-            title="已等待批准的时长"
+            title={t('planCard.waitTime')}
           >
             ⏳ {duration(plan.waitingMinutes)}
           </span>
@@ -95,7 +97,7 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
           {plan.approver ? (
             <AssigneeChip actor={{ type: 'human', ...plan.approver }} size="sm" />
           ) : (
-            <span className="text-[11px] text-slate-400">无技术负责人</span>
+            <span className="text-[11px] text-slate-400">{t('planCard.noTechLead')}</span>
           )}
           <Button variant="gate" size="xs"
             onClick={(e) => {
@@ -103,7 +105,7 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
               onOpen(plan);
             }}
             className="shrink-0 hover:brightness-110">
-            处理 →
+            {t('card.handle')}
           </Button>
         </div>
       </div>

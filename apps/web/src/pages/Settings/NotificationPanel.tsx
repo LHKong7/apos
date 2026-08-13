@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -9,12 +10,13 @@ import type {
   NotificationConfigRow,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
-const ESCALATE_LABELS: Record<string, string> = {
-  assignee: '提醒责任人',
-  project_owner: '提醒项目负责人',
-  manager: '提醒上级',
+const ESCALATE_KEYS: Record<string, MessageKey> = {
+  assignee: 'notify.remindOwner',
+  project_owner: 'notify.remindLead',
+  manager: 'notify.remindManager',
 };
 
 /**
@@ -37,6 +39,7 @@ export function NotificationPanel({
   projectId: string;
   canEdit: boolean;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const saved = integration.notificationConfig!;
   const [draft, setDraft] = useState<NotificationConfigRow | null>(null);
@@ -63,8 +66,8 @@ export function NotificationPanel({
   return (
     <div className="border-t border-slate-100 px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="text-xs font-medium text-slate-700">发送什么</h3>
-        <span className="text-[11px] text-slate-400">默认只发「需要行动」的事</span>
+        <h3 className="text-xs font-medium text-slate-700">{t('notify.whatToSend')}</h3>
+        <span className="text-[11px] text-slate-400">{t('notify.actionableOnly')}</span>
       </div>
 
       <div className="mt-1 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -76,15 +79,13 @@ export function NotificationPanel({
               e.noisy ? 'text-slate-500' : 'text-slate-700',
             )}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               disabled={!canEdit}
               checked={config.events.includes(e.key)}
-              onChange={() => toggle(e.key)}
-              className="h-3 w-3"
+              onCheckedChange={() => toggle(e.key)}
             />
             {e.label}
-            {e.noisy && <span className="text-slate-400">← 默认关</span>}
+            {e.noisy && <span className="text-slate-400">{t('notify.offByDefault')}</span>}
           </label>
         ))}
       </div>
@@ -95,15 +96,13 @@ export function NotificationPanel({
        */}
       {noisyOn.length > 0 && (
         <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-          你打开了「{noisyOn.map((e) => e.label).join('、')}
-          」。这类通知量大，历史上打开它的团队多数会在几天内把整个机器人屏蔽掉 ——
-          之后连需要决策的提醒也收不到
+          {t('notify.noisyWarning', { events: noisyOn.map((e) => e.label).join('、') })}
         </p>
       )}
 
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
         <label className="flex items-center gap-1">
-          每日摘要
+          {t('notify.dailyDigest')}
           <Input
             type="time"
             disabled={!canEdit}
@@ -111,7 +110,7 @@ export function NotificationPanel({
             onChange={(e) => setDraft({ ...config, dailyDigestAt: e.target.value || null })} />
         </label>
         <label className="flex items-center gap-1">
-          免打扰
+          {t('notify.quietHours')}
           <Input
             type="time"
             disabled={!canEdit}
@@ -136,26 +135,28 @@ export function NotificationPanel({
         </label>
         {/* ★ 免打扰保护的是注意力，不是责任 —— 高风险决策必须能穿透 */}
         <label className="flex items-center gap-1">
-          <input
-            type="checkbox"
+          <Checkbox
             disabled={!canEdit}
             checked={config.quietHoursExceptHighRisk}
-            onChange={(e) => setDraft({ ...config, quietHoursExceptHighRisk: e.target.checked })}
-            className="h-3 w-3"
+            onCheckedChange={(v) => setDraft({ ...config, quietHoursExceptHighRisk: v })}
           />
-          高风险决策不受免打扰限制
+          {t('notify.highRiskExempt')}
         </label>
       </div>
 
       {/* 升级规则（产品文档十一）*/}
       <div className="mt-1.5">
-        <p className="text-[11px] text-slate-500">决策等太久时逐级找人</p>
+        <p className="text-[11px] text-slate-500">{t('notify.escalate')}</p>
         <ul className="mt-0.5 space-y-0.5">
           {config.escalation.map((e, i) => (
             <li key={i} className="text-[11px] text-slate-600">
-              · 等待 {e.afterHours} 小时 → {ESCALATE_LABELS[e.notify] ?? e.notify}
+              ·{' '}
+              {t('notify.escalateRule', {
+                hours: e.afterHours,
+                target: ESCALATE_KEYS[e.notify] ? t(ESCALATE_KEYS[e.notify]!) : e.notify,
+              })}
               {e.pauseCriticalPath && (
-                <span className="ml-1 text-amber-700">并暂停关键路径</span>
+                <span className="ml-1 text-amber-700">{t('notify.pauseCriticalPath')}</span>
               )}
             </li>
           ))}
@@ -170,9 +171,7 @@ export function NotificationPanel({
        *   变成谁点谁算，那比不做更糟。
        */}
       <p className="mt-1.5 text-[11px] text-slate-400">
-        通知里只放跳转链接，不放「直接批准」按钮：在第三方平台内确认
-        「点按钮的人真的是决策责任人」各平台机制都不同，做不到这一点的直接批准
-        会把不可代行的决策变成谁点谁算
+        {t('notify.linkOnlyNote')}
       </p>
 
       {canEdit ? (
@@ -181,26 +180,26 @@ export function NotificationPanel({
             <Button variant="neutral" size="xs"
               disabled={save.isPending}
               onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '保存通知配置'}
+              {save.isPending ? t('common.saving') : t('notify.save')}
             </Button>
             <button
               type="button"
               onClick={() => setDraft(null)}
               className="text-[11px] text-slate-500 hover:text-slate-700"
             >
-              撤销
+              {t('notify.revert')}
             </button>
           </div>
         )
       ) : (
         <p className="mt-1.5 text-[11px] text-slate-400">
-          群组通知配置需要 pm 权限；你自己的通知偏好在个人设置里
+          {t('notify.needPm')}
         </p>
       )}
 
       {save.error && (
         <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {save.error instanceof ApiError ? save.error.message : '保存失败'}
+          {save.error instanceof ApiError ? save.error.message : t('notify.saveFailed')}
         </p>
       )}
     </div>

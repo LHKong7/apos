@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -25,6 +26,7 @@ interface Props {
  * 3. Agent 给了哪些选项、倾向哪个、为什么
  */
 export function DecisionDrawer({ decisionId, onClose }: Props) {
+  const t = useT();
   const qc = useQueryClient();
   const currentUserId = useAuthStore((s) => s.userId);
 
@@ -77,7 +79,7 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
   const error = approve.error ?? reject.error;
 
   return (
-    <Drawer title="决策处理" onClose={onClose}>
+    <Drawer title={t('decDrawer.title')} onClose={onClose}>
       <QueryBoundary query={query}>
         {({ decision, options, workItem }) => {
           const due = deadline(decision.dueInMinutes);
@@ -105,28 +107,28 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                   )}
                 </div>
                 {workItem && (
-                  <p className="mt-1 text-xs text-slate-500">关联任务：{workItem.title}</p>
+                  <p className="mt-1 text-xs text-slate-500">{t('decDrawer.linkedItem', { title: workItem.title })}</p>
                 )}
               </div>
 
-              <Section title="为什么需要你">
+              <Section title={t('decDrawer.whyYou')}>
                 <p>{decision.whyHuman}</p>
               </Section>
 
               {decision.consequence && (
-                <Section title="不处理会怎样">
+                <Section title={t('decDrawer.ifIgnored')}>
                   <p className="text-amber-800">{decision.consequence}</p>
                 </Section>
               )}
 
               {decision.background && (
-                <Section title="背景">
+                <Section title={t('decDrawer.background')}>
                   <p className="whitespace-pre-wrap text-slate-600">{decision.background}</p>
                 </Section>
               )}
 
               {options.length > 0 && (
-                <Section title="Agent 给出的选项">
+                <Section title={t('decDrawer.agentOptions')}>
                   <ul className="space-y-2">
                     {options.map((o) => (
                       <li
@@ -142,7 +144,11 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                           <span className="font-medium text-slate-800">{o.name}</span>
                           {o.isRecommended && (
                             <span className="rounded bg-emerald-600 px-1 text-[10px] text-white">
-                              Agent 倾向 {o.confidence ? `${Math.round(Number(o.confidence) * 100)}%` : ''}
+                              {t('decision.agentLeans', {
+                                confidence: o.confidence
+                                  ? `${Math.round(Number(o.confidence) * 100)}%`
+                                  : '',
+                              })}
                             </span>
                           )}
                         </div>
@@ -151,11 +157,13 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                         )}
                         {typeof o.attributes['consequence'] === 'string' && (
                           <p className="mt-0.5 text-xs text-slate-500">
-                            后果：{o.attributes['consequence']}
+                            {t('decision.consequence', {
+                              consequence: String(o.attributes['consequence']),
+                            })}
                           </p>
                         )}
                         {o.rationale && (
-                          <p className="mt-0.5 text-xs text-emerald-800">理由：{o.rationale}</p>
+                          <p className="mt-0.5 text-xs text-emerald-800">{t('decision.rationale', { rationale: o.rationale })}</p>
                         )}
                       </li>
                     ))}
@@ -165,40 +173,40 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
 
               {resolved ? (
                 <p className="rounded bg-slate-100 px-3 py-2 text-xs text-slate-600">
-                  该决策已被处理（{decision.status}）
+                  {t('decDrawer.alreadyResolved', { status: decision.status })}
                 </p>
               ) : notMine ? (
                 <p className="rounded bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  该决策的责任人不是你。决策责任不可代行 —— 如需变更责任人，请使用改派。
+                  {t('decDrawer.notYours')}
                 </p>
               ) : (
                 <div className="space-y-3 border-t border-slate-200 pt-3">
                   <div className="flex gap-1">
                     <TabButton active={mode === 'approve'} onClick={() => setMode('approve')}>
-                      批准
+                      {t('decDrawer.approve')}
                     </TabButton>
                     <TabButton active={mode === 'reject'} onClick={() => setMode('reject')}>
-                      驳回
+                      {t('decDrawer.reject')}
                     </TabButton>
                   </div>
 
                   {mode === 'approve' ? (
                     <>
-                      <Field label="备注（可选）">
+                      <Field label={t('decDrawer.note')}>
                         <Textarea
                           value={note}
                           onChange={(e) => setNote(e.target.value)}
                           rows={2}
                         />
                       </Field>
-                      <Field label="附加执行约束（可选）">
+                      <Field label={t('decDrawer.constraint')}>
                         <Input
                           type="text"
                           value={constraint}
                           onChange={(e) => setConstraint(e.target.value)}
-                          placeholder="例如：只在业务低峰期执行" />
+                          placeholder={t('decDrawer.constraintPlaceholder')} />
                         <p className="mt-0.5 text-[11px] text-slate-400">
-                          约束会写入任务并下发给 Agent，执行时必须遵守
+                          {t('decDrawer.constraintNote')}
                         </p>
                       </Field>
                       <button
@@ -207,12 +215,12 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                         onClick={() => approve.mutate()}
                         className="w-full rounded bg-emerald-600 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
                       >
-                        {approve.isPending ? '提交中…' : '批准并继续执行'}
+                        {approve.isPending ? t('decision.submitting') : t('decDrawer.approveAndContinue')}
                       </button>
                     </>
                   ) : (
                     <>
-                      <Field label="驳回原因（必填）">
+                      <Field label={t('decDrawer.rejectReason')}>
                         <Textarea
                           value={rejectReason}
                           onChange={(e) => setRejectReason(e.target.value)}
@@ -223,14 +231,14 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                         disabled={!rejectReason.trim() || reject.isPending}
                         onClick={() => reject.mutate()}
                         className="w-full">
-                        {reject.isPending ? '提交中…' : '驳回（任务将被取消）'}
+                        {reject.isPending ? t('decision.submitting') : t('decDrawer.reject')}
                       </Button>
                     </>
                   )}
 
                   {error && (
                     <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
-                      {error instanceof ApiError ? error.message : '操作失败'}
+                      {error instanceof ApiError ? error.message : t('decision.actionFailed')}
                     </p>
                   )}
                 </div>

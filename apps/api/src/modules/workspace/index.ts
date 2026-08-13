@@ -2,6 +2,7 @@ import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { agentRuns, repositories, storageTargets, type Database } from '@apos/db';
+import { isPersisted } from '@apos/contracts';
 import {
   NO_CHECK,
   type AgentPermissions,
@@ -24,6 +25,7 @@ import {
   NonePublisher,
   ObjectStorageMaterializer,
   ObjectStoragePublisher,
+  isMountRootAllowed,
   runDir,
   runReleasePipeline,
   workspaceRoot,
@@ -74,6 +76,23 @@ export interface ReleaseResult {
 
 type StoredWorkspace = NonNullable<(typeof agentRuns.$inferSelect)['workspace']>;
 type StoredMount = NonNullable<StoredWorkspace['mounts']>[number];
+
+/**
+ * 允许挂载的宿主目录白名单。
+ *
+ * ★ 只有一处解析，供 WorkspaceService 装配与配置页探测共用。
+ *   两处各自 split 一遍的代价是判据悄悄分叉 —— 而分叉的表现是
+ *   「配置页说能挂，派发时说不在允许范围内」。
+ *
+ * ★ 空串过滤掉：`APOS_LOCAL_MOUNT_ROOTS=` 留空是「没配」，
+ *   而 `['']` 会被 resolve 成进程当前目录，等于凭空多出一条白名单。
+ */
+export function localMountRootsFromEnv(): string[] {
+  return (process.env['APOS_LOCAL_MOUNT_ROOTS'] ?? '')
+    .split(':')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 export interface WorkspaceServiceOptions {
   /** 所有工作区的根目录 */
@@ -317,6 +336,7 @@ export class WorkspaceService {
 
       return { ok: true, workspace, note };
     } catch (err) {
+      // 准备阶段失败：目录里没有任何产出，直接清掉
       await this.cleanupRunDir(input.runId).catch(() => undefined);
       const message = err instanceof GitError ? err.message : errText(err);
       return { ok: false, reason: `准备工作区失败：${message}` };
@@ -355,11 +375,12 @@ export class WorkspaceService {
     const workspace = toWorkspace(ws, input.runId);
     const primary = workspace.mounts.find((m) => m.role === 'primary');
     const check = primary?.source.kind === 'git' ? await this.checkConfigFor(ws) : null;
+    const delivery = await this.deliveryFor(ws, primary);
 
     const outcome = await runReleasePipeline(
       {
         sources: this.sources,
-        publishers: this.publishersFor(ws),
+        publishers: delivery.publishers,
         ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
       },
       workspace,
@@ -371,13 +392,22 @@ export class WorkspaceService {
         goal: run.goal,
       },
       {
-        publisher: this.publisherFor(primary),
+        publisher: delivery.key,
         checkCommand: check?.command ?? null,
         checkTimeoutSeconds: check?.timeoutSeconds ?? 600,
       },
     );
 
-    await this.cleanupRunDir(input.runId).catch(() => undefined);
+    /**
+     * ★★ 与 pipeline 里那条同一个判断：有改动却没交货成功时不删运行目录。
+     *   删了的话，Agent 干的活既没上传、本地也没了 —— 只在 note 里留下一句话。
+     */
+    const lost = !isPersisted(outcome.published) && outcome.changes.total > 0;
+    if (lost) {
+      this.diagnose(`Run ${input.runId} 产出未交货，保留运行目录以便人工取回`);
+    } else {
+      await this.cleanupRunDir(input.runId).catch(() => undefined);
+    }
 
     const git = outcome.published.kind === 'git' ? outcome.published : null;
     const headCommit = git?.headCommit ?? null;
@@ -419,6 +449,20 @@ export class WorkspaceService {
     runId: string;
     path: string;
     seed?: (path: string) => Promise<void>;
+    /**
+     * 额外挂进来的**只读**参考资源。
+     *
+     * ★★ 规划 Agent 靠它才能真的读到项目文件。
+     *
+     *   在此之前规划 Run 只有一个空目录：写一份 BRIEF.md 进去、读一份
+     *   apos-output.json 出来。也就是说「分析这个项目的需求」时，
+     *   Agent 手上**没有这个项目的任何代码** —— 它只能照着需求原文编，
+     *   而界面上写着「基于项目上下文分析」。
+     *
+     *   挂成只读是刻意的：规划不该改代码。产出仍然写在可写的主挂载
+     *   （planning workspace）里，两者分开。
+     */
+    readOnly?: { orgId: string; projectId: string; scopes: ResourceScope[] };
   }): Promise<{ workspace: Workspace; dispatch: RunWorkspace }> {
     const source = this.sources.get('empty')!;
     const mount = await source.materialize({
@@ -429,10 +473,63 @@ export class WorkspaceService {
       ...(input.seed ? { seed: input.seed } : {}),
     });
 
+    const mounts: Mount[] = [mount];
+    const additionalPaths: string[] = [];
+
+    const ro = input.readOnly;
+    if (ro && ro.scopes.length > 0) {
+      const repoScopes = ro.scopes.filter((s) => s.kind === 'repo' && s.access !== 'none');
+      const dataScopes = ro.scopes.filter((s) => s.kind === 'dataset' && s.access !== 'none');
+      const loadInput = {
+        runId: input.runId,
+        orgId: ro.orgId,
+        projectId: ro.projectId,
+        workItemId: '',
+        workItemTitle: '',
+        permissions: { allowedTools: [], deniedTools: [], resourceScopes: ro.scopes },
+      } satisfies AcquireInput;
+
+      const repos = await this.loadRepos(loadInput, repoScopes);
+      const stores = await this.loadStores(loadInput, dataScopes);
+      const runRoot = runDir(this.root, input.runId);
+
+      const candidates: Array<{ scope: ResourceScope; kind: 'repo' | 'dataset' }> = [
+        ...repoScopes.filter((s) => repos.has(s.ref)).map((s) => ({ scope: s, kind: 'repo' as const })),
+        ...dataScopes
+          .filter((s) => stores.has(s.ref))
+          .map((s) => ({ scope: s, kind: 'dataset' as const })),
+      ];
+
+      for (const candidate of candidates) {
+        try {
+          const extra = await this.mountFor(
+            candidate,
+            repos,
+            stores,
+            runRoot,
+            input.runId,
+            'reference',
+            // ★ 一律 false —— 即便这个 Agent 对该资源有写权限。
+            //   规划要的是「看得见」，不是「改得动」。
+            false,
+            null,
+          );
+          mounts.push(extra);
+          additionalPaths.push(extra.path);
+        } catch (err) {
+          /**
+           * ★ 参考资源挂不上不该让整次规划失败，但必须留痕 ——
+           *   否则表现是「Agent 又没看代码」，而没有任何地方说得出为什么。
+           */
+          this.diagnose(`规划参考资源 ${candidate.scope.ref} 准备失败`, err);
+        }
+      }
+    }
+
     return {
-      workspace: { id: input.id, runId: input.runId, root: input.path, mounts: [mount], writable: true },
+      workspace: { id: input.id, runId: input.runId, root: input.path, mounts, writable: true },
       // ★ vcs 为 null —— 这次执行真的不在版本控制下，prompt 会据此换一套说法
-      dispatch: { path: input.path, writable: true, additionalPaths: [], vcs: null },
+      dispatch: { path: input.path, writable: true, additionalPaths, vcs: null },
     };
   }
 
@@ -494,6 +591,123 @@ export class WorkspaceService {
       default:
         return 'none';
     }
+  }
+
+  /**
+   * 本次收尾用哪个交货后端。
+   *
+   * ★★ 这里兑现的是抽象里「两头独立可选」那半边。在 `deliveryTargetId`
+   *   出现之前，交货后端**只能**由主挂载的种类决定，于是
+   *   「从 Git 拉代码、把生成的报告传对象存储」这种组合表达不了 ——
+   *   而那正是 docs/tech/11 §2 用来说明这个设计的例子。
+   *
+   * ★ 配了却没生效的每一种情况都要给出**原因**（目标不存在 / 已停用 /
+   *   只读 / 被挂载白名单挡住）。不给的话，用户看到的收尾说明与
+   *   「本来就没配」一模一样 —— 而这两者一个是配置没生效、一个是符合预期。
+   */
+  private async deliveryFor(
+    ws: StoredWorkspace,
+    primary: Mount | undefined,
+  ): Promise<{ key: string; publishers: Map<string, Publisher> }> {
+    const publishers = this.publishersFor(ws);
+    const fallback = { key: this.publisherFor(primary), publishers };
+    if (!primary) return fallback;
+
+    const targetId = await this.deliveryTargetIdFor(ws, primary);
+    if (!targetId) return fallback;
+
+    /**
+     * ★ 指向自己 = 写回原处，就是默认语义。当成「配了个交货目标」去走
+     *   deliver 那条路的话，产出会落进自己 bucket 的 `{runId}/` 子目录里，
+     *   而用户的本意只是把这一栏填明确。
+     */
+    if (targetId === primaryTargetId(ws)) return fallback;
+
+    const [target] = await this.db
+      .select()
+      .from(storageTargets)
+      .where(eq(storageTargets.id, targetId));
+
+    const blocked = (reason: string) => {
+      this.diagnose(`交货目标未生效：${reason}`);
+      const map = new Map(publishers);
+      map.set('none', new NonePublisher(reason));
+      return { key: 'none', publishers: map };
+    };
+
+    if (!target) return blocked('配置的交货目标已不存在，产出未投递');
+    if (target.status !== 'active') return blocked(`交货目标 ${target.ref} 已停用，产出未投递`);
+    if (!target.writable) {
+      return blocked(`交货目标 ${target.ref} 登记为只读，产出未投递`);
+    }
+
+    if (target.kind === 'object_storage') {
+      const map = new Map(publishers);
+      map.set(
+        'object_storage',
+        new ObjectStoragePublisher(this.objectSource, {
+          // ★ deliver 语义下目标与挂载无关，直接给出本次的目标
+          resolveStore: async () => toStore(target),
+          mode: 'deliver',
+          ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
+        }),
+      );
+      return { key: 'object_storage', publishers: map };
+    }
+
+    const rootPath = target.rootPath?.trim();
+    if (!rootPath) return blocked(`交货目标 ${target.ref} 没有配置路径，产出未投递`);
+
+    /**
+     * ★★ 投递到宿主机目录同样要过 APOS_LOCAL_MOUNT_ROOTS。
+     *
+     *   那道闸此前只挡「挂进来」，而「写出去」的破坏力只大不小 ——
+     *   一条指向 /etc 的登记，挂进来是泄露，写出去是覆盖。
+     *   库里存意图，环境里存闸门，这一条对两个方向都成立。
+     */
+    if (!isMountRootAllowed(rootPath, this.options.localMountRoots)) {
+      return blocked(
+        `交货目标 ${target.ref} 的路径不在 APOS_LOCAL_MOUNT_ROOTS 允许的范围内，产出未投递`,
+      );
+    }
+
+    const map = new Map(publishers);
+    map.set(
+      'local',
+      new LocalPublisher({
+        archiveRoot: rootPath,
+        ...(this.options.onDiagnostic ? { onDiagnostic: this.options.onDiagnostic } : {}),
+      }),
+    );
+    return { key: 'local', publishers: map };
+  }
+
+  /** 主挂载对应的那条登记上配的交货目标 */
+  private async deliveryTargetIdFor(
+    ws: StoredWorkspace,
+    primary: Mount,
+  ): Promise<string | null> {
+    const registrationId = primaryTargetId(ws);
+    if (!registrationId) return null;
+
+    if (primary.source.kind === 'git') {
+      const [repo] = await this.db
+        .select({ deliveryTargetId: repositories.deliveryTargetId })
+        .from(repositories)
+        .where(eq(repositories.id, registrationId));
+      return repo?.deliveryTargetId ?? null;
+    }
+
+    if (primary.source.kind === 'object_storage' || primary.source.kind === 'local') {
+      const [row] = await this.db
+        .select({ deliveryTargetId: storageTargets.deliveryTargetId })
+        .from(storageTargets)
+        .where(eq(storageTargets.id, registrationId));
+      return row?.deliveryTargetId ?? null;
+    }
+
+    // empty 工作区没有登记，也就没有可配的交货目标
+    return null;
   }
 
   // ── DB 适配（providers 包声明的三个注入口）────────────────────────

@@ -1,3 +1,4 @@
+import { t, useT } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import { manualTargetForStage } from '@apos/domain';
@@ -106,6 +107,7 @@ function Column({
   onDragEnd: () => void;
   onDrop: (card: Card, toStage: Stage) => void;
 }) {
+  const t = useT();
   const [over, setOver] = useState(false);
 
   const drop = dragging ? evaluateDrop(dragging, column.key) : null;
@@ -145,8 +147,8 @@ function Column({
             )}
             title={
               wipExceeded
-                ? '已达 WIP 上限，Flow Engine 暂停向该列调度新任务'
-                : `WIP 上限 ${column.wipLimit}`
+                ? t('kanban.wipReached')
+                : t('kanban.wipLimit', { n: column.wipLimit })
             }
           >
             WIP {column.count}/{column.wipLimit} {wipExceeded && '⚠'}
@@ -186,21 +188,21 @@ function Column({
           <p className="px-1 py-3 text-center text-[11px] text-slate-400">
             {hasFilters ? (
               <>
-                无匹配{' '}
+                {t('kanban.noMatch')}{' '}
                 <button type="button" onClick={onClearFilters} className="underline">
-                  清除筛选
+                  {t('kanban.clearFilters')}
                 </button>
               </>
             ) : column.key === 'execution' ? (
-              '等待上游任务完成'
+              t('kanban.waitingUpstream')
             ) : column.key === 'planning' ? (
               /*
                * ★ 这一列不放任务，放的是待批准的计划 —— 不说清楚的话，
                *   一个永远空着的列只会让人以为功能坏了（在此之前正是如此）。
                */
-              '需求批准后，生成的计划会在这里等待批准'
+              t('kanban.planningEmpty')
             ) : (
-              '暂无任务'
+              t('kanban.empty')
             )}
           </p>
         )}
@@ -210,7 +212,9 @@ function Column({
             onClick={onExpandDone}
             className="w-full border-dashed text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700">
             {/* count 含计划卡，折叠数只该算任务 */}
-            ⋯ 展开其余 {column.count - column.plans.length - column.items.length} 项
+            {t('kanban.expandRest', {
+              count: column.count - column.plans.length - column.items.length,
+            })}
           </Button>
         )}
       </div>
@@ -229,7 +233,7 @@ export function evaluateDrop(
   card: Card,
   toStage: Stage,
 ): { allowed: boolean; reason: string } {
-  if (card.stage === toStage) return { allowed: false, reason: '已经在这一列了' };
+  if (card.stage === toStage) return { allowed: false, reason: t('board.drop.sameColumn') };
 
   /**
    * ★ Planning 列装的是**待批准的计划**，不是任务 —— `planning` /
@@ -243,7 +247,7 @@ export function evaluateDrop(
   if (toStage === 'planning') {
     return {
       allowed: false,
-      reason: 'Planning 列放的是待批准的计划，不接收任务卡片',
+      reason: t('board.drop.planningColumn'),
     };
   }
 
@@ -252,14 +256,18 @@ export function evaluateDrop(
   if (!target) {
     return {
       allowed: false,
-      reason: `「${card.title}」当前是「${statusLabel(card.status)}」，不能直接进入「${STAGE_LABELS[toStage]}」`,
+      reason: t('board.drop.illegal', {
+        title: card.title,
+        status: statusLabel(card.status),
+        stage: STAGE_LABELS[toStage],
+      }),
     };
   }
 
   if (toStage === 'execution' && card.unmetDependencies > 0) {
     return {
       allowed: false,
-      reason: `该任务还有 ${card.unmetDependencies} 个前置依赖未完成，不能进入 Execution`,
+      reason: t('board.drop.unmetDependencies', { count: card.unmetDependencies }),
     };
   }
 

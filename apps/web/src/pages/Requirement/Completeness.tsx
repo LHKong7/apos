@@ -1,12 +1,13 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import clsx from 'clsx';
 
 const DIMENSIONS = [
-  { key: 'goal', label: '目标' },
-  { key: 'scope', label: '范围' },
-  { key: 'acceptance', label: '验收' },
-  { key: 'dependency', label: '依赖' },
-  { key: 'risk', label: '风险' },
-  { key: 'technical', label: '技术' },
+  { key: 'goal', labelKey: 'completeness.goal' as MessageKey },
+  { key: 'scope', labelKey: 'completeness.scope' as MessageKey },
+  { key: 'acceptance', labelKey: 'completeness.acceptance' as MessageKey },
+  { key: 'dependency', labelKey: 'completeness.dependency' as MessageKey },
+  { key: 'risk', labelKey: 'completeness.risk' as MessageKey },
+  { key: 'technical', labelKey: 'completeness.technical' as MessageKey },
 ] as const;
 
 /**
@@ -20,11 +21,12 @@ const DIMENSIONS = [
  *   「我刚才那一下是有用的」，比任何说明文字都更能推动他答完剩下的问题。
  */
 export function Completeness({ scores }: { scores: Record<string, number> }) {
+  const t = useT();
   const total = scores.total ?? 0;
 
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs">
-      <span className="text-slate-600">需求完整度</span>
+      <span className="text-slate-600">{t('completeness.title')}</span>
       <span className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
         <span
           className={clsx(
@@ -34,7 +36,7 @@ export function Completeness({ scores }: { scores: Record<string, number> }) {
           style={{ width: `${Math.max(2, total)}%` }}
         />
       </span>
-      <span className="font-semibold tabular-nums text-slate-900">{total} 分</span>
+      <span className="font-semibold tabular-nums text-slate-900">{t('completeness.score', { score: total })}</span>
 
       <span className="flex flex-wrap items-center gap-2">
         {DIMENSIONS.map((d) => {
@@ -47,9 +49,9 @@ export function Completeness({ scores }: { scores: Record<string, number> }) {
                 'text-[11px]',
                 v >= 80 ? 'text-green-700' : v >= 40 ? 'text-amber-700' : 'text-red-600',
               )}
-              title={`${d.label} ${v} 分`}
+              title={t('completeness.itemScore', { label: t(d.labelKey), score: v })}
             >
-              {d.label} {mark}
+              {t(d.labelKey)} {mark}
             </span>
           );
         })}
@@ -57,7 +59,7 @@ export function Completeness({ scores }: { scores: Record<string, number> }) {
 
       {total < 60 && (
         <span className="text-[11px] text-amber-700">
-          完整度较低，Agent 可能产生较多返工 —— 但不阻止你确认
+          {t('completeness.lowWarning')}
         </span>
       )}
     </div>

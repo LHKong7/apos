@@ -248,6 +248,7 @@ export interface DecisionDetail {
 export interface WorkItemDetail {
   item: {
     id: string;
+    projectId: string;
     /** 人类可读编号（`ORD-19`）*/
     ref: string;
     title: string;
@@ -608,7 +609,13 @@ export interface PlanDetail {
     highRiskTasks: number;
   };
   autoActions: { description: string; policyName: string | null; reversible: boolean; externalVisible: boolean }[];
-  humanGates: { taskTitle: string; reason: string; assigneeHint: string }[];
+  humanGates: {
+    taskTitle: string;
+    /** execution = 这活得人干；approval = 干完要人批。两者判断完全不同 */
+    cause: 'execution' | 'approval';
+    reason: string;
+    assigneeHint: string;
+  }[];
   currentBoundary: { auto: string[]; human: string[]; depends: { label: string; when: string | null }[] };
   tasks: {
     id: string;
@@ -715,7 +722,16 @@ export interface CapabilityReport {
   limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
   tools: { name: string; description: string; sideEffects: string }[];
   supported: { feature: string; label: string }[];
-  missing: { feature: string; label: string; behavior: string; userImpact: string; severity: string }[];
+  missing: {
+    feature: string;
+    label: string;
+    behavior: string;
+    /** 与 contracts 的 Degradation 一致；缺省时界面回落中文 */
+    behaviorEn?: string;
+    userImpact: string;
+    userImpactEn?: string;
+    severity: string;
+  }[];
   restricted: boolean;
 }
 
@@ -755,8 +771,10 @@ export interface AgentDetail {
   queue: { id: string; title: string; status: string; riskLevel: string }[];
   queueDoneCount: number;
   recentRuns: {
+    /** execution | planning —— 规划 Run 没有工作项 */
+    kind: string;
     id: string;
-    workItemId: string;
+    workItemId: string | null;
     workItemTitle: string;
     status: string;
     attempt: number;
@@ -826,12 +844,19 @@ export interface RuntimeRow {
 export interface SyncMappingRow {
   field: string;
   fieldLabel: string;
+  /** 服务端一起给的英文；前端按当前语言挑 / English sent alongside; client picks */
+  fieldLabelEn?: string;
   sourceOfTruth: 'apos' | 'external' | 'merge';
   strategy: 'writeback' | 'record_conflict' | 'accept_and_warn';
   strategyLabel: string;
+  strategyLabelEn?: string;
   why: string;
+  whyEn?: string;
   options: ('apos' | 'external' | 'merge')[];
-  /** 偏离默认值 —— 用户改过的地方下次读这一页时要一眼看见 */
+  /**
+   * 偏离默认值 —— 用户改过的地方下次读这一页时要一眼看见。
+   * Deviates from the default: what a user changed must be obvious next time.
+   */
   customized: boolean;
 }
 
@@ -858,7 +883,7 @@ export interface IntegrationRow {
   transportReady: boolean;
   syncMappings: SyncMappingRow[];
   sotPreset: string | null;
-  autoRules: { field: string; fieldLabel: string; winner: string }[];
+  autoRules: { field: string; fieldLabel: string; fieldLabelEn?: string; winner: string }[];
   conflictCount: number;
   linkedItems: number;
   notificationConfig: NotificationConfigRow | null;
@@ -898,15 +923,30 @@ export interface IntegrationsResponse {
     categoryLabel: string;
     transportReady: boolean;
   }[];
+  /**
+   * ★ `*En` 是服务端一起给的，前端按当前语言挑 —— 服务端不知道调用方
+   *   的界面语言。见 apps/api/src/http/integrations.ts。
+   *   The `*En` variants arrive alongside; the client picks by locale because
+   *   the server has no idea which one the caller is showing.
+   */
   fieldCatalog: {
     field: string;
     label: string;
+    labelEn?: string;
     sourceOfTruth: string;
     options: string[];
     why: string;
+    whyEn?: string;
   }[];
-  presets: { key: string; label: string; description: string }[];
+  presets: {
+    key: string;
+    label: string;
+    labelEn?: string;
+    description: string;
+    descriptionEn?: string;
+  }[];
   strategyLabels: Record<string, string>;
+  strategyLabelsEn?: Record<string, string>;
   notifyEvents: { key: string; label: string; noisy: boolean }[];
   permissions: Record<IntegrationAction, boolean>;
 }
@@ -1016,18 +1056,28 @@ export interface BenefitLineRow {
 
 // ── Agent 配置（页面文档 08 §5.5）────────────────────────────────────
 
+/**
+ * ★ 这几个 `*En` 字段与 `@apos/contracts` 的同名类型保持一致。
+ *   服务端原样透传 spec，缺英文时前端回落中文（见 lib/i18n/spec.ts）。
+ *   Mirrors the `*En` fields on the contracts types; the server passes specs
+ *   through untouched and the UI falls back to Chinese when English is absent.
+ */
 export interface ConfigFieldOption {
   value: string;
   label: string;
+  labelEn?: string;
   help?: string;
+  helpEn?: string;
 }
 
 export interface ConfigField {
   key: string;
   label: string;
+  labelEn?: string;
   type: 'string' | 'number' | 'boolean' | 'select' | 'string_list' | 'json';
   default: unknown;
   help?: string;
+  helpEn?: string;
   options?: ConfigFieldOption[];
   min?: number;
   max?: number;
@@ -1042,9 +1092,11 @@ export interface RuntimeKindSpec {
   kind: string;
   label: string;
   description: string;
-  credential: { label: string; help: string } | null;
-  endpoint: { label: string; help: string } | null;
+  descriptionEn?: string;
+  credential: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
+  endpoint: { label: string; labelEn?: string; help: string; helpEn?: string } | null;
   prerequisite: string | null;
+  prerequisiteEn?: string | null;
   fields: ConfigField[];
 }
 
@@ -1055,7 +1107,14 @@ export interface AgentCapability {
   limits: { maxConcurrentRuns: number; maxRunDurationSeconds: number; maxContextTokens: number | null };
   tools: { name: string; description: string; sideEffects: string }[];
   supported: string[];
-  missing: { feature: string; behavior: string; userImpact: string; severity: string }[];
+  missing: {
+    feature: string;
+    behavior: string;
+    behaviorEn?: string;
+    userImpact: string;
+    userImpactEn?: string;
+    severity: string;
+  }[];
   restricted: boolean;
 }
 
@@ -1159,6 +1218,12 @@ export interface RepositoryRow {
   sshHosts: string[];
   checkCommand: string | null;
   checkTimeoutSeconds: number;
+  /**
+   * 产出交货到哪个存储目标。null = 推分支（默认）。
+   *
+   * ★ 填了就**不推分支**了 —— 是覆盖不是追加。
+   */
+  deliveryTargetId: string | null;
   warnings: string[];
 }
 
@@ -1188,6 +1253,64 @@ export interface RepositoriesResponse {
   sshAvailable: boolean;
   sshProblem: string | null;
   /** 直接粘贴的凭证是不是密文入库。false = 明文进库，不是存不下 */
+  encryptsInlineSecrets: boolean;
+}
+
+/**
+ * 存储目标 —— 非 Git 的工作区来源。
+ *
+ * ★ 与仓库分开的理由见 docs/tech/11-workspace-abstraction.md §7.2：
+ *   repositories 的每一列都是 git 概念，一个 S3 bucket 塞进去要填占位符，
+ *   而占位符会一路流到界面上（「默认分支：main」）。
+ */
+export interface StorageTargetRow {
+  id: string;
+  ref: string;
+  name: string;
+  kind: 'object_storage' | 'local';
+  endpoint: string | null;
+  region: string;
+  bucket: string | null;
+  prefix: string;
+  /** path-style（host/bucket/key）还是 virtual-host-style（bucket.host/key） */
+  forcePathStyle: boolean;
+  rootPath: string | null;
+  /** 只读挂载在交货阶段会被原样跳过 —— 登记成只读却指望它接收产物是常见的坑 */
+  writable: boolean;
+  /** 产出交货到哪个存储目标。null = 写回自己 */
+  deliveryTargetId: string | null;
+  scope: 'project' | 'organization';
+  projectId: string | null;
+  status: string;
+  credentialHint: string | null;
+  credentialUsable: boolean;
+  credentialProblem: string | null;
+  warnings: string[];
+}
+
+export interface StorageTargetProbe {
+  ok: boolean;
+  /**
+   * ★ allowlist 与 not_found 是两档独立的失败：前者要改**部署环境**的
+   *   APOS_LOCAL_MOUNT_ROOTS，后者要改登记里的路径。混成一句的话，
+   *   管理员会一直在界面上改路径，而闸门根本不在界面上。
+   */
+  stage: 'ok' | 'config' | 'credential' | 'allowlist' | 'network' | 'auth' | 'not_found';
+  message: string;
+  objectCount: number | null;
+  samples: string[];
+}
+
+export interface StorageTargetsResponse {
+  storageTargets: StorageTargetRow[];
+  /**
+   * 部署方允许挂载的宿主目录白名单。
+   *
+   * ★ 它是环境变量，管理员在界面上看不到，而一条 local 登记「过没过闸」
+   *   完全由它决定 —— 不显示的话，被闸掉的登记在页面上和正常的一模一样。
+   */
+  localMountRoots: string[];
+  localMountRestricted: boolean;
   encryptsInlineSecrets: boolean;
 }
 
@@ -1244,4 +1367,87 @@ export interface OrganizationMemberRow {
 export interface OrganizationMembersResponse {
   members: OrganizationMemberRow[];
   assignableOrgRoles: { role: string; label: string }[];
+}
+
+/** 执行方式 —— 与「要不要人批」是两件事，后者是 approvalGate */
+export type ExecutionModeValue = 'auto' | 'agent' | 'human';
+
+export interface CandidateAgent {
+  agentId: string;
+  name: string;
+  runtimeKind: string | null;
+  status: string | null;
+  registered: boolean;
+  maxConcurrency: number | null;
+}
+
+export interface EligibleAgent extends CandidateAgent {
+  score: number;
+  /** 面向用户的匹配依据，直接展示 */
+  reasons: string[];
+}
+
+export interface IneligibleAgent extends CandidateAgent {
+  /** ★ 不可选的必须带原因：空下拉框回答不了「为什么选不了」 */
+  reason: string;
+}
+
+export interface ExecutorCandidates {
+  executionMode: ExecutionModeValue;
+  current: { executorType: 'agent' | 'human' | null; executorId: string | null };
+  agents: { eligible: EligibleAgent[]; ineligible: IneligibleAgent[] };
+  humans: { userId: string; name: string; email: string | null; role: string }[];
+}
+
+export interface ProjectAgentBindings {
+  bindings: {
+    id: string;
+    role: string;
+    /** 0 = 主 Agent，往后是备选。主的不可用时按这个顺序退 */
+    priority: number;
+    agentId: string;
+    agentName: string;
+    runtimeKind: string;
+    status: string;
+    applicableTypes: string[];
+    updatedAt: string;
+  }[];
+  /** ★ 只列本项目成员里的 Agent —— 列全组织的话会选到保存时才被拒的那些 */
+  available: {
+    agentId: string;
+    name: string;
+    runtimeKind: string;
+    status: string;
+    applicableTypes: string[];
+    skills: string[];
+  }[];
+}
+
+export interface ArtifactFileList {
+  artifactId: string;
+  projectId: string;
+  /** ★ 目录可能已随工作区回收 —— 与「这次没产出」是两回事，所以带原因 */
+  available: boolean;
+  reason: string | null;
+  files: {
+    path: string;
+    size: number;
+    isDirectory: boolean;
+    /** 新增 / 修改 / 删除。deleted 的文件不在归档里，但必须列出来 */
+    change: 'added' | 'modified' | 'deleted' | null;
+  }[];
+  truncated: boolean;
+  /** ★ 本地归档只存改完之后的内容，没有变更前的版本 —— 所以没有对照 diff */
+  diffAvailable: boolean;
+}
+
+export interface ArtifactFileContent {
+  artifactId: string;
+  projectId: string;
+  path: string;
+  size: number;
+  mime: string;
+  /** 二进制或超大文件为 null，此时 reason 说明为什么 */
+  preview: string | null;
+  reason: string | null;
 }

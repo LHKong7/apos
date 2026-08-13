@@ -56,6 +56,38 @@ describe('治理规则里的工作区说明', () => {
     expect(text).not.toContain('分支');
   });
 
+  /**
+   * ★★ 挂了参考目录却不写进 prompt，等于没挂。
+   *
+   *   规划 Run 现在会把项目代码只读挂进来（acquireLocal 的 readOnly）。
+   *   如果 prompt 不说它在哪，Agent 不知道有这么个目录 —— 表现与
+   *   「根本没挂」一模一样：照样只凭需求原文编，而工作区里躺着整个仓库。
+   */
+  it('★ 有只读参考目录时要在 prompt 里点名路径，并说明不可修改', () => {
+    const text = buildGovernanceRules(
+      task({
+        path: '/tmp/ws/planning/r1',
+        writable: true,
+        additionalPaths: ['/tmp/ws/runs/r1/order-service', '/tmp/ws/runs/r1/datasets'],
+        vcs: null,
+      }),
+      { writable: true },
+    );
+
+    expect(text).toContain('/tmp/ws/runs/r1/order-service');
+    expect(text).toContain('/tmp/ws/runs/r1/datasets');
+    expect(text).toContain('只读');
+    expect(text).toContain('不要修改');
+  });
+
+  it('没有参考目录时不出现那一段', () => {
+    const text = buildGovernanceRules(
+      task({ path: '/tmp/ws/planning/r1', writable: true, additionalPaths: [], vcs: null }),
+      { writable: true },
+    );
+    expect(text).not.toContain('参考资料');
+  });
+
   it('没有工作区时整段省略', () => {
     const text = buildGovernanceRules(task(null), { writable: false });
     expect(text).not.toContain('工作区：');

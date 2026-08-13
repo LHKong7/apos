@@ -48,6 +48,7 @@ export const PERMISSIONS = [
 
   // ── 任务 ──────────────────────────────────────────────────────────
   'work_item.create',
+  'work_item.assign',
   'work_item.execute',
   'work_item.takeover',
   'work_item.force_pass',
@@ -76,6 +77,7 @@ export const PERMISSIONS = [
 
   // ── 组织配置 ──────────────────────────────────────────────────────
   'repository.manage',
+  'storage_target.manage',
   'convention.manage',
   'org.members.manage',
   'org.roles.manage',
@@ -284,6 +286,19 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     projectRoles: EXECUTING,
     requires: '需要项目成员权限（只读角色不能建任务）',
   },
+  /**
+   * ★ 与 work_item.execute 分开：排活与花钱是两件事。
+   *
+   *   「把这张卡挂到某人名下」不动文件、不动预算，是 PM 的日常动作；
+   *   「开始执行」会让 Agent 改代码并消耗预算。合成一个权限的话，
+   *   要么排活的人拿到了派发权，要么 PM 连排活都做不了 —— 两边都不对。
+   */
+  'work_item.assign': {
+    scope: 'project',
+    label: '分配任务执行者',
+    projectRoles: EXECUTING,
+    requires: '需要项目成员权限（只读角色不能改动任务）',
+  },
   'work_item.execute': {
     scope: 'project',
     label: '执行任务',
@@ -491,6 +506,20 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     scope: 'org',
     label: '管理代码仓库登记',
     requires: '代码仓库登记需要组织管理员',
+  },
+  /**
+   * ★ 与 repository.manage 分开而不是合成一个「资源登记」权限。
+   *
+   *   两者的风险面不同：登记一个仓库最坏是让 Agent 往一个仓库里写代码，
+   *   而登记一个 local 目标是把**宿主机上的一个目录**交给 Agent
+   *   （能不能真挂还要过 APOS_LOCAL_MOUNT_ROOTS 那道闸，但登记本身
+   *   已经表达了意图）。合成一个的话，想授出「能配仓库」就等于同时
+   *   授出了「能指定宿主机目录」。
+   */
+  'storage_target.manage': {
+    scope: 'org',
+    label: '管理存储目标登记',
+    requires: '存储目标登记需要组织管理员',
   },
   'convention.manage': {
     scope: 'project',

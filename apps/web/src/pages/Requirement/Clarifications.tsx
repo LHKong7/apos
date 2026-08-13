@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Clarification } from '../../lib/api/types';
@@ -16,25 +17,25 @@ import { Input } from '@/components/ui/input';
 const LEVEL_META = {
   must_confirm: {
     icon: '🔴',
-    label: '必须确认',
+    labelKey: 'clarify.mustConfirm' as MessageKey,
     className: 'border-red-200 bg-red-50',
     order: 0,
   },
   default_applicable: {
     icon: '🟡',
-    label: '可用默认',
+    labelKey: 'clarify.defaultOk' as MessageKey,
     className: 'border-amber-200 bg-amber-50',
     order: 1,
   },
   assumption_ok: {
     icon: '🔵',
-    label: '可记录假设',
+    labelKey: 'clarify.assumptionOk' as MessageKey,
     className: 'border-sky-200 bg-sky-50',
     order: 2,
   },
   auto_resolved: {
     icon: '🟢',
-    label: '已自动解决',
+    labelKey: 'clarify.autoResolved' as MessageKey,
     className: 'border-slate-200 bg-slate-50',
     order: 3,
   },
@@ -51,12 +52,13 @@ export function Clarifications({
   pending: string | null;
   readOnly: boolean;
 }) {
+  const t = useT();
   const [expandResolved, setExpandResolved] = useState(false);
 
   if (clarifications.length === 0) {
     return (
       <p className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400">
-        AI 没有提出澄清问题
+        {t('clarify.none')}
       </p>
     );
   }
@@ -72,10 +74,10 @@ export function Clarifications({
     <section className="rounded border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5">
         <h2 className="text-xs font-medium text-slate-700">
-          ❓ 需要澄清（{clarifications.length}）
+          {t('clarify.title', { count: clarifications.length })}
         </h2>
         {unanswered > 0 && (
-          <span className="text-[11px] text-red-700">还有 {unanswered} 个必答问题没回答</span>
+          <span className="text-[11px] text-red-700">{t('clarify.unanswered', { count: unanswered })}</span>
         )}
         {resolved.length > 0 && (
           <button
@@ -83,7 +85,7 @@ export function Clarifications({
             onClick={() => setExpandResolved((v) => !v)}
             className="ml-auto text-[11px] text-slate-500 underline"
           >
-            {expandResolved ? '收起' : `已自动解决 ${resolved.length} 个`}
+            {expandResolved ? t('clarify.collapse') : t('clarify.autoResolvedCount', { count: resolved.length })}
           </button>
         )}
       </div>
@@ -104,7 +106,7 @@ export function Clarifications({
               <span aria-hidden>🟢</span> {c.question}
               <span className="ml-2 text-slate-500">→ {c.answer}</span>
               {c.resolvedSource && (
-                <span className="ml-1 text-[11px] text-slate-400">（来自{c.resolvedSource}）</span>
+                <span className="ml-1 text-[11px] text-slate-400">{t('clarify.fromSource', { source: c.resolvedSource })}</span>
               )}
             </li>
           ))}
@@ -124,6 +126,7 @@ function Question({
   pending: boolean;
   readOnly: boolean;
 }) {
+  const t = useT();
   const [custom, setCustom] = useState('');
   const meta = LEVEL_META[c.level];
   const options = (c.options as { label?: string; value?: string }[]).filter(
@@ -144,18 +147,19 @@ function Question({
     <li className={clsx('border-l-2 px-3 py-2', meta.className)}>
       <p className="text-xs">
         <span aria-hidden>{meta.icon}</span>
-        <span className="ml-1 font-medium text-slate-500">{meta.label}</span>
+        <span className="ml-1 font-medium text-slate-500">{t(meta.labelKey)}</span>
         <span className="ml-2 text-slate-900">{c.question}</span>
       </p>
 
       {/* ★ 不回答会怎样 —— 把紧迫性从「有个问题」变成具体的工期影响 */}
-      {c.impact && <p className="mt-0.5 text-[11px] text-slate-600">影响：{c.impact}</p>}
+      {c.impact && <p className="mt-0.5 text-[11px] text-slate-600">{t('clarify.impact', { impact: c.impact })}</p>}
 
       {/* ★ Agent 倾向 + 依据。只提问不给建议，就是在考用户 */}
       {c.agentSuggestion && (
         <p className="mt-0.5 text-[11px] text-slate-600">
-          Agent 倾向：<span className="text-slate-800">{c.agentSuggestion}</span>
-          {c.suggestionBasis && <span className="text-slate-400">（依据：{c.suggestionBasis}）</span>}
+          {t('clarify.agentLeans')}
+          <span className="text-slate-800">{c.agentSuggestion}</span>
+          {c.suggestionBasis && <span className="text-slate-400">{t('clarify.basis', { basis: c.suggestionBasis })}</span>}
         </p>
       )}
 
@@ -165,7 +169,7 @@ function Question({
             <Button variant="neutral" size="xs"
               disabled={pending}
               onClick={() => onAnswer(c.id, c.agentSuggestion!, true)}>
-              {c.level === 'default_applicable' ? '接受默认' : '采纳倾向'}
+              {c.level === 'default_applicable' ? t('clarify.acceptDefault') : t('clarify.acceptSuggestion')}
             </Button>
           )}
           {options.map((o, i) => {
@@ -188,7 +192,7 @@ function Question({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && custom.trim()) onAnswer(c.id, custom.trim(), false);
             }}
-            placeholder="或者自己写…"
+            placeholder={t('clarify.writeYourOwn')}
             className="w-40" />
           {custom.trim() && (
             <button
@@ -197,7 +201,7 @@ function Question({
               onClick={() => onAnswer(c.id, custom.trim(), false)}
               className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700"
             >
-              提交
+              {t('clarify.submit')}
             </button>
           )}
         </div>

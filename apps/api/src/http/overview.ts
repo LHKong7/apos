@@ -205,7 +205,8 @@ export async function getOverview(db: Database, projectId: string, userId: strin
         name: a.name,
         type: a.type,
         status: running ? 'running' : a.status === 'paused' ? 'paused' : 'idle',
-        currentTask: running ? (itemTitle.get(running.workItemId) ?? null) : null,
+        currentTask:
+          running && running.workItemId ? (itemTitle.get(running.workItemId) ?? null) : null,
         currentRunId: running?.id ?? null,
         successRate: perf?.successRate ?? null,
         runs: perf?.runs ?? 0,

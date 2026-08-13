@@ -6,6 +6,23 @@ import type { Publisher, ReleaseContext } from '../publisher-types';
 import { isSafeRelative, normalizePrefix, type ObjectStorageMaterializer } from './source';
 
 /**
+ * 交货语义。
+ *
+ * ★★ 这两种**必须**在类型上分开，否则会删错东西。
+ *
+ *   `sync`：目标就是主挂载的来源 —— 把工作区同步回原处。变更集里
+ *           deleted 的那些对象要在远端一并删掉，否则远端反映的是
+ *           「历次叠加」而不是收尾时的状态。
+ *
+ *   `deliver`：目标是**另一个** bucket（主挂载可能是 git）。这时
+ *           `changes.deleted` 里的路径与目标 bucket 里的 key 毫无关系 ——
+ *           照着删就是拿一次 Run 的变更集去删一个不相干的 bucket。
+ *           所以只上传、不删除，而且落在 `{prefix}{runId}/` 下，
+ *           不与别的 Run 互相覆盖。
+ */
+export type PublishMode = 'sync' | 'deliver';
+
+/**
  * 对象存储交货后端。
  *
  * ★★ 只上传变更集里的对象，不整个目录重传。
@@ -23,13 +40,24 @@ export class ObjectStoragePublisher implements Publisher {
   constructor(
     private readonly source: ObjectStorageMaterializer,
     private readonly options: {
-      /** 按挂载的寻址键回查端点描述 —— 交货时挂载点上只剩 identifier */
+      /**
+       * 回查端点描述。
+       *
+       * ★ sync 语义下按挂载的寻址键回查（交货时挂载点上只剩 identifier）；
+       *   deliver 语义下调用方直接给出目标，与挂载无关。
+       */
       resolveStore: (mount: { source: { identifier: string } }) => Promise<ObjectStoreDescriptor | null>;
+      /** 默认 sync —— 老行为 */
+      mode?: PublishMode;
       onDiagnostic?: Diagnose;
     },
   ) {}
 
-  async publish(ws: Workspace, changes: ChangeSet, _ctx: ReleaseContext): Promise<PublishResult> {
+  private get mode(): PublishMode {
+    return this.options.mode ?? 'sync';
+  }
+
+  async publish(ws: Workspace, changes: ChangeSet, ctx: ReleaseContext): Promise<PublishResult> {
     const primary = ws.mounts.find((m) => m.role === 'primary');
     const store = primary ? await this.options.resolveStore(primary) : null;
 
@@ -46,7 +74,15 @@ export class ObjectStoragePublisher implements Publisher {
       };
     }
 
-    const prefix = normalizePrefix(store.prefix);
+    const deliver = this.mode === 'deliver';
+    /**
+     * ★ 投递时按 Run 分目录。不分的话，两次 Run 改了同一个相对路径
+     *   （`report.md` 这种再常见不过的名字）后一次会静默覆盖前一次，
+     *   而产物页上两条记录都指向同一个 key。
+     */
+    const prefix = deliver
+      ? `${normalizePrefix(store.prefix)}${ctx.runId}/`
+      : normalizePrefix(store.prefix);
     const base = {
       kind: 'object_storage' as const,
       bucket: store.bucket,
@@ -54,7 +90,12 @@ export class ObjectStoragePublisher implements Publisher {
       url: consoleUrl(store, prefix),
     };
 
-    if (!primary.writable) {
+    /**
+     * ★ 只在 sync 语义下看挂载的可写性。deliver 语义下主挂载可能是一棵
+     *   只读的 git 工作树，而那与「能不能往目标 bucket 写」毫无关系 ——
+     *   目标自己的可写性由调用方在挑交货后端时就判过了。
+     */
+    if (!deliver && !primary.writable) {
       return {
         ...base,
         uploaded: 0,
@@ -98,14 +139,24 @@ export class ObjectStoragePublisher implements Publisher {
       }
     }
 
-    for (const rel of changes.deleted) {
-      if (!isSafeRelative(rel)) continue;
-      try {
-        await client.delete(`${prefix}${rel}`);
-        removed++;
-      } catch (err) {
-        failures.push(rel);
-        this.options.onDiagnostic?.(`删除 ${rel} 失败`, err);
+    /**
+     * ★★ 只有 sync 语义才删远端对象。
+     *
+     *   deliver 语义下 changes.deleted 里的路径说的是「Agent 在**工作区里**
+     *   删了这些文件」，而目标 bucket 是另一个地方 —— 那里同名的 key
+     *   （如果存在）属于别人。拿一次 Run 的变更集去删一个不相干的 bucket，
+     *   是这次改动里唯一可能造成**数据丢失**的操作，所以它被关在这个分支后面。
+     */
+    if (!deliver) {
+      for (const rel of changes.deleted) {
+        if (!isSafeRelative(rel)) continue;
+        try {
+          await client.delete(`${prefix}${rel}`);
+          removed++;
+        } catch (err) {
+          failures.push(rel);
+          this.options.onDiagnostic?.(`删除 ${rel} 失败`, err);
+        }
       }
     }
 
@@ -115,9 +166,12 @@ export class ObjectStoragePublisher implements Publisher {
      *   persisted: true 就不会再管它了。
      */
     const persisted = failures.length === 0;
+    const where = `${store.bucket}/${prefix}`;
     const note = failures.length
       ? `上传 ${uploaded}、删除 ${removed}；${failures.length} 个失败：${failures.slice(0, 5).join('、')}（远端处于中间态，需人工核对）`
-      : `已上传 ${uploaded} 个对象、删除 ${removed} 个，到 ${store.bucket}/${prefix}`;
+      : deliver
+        ? `已投递 ${uploaded} 个文件到 ${where}（投递不删除目标里的任何对象）`
+        : `已上传 ${uploaded} 个对象、删除 ${removed} 个，到 ${where}`;
 
     return { ...base, uploaded, removed, persisted, note };
   }

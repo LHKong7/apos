@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { AnalyticsRange, LayoutKind } from '@apos/domain';
 import type {
   AgentDetail,
@@ -34,7 +35,14 @@ import type {
   AgentAdminResponse,
   RepositoriesResponse,
   RepositoryProbe,
+  StorageTargetProbe,
+  StorageTargetsResponse,
   ConventionsResponse,
+  ArtifactFileContent,
+  ArtifactFileList,
+  ExecutionModeValue,
+  ExecutorCandidates,
+  ProjectAgentBindings,
   RequirementDetail,
   RequirementSummary,
   RunControlAction,
@@ -123,7 +131,7 @@ async function request<T>(
       ?.error;
     throw new ApiError(
       envelope?.code ?? 'UNKNOWN',
-      envelope?.message ?? `请求失败（${res.status}）`,
+      envelope?.message ?? t('api.requestFailed', { status: res.status }),
       envelope?.details,
       res.status,
     );
@@ -139,6 +147,8 @@ export interface BoardFilters {
   executorType?: string;
   humanGate?: boolean;
   blocked?: boolean;
+  /** 待认领：标为人工执行但没有执行者 —— 批准计划时确认放行的那些 */
+  unclaimed?: boolean;
 }
 
 export function boardQueryString(filters: BoardFilters): string {
@@ -147,6 +157,7 @@ export function boardQueryString(filters: BoardFilters): string {
   if (filters.risk?.length) params.set('risk', filters.risk.join(','));
   if (filters.executorType) params.set('executorType', filters.executorType);
   if (filters.humanGate) params.set('humanGate', 'true');
+  if (filters.unclaimed) params.set('unclaimed', 'true');
   if (filters.blocked) params.set('blocked', 'true');
   const qs = params.toString();
   return qs ? `?${qs}` : '';
@@ -404,6 +415,23 @@ export const api = {
   deleteRepository: (id: string) =>
     request<{ ok: true }>(`/admin/repositories/${id}`, { method: 'DELETE' }),
 
+  storageTargets: (projectId?: string) =>
+    request<StorageTargetsResponse>(
+      `/admin/storage-targets${projectId ? `?projectId=${projectId}` : ''}`,
+    ),
+  createStorageTarget: (body: Record<string, unknown>) =>
+    request<{ storageTarget: { id: string } }>('/admin/storage-targets', {
+      method: 'POST',
+      json: body,
+    }),
+  updateStorageTarget: (id: string, body: Record<string, unknown>) =>
+    request<unknown>(`/admin/storage-targets/${id}`, { method: 'PATCH', json: body }),
+  deleteStorageTarget: (id: string) =>
+    request<{ ok: true }>(`/admin/storage-targets/${id}`, { method: 'DELETE' }),
+  /** 存储目标连通性探测 —— 与仓库同理：配错了要在这一页知道 */
+  probeStorageTarget: (id: string) =>
+    request<StorageTargetProbe>(`/admin/storage-targets/${id}/probe`, { method: 'POST' }),
+
   conventions: (projectId: string) =>
     request<ConventionsResponse>(`/projects/${projectId}/conventions`),
   createConvention: (projectId: string, body: Record<string, unknown>) =>
@@ -419,6 +447,63 @@ export const api = {
   assignWorkItem: (id: string, body: { agentId?: string; userId?: string; note?: string }) =>
     request<{ ok: true; runId?: string }>(`/work-items/${id}/assign`, {
       method: 'POST',
+      json: body,
+    }),
+
+  /** 候选执行者：可选的与**不可选的**（带原因）一起回 */
+  workItemCandidates: (id: string) =>
+    request<ExecutorCandidates>(`/work-items/${id}/candidates`),
+
+  /**
+   * 只设置执行者，不开始执行。
+   *
+   * ★ 与 assignWorkItem 的区别是这一条**没有副作用**：不派 Run、不动状态、
+   *   不花钱。界面上的执行者下拉框走这个，「开始执行」是另一个按钮。
+   */
+  setWorkItemAssignee: (
+    id: string,
+    body: {
+      agentId?: string | null;
+      userId?: string | null;
+      executionMode?: ExecutionModeValue;
+      /** 有 Run 在跑时必须给：terminate / wait / handover */
+      takeover?: 'terminate' | 'wait' | 'handover';
+    },
+  ) =>
+    request<{
+      ok: true;
+      executorType: 'agent' | 'human' | null;
+      executorId: string | null;
+      executionMode: ExecutionModeValue;
+      terminatedRuns: string[];
+    }>(`/work-items/${id}/assignee`, { method: 'PATCH', json: body }),
+
+  startWorkItem: (id: string, body: { agentId?: string; note?: string } = {}) =>
+    request<{ ok: true; runId?: string; attempt?: number }>(`/work-items/${id}/start`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  /** 产物里的文件清单。★ 只有本地归档那一类有，git / 对象存储走它们自己的链接 */
+  artifactFiles: (artifactId: string) =>
+    request<ArtifactFileList>(`/artifacts/${artifactId}/files`),
+
+  artifactFile: (artifactId: string, path: string) =>
+    request<ArtifactFileContent>(
+      `/artifacts/${artifactId}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+    ),
+
+  projectAgents: (projectId: string) =>
+    request<ProjectAgentBindings>(`/projects/${projectId}/agents`),
+
+  setProjectAgent: (
+    projectId: string,
+    body: { role: string; agentId: string | null; priority?: number },
+  ) =>
+    request<{ ok: true; role: string; agentId: string | null; priority: number }>(
+      `/projects/${projectId}/agents`,
+      {
+      method: 'PUT',
       json: body,
     }),
 
@@ -661,6 +746,38 @@ export const api = {
   approveRequirement: (id: string, note?: string) =>
     request<{ ok: true }>(`/requirements/${id}/approve`, { method: 'POST', json: { note } }),
 
+  /**
+   * 确认并生成计划 —— **一次调用**。
+   *
+   * ★★ 以前这是前端连着发的两个请求。中间断掉（网络抖动、关标签页、
+   *   生成报错）留下的是「需求已确认但没有计划」：状态已经变了，
+   *   而用户看到的是报错，会以为什么都没发生，再点一次还会撞上
+   *   「已确认的需求不能再确认」。
+   *
+   * ★ planError 不为空表示确认成功、生成失败 —— 这时该重试
+   *   generatePlan，而不是再确认一次。
+   */
+  /** 这条需求的历次分析 / 规划 Run —— 「刚才那次分析做了什么」的入口 */
+  requirementRuns: (id: string) =>
+    request<{
+      runs: {
+        id: string;
+        status: string;
+        goal: string;
+        cost: number;
+        model: string | null;
+        errorMessage: string | null;
+        startedAt: string | null;
+        endedAt: string | null;
+      }[];
+    }>(`/requirements/${id}/runs`),
+
+  approveAndPlan: (id: string, note?: string) =>
+    request<{ requirementId: string; plan: { planId: string } | null; planError: string | null }>(
+      `/requirements/${id}/approve-and-plan`,
+      { method: 'POST', json: { note } },
+    ),
+
   rejectRequirement: (id: string, reason: string) =>
     request<{ requirement: unknown }>(`/requirements/${id}/reject`, {
       method: 'POST',
@@ -682,10 +799,15 @@ export const api = {
 
   plan: (id: string) => request<PlanDetail>(`/plans/${id}`),
 
-  approvePlan: (id: string, acknowledgedOverrun?: boolean) =>
+  approvePlan: (
+    id: string,
+    acknowledgedOverrun?: boolean,
+    /** ★ 与超支确认分开：一个是「确认花钱」，一个是「确认这几项先没人接」 */
+    acknowledgedUnassigned?: boolean,
+  ) =>
     request<{ ok: true; planId: string; activatedTasks: number }>(`/plans/${id}/approve`, {
       method: 'POST',
-      json: { acknowledgedOverrun },
+      json: { acknowledgedOverrun, acknowledgedUnassigned },
     }),
 
   revisePlan: (id: string, feedback: string) =>

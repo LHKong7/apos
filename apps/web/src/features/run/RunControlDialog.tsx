@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Modal } from '../work-item/ManualMoveDialog';
 import type { RunControlAction } from '../../lib/api/types';
@@ -31,32 +32,33 @@ export function RunControlDialog({
   error,
   fallback,
 }: Props) {
+  const t = useT();
   const [text, setText] = useState('');
   const isTerminate = action === 'terminate';
   const canSubmit = text.trim().length > 0 && !pending;
 
   return (
-    <Modal onClose={onCancel} title="Run 控制">
+    <Modal onClose={onCancel} title={t('runCtl.title')}>
       <h2 className="text-sm font-semibold text-slate-900">
-        {isTerminate ? '终止这次执行' : '向执行中的 Agent 追加约束'}
+        {isTerminate ? t('runCtl.terminate') : t('runCtl.addConstraint')}
       </h2>
 
       <p className="mt-1 text-xs text-slate-500">
         {isTerminate
-          ? '终止不可恢复。已产生的产物会保留，并标注「来自未完成的 Run」。'
-          : `${runtimeName} 将在当前步骤结束后应用该约束，已完成的步骤不会回滚。`}
+          ? t('runCtl.terminateWarning')
+          : t('runCtl.constraintWarning', { runtime: runtimeName })}
       </p>
 
       <label className="mt-3 block">
         <span className="mb-0.5 block text-[11px] text-slate-500">
-          {isTerminate ? '终止原因（必填，会记入事件）' : '约束内容'}
+          {isTerminate ? t('runCtl.terminateReason') : t('runCtl.constraintLabel')}
         </span>
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
           placeholder={
-            isTerminate ? '需求已作废，不必继续' : '例如：仅修改 order-service，不要动 shared-lib'
+            isTerminate ? t('runCtl.terminatePlaceholder') : t('runCtl.constraintPlaceholder')
           }
         />
       </label>
@@ -72,7 +74,7 @@ export function RunControlDialog({
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="outline" size="sm"
           onClick={onCancel}>
-          取消
+          {t('common.cancel')}
         </Button>
         <button
           type="button"
@@ -86,7 +88,7 @@ export function RunControlDialog({
               : 'rounded bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40'
           }
         >
-          {pending ? '提交中…' : isTerminate ? '确认终止' : '发送'}
+          {pending ? t('decision.submitting') : isTerminate ? t('runCtl.confirmTerminate') : t('runCtl.send')}
         </button>
       </div>
     </Modal>

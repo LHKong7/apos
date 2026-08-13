@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../lib/i18n';
 import clsx from 'clsx';
 
 export type ActorState = 'idle' | 'running' | 'blocked' | 'failed';
@@ -19,6 +20,7 @@ interface Props {
  * 「人还是 Agent 在做」这条产品最核心的视觉差异就会不一致。
  */
 export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Props) {
+  const t = useT();
   const isAgent = actor.type === 'agent';
   const text = size === 'sm' ? 'text-[11px]' : 'text-xs';
   const Wrapper = onClick ? 'button' : 'span';
@@ -27,7 +29,7 @@ export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Pr
     <Wrapper
       type={onClick ? 'button' : undefined}
       onClick={onClick}
-      title={`${isAgent ? 'Agent' : '人类'}：${actor.name}`}
+      title={t('chip.agentOrHuman', { kind: isAgent ? 'Agent' : t('chip.human'), name: actor.name })}
       className={clsx(
         'inline-flex max-w-full items-center gap-1 truncate align-middle transition',
         text,
@@ -67,14 +69,23 @@ const DOT_STYLES: Record<ActorState, string> = {
   failed: 'bg-overdue',
 };
 
-const DOT_LABELS: Record<ActorState, string> = {
-  idle: '空闲',
-  running: '执行中',
-  blocked: '阻塞',
-  failed: '失败',
+/**
+ * 状态 → 词条键 / Actor state → message key.
+ *
+ * ★★ 存**键**不存译文。模块级常量取不到 hook，`t()` 在这里只会跑一次 ——
+ *   切语言时它不重算，圆点的 tooltip 会永远停在启动时那个语言。
+ *   翻译发生在渲染处（见 lib/i18n/index.ts 里 useT 的理由）。
+ */
+const DOT_KEYS: Record<ActorState, MessageKey> = {
+  idle: 'chip.idle',
+  running: 'chip.running',
+  blocked: 'chip.blocked',
+  failed: 'chip.failed',
 };
 
 export function StatusDot({ state }: { state: ActorState }) {
+  const t = useT();
+  const label = t(DOT_KEYS[state]);
   return (
     /*
      * ★ 「执行中」额外套一圈向外扩散的涟漪。
@@ -83,8 +94,8 @@ export function StatusDot({ state }: { state: ActorState }) {
      *   减少动态效果的系统设置会把它停掉（见 index.css）。
      */
     <span
-      title={DOT_LABELS[state]}
-      aria-label={DOT_LABELS[state]}
+      title={label}
+      aria-label={label}
       className="relative flex h-1.5 w-1.5 shrink-0"
     >
       {state === 'running' && (

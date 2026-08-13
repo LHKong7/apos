@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { eventIcon, groupEvents, isNoise, type TimelineEntry } from './group-events';
@@ -21,6 +22,7 @@ interface Props {
  * 两者的差别不是字段多少，是叙事粒度。
  */
 export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props) {
+  const t = useT();
   const entries = useMemo(() => {
     const visible = detailed ? events : events.filter((e) => !isNoise(e.type));
     return groupEvents(visible, !detailed);
@@ -40,7 +42,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
           onClick={onJumpToFailure}
           className="mb-1 self-start text-[11px] text-red-700 underline"
         >
-          跳到失败点 ↓
+          {t('timeline.jumpToFailure')}
         </button>
       )}
 
@@ -58,14 +60,14 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
 
         {entries.length === 0 && (
           <p className="py-6 text-center text-xs text-slate-400">
-            {detailed ? '还没有事件' : '还没有里程碑事件，切到详细模式看全部'}
+            {detailed ? t('timeline.noEvents') : t('timeline.noMilestones')}
           </p>
         )}
 
         {live && (
           <div className="flex items-center gap-2 py-2 pl-1 text-xs text-slate-500">
             <span className="inline-block h-1.5 w-1.5 animate-breathe rounded-full bg-emerald-500" />
-            执行中…
+            {t('timeline.running')}
           </div>
         )}
       </div>
@@ -77,7 +79,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
           onClick={scrollToBottom}
           className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-fade-in-up rounded-full border border-brand/40 px-3 py-1 text-[11px] font-medium text-brand shadow-lg glass-strong hover:border-brand"
         >
-          ↓ {unseen} 条新事件
+          {t('timeline.newEvents', { count: unseen })}
         </button>
       )}
     </div>
@@ -93,6 +95,7 @@ function Entry({
   detailed: boolean;
   last: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const expandable = detailed || entry.members.length > 1 || hasDetail(entry);
   const isError = entry.type === 'error';
@@ -136,7 +139,7 @@ function Entry({
               onClick={() => setOpen((v) => !v)}
               className="shrink-0 text-[10px] text-slate-400 hover:text-slate-600"
             >
-              {open ? '收起' : '展开'}
+              {open ? t('timeline.collapse') : t('timeline.expand')}
             </button>
           )}
         </div>
@@ -155,6 +158,7 @@ function Entry({
 
 /** 单条事件的原始内容。超长内容折叠，避免一个工具返回撑爆整页 */
 function Detail({ row, showSummary }: { row: RunEventRow; showSummary: boolean }) {
+  const t = useT();
   const text = JSON.stringify(row.payload ?? {}, null, 2);
   const truncated = text.length > 4000;
 
@@ -166,7 +170,7 @@ function Detail({ row, showSummary }: { row: RunEventRow; showSummary: boolean }
         </p>
       )}
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-[10px] leading-4 text-slate-600">
-        {truncated ? `${text.slice(0, 4000)}\n…（已截断，共 ${text.length} 字符）` : text}
+        {truncated ? text.slice(0, 4000) + t('timeline.truncated', { total: text.length }) : text}
       </pre>
     </div>
   );

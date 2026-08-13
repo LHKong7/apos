@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_TYPES, type DiagnosticAction } from '@apos/domain';
+import { useLocaleStore } from '../../lib/i18n';
 import { resolveDiagnosticAction } from './diagnostic-actions';
 
 const PROJECT = 'p1';
@@ -13,6 +14,9 @@ const ALL_KINDS: DiagnosticAction['kind'][] = [
   'adjust_policy',
   'locate',
 ];
+
+/** ★ 钉住中文：这条断言查的是「计划」两个字，默认语言是英文 */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
 
 describe('诊断动作一定有去处', () => {
   it('★ 每一种动作都解析出可执行意图，没有一种是死胡同', () => {

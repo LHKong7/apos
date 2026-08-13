@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -29,6 +30,7 @@ import type { AssignableRole } from '../../lib/api/types';
  *   不是前端硬编码的枚举。
  */
 export function MembersPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const currentUserId = useAuthStore((s) => s.userId);
   const perms = usePermissions(projectId);
@@ -68,7 +70,7 @@ export function MembersPage() {
       setAdding(null);
       refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '修改角色失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('members.roleChangeFailed')),
   });
 
   const remove = useMutation({
@@ -78,7 +80,7 @@ export function MembersPage() {
       setError(null);
       refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : '移除成员失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('members.removeFailed')),
   });
 
   if (!projectId) return null;
@@ -106,19 +108,19 @@ export function MembersPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">成员与角色</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('members.title')}</h1>
           <RoleBadge projectId={projectId} />
           <Link
             to={`/projects/${projectId}`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到项目
+            {t('nav.backToProject')}
           </Link>
           <Link
             to={`/projects/${projectId}/settings/roles`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            角色定义 →
+            {t('members.toRoles')}
           </Link>
           {/*
             ★ 通向「开账号」的入口必须在这里。
@@ -129,7 +131,7 @@ export function MembersPage() {
             to={`/projects/${projectId}/settings/accounts`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            账号 →
+            {t('members.toAccounts')}
           </Link>
           <div className="ml-auto flex gap-1.5">
             <GatedButton
@@ -138,7 +140,7 @@ export function MembersPage() {
               onClick={() => setAdding('human')}
               className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
             >
-              添加成员
+              {t('members.addMember')}
             </GatedButton>
             <GatedButton
               permission="project.members.manage"
@@ -146,12 +148,12 @@ export function MembersPage() {
               onClick={() => setAdding('agent')}
               className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
             >
-              添加 Agent
+              {t('members.addAgent')}
             </GatedButton>
           </div>
         </div>
         <p className="mt-0.5 text-[11px] text-slate-400">
-          角色决定这个人 / 这个 Agent 在本项目里能做什么。权限变更全部记入审计
+          {t('members.roleHint')}
         </p>
       </div>
 
@@ -173,7 +175,7 @@ export function MembersPage() {
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}
                 <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                  知道了
+                  {t('common.gotIt')}
                 </button>
               </p>
             )}
@@ -181,12 +183,12 @@ export function MembersPage() {
             {adding && (
               <section className="rounded border border-slate-300 bg-white px-3 py-2">
                 <h2 className="text-xs font-medium text-slate-700">
-                  添加{adding === 'agent' ? ' Agent' : '成员'}
+                  {adding === 'agent' ? t('members.addAgent') : t('members.addMember')}
                 </h2>
                 <p className="text-[11px] text-slate-400">
                   {adding === 'agent'
-                    ? '只列出本组织的 Agent。含「确认需求 / 批准计划 / 处理决策」的角色不会出现在下拉框里 —— 那些只能由人担任'
-                    : '只能添加本组织的人'}
+                    ? t('members.agentDropdownHint')
+                    : t('members.orgOnly')}
                 </p>
                 <ul className="mt-1.5 max-h-64 space-y-1 overflow-y-auto">
                   {candidates.map((c) => (
@@ -203,9 +205,9 @@ export function MembersPage() {
                           setRole.mutate({ id: c.id, role: e.target.value, actorType: adding })
                         }
                         className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px]"
-                        aria-label={`${c.name} 的角色`}
+                        aria-label={t('members.roleOf', { name: c.name })}
                       >
-                        <option value="">选择角色…</option>
+                        <option value="">{t('members.chooseRole')}</option>
                         {rolesFor(adding).map((r) => (
                           <option key={r.role} value={r.role}>
                             {r.label}
@@ -214,12 +216,12 @@ export function MembersPage() {
                       </select>
                     </li>
                   ))}
-                  {directory.isPending && <li className="text-xs text-slate-400">加载中…</li>}
+                  {directory.isPending && <li className="text-xs text-slate-400">{t('common.loading')}</li>}
                   {!directory.isPending && candidates.length === 0 && (
                     <li className="text-xs text-slate-400">
                       {adding === 'agent'
-                        ? '本组织的 Agent 都已经在这个项目里了'
-                        : '组织里的人都已经是本项目成员了'}
+                        ? t('members.allAgentsAdded')
+                        : t('members.allPeopleAdded')}
                     </li>
                   )}
                 </ul>
@@ -228,13 +230,13 @@ export function MembersPage() {
                   onClick={() => setAdding(null)}
                   className="mt-1.5 text-[11px] text-slate-500 underline"
                 >
-                  收起
+                  {t('members.collapse')}
                 </button>
               </section>
             )}
 
             <MemberTable
-              title={`人类成员（${humans.length}）`}
+              title={t('members.humans', { count: humans.length })}
               rows={humans}
               roles={rolesFor('human')}
               canManage={canManage}
@@ -250,15 +252,15 @@ export function MembersPage() {
                 而那恰恰是看混合团队时第一个要问的。
             */}
             <MemberTable
-              title={`Agent 成员（${agentMembers.length}）`}
-              hint="Agent 担任的是同一套角色。它的工具与资源权限另在 Agent 档案里配置，绝不继承任何人类成员（§1.2）"
+              title={t('members.agents', { count: agentMembers.length })}
+              hint={t('members.agentRoleNote')}
               rows={agentMembers}
               roles={rolesFor('agent')}
               canManage={canManage}
               denyReason={perms.why('project.members.manage')}
               currentUserId={null}
               icon="🤖"
-              empty="还没有 Agent 加入这个项目"
+              empty={t('members.noAgents')}
               onChange={(id, role) => setRole.mutate({ id, role, actorType: 'agent' })}
               onRemove={(id) => remove.mutate({ id, actorType: 'agent' })}
             />
@@ -305,6 +307,7 @@ function MemberTable({
   onChange: (id: string, role: string) => void;
   onRemove: (id: string) => void;
 }) {
+  const t = useT();
   return (
     <section className="rounded border border-slate-200 bg-white">
       <div className="border-b border-slate-100 px-3 py-1.5">
@@ -312,7 +315,7 @@ function MemberTable({
         {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
       </div>
       {rows.length === 0 ? (
-        <p className="px-3 py-3 text-center text-xs text-slate-400">{empty ?? '还没有成员'}</p>
+        <p className="px-3 py-3 text-center text-xs text-slate-400">{empty ?? t('members.empty')}</p>
       ) : (
         <ul>
           {rows.map((m) => {
@@ -327,11 +330,14 @@ function MemberTable({
                     {icon && <span className="mr-1">{icon}</span>}
                     {m.name ?? m.actorId}
                     {m.actorId === currentUserId && (
-                      <span className="ml-1 text-[11px] text-slate-400">（你）</span>
+                      <span className="ml-1 text-[11px] text-slate-400">{t('members.you')}</span>
                     )}
                   </p>
                   <p className="truncate text-[11px] text-slate-400">
-                    {m.email ?? m.detail} · 加入于 {relativeTime(m.addedAt)}
+                    {t('members.joinedAt', {
+                      detail: m.email ?? m.detail ?? '',
+                      time: relativeTime(m.addedAt),
+                    })}
                   </p>
                 </div>
 
@@ -349,22 +355,24 @@ function MemberTable({
                     'rounded border border-slate-300 px-1.5 py-0.5 text-[11px]',
                     !canManage && 'cursor-not-allowed opacity-60',
                   )}
-                  aria-label={`${m.name ?? m.actorId} 的角色`}
+                  aria-label={t('members.roleOf', { name: m.name ?? m.actorId })}
                 >
                   {/* 当前角色可能已不适用于这一类担任者（角色被改窄了），仍要显示出来 */}
                   {!roles.some((r) => r.role === m.role) && (
-                    <option value={m.role}>{m.roleLabel}（已不适用）</option>
+                    <option value={m.role}>
+                      {t('members.roleNoLongerApplies', { label: m.roleLabel })}
+                    </option>
                   )}
                   {roles.map((r) => (
                     <option key={r.role} value={r.role}>
                       {r.label}
-                      {r.builtin ? '' : '（自定义）'}
+                      {r.builtin ? '' : t('members.customRole')}
                     </option>
                   ))}
                 </select>
 
                 <span className="hidden w-52 shrink-0 truncate text-[11px] text-slate-400 md:block">
-                  {role?.description ?? `${m.permissionCount} 项权限`}
+                  {role?.description ?? t('members.permissionCount', { count: m.permissionCount })}
                 </span>
 
                 <GatedButton
@@ -372,7 +380,7 @@ function MemberTable({
                   onClick={() => onRemove(m.actorId)}
                   className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                 >
-                  移除
+                  {t('members.remove')}
                 </GatedButton>
               </li>
             );

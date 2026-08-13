@@ -6,19 +6,29 @@ import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { relativeTime } from '../../lib/format';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
-  analyzing: '分析中',
-  clarifying: '待澄清',
-  awaiting_approval: '待确认',
-  approved: '已确认',
-  rejected: '已驳回',
-  on_hold: '暂缓',
+/**
+ * 状态 → 词条键。
+ *
+ * ★ 存键不存译文：这张表是模块级常量，取不到 hook；而且切换语言时
+ *   模块常量不会重算，译好的字符串会一直停在第一次渲染的那个语言。
+ *   Status values map to message keys, not strings — a module-level constant
+ *   cannot call hooks and would freeze at whatever locale loaded first.
+ */
+const STATUS_KEYS: Record<string, MessageKey> = {
+  draft: 'requirement.status.draft',
+  analyzing: 'requirement.status.analyzing',
+  clarifying: 'requirement.status.clarifying',
+  awaiting_approval: 'requirement.status.awaiting_approval',
+  approved: 'requirement.status.approved',
+  rejected: 'requirement.status.rejected',
+  on_hold: 'requirement.status.on_hold',
 };
 
 /**
@@ -37,6 +47,7 @@ export function RequirementListPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const t = useT();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -63,7 +74,7 @@ export function RequirementListPage() {
         .then((r) => ({ id: r.requirement.id, next })),
     onSuccess: ({ id, next }) =>
       navigate(`/projects/${projectId}/requirements/${id}${next === 'manual' ? '?edit=1' : ''}`),
-    onError: (e) => setError(e instanceof ApiError ? e.message : '创建失败'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.compose.createFailed')),
   });
 
   const rows = list.data?.requirements ?? [];
@@ -91,7 +102,7 @@ export function RequirementListPage() {
   const removeMany = useMutation({
     mutationFn: async (targets: { id: string; title: string }[]) => {
       const results = await Promise.allSettled(
-        targets.map((t) => api.deleteRequirement(t.id)),
+        targets.map((target) => api.deleteRequirement(target.id)),
       );
       return results.flatMap((res, i) =>
         res.status === 'fulfilled'
@@ -100,7 +111,10 @@ export function RequirementListPage() {
               {
                 id: targets[i]!.id,
                 title: targets[i]!.title,
-                reason: res.reason instanceof ApiError ? res.reason.message : '删除失败',
+                reason:
+                  res.reason instanceof ApiError
+                    ? res.reason.message
+                    : t('requirement.delete.failed'),
               },
             ],
       );
@@ -120,12 +134,12 @@ export function RequirementListPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">需求</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('requirement.title')}</h1>
           <Link
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
         </div>
       </div>
@@ -133,33 +147,35 @@ export function RequirementListPage() {
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
         <div className="mx-auto max-w-3xl space-y-3">
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
-            <h2 className="text-xs font-medium text-slate-700">描述你想要什么，用自己的话就行</h2>
+            <h2 className="text-xs font-medium text-slate-700">
+              {t('requirement.compose.heading')}
+            </h2>
             <Textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={5}
-              placeholder="例如：现在用户查订单要等好几秒，客服天天投诉。想优化一下，最好能支持按手机号、订单号、时间段搜。"
+              placeholder={t('requirement.compose.placeholder')}
               className="mt-1.5"
             />
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <Button variant="neutral" size="sm"
                 onClick={() => create.mutate('ai')}
                 disabled={draft.trim().length === 0 || create.isPending}>
-                {create.isPending ? '创建中…' : '交给 AI 分析 →'}
+                {create.isPending ? t('requirement.compose.creating') : t('requirement.compose.toAi')}
               </Button>
               <Button variant="outline" size="sm"
                 onClick={() => create.mutate('manual')}
                 disabled={draft.trim().length === 0 || create.isPending}>
-                自己填写 →
+                {t('requirement.compose.manual')}
               </Button>
               {/* ★ 不阻止短输入，只如实说明后果 */}
               {draft.trim().length > 0 && draft.trim().length < 20 && (
                 <span className="text-[11px] text-amber-700">
-                  描述较少，AI 会问更多问题
+                  {t('requirement.compose.shortInput')}
                 </span>
               )}
               <span className="ml-auto text-[11px] text-slate-400">
-                MVP 只支持直接描述；对话式录入与文档上传尚未实现
+                {t('requirement.compose.mvpNote')}
               </span>
             </div>
             {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
@@ -171,13 +187,17 @@ export function RequirementListPage() {
           )}
 
           {list.data && list.data.requirements.length === 0 && (
-            <EmptyState icon="📝" message="这个项目还没有需求" hint="上面写一段就能开始" />
+            <EmptyState
+              icon="📝"
+              message={t('requirement.list.empty')}
+              hint={t('requirement.list.emptyHint')}
+            />
           )}
 
           {blocked.length > 0 && (
             <section className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs font-medium text-amber-900">
-                有 {blocked.length} 条没能删除，仍然勾着：
+                {t('requirement.delete.blockedHeading', { count: blocked.length })}
               </p>
               <ul className="mt-1 space-y-0.5">
                 {blocked.map((b) => (
@@ -191,7 +211,7 @@ export function RequirementListPage() {
                 className="mt-1 text-[11px] text-amber-700 underline"
                 onClick={() => setBlocked([])}
               >
-                知道了
+                {t('common.gotIt')}
               </button>
             </section>
           )}
@@ -199,27 +219,31 @@ export function RequirementListPage() {
           {rows.length > 0 && (
             <section className="rounded border border-slate-200 bg-white">
               <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5">
-                <h2 className="text-xs font-medium text-slate-700">已有需求（{rows.length}）</h2>
+                <h2 className="text-xs font-medium text-slate-700">
+                  {t('requirement.list.heading', { count: rows.length })}
+                </h2>
                 {/*
                   ★ 批量删除只在勾了东西之后出现 —— 常驻一个删除按钮会让
                     这个以「录入」为主的页面看起来像个管理后台。
                 */}
                 {selected.size > 0 && (
                   <>
-                    <span className="text-[11px] text-slate-500">已选 {selected.size} 条</span>
+                    <span className="text-[11px] text-slate-500">
+                      {t('requirement.list.selected', { count: selected.size })}
+                    </span>
                     <button
                       type="button"
                       className="text-[11px] text-slate-500 underline"
                       onClick={() => setSelected(new Set())}
                     >
-                      取消选择
+                      {t('requirement.list.clearSelection')}
                     </button>
                     <GatedButton
                       permission="requirement.delete"
                       onClick={() => setConfirmingDelete(true)}
                       className="ml-auto text-xs text-red-600 hover:text-red-800"
                     >
-                      删除选中
+                      {t('requirement.list.deleteSelected')}
                     </GatedButton>
                   </>
                 )}
@@ -237,12 +261,11 @@ export function RequirementListPage() {
                       ★ 勾选框独立于整行按钮之外：按钮不能嵌套，而且勾选与
                         「进入这条需求」是两个意图，共用一次点击必然误触。
                     */}
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      tone="destructive"
                       checked={selected.has(r.id)}
-                      onChange={() => toggle(r.id)}
-                      aria-label={`选择「${r.title}」`}
-                      className="shrink-0 accent-red-600"
+                      onCheckedChange={() => toggle(r.id)}
+                      aria-label={t('requirement.list.selectOne', { title: r.title })}
                     />
                     <button
                       type="button"
@@ -265,11 +288,13 @@ export function RequirementListPage() {
                               : 'bg-slate-100 text-slate-600',
                         )}
                       >
-                        {STATUS_LABELS[r.status] ?? r.status}
+                        {STATUS_KEYS[r.status] ? t(STATUS_KEYS[r.status]!) : r.status}
                       </span>
                       {r.latestPlanId && (
                         <span className="text-[11px] text-slate-500">
-                          计划 {r.latestPlanStatus === 'approved' ? '已批准' : '待批准'}
+                          {r.latestPlanStatus === 'approved'
+                            ? t('requirement.list.planApproved')
+                            : t('requirement.list.planPending')}
                         </span>
                       )}
                       <span className="text-[11px] text-slate-400">
@@ -317,9 +342,12 @@ function BulkDeleteDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   return (
-    <Modal onClose={onCancel} title="删除需求">
-      <h2 className="text-sm font-semibold text-slate-900">删除 {targets.length} 条需求</h2>
+    <Modal onClose={onCancel} title={t('requirement.delete.one.title')}>
+      <h2 className="text-sm font-semibold text-slate-900">
+        {t('requirement.delete.many.title', { count: targets.length })}
+      </h2>
       <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
         {targets.map((t) => (
           <li key={t.id} className="truncate text-xs text-slate-700">
@@ -327,16 +355,23 @@ function BulkDeleteDialog({
           </li>
         ))}
       </ul>
+      {/*
+        ★ 「无法恢复」单独成键并染红 —— 它是这一屏唯一不可逆的部分。
+          把它揉进整段里，读的人会连着扫过去。
+      */}
       <p className="mt-2 text-xs text-slate-500">
-        记录连同各自的澄清项与假设一并删除，<span className="text-red-600">无法恢复</span>。
-        已经生成过计划或工作项的会被挡下并逐条告诉你原因 —— 那些需要的是驳回，不是删除。
+        {t('requirement.delete.warning')}{' '}
+        <span className="text-red-600">{t('requirement.delete.irreversible')}</span>{' '}
+        {t('requirement.delete.blockedHint')}
       </p>
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="destructive" size="sm" onClick={onConfirm} disabled={pending}>
-          {pending ? '删除中…' : `确认删除 ${targets.length} 条`}
+          {pending
+            ? t('common.deleting')
+            : t('requirement.delete.confirmMany', { count: targets.length })}
         </Button>
       </div>
     </Modal>

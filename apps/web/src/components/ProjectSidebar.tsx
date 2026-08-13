@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { api } from '../lib/api/client';
 import { qk } from '../lib/query/keys';
 import { sidebarCollapsed, useSidebarStore } from '../stores/sidebar';
+import { useT, type MessageKey } from '../lib/i18n';
 import { RoleBadge } from './Gated';
 
 /**
@@ -57,6 +58,7 @@ export function ProjectSidebar() {
   });
 
   const collapsed = sidebarCollapsed(manual, pathname);
+  const t = useT();
 
   if (!projectId) {
     /*
@@ -77,7 +79,7 @@ export function ProjectSidebar() {
 
   return (
     <aside
-      aria-label="项目导航"
+      aria-label={t('nav.aria.projectNav')}
       className={clsx(
         'relative z-10 flex shrink-0 flex-col border-r border-slate-200/80 glass',
         'transition-[width] duration-200 ease-out',
@@ -108,12 +110,12 @@ export function ProjectSidebar() {
       {/* ── 导航 ── */}
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {groups.map((group, gi) => (
-          <div key={group.title} className={clsx(gi > 0 && 'mt-3')}>
+          <div key={group.titleKey} className={clsx(gi > 0 && 'mt-3')}>
             {collapsed ? (
               gi > 0 && <div aria-hidden className="mx-2 mb-2 h-px bg-slate-200/70" />
             ) : (
               <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                {group.title}
+                {t(group.titleKey)}
               </p>
             )}
             <ul className="space-y-0.5">
@@ -122,7 +124,7 @@ export function ProjectSidebar() {
                   <NavLink
                     to={item.to}
                     end={item.end}
-                    title={collapsed ? item.label : undefined}
+                    title={collapsed ? t(item.labelKey) : undefined}
                     className={({ isActive }) =>
                       clsx(
                         'group relative flex items-center rounded-md text-xs transition',
@@ -145,7 +147,7 @@ export function ProjectSidebar() {
                         <span aria-hidden className="shrink-0">
                           {item.icon}
                         </span>
-                        {!collapsed && <span className="truncate">{item.label}</span>}
+                        {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
                       </>
                     )}
                   </NavLink>
@@ -173,8 +175,8 @@ export function ProjectSidebar() {
         <button
           type="button"
           onClick={() => setManual(!collapsed)}
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
-          title={collapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+          title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
           className={clsx(
             'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700',
             !collapsed && 'ml-auto',
@@ -191,40 +193,49 @@ export function ProjectSidebar() {
 
 interface NavItem {
   to: string;
-  label: string;
+  /**
+   * ★ 存词条键而不是译好的字符串：navGroups 是普通函数，不是组件，
+   *   在里面调 useT 会违反 Hook 规则；而提前译好又意味着切换语言时
+   *   这张表不会重算。存键、渲染处再译，两个问题一起没了。
+   *
+   *   Nav items carry message keys, not translated strings: navGroups is a
+   *   plain function (no hooks), and pre-translating would freeze the labels
+   *   at build time of the array rather than at render.
+   */
+  labelKey: MessageKey;
   icon: ReactNode;
   /** 总览的路径是其余所有页的前缀，不加 end 会一直高亮 */
   end?: boolean;
 }
 
-function navGroups(id: string): { title: string; items: NavItem[] }[] {
+function navGroups(id: string): { titleKey: MessageKey; items: NavItem[] }[] {
   const p = `/projects/${id}`;
   return [
     {
-      title: '工作',
+      titleKey: 'nav.group.work',
       items: [
-        { to: p, label: '总览', icon: <Icon.Overview />, end: true },
-        { to: `${p}/board`, label: '看板', icon: <Icon.Board /> },
-        { to: `${p}/graph`, label: '执行图', icon: <Icon.Graph /> },
-        { to: `${p}/requirements`, label: '需求', icon: <Icon.Requirement /> },
-        { to: `${p}/decisions`, label: '决策', icon: <Icon.Decision /> },
+        { to: p, labelKey: 'nav.overview', icon: <Icon.Overview />, end: true },
+        { to: `${p}/board`, labelKey: 'nav.board', icon: <Icon.Board /> },
+        { to: `${p}/graph`, labelKey: 'nav.graph', icon: <Icon.Graph /> },
+        { to: `${p}/requirements`, labelKey: 'nav.requirements', icon: <Icon.Requirement /> },
+        { to: `${p}/decisions`, labelKey: 'nav.decisions', icon: <Icon.Decision /> },
       ],
     },
     {
-      title: '洞察',
+      titleKey: 'nav.group.insight',
       items: [
-        { to: `${p}/analytics`, label: 'Analytics', icon: <Icon.Analytics /> },
-        { to: `${p}/agents`, label: 'Agent 团队', icon: <Icon.Agents /> },
+        { to: `${p}/analytics`, labelKey: 'nav.analytics', icon: <Icon.Analytics /> },
+        { to: `${p}/agents`, labelKey: 'nav.agents', icon: <Icon.Agents /> },
       ],
     },
     {
-      title: '配置',
+      titleKey: 'nav.group.config',
       items: [
-        { to: `${p}/settings/policies`, label: 'Policy', icon: <Icon.Policy /> },
-        { to: `${p}/settings/integrations`, label: '集成', icon: <Icon.Integration /> },
-        { to: `${p}/settings/agents`, label: 'Agent 配置', icon: <Icon.AgentConfig /> },
-        { to: `${p}/settings/members`, label: '成员与角色', icon: <Icon.Members /> },
-        { to: `${p}/settings/roles`, label: '角色定义', icon: <Icon.Roles /> },
+        { to: `${p}/settings/policies`, labelKey: 'nav.policies', icon: <Icon.Policy /> },
+        { to: `${p}/settings/integrations`, labelKey: 'nav.integrations', icon: <Icon.Integration /> },
+        { to: `${p}/settings/agents`, labelKey: 'nav.agentConfig', icon: <Icon.AgentConfig /> },
+        { to: `${p}/settings/members`, labelKey: 'nav.members', icon: <Icon.Members /> },
+        { to: `${p}/settings/roles`, labelKey: 'nav.roles', icon: <Icon.Roles /> },
       ],
     },
   ];

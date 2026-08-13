@@ -19,7 +19,9 @@ import {
   PROVIDER_LABELS,
   SOT_PRESETS,
   STRATEGY_LABELS,
+  STRATEGY_LABELS_EN,
   SYNC_FIELD_LABELS,
+  SYNC_FIELD_LABELS_EN,
   type IntegrationProvider,
   type NotificationConfig,
   type SideSnapshot,
@@ -152,6 +154,7 @@ export async function listIntegrations(
         .map((a) => ({
           field: a.field,
           fieldLabel: SYNC_FIELD_LABELS[a.field as SyncField] ?? a.field,
+          fieldLabelEn: SYNC_FIELD_LABELS_EN[a.field as SyncField] ?? a.field,
           winner: a.winner,
         })),
 
@@ -182,34 +185,61 @@ export async function listIntegrations(
         categoryLabel: CATEGORY_LABELS[PROVIDER_CATEGORY[p]],
         transportReady: registry.has(p),
       })),
+    /**
+     * ★ 中英一起给，由前端按当前语言挑（lib/i18n 的 useSpecText）。
+     *   服务端不知道调用方的界面语言 —— 让它猜的结果是「切了语言，
+     *   这一页的字段名还是原来那套」。
+     *
+     *   Both languages go out and the client picks (useSpecText in lib/i18n).
+     *   The server has no idea which locale the caller is showing; guessing
+     *   produces "I switched language but this page's field names did not".
+     */
     fieldCatalog: (Object.keys(FIELD_DEFAULTS) as SyncField[]).map((f) => ({
       field: f,
       label: SYNC_FIELD_LABELS[f],
+      labelEn: SYNC_FIELD_LABELS_EN[f],
       ...FIELD_DEFAULTS[f],
     })),
     presets: Object.entries(SOT_PRESETS).map(([key, p]) => ({
       key,
       label: p.label,
+      labelEn: p.labelEn,
       description: p.description,
+      descriptionEn: p.descriptionEn,
     })),
     strategyLabels: STRATEGY_LABELS,
+    strategyLabelsEn: STRATEGY_LABELS_EN,
     notifyEvents: NOTIFY_EVENTS.map((e) => ({ ...e })),
   };
 }
 
+/**
+ * ★ 中英一起返回，前端按当前语言挑。理由同 fieldCatalog。
+ *   Both languages are returned and the client picks; same reason as fieldCatalog.
+ */
 function describeMapping(m: SyncMapping) {
   return {
     ...m,
     fieldLabel: SYNC_FIELD_LABELS[m.field],
+    fieldLabelEn: SYNC_FIELD_LABELS_EN[m.field],
     why: FIELD_DEFAULTS[m.field].why,
+    whyEn: FIELD_DEFAULTS[m.field].whyEn,
     options: FIELD_DEFAULTS[m.field].options,
     strategyLabel: STRATEGY_LABELS[m.strategy],
-    /** 偏离默认值要标出来 —— 用户改过的地方，下次读这一页时该一眼看见 */
+    strategyLabelEn: STRATEGY_LABELS_EN[m.strategy],
+    /**
+     * 偏离默认值要标出来 —— 用户改过的地方，下次读这一页时该一眼看见。
+     * Flag anything that deviates from the default: what a user changed should
+     * be obvious the next time this page is read.
+     */
     customized: m.sourceOfTruth !== FIELD_DEFAULTS[m.field].sourceOfTruth,
   };
 }
 
-/** 7 天内过期就提示（页面文档 14 §7） */
+/**
+ * 7 天内过期就提示（页面文档 14 §7）。
+ * Warn when a credential expires within 7 days (page doc 14 §7).
+ */
 function expiringSoon(at: Date | null): boolean {
   if (!at) return false;
   return at.getTime() - Date.now() < 7 * 24 * 3600_000;

@@ -137,6 +137,24 @@ import {
   updateConvention,
   updateRepository,
 } from './project-config';
+import {
+  createStorageTarget,
+  deleteStorageTarget,
+  listStorageTargets,
+  probeStorageTarget,
+  StorageTargetInput,
+  updateStorageTarget,
+} from './storage-targets';
+import { AssigneeInput, listCandidates, setAssignee } from './assignment';
+import {
+  addAssumption,
+  confirmAssumption,
+  invalidateAssumption,
+  listAssumptions,
+  reopenRequirement,
+} from '../modules/requirement/service';
+import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
+import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
@@ -534,6 +552,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         return one(await db.select({ projectId: integrations.projectId }).from(integrations).where(eq(integrations.id, id)));
       case 'sync-conflicts':
         return one(await db.select({ projectId: syncConflicts.projectId }).from(syncConflicts).where(eq(syncConflicts.id, id)));
+      /**
+       * ★★ 产物必须登记在这里，否则文件网关就是**不设防**的。
+       *
+       *   `/api/v1/artifacts/:id/files` 不落在 PROJECT_SCOPED_URL 上，
+       *   闸门只有靠这张表才知道它属于哪个项目。漏登记的表现是
+       *   「任何登录用户都能读任意项目的产物文件」——
+       *   而那正是这个网关最不该有的性质。
+       */
+      case 'artifacts':
+        return one(await db.select({ projectId: artifacts.projectId }).from(artifacts).where(eq(artifacts.id, id)));
+      /** ★ 同 artifacts：URL 上看不出项目，不登记就等于不设防 */
+      case 'assumptions': {
+        const rows = await db
+          .select({ projectId: requirements.projectId })
+          .from(requirementAssumptions)
+          .innerJoin(requirements, eq(requirements.id, requirementAssumptions.requirementId))
+          .where(eq(requirementAssumptions.id, id));
+        return one(rows);
+      }
       case 'clarifications': {
         const rows = await db
           .select({ projectId: requirements.projectId })
@@ -937,17 +974,36 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.post('/api/v1/projects/:id/requirements', async (req, reply) => {
-    actorFrom(req);
     const { id } = req.params as { id: string };
     const body = CreateRequirement.parse(req.body);
 
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     if (!project) throw notFound('项目');
 
+    const { userId } = actorFrom(req);
     const [requirement] = await db
       .insert(requirements)
       .values({ orgId: project.orgId, projectId: id, ...body })
       .returning();
+
+    /**
+     * ★★ requirement.created 此前**从没被发出来过** —— 事件类型目录里
+     *   声明了它，而创建路由只是 insert 完就返回。
+     *
+     *   后果是需求的生命周期从中间开始：审计里第一条是 analyzed 或 approved，
+     *   「谁在什么时候提的这条需求」查不到。而需求是整条链的起点，
+     *   缺了起点的时间线读起来像是凭空冒出来一条已确认的需求。
+     */
+    await emitAndPublish(db, {
+      type: 'requirement.created',
+      orgId: project.orgId,
+      projectId: id,
+      actor: humanActor(userId),
+      subjectType: 'requirement',
+      subjectId: requirement!.id,
+      payload: { title: requirement!.title ?? null, source: body.rawInput ? 'raw_input' : 'manual' },
+      correlationId: corr(req),
+    });
 
     return reply.status(201).send({ requirement });
   });
@@ -1255,6 +1311,112 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { clarification: row };
   });
 
+  /**
+   * 重新打开一条已确认 / 已驳回的需求。
+   *
+   * ★★ 缺了它，需求确认是一道**单向门**：批错了、或者业务变了，
+   *   唯一的出路是新建一条 —— 而那会让已有的计划、任务、讨论全部与原需求脱钩。
+   *
+   * ★ 原因必填：重新打开会让下游已生成的计划全部作废，三周后没人记得为什么。
+   */
+  /**
+   * 需求假设 —— 登记、确认、证伪。
+   *
+   * ★★ 此前假设只能由 AI 分析产生，手写需求的那条路根本没有地方记它 ——
+   *   而假设现在会随需求一起传给规划 Agent，等于那条路永远少一块
+   *   最影响规划结果的输入。
+   */
+  app.get('/api/v1/requirements/:id/assumptions', async (req) => {
+    const { id } = req.params as { id: string };
+    return listAssumptions(db, id);
+  });
+
+  /**
+   * 这条需求的历次分析 / 规划 Run。
+   *
+   * ★★ 规划 Run 落库之后，「这次分析到底做了什么」终于查得到 —— 但前提是
+   *   需求页上有入口指向它。没有这条路由的话，那些记录躺在 agent_runs 里
+   *   而没有任何界面能找到它们，可审计只做了一半。
+   */
+  app.get('/api/v1/requirements/:id/runs', async (req) => {
+    const { id } = req.params as { id: string };
+    const rows = await db
+      .select({
+        id: agentRuns.id,
+        status: agentRuns.status,
+        goal: agentRuns.goal,
+        cost: agentRuns.cost,
+        model: agentRuns.model,
+        errorMessage: agentRuns.errorMessage,
+        startedAt: agentRuns.startedAt,
+        endedAt: agentRuns.endedAt,
+      })
+      .from(agentRuns)
+      .where(eq(agentRuns.requirementId, id))
+      .orderBy(desc(agentRuns.createdAt));
+
+    return {
+      runs: rows.map((r) => ({
+        ...r,
+        cost: Number(r.cost),
+        startedAt: r.startedAt?.toISOString() ?? null,
+        endedAt: r.endedAt?.toISOString() ?? null,
+      })),
+    };
+  });
+
+  app.post('/api/v1/requirements/:id/assumptions', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ statement: z.string().trim().min(1, '假设内容不能为空').max(2000) })
+      .parse(req.body);
+
+    const created = await addAssumption(db, {
+      requirementId: id,
+      statement: body.statement,
+      actorId: userId,
+      correlationId: corr(req),
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.post('/api/v1/assumptions/:id/confirm', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    return confirmAssumption(db, { assumptionId: id, actorId: userId });
+  });
+
+  /** ★ 证伪必须写原因：它会让已生成的计划失去一块前提 */
+  app.post('/api/v1/assumptions/:id/invalidate', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ reason: z.string().trim().min(1, '证伪必须写明原因').max(2000) })
+      .parse(req.body);
+    return invalidateAssumption(db, {
+      assumptionId: id,
+      reason: body.reason,
+      actorId: userId,
+      correlationId: corr(req),
+    });
+  });
+
+  app.post('/api/v1/requirements/:id/reopen', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ reason: z.string().min(1, '重新打开必须写明原因').max(2000) })
+      .parse(req.body ?? {});
+
+    return reopenRequirement(db, {
+      requirementId: id,
+      actorId: userId,
+      reason: body.reason,
+      correlationId: corr(req),
+    });
+  });
+
   app.post('/api/v1/requirements/:id/approve', async (req) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
@@ -1286,6 +1448,64 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   // ── 计划 ────────────────────────────────────────────────────────────
+  /**
+   * 确认需求并立刻生成计划 —— **一次调用**。
+   *
+   * ★★ 此前这是浏览器里的两次连续请求（approve 然后 plans）。
+   *
+   *   中间任何一处断掉 —— 网络抖动、用户关了标签页、生成阶段报错 ——
+   *   留下的都是「需求已确认，但没有计划」：状态已经变了，而用户看到的
+   *   是一句报错，会以为什么都没发生。再点一次确认还会撞上
+   *   「已确认的需求不能再确认」。
+   *
+   * ★ 不能把两步塞进一个数据库事务：生成计划要调 LLM，可能跑几分钟，
+   *   一个横跨它的事务会一直占着连接。所以保证的是**另一件事**：
+   *   确认这一步要么成功要么不发生，而计划有没有生成出来单独如实回报。
+   *   生成失败时需求仍是 approved（那一步确实成功了），调用方可以重试
+   *   POST /requirements/:id/plans —— 不需要也不能再确认一次。
+   */
+  app.post('/api/v1/requirements/:id/approve-and-plan', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const note = (req.body as { note?: string } | undefined)?.note;
+
+    const approved = await approveRequirement(db, {
+      requirementId: id,
+      approverId: userId,
+      correlationId: corr(req),
+      note,
+    });
+
+    if (!approved.ok) {
+      if (approved.code === 'EMPTY_REQUIREMENT') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
+        );
+      }
+      throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', approved.questions);
+    }
+
+    try {
+      const summary = await generatePlan(db, deps.provider, {
+        requirementId: id,
+        correlationId: corr(req),
+      });
+      return reply.status(201).send({ requirementId: id, plan: summary, planError: null });
+    } catch (err) {
+      /**
+       * ★ 生成失败不回滚确认 —— 确认是人做的判断，它真的发生了。
+       *   把它撤掉会让「我明明点了确认」和界面状态对不上。
+       *   如实回报，让调用方决定是重试生成还是先去看需求。
+       */
+      return reply.status(201).send({
+        requirementId: id,
+        plan: null,
+        planError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   app.post('/api/v1/requirements/:id/plans', async (req, reply) => {
     actorFrom(req);
     const { id } = req.params as { id: string };
@@ -1341,7 +1561,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };
     const body = z
-      .object({ acknowledgedOverrun: z.boolean().optional() })
+      .object({
+        acknowledgedOverrun: z.boolean().optional(),
+        /** 确认「这几项人工任务先进待认领队列」 */
+        acknowledgedUnassigned: z.boolean().optional(),
+      })
       .parse(req.body ?? {});
 
     const result = await approvePlan(db, {
@@ -1352,6 +1576,20 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
 
     if (!result.ok) {
+      /**
+       * ★ 两种拦截各用各的错误码。合成一个的话前端分不清该弹哪个确认框 ——
+       *   一个是「确认超支」，一个是「确认这几项先没人认领」，
+       *   用户要做的判断完全不同。
+       */
+      if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
+            .map((t) => t.title)
+            .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,
+          result,
+        );
+      }
       throw new ApiError(
         'BUDGET_EXCEEDED',
         `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
@@ -1374,6 +1612,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       executorType: q['executorType'],
       humanGateOnly: q['humanGate'] === 'true',
       blockedOnly: q['blocked'] === 'true',
+      unclaimedOnly: q['unclaimed'] === 'true',
     });
   });
 
@@ -1420,7 +1659,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .where(eq(agentRuns.projectId, id))
       .orderBy(desc(agentRuns.attempt));
     const latestRun = new Map<string, (typeof runs)[number]>();
-    for (const r of runs) if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+    for (const r of runs) {
+      // ★ 这条按 projectId 查，规划 Run 会混进来 —— 它没有工作项，跳过
+      if (!r.workItemId) continue;
+      if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+    }
 
     return {
       agents: rows.map((a) => {
@@ -1595,7 +1838,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
     const subject = await rbac.subjectForAgent(req, userId, id);
-    const result = await updateAgent(db, deps.registry, id, body, userId, (permission) =>
+    const result = await updateAgent(db, deps.registry, orgId, id, body, userId, (permission) =>
       rbac.assertPermission(subject, permission, { agentId: id }),
     );
 
@@ -1622,16 +1865,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.delete('/api/v1/admin/agents/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return deleteAgent(db, id);
+    return deleteAgent(db, orgId, id);
   });
 
   /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
   app.post('/api/v1/admin/agents/:id/probe', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return probeAgent(db, deps.registry, id);
+    return probeAgent(db, deps.registry, orgId, id);
   });
 
   // ── 代码仓库登记 ────────────────────────────────────────────────────
@@ -1649,12 +1892,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.patch('/api/v1/admin/repositories/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     const body = RepositoryInput.partial()
       .extend({ status: z.enum(['active', 'disabled']).optional() })
       .parse(req.body);
-    return updateRepository(db, id, body);
+    return updateRepository(db, orgId, id, body);
   });
 
   /**
@@ -1662,15 +1905,125 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
    */
   app.post('/api/v1/admin/repositories/:id/probe', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return probeRepository(db, id);
+    return probeRepository(db, orgId, id);
   });
 
   app.delete('/api/v1/admin/repositories/:id', async (req) => {
-    await callerOrg(req);
+    const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
-    return deleteRepository(db, id);
+    return deleteRepository(db, orgId, id);
+  });
+
+  // ── 存储目标登记（非 Git 的工作区来源）──────────────────────────────
+  app.get('/api/v1/admin/storage-targets', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const q = req.query as { projectId?: string };
+    const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
+    return listStorageTargets(db, orgId, projectId);
+  });
+
+  app.post('/api/v1/admin/storage-targets', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const body = StorageTargetInput.parse(req.body);
+    return reply.status(201).send(await createStorageTarget(db, orgId, userId, body));
+  });
+
+  app.patch('/api/v1/admin/storage-targets/:id', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    /**
+     * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
+     *   StorageTargetInput 外面裹了一层 superRefine（ZodEffects），
+     *   ZodEffects 上没有 partial()。而那层交叉校验本来也只对**完整**
+     *   输入成立 —— 局部更新时缺 bucket 不代表配错了，代表这次没改它。
+     */
+    const body = StorageTargetInput.innerType()
+      .partial()
+      .extend({ status: z.enum(['active', 'disabled']).optional() })
+      .parse(req.body);
+    return updateStorageTarget(db, orgId, id, body);
+  });
+
+  /** 连通性探测。★ 与仓库那边同理：配错了要在配置页上知道，而不是等第一次派发 */
+  app.post('/api/v1/admin/storage-targets/:id/probe', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeStorageTarget(db, orgId, id);
+  });
+
+  app.delete('/api/v1/admin/storage-targets/:id', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return deleteStorageTarget(db, orgId, id);
+  });
+
+  // ── 产物文件 ────────────────────────────────────────────────────────
+  /**
+   * ★★ 项目成员关系由闸门统一判过 —— 前提是 `artifacts` 已经登记进
+   *   projectOfResource 与 RESOURCE_SCOPED_URL（见上面那段与 rbac.ts）。
+   *   少了那两处登记，这三条路由对任何登录用户都是敞开的。
+   *
+   * ★ 只读，且只服务本地归档那一类产物。git / 对象存储的产物有自己的
+   *   可点开地址，不从这里再走一遍。
+   */
+  app.get('/api/v1/artifacts/:id/files', async (req) => {
+    const { id } = req.params as { id: string };
+    return listArtifactFiles(db, id);
+  });
+
+  /**
+   * ★ 路径用通配符段接收：文件名里有 `/` 是常态（`src/app.ts`），
+   *   用查询参数会被各层中间件反复编解码，而通配符是 Fastify 原生支持的。
+   */
+  app.get('/api/v1/artifacts/:id/files/*', async (req) => {
+    const { id } = req.params as { id: string };
+    const rel = (req.params as Record<string, string>)['*'] ?? '';
+    return readArtifactFile(db, id, rel);
+  });
+
+  app.get('/api/v1/artifacts/:id/download/*', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rel = (req.params as Record<string, string>)['*'] ?? '';
+    const file = await openArtifactFile(db, id, rel);
+    return reply
+      .header('content-type', file.mime)
+      .header('content-length', String(file.size))
+      // ★ 一律 attachment：产物内容是 Agent 写的，浏览器里内联渲染
+      //   等于让它在本站域下执行 —— 一个 HTML 产物就能拿到同源权限
+      .header('content-disposition', `attachment; filename="${encodeURIComponent(file.name)}"`)
+      .send(file.stream);
+  });
+
+  // ── 项目 Agent 绑定 ─────────────────────────────────────────────────
+  /**
+   * ★ 这一层只回答「哪个已配置的 Agent 干这个角色」。
+   *   选运行时是 Agent 配置页的事，到这里已经定好了。
+   */
+  app.get('/api/v1/projects/:id/agents', async (req) => {
+    const { id } = req.params as { id: string };
+    return listProjectAgents(db, id);
+  });
+
+  app.put('/api/v1/projects/:id/agents', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = BindingInput.parse(req.body);
+    const result = await setProjectAgent(db, { orgId, projectId: id, userId }, body);
+
+    await emitAndPublish(db, {
+      orgId,
+      projectId: id,
+      type: 'project.agent_bound',
+      actor: humanActor(userId),
+      subjectType: 'project',
+      subjectId: id,
+      payload: { role: result.role, agentId: result.agentId },
+      correlationId: corr(req),
+    });
+
+    return result;
   });
 
   // ── 项目工程约定 ────────────────────────────────────────────────────
@@ -2457,63 +2810,40 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   于是在 draft / reviewing 状态的卡片上点派发会得到一个
    *   看不懂的流转错误。
    */
-  app.post('/api/v1/work-items/:id/assign', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        agentId: z.string().uuid().optional(),
-        /** 指派给人时用 */
-        userId: z.string().uuid().optional(),
-        /** 派发时附加的说明，进 must_read 上下文 */
-        note: z.string().max(4000).optional(),
-      })
-      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
-        message: '必须且只能指定 agentId 或 userId 其中之一',
-      })
-      .parse(req.body ?? {});
-
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
-
-    // ★ 先说清楚「现在不能开始」，而不是让它掉进流转错误里
+  /**
+   * 「现在能不能开始」要先说清楚，而不是让它掉进流转错误里。
+   *
+   * ★ /assign 与 /start 共用同一条判据 —— 两处各写一份的话，
+   *   同一张卡在两个入口上会得到两种说法。
+   */
+  function assertStartable(status: string) {
     const STARTABLE = ['ready', 'blocked', 'changes_requested'];
-    if (!STARTABLE.includes(item.status)) {
+    if (!STARTABLE.includes(status)) {
       throw new ApiError(
         'INVALID_TRANSITION',
-        `任务当前状态是 ${item.status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
-        { status: item.status, startable: STARTABLE },
+        `任务当前状态是 ${status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
+        { status, startable: STARTABLE },
       );
     }
+  }
 
-    if (body.userId) {
-      const moved = await transition(db, {
-        workItemId: id,
-        trigger: 'assigned_to_human',
-        actor,
-        reason: body.note ?? '人工指派',
-        correlationId: corr(req),
-      });
-      if (!moved.ok) return mapTransitionError(moved);
-
-      await db
-        .update(workItems)
-        .set({ executorType: 'human', executorId: body.userId })
-        .where(eq(workItems.id, id));
-
-      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
-    }
-
+  /** 真正派 Run 的那一段。/assign 与 /start 共用 */
+  async function startRun(
+    req: FastifyRequest,
+    item: typeof workItems.$inferSelect,
+    agentId: string,
+    note: string | undefined,
+    actor: ReturnType<typeof actorFrom>['actor'],
+    userId: string,
+  ) {
     const result = await dispatchRun(
       db,
       deps.registry,
       {
-        workItemId: id,
-        agentId: body.agentId!,
+        workItemId: item.id,
+        agentId,
         correlationId: corr(req),
-        additionalContext: body.note
-          ? [{ title: '派发人的补充说明', content: body.note }]
-          : undefined,
+        additionalContext: note ? [{ title: '派发人的补充说明', content: note }] : undefined,
       },
       { workspaces: deps.workspaces },
     );
@@ -2535,8 +2865,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       type: 'work_item.assigned',
       actor,
       subjectType: 'work_item',
-      subjectId: id,
-      payload: { executorType: 'agent', executorId: body.agentId, byUserId: userId, manual: true },
+      subjectId: item.id,
+      payload: { executorType: 'agent', executorId: agentId, byUserId: userId, manual: true },
       correlationId: corr(req),
     });
 
@@ -2547,6 +2877,130 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       attempt: result.attempt,
       reused: result.reused,
     };
+  }
+
+  /**
+   * 候选执行者 —— 能选谁、以及为什么不能选谁。
+   *
+   * ★ 不可选的也返回。只回可选项的话，界面上是个空下拉框，
+   *   而「没配 Agent / 没加进项目 / 满载 / 运行时没注册」这四种原因
+   *   的下一步动作完全不同。
+   */
+  app.get('/api/v1/work-items/:id/candidates', async (req) => {
+    const { id } = req.params as { id: string };
+    return listCandidates(db, deps.registry, id);
+  });
+
+  /**
+   * 只设置执行者，不开始执行。
+   *
+   * ★★ 这是从 /assign 里拆出来的那一半。选执行者是一个「选择」，
+   *   不该有副作用 —— 而在拆开之前，它会立刻派 Run、改文件、烧预算。
+   */
+  app.patch('/api/v1/work-items/:id/assignee', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = AssigneeInput.parse(req.body ?? {});
+
+    const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!before) throw notFound('任务');
+
+    const result = await setAssignee(db, id, body, { registry: deps.registry });
+
+    await emitAndPublish(db, {
+      orgId: before.orgId,
+      projectId: before.projectId,
+      type: 'work_item.assignee_changed',
+      actor,
+      subjectType: 'work_item',
+      subjectId: id,
+      payload: {
+        from: { executorType: before.executorType, executorId: before.executorId },
+        to: { executorType: result.executorType, executorId: result.executorId },
+        executionMode: result.executionMode,
+        byUserId: userId,
+        /** ★ 改派顺手终止了哪几次执行 —— 这是花过钱的事，必须留痕 */
+        takeover: body.takeover ?? null,
+        terminatedRuns: result.terminatedRuns,
+      },
+      correlationId: corr(req),
+    });
+
+    return result;
+  });
+
+  /**
+   * 开始执行 —— 真正派 Run 的那一步。
+   *
+   * ★ 不带执行者时用卡片上已经设好的那个。这样「先排活、回头再开跑」
+   *   是两次独立的动作，而不是必须在一次调用里同时决定。
+   */
+  app.post('/api/v1/work-items/:id/start', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ agentId: z.string().uuid().optional(), note: z.string().max(4000).optional() })
+      .parse(req.body ?? {});
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!item) throw notFound('任务');
+
+    assertStartable(item.status);
+
+    const agentId = body.agentId ?? (item.executorType === 'agent' ? item.executorId : null);
+    if (!agentId) {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        item.executorType === 'human'
+          ? '这张卡的执行者是人，不能派给 Agent 执行'
+          : '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
+        { executorType: item.executorType },
+      );
+    }
+
+    return startRun(req, item, agentId, body.note, actor, userId);
+  });
+
+  app.post('/api/v1/work-items/:id/assign', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        agentId: z.string().uuid().optional(),
+        /** 指派给人时用 */
+        userId: z.string().uuid().optional(),
+        /** 派发时附加的说明，进 must_read 上下文 */
+        note: z.string().max(4000).optional(),
+      })
+      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
+        message: '必须且只能指定 agentId 或 userId 其中之一',
+      })
+      .parse(req.body ?? {});
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!item) throw notFound('任务');
+
+    assertStartable(item.status);
+
+    if (body.userId) {
+      const moved = await transition(db, {
+        workItemId: id,
+        trigger: 'assigned_to_human',
+        actor,
+        reason: body.note ?? '人工指派',
+        correlationId: corr(req),
+      });
+      if (!moved.ok) return mapTransitionError(moved);
+
+      await db
+        .update(workItems)
+        .set({ executorType: 'human', executorId: body.userId })
+        .where(eq(workItems.id, id));
+
+      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
+    }
+
+    return startRun(req, item, body.agentId!, body.note, actor, userId);
   });
 
   app.post('/api/v1/work-items/:id/retry', async (req) => {

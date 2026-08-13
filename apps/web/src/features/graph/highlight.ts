@@ -1,13 +1,21 @@
+import type { MessageKey } from '../../lib/i18n';
 import type { GraphEdge, GraphNode } from '@apos/domain';
 
 export const HIGHLIGHT_MODES = ['critical', 'blocked', 'mine', 'risk'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
-export const MODE_LABELS: Record<HighlightMode, string> = {
-  critical: '关键路径',
-  blocked: '阻塞链',
-  mine: '我的任务',
-  risk: '高风险',
+/**
+ * 高亮模式 → 词条键 / Highlight mode → message key.
+ *
+ * ★★ 这是个纯模块，拿不到 hook —— 所以它只能存**键**，翻译由渲染处做。
+ *   此前这里存的是 `t(...)` 的结果：模块加载时求值一次，切语言不重算，
+ *   于是几个复选框的文字会永远停在启动时那个语言。
+ */
+export const MODE_KEYS: Record<HighlightMode, MessageKey> = {
+  critical: 'highlight.critical',
+  blocked: 'highlight.blocked',
+  mine: 'highlight.mine',
+  risk: 'highlight.risk',
 };
 
 export interface HighlightResult {

@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AssigneeChip, type ActorState } from '../../components/AssigneeChip';
@@ -23,6 +24,7 @@ interface Props {
  * 只看 Agent 会漏掉「卡在王强那里两小时」这种最常见的堵点。
  */
 export function AgentView({ projectId, columns, actions }: Props) {
+  const t = useT();
   const agents = useQuery({
     queryKey: qk.agents(projectId),
     queryFn: () => api.agents(projectId),
@@ -38,9 +40,9 @@ export function AgentView({ projectId, columns, actions }: Props) {
         isEmpty={(d) => d.agents.length === 0}
         empty={{
           icon: '🤖',
-          message: '本项目还没有可用的 Agent',
-          hint: '没有 Agent 时任务只能由人类执行，看板不会自动流动',
-          action: { label: '刷新', onClick: () => void agents.refetch() },
+          message: t('agentView.empty'),
+          hint: t('agentView.emptyHint'),
+          action: { label: t('agentView.refresh'), onClick: () => void agents.refetch() },
         }}
       >
         {(data) =>
@@ -56,11 +58,11 @@ export function AgentView({ projectId, columns, actions }: Props) {
           <header className="flex items-center gap-2.5 border-b border-slate-200/70 bg-slate-100/40 px-3 py-2.5">
             <AssigneeChip actor={{ type: 'human', ...lane.owner }} />
             <span className="text-xs tabular-nums text-slate-500">
-              {lane.cards.length} 项待处理
+              {t('agentView.pendingCount', { count: lane.cards.length })}
             </span>
             {lane.overdue > 0 && (
               <span className="rounded-full border border-red-300/50 bg-red-50 px-2 py-0.5 text-[11px] font-medium tabular-nums text-red-700">
-                ⏰ {lane.overdue} 项已超时
+                {t('agentView.overdueCount', { count: lane.overdue })}
               </span>
             )}
           </header>
@@ -90,6 +92,7 @@ export function AgentView({ projectId, columns, actions }: Props) {
 }
 
 function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActions }) {
+  const t = useT();
   const failing = agent.items.filter((i) => i.consecutiveFailures > 0);
   const state: ActorState =
     failing.length > 0 ? 'failed' : agent.load > 0 ? 'running' : 'idle';
@@ -108,13 +111,13 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
         <AssigneeChip actor={{ type: 'agent', id: agent.id, name: agent.name }} state={state} />
 
         <span className="flex items-center gap-1 text-xs">
-          <span className="text-slate-400">负载</span>
+          <span className="text-slate-400">{t('agentView.load')}</span>
           <span
             className={clsx(
               'tabular-nums',
               overloaded ? 'font-medium text-orange-600' : 'text-slate-700',
             )}
-            title={overloaded ? '已满负载，不会再接新任务' : undefined}
+            title={overloaded ? t('agentView.overloaded') : undefined}
           >
             {agent.load}/{agent.maxConcurrency}
           </span>
@@ -123,7 +126,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
         <span aria-hidden className="h-3 w-px bg-slate-200" />
 
         <span className="flex items-center gap-1 text-xs">
-          <span className="text-slate-400">成功率</span>
+          <span className="text-slate-400">{t('agentView.successRate')}</span>
           <span
             className={clsx(
               'tabular-nums',
@@ -135,7 +138,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
         </span>
 
         <span className="ml-auto flex items-center gap-1 text-xs">
-          <span className="text-slate-400">累计</span>
+          <span className="text-slate-400">{t('agentView.cumulative')}</span>
           <span className="font-mono tabular-nums text-slate-700">
             {money(agent.todaySpentUsd)}
           </span>
@@ -143,7 +146,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
       </header>
 
       {agent.items.length === 0 ? (
-        <p className="px-3 py-3 text-[11px] text-slate-400">空闲中</p>
+        <p className="px-3 py-3 text-[11px] text-slate-400">{t('agentView.idle')}</p>
       ) : (
         <ul className="divide-y divide-slate-200/60">
           {agent.items.map((item) => {
@@ -177,7 +180,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
                     )}
                   >
                     {item.consecutiveFailures > 0
-                      ? `❌ 失败 ${item.consecutiveFailures} 次`
+                      ? t('agentView.failedTimes', { count: item.consecutiveFailures })
                       : statusLabel(item.status)}
                   </span>
                 </button>

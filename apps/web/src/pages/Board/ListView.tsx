@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
@@ -6,6 +7,7 @@ import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib
 import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard, BoardColumn } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type SortKey = 'title' | 'status' | 'risk' | 'cost' | 'updatedAt';
 
@@ -24,6 +26,7 @@ interface Props {
  * 但「把今天失败的 3 个任务一起重试」在看板上要点九次。
  */
 export function ListView({ columns, actions, onBulkRetry }: Props) {
+  const t = useT();
   const all = useMemo(() => columns.flatMap((c) => c.items), [columns]);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
     key: 'updatedAt',
@@ -50,22 +53,22 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
     <div className="min-h-0 flex-1 overflow-auto p-3">
       {selected.size > 0 && (
         <div className="sticky top-0 z-20 mb-2 flex items-center gap-3 rounded-lg border border-brand/30 px-3 py-2 text-xs shadow-md glass-strong">
-          <span className="font-medium text-slate-800">已选 {selected.size} 项</span>
+          <span className="font-medium text-slate-800">{t('list.selectedCount', { count: selected.size })}</span>
           <Button variant="neutral"
             disabled={retriable.length === 0}
             onClick={() => onBulkRetry(retriable)}>
-            批量重试 {retriable.length} 个失败任务
+            {t('list.bulkRetry', { count: retriable.length })}
           </Button>
           {/* 批量操作前给出影响预估（页面文档 05 §5.8） */}
           {retriable.length > 0 && (
-            <span className="text-slate-500">预计消耗 ~{money(estimatedRetryCost)}</span>
+            <span className="text-slate-500">{t('list.estimatedSpend', { amount: money(estimatedRetryCost) })}</span>
           )}
           <button
             type="button"
             onClick={() => setSelected(new Set())}
             className="ml-auto text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
           >
-            取消选择
+            {t('list.clearSelection')}
           </button>
         </div>
       )}
@@ -79,22 +82,20 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
         <thead className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_0_rgb(var(--c-slate-200))]">
           <tr>
             <th className="w-9 px-3 py-2">
-              <input
-                type="checkbox"
-                aria-label="全选"
+              <Checkbox
+                aria-label={t('list.selectAll')}
                 checked={selected.size > 0 && selected.size === rows.length}
-                onChange={(e) =>
-                  setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                onCheckedChange={(v) =>
+                  setSelected(v ? new Set(rows.map((r) => r.id)) : new Set())
                 }
-                className="h-3.5 w-3.5 accent-brand"
               />
             </th>
-            <SortHeader label="任务" sortKey="title" sort={sort} onSort={setSort} />
-            <SortHeader label="状态" sortKey="status" sort={sort} onSort={setSort} />
-            <th className="px-3 py-2 font-medium">执行者</th>
-            <SortHeader label="风险" sortKey="risk" sort={sort} onSort={setSort} />
-            <SortHeader label="成本" sortKey="cost" sort={sort} onSort={setSort} align="right" />
-            <SortHeader label="更新" sortKey="updatedAt" sort={sort} onSort={setSort} />
+            <SortHeader label={t('list.col.title')} sortKey="title" sort={sort} onSort={setSort} />
+            <SortHeader label={t('list.col.status')} sortKey="status" sort={sort} onSort={setSort} />
+            <th className="px-3 py-2 font-medium">{t('list.col.executor')}</th>
+            <SortHeader label={t('list.col.risk')} sortKey="risk" sort={sort} onSort={setSort} />
+            <SortHeader label={t('list.col.cost')} sortKey="cost" sort={sort} onSort={setSort} align="right" />
+            <SortHeader label={t('list.col.updated')} sortKey="updatedAt" sort={sort} onSort={setSort} />
           </tr>
         </thead>
         <tbody>
@@ -108,12 +109,10 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
               )}
             >
               <td className="px-3 py-2.5 align-middle" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  aria-label={`选择 ${card.title}`}
+                <Checkbox
+                  aria-label={t('list.selectOne', { title: card.title })}
                   checked={selected.has(card.id)}
-                  onChange={() => toggle(card.id)}
-                  className="h-3.5 w-3.5 accent-brand"
+                  onCheckedChange={() => toggle(card.id)}
                 />
               </td>
               {/*
@@ -146,7 +145,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                     size="sm"
                   />
                 ) : (
-                  <span className="text-slate-400">未分配</span>
+                  <span className="text-slate-400">{t('card.unassigned')}</span>
                 )}
               </td>
               <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-600">

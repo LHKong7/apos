@@ -56,8 +56,21 @@ export async function ingestRunEvent(
 ): Promise<IngestResult> {
   const { runId, event, correlationId } = input;
 
-  const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
-  if (!run) return { stored: false, promoted: false, transitioned: false };
+  const [raw] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
+  if (!raw) return { stored: false, promoted: false, transitioned: false };
+
+  /**
+   * ★★ 规划 Run 不走这条回调通道。
+   *
+   *   它由 AgentPlanningProvider 在进程内直接 await，事件也由它自己收。
+   *   真要有一条规划 Run 打到这里，它没有工作项，下面每一步（流转、产物、
+   *   失败恢复）都无从谈起 —— 与其让它在某个 `where id = null` 上静默失效，
+   *   不如在入口就说清楚不处理。
+   */
+  if (raw.workItemId === null) {
+    return { stored: false, promoted: false, transitioned: false };
+  }
+  const run: RunRow = { ...raw, workItemId: raw.workItemId };
 
   // 终态之后到达的事件忽略（除非是补发的更早 seq）
   const isTerminal = ['completed', 'failed', 'timeout', 'terminated'].includes(run.status);
@@ -401,7 +414,18 @@ async function applyRunPatch(db: Database, runId: string, event: RunEvent) {
   }
 }
 
-type RunRow = typeof agentRuns.$inferSelect;
+/**
+ * 执行 Run —— workItemId 一定有值。
+ *
+ * ★★ agent_runs.work_item_id 放开成可空之后（规划 Run 发生在工作项存在之前），
+ *   这个文件里的每个帮手都只处理执行 Run：它们做的事情全是围绕工作项的
+ *   （流转状态、写产物、判失败恢复），对一条没有工作项的记录一条都不成立。
+ *   把这个前提写进类型，而不是在每处 `run.workItemId!` 断言一遍 ——
+ *   断言会在将来某次改动里静默地变成一个真的 null。
+ *
+ *   入口的守卫在 ingestRunEvent 里，只有一处。
+ */
+type RunRow = typeof agentRuns.$inferSelect & { workItemId: string };
 
 /** 事件提升规则 —— docs/tech/06-agent-protocol.md §5.1 */
 async function promote(

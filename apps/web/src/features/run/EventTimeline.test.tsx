@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import { useLocaleStore } from '../../lib/i18n';
 import userEvent from '@testing-library/user-event';
 import { EventTimeline } from './EventTimeline';
 import type { RunEventRow } from '../../lib/api/types';
@@ -38,6 +39,9 @@ const RUN = [
  * 两类用户：负责人只想看懂「它做了什么、结果如何」，
  * 工程师需要原始请求与工具参数。同一个页面必须同时服务两者。
  */
+/** ★ 钉住中文：断言按「展开」「收起」等按钮文字定位，默认语言是英文 */
+beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
+
 describe('执行流的简明与详细', () => {
   it('简明模式滤掉心跳/工具返回/成本，保留叙事骨架', () => {
     render(<EventTimeline events={RUN} detailed={false} live={false} />);

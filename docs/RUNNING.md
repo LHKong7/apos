@@ -1,5 +1,7 @@
 # 运行指南
 
+*[English version / 英文版本](RUNNING.en.md)*
+
 把 projectOS 在本机跑起来，并确认它真的跑起来了。
 
 开发约定（三条不可违反的约束、测试要求、命名）见 [CONTRIBUTING](../CONTRIBUTING.md)。

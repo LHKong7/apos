@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../lib/i18n';
 import clsx from 'clsx';
 import type { HumanGate, RiskLevel } from '@apos/contracts';
 import { Badge } from '@/components/ui/badge';
@@ -10,44 +11,44 @@ import { duration, riskLabel } from '../lib/format';
  *   只给底色的话，深色主题下这些徽标会糊成一片色块 ——
  *   描边是把它们从卡面上「切」出来的那条线。
  */
-const GATE_META: Record<HumanGate, { label: string; icon: string; className: string }> = {
+const GATE_META: Record<HumanGate, { labelKey: MessageKey; icon: string; className: string }> = {
   approval_required: {
-    label: '待审批',
+    labelKey: 'badge.awaitingApproval' as MessageKey,
     icon: '⚠',
     className: 'border-gate/30 bg-gate/10 text-amber-700',
   },
   waiting_for_decision: {
-    label: '待决策',
+    labelKey: 'badge.awaitingDecision' as MessageKey,
     icon: '⚡',
     className: 'border-gate/30 bg-gate/10 text-amber-700',
   },
   human_reviewing: {
-    label: '人工审核中',
+    labelKey: 'badge.humanReview' as MessageKey,
     icon: '👁',
     className: 'border-sky-300/40 bg-sky-100/60 text-sky-700',
   },
   human_took_over: {
-    label: '人工接管',
+    labelKey: 'badge.humanTakeover' as MessageKey,
     icon: '👤',
     className: 'border-sky-300/40 bg-sky-100/60 text-sky-700',
   },
   approved: {
-    label: '已批准',
+    labelKey: 'badge.approved' as MessageKey,
     icon: '✓',
     className: 'border-emerald-300/40 bg-emerald-100/60 text-emerald-700',
   },
   rejected: {
-    label: '已驳回',
+    labelKey: 'badge.rejected' as MessageKey,
     icon: '✕',
     className: 'border-slate-300/60 bg-slate-200/60 text-slate-600',
   },
   escalated: {
-    label: '已升级',
+    labelKey: 'badge.escalated' as MessageKey,
     icon: '↑',
     className: 'border-orange-300/40 bg-orange-100/60 text-orange-700',
   },
   decision_overdue: {
-    label: '决策超时',
+    labelKey: 'badge.expired' as MessageKey,
     icon: '🔴',
     className: 'border-overdue/40 bg-overdue/10 text-red-700',
   },
@@ -60,6 +61,7 @@ export function HumanGateBadge({
   gate: HumanGate;
   dueInMinutes?: number | null;
 }) {
+  const t = useT();
   // 超时压过其他状态显示（HUMAN_GATE_PRIORITY 的前端体现）
   const effective: HumanGate =
     dueInMinutes !== null && dueInMinutes !== undefined && dueInMinutes < 0
@@ -77,10 +79,12 @@ export function HumanGateBadge({
      */
     <Badge variant="outline" className={meta.className}>
       <span aria-hidden>{meta.icon}</span>
-      {meta.label}
+      {t(meta.labelKey)}
       {dueInMinutes !== null && dueInMinutes !== undefined && (
         <span className="font-normal opacity-80">
-          {dueInMinutes < 0 ? `超时 ${duration(dueInMinutes)}` : `${duration(dueInMinutes)} 内`}
+          {dueInMinutes < 0
+        ? t('format.deadline.overdue', { time: duration(dueInMinutes) })
+        : t('format.deadline.within', { time: duration(dueInMinutes) })}
         </span>
       )}
     </Badge>
@@ -165,8 +169,9 @@ export function CostMeter({
 
 /** 阻塞时长。越久颜色越重 —— 让「卡了很久」在扫视时自己跳出来 */
 export function BlockedDuration({ minutes }: { minutes: number }) {
+  const t = useT();
   const severity = minutes > 240 ? 'text-red-700 font-semibold' : minutes > 60 ? 'text-blocked' : 'text-amber-600';
   return (
-    <span className={clsx('text-[11px] tabular-nums', severity)}>⛔ 阻塞 {duration(minutes)}</span>
+    <span className={clsx('text-[11px] tabular-nums', severity)}>{t('badge.blockedFor', { time: duration(minutes) })}</span>
   );
 }

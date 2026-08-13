@@ -181,9 +181,33 @@ export async function createAgent(
   return { agent: await describeAgent(db, registry, row!), unknownConfigKeys: unknownKeys };
 }
 
+/**
+ * 按 id 取一个 Agent，**并且**要求它属于调用者的组织。
+ *
+ * ★★ `/api/v1/admin/…` 不在 rbac 的两条作用域正则里
+ *   （PROJECT_SCOPED_URL / RESOURCE_SCOPED_URL），闸门判得了
+ *   「调用者在**自己组织**里够不够格」，判不了「这个 Agent 是谁的」——
+ *   `ownsAgent` 比的也只是 ownerId，同样不看组织。
+ *
+ *   Agent 身上挂着凭证引用与资源范围，越界改一个 Agent 等于改别人的
+ *   执行主体：换掉 allowedTools、把 resourceScopes 指向自己的仓库，
+ *   都不会在对方那边留下任何异常。所以这道收窄比仓库那边更要紧。
+ *
+ * ★ 越界回 404 不回 403 —— 403 等于确认这个 id 存在。
+ */
+async function loadOwnedAgent(db: Database, orgId: string, agentId: string) {
+  const [row] = await db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
+  if (!row) throw notFound('Agent');
+  return row;
+}
+
 export async function updateAgent(
   db: Database,
   registry: RuntimeRegistry,
+  orgId: string,
   agentId: string,
   input: Partial<AgentInput> & { reason?: string },
   actorUserId: string,
@@ -195,8 +219,7 @@ export async function updateAgent(
    */
   assertCan?: (permission: 'agent.permissions.expand' | 'agent.permissions.restrict') => void,
 ) {
-  const [existing] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!existing) throw notFound('Agent');
+  const existing = await loadOwnedAgent(db, orgId, agentId);
 
   const kind = input.runtimeKind ?? existing.runtimeKind;
   if (input.runtimeKind) assertKind(input.runtimeKind);
@@ -302,9 +325,9 @@ export async function updateAgent(
   };
 }
 
-export async function deleteAgent(db: Database, agentId: string) {
-  const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!row) throw notFound('Agent');
+export async function deleteAgent(db: Database, orgId: string, agentId: string) {
+  // 只为「存在且属于本组织」这道检查而调用 —— 不存在或越界都在这里 404
+  await loadOwnedAgent(db, orgId, agentId);
 
   const [active] = await db
     .select({ n: count() })
@@ -347,9 +370,13 @@ export async function deleteAgent(db: Database, agentId: string) {
  *   页面必须分别显示 —— 混成一句「不可用」，用户不知道该去装依赖、
  *   换 key，还是换个 Agent 跑高风险任务。
  */
-export async function probeAgent(db: Database, registry: RuntimeRegistry, agentId: string) {
-  const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!row) throw notFound('Agent');
+export async function probeAgent(
+  db: Database,
+  registry: RuntimeRegistry,
+  orgId: string,
+  agentId: string,
+) {
+  const row = await loadOwnedAgent(db, orgId, agentId);
 
   const described = await describeAgent(db, registry, row);
 

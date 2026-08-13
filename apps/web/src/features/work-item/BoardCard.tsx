@@ -1,3 +1,4 @@
+import { t, useT } from '../../lib/i18n';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
@@ -143,6 +144,7 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
 
 /** 按状态裁剪的卡片主体 —— 这个 switch 就是页面文档 05 §5.3 的表格 */
 function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
+  const t = useT();
   const executor = card.executor;
   const chip = executor ? (
     <AssigneeChip
@@ -156,7 +158,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       }
     />
   ) : (
-    <span className="text-[11px] text-slate-400">未分配</span>
+    <span className="text-[11px] text-slate-400">{t('card.unassigned')}</span>
   );
 
   // 待审批 / 待决策：突出 Gate、时限、风险与处理入口，隐藏进度与成本
@@ -177,7 +179,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
               actions.onHandleGate(card);
             }}
             className="shrink-0 hover:brightness-110">
-            处理 →
+            {t('card.handle')}
           </Button>
         </div>
       </>
@@ -190,7 +192,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       <>
         <BlockedDuration minutes={card.blockedMinutes ?? 0} />
         <p className="line-clamp-2 text-[11px] leading-4 text-slate-600">
-          {card.blockedReason ?? '原因未记录'}
+          {card.blockedReason ?? t('card.reasonNotRecorded')}
         </p>
         <div className="flex items-center justify-between gap-2">
           {card.owner ? (
@@ -200,9 +202,9 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
           )}
           <div className="flex shrink-0 gap-1">
             {card.humanGateRef && (
-              <CardButton onClick={() => actions.onRemind(card)}>催办</CardButton>
+              <CardButton onClick={() => actions.onRemind(card)}>{t('card.remind')}</CardButton>
             )}
-            <CardButton onClick={() => actions.onTakeover(card)}>接管</CardButton>
+            <CardButton onClick={() => actions.onTakeover(card)}>{t('card.takeOver')}</CardButton>
           </div>
         </div>
       </>
@@ -215,15 +217,15 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       <>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-red-700">
-            ❌ 失败 {card.consecutiveFailures}/3
+            {t('card.failedTimes', { count: card.consecutiveFailures })}
           </span>
           {chip}
         </div>
         <p className="text-[11px] leading-4 text-slate-600">{nextActionHint(card)}</p>
         <div className="flex gap-1">
-          {card.runId && <CardButton onClick={() => actions.onViewRun(card)}>看日志</CardButton>}
-          <CardButton onClick={() => actions.onRetry(card)}>重试</CardButton>
-          <CardButton onClick={() => actions.onTakeover(card)}>我来接管</CardButton>
+          {card.runId && <CardButton onClick={() => actions.onViewRun(card)}>{t('card.viewLog')}</CardButton>}
+          <CardButton onClick={() => actions.onRetry(card)}>{t('card.retry')}</CardButton>
+          <CardButton onClick={() => actions.onTakeover(card)}>{t('card.takeItOver')}</CardButton>
         </div>
       </>
     );
@@ -252,7 +254,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
           </div>
         )}
         {card.latestNote && (
-          <p className="line-clamp-1 text-[11px] text-slate-500">最新：{card.latestNote}</p>
+          <p className="line-clamp-1 text-[11px] text-slate-500">{t('card.latestNote', { note: card.latestNote })}</p>
         )}
       </>
     );
@@ -267,7 +269,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
           <span className="text-[11px] text-slate-500">{statusLabel(card.status)}</span>
         </div>
         {card.artifactCount > 0 && (
-          <p className="text-[11px] text-slate-500">📎 {card.artifactCount} 项产物待审</p>
+          <p className="text-[11px] text-slate-500">{t('card.artifactsPending', { count: card.artifactCount })}</p>
         )}
       </>
     );
@@ -284,7 +286,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
           </span>
         </div>
         {card.owner && (
-          <p className="text-[11px] text-slate-500">验收：{card.owner.name}</p>
+          <p className="text-[11px] text-slate-500">{t('card.acceptanceBy', { name: card.owner.name })}</p>
         )}
       </>
     );
@@ -299,7 +301,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
         {card.unmetDependencies > 0 && (
           <span
             className="text-[11px] text-slate-500"
-            title={`${card.unmetDependencies} 个前置依赖未完成`}
+            title={t('card.unmetDependencies', { count: card.unmetDependencies })}
           >
             🔗 {card.unmetDependencies}
           </span>
@@ -313,9 +315,9 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
 /** 把「下一步会发生什么」讲清楚，而不是只说失败了几次 */
 function nextActionHint(card: Card): string {
   const remaining = 3 - card.consecutiveFailures;
-  if (remaining <= 0) return '已达失败上限，等待人工介入';
-  if (remaining === 1) return '再失败 1 次将请求人工介入';
-  return `还可自动重试 ${remaining} 次`;
+  if (remaining <= 0) return t('card.retryExhausted');
+  if (remaining === 1) return t('card.oneMoreFailure');
+  return t('card.retriesLeft', { count: remaining });
 }
 
 function CardButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {

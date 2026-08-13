@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -17,6 +18,7 @@ import { qk } from '../../lib/query/keys';
  *   会主动去点开它的人，本来就是会认真重读的那批。
  */
 export function VersionDiff({ planId }: { planId: string }) {
+  const t = useT();
   const [against, setAgainst] = useState<number | undefined>(undefined);
   const [showUnchanged, setShowUnchanged] = useState(false);
 
@@ -42,13 +44,13 @@ export function VersionDiff({ planId }: { planId: string }) {
     >
       <div className="flex flex-wrap items-baseline gap-2 border-b border-slate-100 px-3 py-1.5">
         <h2 className="text-xs font-medium text-slate-700">
-          与 v{q.data.against?.version ?? '—'} 的差异
+          {t('planDiff.against', { version: q.data.against?.version ?? '—' })}
         </h2>
         {others.length > 1 && (
           <select
             value={against ?? q.data.against?.version ?? ''}
             onChange={(e) => setAgainst(Number(e.target.value))}
-            aria-label="对比版本"
+            aria-label={t('planDiff.compareVersion')}
             className="rounded border border-slate-300 px-1 py-0.5 text-[11px]"
           >
             {others.map((v) => (
@@ -59,7 +61,10 @@ export function VersionDiff({ planId }: { planId: string }) {
           </select>
         )}
         <span className="text-[11px] text-slate-400">
-          共 {versions.length} 个版本，当前 v{current?.version}
+          {t('planDiff.versionCount', {
+            count: versions.length,
+            current: current?.version ?? '',
+          })}
         </span>
       </div>
 
@@ -67,15 +72,15 @@ export function VersionDiff({ planId }: { planId: string }) {
           diff 说改了什么，这句说为什么改。 */}
       {q.data.feedback && (
         <p className="border-b border-slate-100 bg-sky-50 px-3 py-1.5 text-[11px] text-sky-900">
-          💬 这一版是基于这条意见重新规划的：{q.data.feedback}
+          {t('planDiff.basedOnFeedback', { feedback: q.data.feedback })}
         </p>
       )}
 
       {!diff ? (
-        <p className="px-3 py-2 text-[11px] text-slate-500">这是第一版，没有可对比的版本</p>
+        <p className="px-3 py-2 text-[11px] text-slate-500">{t('planDiff.firstVersion')}</p>
       ) : diff.identical ? (
         <p className="px-3 py-2 text-[11px] text-slate-500">
-          重新规划后产出的是一份内容相同的计划 —— 你上次提的意见可能没有被采纳
+          {t('planDiff.identical')}
         </p>
       ) : (
         <>
@@ -83,7 +88,7 @@ export function VersionDiff({ planId }: { planId: string }) {
 
           {diff.metrics.length > 0 && (
             <div className="border-t border-slate-100 px-3 py-1.5">
-              <p className="text-[11px] text-slate-500">总量变化</p>
+              <p className="text-[11px] text-slate-500">{t('planDiff.totals')}</p>
               <ul className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
                 {diff.metrics.map((m) => (
                   <li key={m.field} className="text-[11px]">
@@ -103,16 +108,16 @@ export function VersionDiff({ planId }: { planId: string }) {
 
           {(diff.risks.added.length > 0 || diff.risks.removed.length > 0) && (
             <div className="border-t border-slate-100 px-3 py-1.5">
-              <p className="text-[11px] text-slate-500">风险</p>
+              <p className="text-[11px] text-slate-500">{t('planDiff.risk')}</p>
               <ul className="mt-0.5 space-y-0.5">
                 {diff.risks.added.map((r) => (
                   <li key={r} className="text-[11px] text-amber-800">
-                    + 新识别：{r}
+                    {t('planDiff.riskAdded', { risk: r })}
                   </li>
                 ))}
                 {diff.risks.removed.map((r) => (
                   <li key={r} className="text-[11px] text-slate-500">
-                    − 不再列出：{r}
+                    {t('planDiff.riskRemoved', { risk: r })}
                   </li>
                 ))}
               </ul>
@@ -130,6 +135,7 @@ export function VersionDiff({ planId }: { planId: string }) {
  *   这一类最坏是批准了自己不知道的自动化。
  */
 function BoundarySection({ boundary }: { boundary: PlanDiff['boundary'] }) {
+  const t = useT();
   const nothing =
     boundary.autoAdded.length === 0 &&
     boundary.autoRemoved.length === 0 &&
@@ -139,7 +145,7 @@ function BoundarySection({ boundary }: { boundary: PlanDiff['boundary'] }) {
   if (nothing) {
     return (
       <p className="px-3 py-1.5 text-[11px] text-slate-500">
-        自动化边界没有变化 —— 这一版不会比上一版多做任何未经你同意的事
+        {t('planDiff.boundaryUnchanged')}
       </p>
     );
   }
@@ -158,29 +164,29 @@ function BoundarySection({ boundary }: { boundary: PlanDiff['boundary'] }) {
         )}
       >
         {boundary.loosened
-          ? '⚠ 这一版放宽了自动化边界 —— 批准前请先看这几条'
-          : '自动化边界变化'}
+          ? t('planDiff.loosenedWarning')
+          : t('planDiff.automationBoundary')}
       </p>
       <ul className="mt-0.5 space-y-0.5">
         {boundary.autoAdded.map((a) => (
           <li key={`aa-${a}`} className="text-[11px] text-amber-900">
-            + 新增自动执行：{a}
-            <span className="ml-1 text-amber-700">（上一版你批准时没有这一条）</span>
+            {t('planDiff.autoAdded', { action: a })}
+            <span className="ml-1 text-amber-700">{t('planDiff.notInPrevious')}</span>
           </li>
         ))}
         {boundary.gatesRemoved.map((g) => (
           <li key={`gr-${g}`} className="text-[11px] text-amber-900">
-            ⚠ 「{g}」不再需要你确认，改为 Agent 直接执行
+            {t('planDiff.gateRemoved', { gate: g })}
           </li>
         ))}
         {boundary.gatesAdded.map((g) => (
           <li key={`ga-${g}`} className="text-[11px] text-slate-600">
-            + 「{g}」新增为需要你确认（更保守）
+            {t('planDiff.gateAdded', { gate: g })}
           </li>
         ))}
         {boundary.autoRemoved.map((a) => (
           <li key={`ar-${a}`} className="text-[11px] text-slate-600">
-            − 不再自动执行：{a}
+            {t('planDiff.autoRemoved', { action: a })}
           </li>
         ))}
       </ul>
@@ -197,6 +203,7 @@ function TaskSection({
   showUnchanged: boolean;
   onToggle: (v: boolean) => void;
 }) {
+  const t = useT();
   const changed = tasks.filter((t) => t.kind !== 'unchanged');
   const unchangedCount = tasks.length - changed.length;
   const visible = showUnchanged ? tasks : changed;
@@ -207,7 +214,7 @@ function TaskSection({
     <div className="border-t border-slate-100 px-3 py-1.5">
       <div className="flex flex-wrap items-baseline gap-2">
         <p className="text-[11px] text-slate-500">
-          任务变化（{changed.length}）
+          {t('planDiff.taskChanges', { count: changed.length })}
         </p>
         {unchangedCount > 0 && (
           <button
@@ -215,28 +222,29 @@ function TaskSection({
             onClick={() => onToggle(!showUnchanged)}
             className="text-[11px] text-slate-500 hover:text-slate-700"
           >
-            {showUnchanged ? '隐藏' : '显示'}未变的 {unchangedCount} 项
+            {t('planDiff.unchangedCount', { action: showUnchanged ? t('planDiff.hide') : t('planDiff.show'), count: unchangedCount })}
           </button>
         )}
       </div>
 
       <ul className="mt-0.5 space-y-0.5">
-        {visible.map((t) => (
-          <li key={`${t.kind}-${t.title}`} className="text-[11px]">
-            <span className={clsx('mr-1', MARK_TONE[t.kind])}>{MARK[t.kind]}</span>
+        {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+        {visible.map((row) => (
+          <li key={`${row.kind}-${row.title}`} className="text-[11px]">
+            <span className={clsx('mr-1', MARK_TONE[row.kind])}>{MARK[row.kind]}</span>
             <span
               className={clsx(
-                t.kind === 'removed' ? 'text-slate-400 line-through' : 'text-slate-700',
+                row.kind === 'removed' ? 'text-slate-400 line-through' : 'text-slate-700',
               )}
             >
-              {t.title}
+              {row.title}
             </span>
-            {t.kind === 'added' && (
+            {row.kind === 'added' && (
               <span className="ml-1.5 text-slate-500">
-                {t.after?.requiresHuman ? '👤 需要人确认' : '🤖 由 Agent 执行'}
+                {row.after?.requiresHuman ? t('planDiff.needsHuman') : t('planDiff.byAgent')}
               </span>
             )}
-            {t.fields.map((f) => (
+            {row.fields.map((f) => (
               <span key={f.field} className="ml-2 text-slate-500">
                 {f.label} <span className="text-slate-400">{f.before}</span> →{' '}
                 <span className={clsx(f.loosened ? 'text-amber-700' : 'text-slate-700')}>

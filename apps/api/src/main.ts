@@ -14,8 +14,8 @@ import { buildApp } from './app';
 import { syncBuiltinRoles } from './http/roles';
 import { bootstrapSuperadmin, signupSwitch } from './modules/auth';
 import { syncAgents } from './modules/agent/runtime-factory';
-import { WorkspaceService } from './modules/workspace';
-import { probeGit } from '@apos/workspace-providers';
+import { WorkspaceService, localMountRootsFromEnv } from './modules/workspace';
+import { probeGit, workspaceRoot } from '@apos/workspace-providers';
 import { startFlowLoops } from './workers/flow-loops';
 import { defaultBus } from './modules/event/bus';
 import { StubPlanningProvider } from './modules/planning/stub-provider';
@@ -172,10 +172,7 @@ async function main() {
      *   等于把整台机器交给 Agent。库里存意图，环境里存闸门 ——
      *   拿到数据库写权限的人改不动这一条。
      */
-    localMountRoots: (process.env['APOS_LOCAL_MOUNT_ROOTS'] ?? '')
-      .split(':')
-      .map((s) => s.trim())
-      .filter(Boolean),
+    localMountRoots: localMountRootsFromEnv(),
     onDiagnostic: (message, detail) => console.warn('[workspace]', message, detail ?? ''),
   });
   const gitStatus = await probeGit();
@@ -185,7 +182,13 @@ async function main() {
         '只跑调研/文档类任务可以忽略这条。',
     );
   } else {
-    console.log(`[workspace] ${gitStatus.version}，根目录 ${process.env['AGENT_WORKSPACE_ROOT'] ?? '/tmp/apos-workspaces'}`);
+    /**
+     * ★ 打印**解析后**的根目录，而不是照抄环境变量。
+     *   照抄的话 `AGENT_WORKSPACE_ROOT=`（留空）会打出一行「根目录 」，
+     *   而真实取值是 workspaceRoot() 兜的默认值 —— 日志与事实对不上，
+     *   排查的人会以为配置没生效。
+     */
+    console.log(`[workspace] ${gitStatus.version}，根目录 ${workspaceRoot()}`);
   }
 
   /**

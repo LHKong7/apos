@@ -41,7 +41,14 @@ export async function getRunDetail(db: Database, runId: string) {
   if (!run) throw notFound('Run');
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
-  const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
+  /**
+   * ★ 规划 Run 没有工作项 —— 这不是「工作项被删了」，是它本来就不该有。
+   *   下面几处按工作项展开的关联（同批尝试、人工干预、Policy 命中）
+   *   对它一律为空，而不是去查一个 id 为 null 的行。
+   */
+  const [item] = run.workItemId
+    ? await db.select().from(workItems).where(eq(workItems.id, run.workItemId))
+    : [];
   const [project] = await db.select().from(projects).where(eq(projects.id, run.projectId));
 
   const runEventRows = await db
@@ -54,17 +61,20 @@ export async function getRunDetail(db: Database, runId: string) {
 
   const decisionRows = await db.select().from(decisions).where(eq(decisions.runId, runId));
 
-  const siblings = await db
-    .select({
-      id: agentRuns.id,
-      attempt: agentRuns.attempt,
-      status: agentRuns.status,
-      cost: agentRuns.cost,
-      errorClass: agentRuns.errorClass,
-    })
-    .from(agentRuns)
-    .where(eq(agentRuns.workItemId, run.workItemId))
-    .orderBy(asc(agentRuns.attempt));
+  // ★ 「同一个工作项的历次尝试」对规划 Run 无意义，直接空列表
+  const siblings = run.workItemId
+    ? await db
+        .select({
+          id: agentRuns.id,
+          attempt: agentRuns.attempt,
+          status: agentRuns.status,
+          cost: agentRuns.cost,
+          errorClass: agentRuns.errorClass,
+        })
+        .from(agentRuns)
+        .where(eq(agentRuns.workItemId, run.workItemId))
+        .orderBy(asc(agentRuns.attempt))
+    : [];
 
   const interventions = await loadInterventions(db, run);
   const policyHits = await loadPolicyHits(db, run);
@@ -328,7 +338,10 @@ async function loadInterventions(db: Database, run: RunRow) {
     .where(
       and(
         eq(events.actorType, 'human'),
-        or(eq(events.subjectId, run.id), eq(events.subjectId, run.workItemId)),
+        // ★ 没有工作项时只按 Run 自己找，别拿 null 去比
+        run.workItemId
+          ? or(eq(events.subjectId, run.id), eq(events.subjectId, run.workItemId))
+          : eq(events.subjectId, run.id),
         gte(events.occurredAt, from),
         lte(events.occurredAt, to),
       ),
@@ -354,6 +367,8 @@ async function loadInterventions(db: Database, run: RunRow) {
 
 /** Run 期间命中的 Policy —— 审计回溯要能回答「当时是哪条规则放行/拦下的」 */
 async function loadPolicyHits(db: Database, run: RunRow) {
+  // ★ Policy 评估挂在工作项上；规划 Run 没有工作项，也就没有命中记录
+  if (!run.workItemId) return [];
   const from = run.startedAt ?? run.createdAt;
   const to = run.endedAt ?? new Date();
 

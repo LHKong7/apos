@@ -16,26 +16,56 @@ import { PERMISSIONS, PERMISSION_SPECS, type Permission } from './catalog';
  *
  * ★ 判定是纯函数，不碰数据库。调用方负责把角色查出来传进来 ——
  *   这样同一份判定前端也能用（灰按钮）而不必把成员表暴露出去。
+ *
+ * Authorisation — layers ① and ② of the four in docs/tech/09-security.md §2.1.
+ *
+ * ★ This answers only "are you entitled to do it". Whether it *should happen
+ *   automatically* is layer ③, answered by the Policy Engine
+ *   (packages/domain/src/policy/). Neither substitutes for the other: a
+ *   tech_lead is entitled to approve a plan (② passes), but if the plan
+ *   involves production DDL, policy still demands a DBA's signature (③).
+ *
+ * ★ The check is a pure function and never touches the database. The caller
+ *   looks the roles up and passes them in, which is what lets the frontend run
+ *   the same check (to grey out a button) without exposing the member table.
  */
 
 export interface RbacActor {
   /**
    * 身份类型（§1）。缺省当人类处理 —— humanOnly 的口子必须一直关着，
    * 不管调用方是人、是 Agent，还是一个自定义角色下的 Agent。
+   *
+   * Actor kind (§1). Defaults to human — the humanOnly gate has to stay shut
+   * whether the caller is a person, an Agent, or an Agent wearing a custom
+   * role.
    */
   actorType?: ActorType;
-  /** 组织角色。跨组织的调用方不该走到这里，由成员关系闸门先挡掉 */
+  /**
+   * 组织角色。跨组织的调用方不该走到这里，由成员关系闸门先挡掉。
+   * Organisation role. A cross-organisation caller should never reach here —
+   * the membership gate stops them first.
+   */
   orgRole: OrgRole;
   /**
    * 在**目标项目**里的角色 key；不是成员则为 null。
    *
    * ★ 类型是 string 不是内置枚举：角色是数据，组织可以自定义
    *   （研发 / 运营 / 测试…）。内置的五个只是预置数据，不是全集。
+   *
+   * The role key inside the **target project**; null when not a member.
+   *
+   * ★ Typed as string rather than the built-in enum: roles are data and an
+   *   organisation defines its own (engineering, ops, QA…). The built-in five
+   *   are seeded data, not the complete set.
    */
   projectRole: ProjectRole | string | null;
   /**
    * 这个角色授予的权限。自定义角色靠它判定 —— 内置角色不传也行，
    * 目录里的 `projectRoles` 会兜住（见 {@link check} 的④⑤两步）。
+   *
+   * The permissions this role grants. Custom roles are decided by it; built-in
+   * roles may omit it, since `projectRoles` in the catalogue covers them (see
+   * steps ④ and ⑤ of {@link check}).
    */
   grantedPermissions?: readonly Permission[];
   /**
@@ -43,13 +73,22 @@ export interface RbacActor {
    *
    * ★ 这是 §2.2 里唯一的资源级角色：它跨项目，来自 agents.owner_id，
    *   不来自 project_members。
+   *
+   * Whether the target resource belongs to the caller (`agent_owner`).
+   *
+   * ★ The one resource-level role in §2.2: it spans projects and comes from
+   *   `agents.owner_id`, not from `project_members`.
    */
   resourceOwner?: boolean;
 }
 
 export interface PermissionCheck {
   allowed: boolean;
-  /** 允许时为 null；拒绝时是一句能直接展示给用户的话 */
+  /**
+   * 允许时为 null；拒绝时是一句能直接展示给用户的话。
+   * null when allowed; on a refusal, a sentence that can be shown to the user
+   * as-is.
+   */
   reason: string | null;
 }
 
@@ -59,6 +98,13 @@ export interface PermissionCheck {
  *   注意这**不是**「org_admin 能看所有项目」：项目成员关系闸门
  *   （apps/api/src/http/rbac.ts 的 assertProjectAccess）另有判定，
  *   且限定在同一组织内。这里放行的是**能力**，不是**范围**。
+ *
+ * ★ An organisation administrator always passes — §2.2, "org_admin: all".
+ *
+ *   Note this is **not** "org_admin can see every project": the project
+ *   membership gate (`assertProjectAccess` in apps/api/src/http/rbac.ts) makes
+ *   its own decision and stays within one organisation. What passes here is
+ *   **capability**, not **scope**.
  *
  *   两个例外，都在别处硬编码，不由角色决定：
  *   - 决策不可代行（§2.4）：org_admin 也批不动别人名下的决策

@@ -1,3 +1,4 @@
+import { t, useT } from '../../lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { GraphEdge, GraphNode, LayoutResult } from '@apos/domain';
@@ -40,6 +41,7 @@ export function GraphCanvas({
   onSelect,
   onContextMenu,
 }: Props) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [transform, setTransform] = useState<Transform>({ scale: 1, tx: 0, ty: 0 });
   const [dragging, setDragging] = useState<{ x: number; y: number } | null>(null);
@@ -134,7 +136,7 @@ export function GraphCanvas({
         onMouseUp={() => setDragging(null)}
         onMouseLeave={() => setDragging(null)}
       >
-        <svg className="h-full w-full" role="img" aria-label="执行图">
+        <svg className="h-full w-full" role="img" aria-label={t('graph.aria')}>
           <defs>
             <marker
               id="arrow"
@@ -279,7 +281,7 @@ export function GraphCanvas({
                             fontSize={9}
                             fill="var(--graph-sub)"
                           >
-                            {truncate(node.executor?.name ?? '未分配', titleBudget(node.kind))}
+                            {truncate(node.executor?.name ?? t('graph.unassigned'), titleBudget(node.kind))}
                           </text>
                           <text
                             x={NODE_W / 2}
@@ -289,7 +291,7 @@ export function GraphCanvas({
                             fill="var(--graph-meta)"
                           >
                             {node.durationHours}h
-                            {node.durationEstimated ? '(估)' : ''} · {money(node.cost)}
+                            {node.durationEstimated ? t('graph.estimated') : ''} · {money(node.cost)}
                             {node.progressPct !== null && ` · ${node.progressPct}%`}
                           </text>
                         </>
@@ -371,7 +373,7 @@ export function GraphCanvas({
           }}
           className="ml-1 text-slate-600 hover:text-slate-900"
         >
-          适应窗口
+          {t('graph.fitToWindow')}
         </button>
       </div>
     </div>
@@ -403,16 +405,16 @@ function isRectangular(kind: GraphNode['kind']): boolean {
 function tooltipOf(node: GraphNode): string {
   const lines = [
     node.title,
-    `${KIND_META[node.kind].label} · ${node.status}`,
-    `执行者：${node.executor?.name ?? '未分配'}`,
-    `工期 ${node.durationHours}h${node.durationEstimated ? '（默认估值）' : ''} · 成本 ${money(node.cost)}`,
+    `${t(KIND_META[node.kind].labelKey)} · ${node.status}`,
+    t('graph.executorLine', { name: node.executor?.name ?? t('graph.unassigned') }),
+    t('graph.durationLine', { hours: node.durationHours, estimated: node.durationEstimated ? t('graph.defaultEstimate') : '', cost: money(node.cost) }),
   ];
-  if (node.blockedReason) lines.push(`阻塞：${node.blockedReason}`);
+  if (node.blockedReason) lines.push(t('graph.blockedLine', { reason: node.blockedReason }));
   if (node.decisionDueInMinutes !== null) {
     lines.push(
       node.decisionDueInMinutes < 0
-        ? `决策已超时 ${Math.round(Math.abs(node.decisionDueInMinutes) / 60)}h`
-        : `决策剩余 ${Math.round(node.decisionDueInMinutes / 60)}h`,
+        ? t('graph.decisionOverdue', { hours: Math.round(Math.abs(node.decisionDueInMinutes) / 60) })
+        : t('graph.decisionLeft', { hours: Math.round(node.decisionDueInMinutes / 60) }),
     );
   }
   return lines.join('\n');

@@ -1,8 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
   plans,
   policies,
   projects,
+  requirementAssumptions,
+  requirementClarifications,
   requirements,
   workItemDependencies,
   workItems,
@@ -15,6 +17,7 @@ import {
   type PolicyContext,
 } from '@apos/contracts';
 import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
+import { executionModeOf } from '../agent/matching';
 import { emitAndPublish } from '../event/bus';
 import { allocateNumbers } from '../work-item/numbering';
 import { transition } from '../flow/transition';
@@ -30,6 +33,15 @@ export interface AutoAction {
 
 export interface HumanGateEntry {
   taskTitle: string;
+  /**
+   * 这道闸是**为什么**在的。
+   *
+   * ★★ `execution` = 这活得人干；`approval` = 干完要人批。
+   *   两者以前混在同一个列表里，而用户看到它时要做的判断完全不同：
+   *   前者是排人，后者是把关。分不开的话，计划页上「仍需人确认的（5）」
+   *   里可能一条审批都没有 —— 全是「这几件事得人做」。
+   */
+  cause: 'execution' | 'approval';
   reason: string;
   assigneeHint: string;
 }
@@ -86,6 +98,33 @@ export async function generatePlan(
 
   const [project] = await db.select().from(projects).where(eq(projects.id, req.projectId));
 
+  /**
+   * ★★ 假设与澄清必须一起传给规划器。
+   *
+   *   这两栏以前是硬编码的空数组，于是 buildPlanBrief 里那句
+   *   `assumptions: req.assumptions` 永远拿到空 —— 规划 Agent 看不到
+   *   「上一步 AI 假设了什么」「人回答了哪些澄清问题」，只能凭结构化字段
+   *   重新猜一遍。用户在需求页上逐条回答的东西，到计划这一步全丢了。
+   *
+   * ★ 只带**已回答**的澄清与**未被证伪**的假设：没答的问题带过去是噪声，
+   *   已经被证伪的假设带过去会把规划引向已知错误的方向。
+   */
+  const [clarificationRows, assumptionRows] = await Promise.all([
+    db
+      .select()
+      .from(requirementClarifications)
+      .where(eq(requirementClarifications.requirementId, req.id)),
+    db
+      .select()
+      .from(requirementAssumptions)
+      .where(
+        and(
+          eq(requirementAssumptions.requirementId, req.id),
+          isNull(requirementAssumptions.invalidatedAt),
+        ),
+      ),
+  ]);
+
   const structured: StructuredRequirement = {
     title: req.title ?? '',
     businessContext: req.businessContext ?? '',
@@ -98,8 +137,19 @@ export async function generatePlan(
     constraints: req.constraints as string[],
     risks: req.risks as string[],
     acceptanceCriteria: req.acceptanceCriteria,
-    clarifications: [],
-    assumptions: [],
+    clarifications: clarificationRows
+      .filter((c) => c.answer !== null)
+      .map((c) => ({
+        question: c.question,
+        level: c.level,
+        impact: c.impact ?? '',
+        agentSuggestion: c.agentSuggestion,
+        suggestionBasis: c.suggestionBasis,
+        options: (c.options as string[]) ?? [],
+        /** ★ 答案本身才是规划要用的东西 —— 只带问题等于没传 */
+        answer: c.answer,
+      })),
+    assumptions: assumptionRows.map((a) => a.statement),
     provenance: {},
     cost: 0,
     model: '',
@@ -110,7 +160,8 @@ export async function generatePlan(
     structured,
     project?.type ?? 'development',
     input.feedback,
-    { orgId: req.orgId, projectId: req.projectId },
+    // ★ 带上 requirementId：规划 Run 靠它才能从需求页找回来
+    { orgId: req.orgId, projectId: req.projectId, requirementId: req.id },
   );
 
   const [prev] = await db
@@ -134,7 +185,19 @@ export async function generatePlan(
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
   const estimatedCost = generated.tasks.reduce((s, t) => s + (t.estimatedCost ?? 0), 0);
 
-  const [plan] = await db
+  /**
+   * ★★ 计划、任务、依赖边必须在**同一个事务**里落地。
+   *
+   *   在此之前它们是三段独立的写：先 insert plans，再循环 insert workItems，
+   *   最后 insert 依赖边。中途进程挂掉（或某条任务违反约束）留下的是一份
+   *   「已生成」的计划，底下却只有前几个任务 —— 而计划页看起来完全正常，
+   *   用户批准之后才发现少了一半的活。半份计划比没有计划危险得多。
+   *
+   * ★ 编号分配也放进来：它自己会推进项目的序号计数器，事务回滚时
+   *   那几个号就该跟着还回去，否则任务编号会莫名其妙地跳段。
+   */
+  const plan = await db.transaction(async (tx) => {
+  const [plan] = await tx
     .insert(plans)
     .values({
       projectId: req.projectId,
@@ -160,10 +223,10 @@ export async function generatePlan(
    *   循环分配会让别人的号插进中间，同一份计划出来的任务编号不连续 ——
    *   读起来像是丢了几条。
    */
-  const numbers = await allocateNumbers(db, req.projectId, generated.tasks.length);
+  const numbers = await allocateNumbers(tx, req.projectId, generated.tasks.length);
   const refToId = new Map<string, string>();
   for (const [index, task] of generated.tasks.entries()) {
-    const [row] = await db
+    const [row] = await tx
       .insert(workItems)
       .values({
         orgId: req.orgId,
@@ -184,6 +247,18 @@ export async function generatePlan(
           phase: task.phase,
           requiredSkills: task.requiredSkills,
           requiredTools: task.requiredTools,
+          /**
+           * ★★ executionMode 与 approvalGate 是两件事。
+           *
+           *   「这活只能人干」和「干完要不要人批」在产品上正交：一段需要人写的
+           *   文案不一定要审批，一次自动的生产发布几乎一定要。合成一个
+           *   requiresHuman 之后，「Agent 执行 + 人类审批」表达不了，
+           *   而计划页那一栏会显示成「🤖 Agent」，看不出后面还有一道闸。
+           *
+           * ★ requiresHuman 一并留着：老工作项只有它，读取处（executionModeOf）
+           *   两个都认。等历史数据都带上 executionMode 之后再删。
+           */
+          executionMode: task.requiresHuman ? 'human' : 'auto',
           requiresHuman: task.requiresHuman,
           ...(task.operationType ? { operationType: task.operationType } : {}),
           ...(task.environment ? { environment: task.environment } : {}),
@@ -198,7 +273,7 @@ export async function generatePlan(
       const fromId = refToId.get(dep.ref);
       const toId = refToId.get(task.ref);
       if (!fromId || !toId) continue;
-      await db.insert(workItemDependencies).values({
+      await tx.insert(workItemDependencies).values({
         projectId: req.projectId,
         fromId,
         toId,
@@ -208,13 +283,21 @@ export async function generatePlan(
     }
   }
 
+    return plan!;
+  });
+
+  /**
+   * ★ 事件在事务**提交之后**发（modules/event/bus.ts 的纪律）。
+   *   事务内发布会把「计划已生成」推给浏览器而事务随后回滚 ——
+   *   用户点进去看到一个不存在的计划。
+   */
   await emitAndPublish(db, {
     type: 'plan.generated',
     orgId: req.orgId,
     projectId: req.projectId,
     actor: SYSTEM_ACTOR,
     subjectType: 'plan',
-    subjectId: plan!.id,
+    subjectId: plan.id,
     payload: {
       version,
       taskCount: generated.tasks.length,
@@ -229,7 +312,7 @@ export async function generatePlan(
   const humanTaskCount = generated.tasks.filter((t) => t.requiresHuman).length;
 
   return {
-    planId: plan!.id,
+    planId: plan.id,
     version,
     taskCount: generated.tasks.length,
     agentTaskCount: generated.tasks.length - humanTaskCount,
@@ -315,10 +398,19 @@ function predictPolicyOutcomes(
 
     const verdict = evaluate(policyCtx, ctx.rules);
 
+    /**
+     * ★★ 「人来执行」不等于「要人批准」。
+     *
+     *   这一条以前和 Policy 判出来的审批闸混在同一个列表里，于是计划页上
+     *   「仍需人确认的」既包含「这活得人干」也包含「这活干完要人批」——
+     *   而用户看到它时要做的判断完全不同：前者是排人，后者是把关。
+     *   cause 把两者分开，文案也分开。
+     */
     if (task.requiresHuman) {
       humanGates.push({
         taskTitle: task.title,
-        reason: '该任务在计划中被标记为需要人类执行',
+        cause: 'execution',
+        reason: '该任务需要人来执行（不是审批闸）',
         assigneeHint: '项目成员',
       });
       continue;
@@ -327,6 +419,7 @@ function predictPolicyOutcomes(
     if (requiresHuman(verdict.action)) {
       humanGates.push({
         taskTitle: task.title,
+        cause: 'approval',
         reason: verdict.matchedPolicyName
           ? `Policy「${verdict.matchedPolicyName}」要求人工介入`
           : `项目自治等级下 ${task.riskLevel} 风险任务需人工确认`,
@@ -373,8 +466,24 @@ function predictPolicyOutcomes(
 }
 
 export type ApprovePlanResult =
-  | { ok: true; planId: string; activatedTasks: number }
-  | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number };
+  | { ok: true; planId: string; activatedTasks: number; unclaimed: number }
+  | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number }
+  /**
+   * ★★ 有人工任务没人认领。
+   *
+   *   这不是「不许批准」，是「批准之前得知道」。一个 executionMode=human
+   *   却没有执行者的任务，批下去之后会进 ready 然后**停在那里**：
+   *   调度器不碰人工任务，而没有人被通知过它是自己的。它不报错、不失败，
+   *   只是永远不动 —— 计划看起来批了，其中几项其实没人接。
+   *
+   *   与 BUDGET_EXCEEDED 同一套形态：先拦一次、说清楚是哪几项，
+   *   调用方确认后再放行（那时它们进「待认领」）。
+   */
+  | {
+      ok: false;
+      code: 'UNASSIGNED_HUMAN_TASKS';
+      tasks: { id: string; title: string }[];
+    };
 
 /**
  * Human Gate：计划批准。批准后任务从 draft 转 ready，Scheduler 开始接手。
@@ -386,6 +495,8 @@ export async function approvePlan(
     approverId: string;
     correlationId: string;
     acknowledgedOverrun?: boolean;
+    /** 确认「这几项人工任务先进待认领队列」 */
+    acknowledgedUnassigned?: boolean;
   },
 ): Promise<ApprovePlanResult> {
   const [plan] = await db.select().from(plans).where(eq(plans.id, input.planId));
@@ -399,6 +510,23 @@ export async function approvePlan(
     return { ok: false, code: 'BUDGET_EXCEEDED', estimated, budget };
   }
 
+  const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
+
+  /**
+   * ★ 在写 approved 之前判，不是之后 —— 拦下来的时候计划必须还是待批状态，
+   *   否则用户补完执行者回来会发现计划已经批过了。
+   */
+  const unassignedHuman = tasks.filter(
+    (t) => t.status === 'draft' && executionModeOf(t.typeData) === 'human' && !t.executorId,
+  );
+  if (unassignedHuman.length > 0 && !input.acknowledgedUnassigned) {
+    return {
+      ok: false,
+      code: 'UNASSIGNED_HUMAN_TASKS',
+      tasks: unassignedHuman.map((t) => ({ id: t.id, title: t.title })),
+    };
+  }
+
   await db
     .update(plans)
     .set({
@@ -407,8 +535,6 @@ export async function approvePlan(
       approvedAt: new Date(),
     })
     .where(eq(plans.id, plan.id));
-
-  const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
 
   let activated = 0;
   for (const task of tasks) {
@@ -434,11 +560,18 @@ export async function approvePlan(
       approvers: [input.approverId],
       acknowledgedOverrun: input.acknowledgedOverrun ?? false,
       activatedTasks: activated,
+      /** ★ 留痕：批准时有几项人工任务是没人认领就放行的 */
+      unclaimedHumanTasks: unassignedHuman.length,
       // 批准时的自动化清单快照 —— 追溯「他到底批准了什么」
       autoActionsSnapshot: plan.autoActions,
     },
     correlationId: input.correlationId,
   });
 
-  return { ok: true, planId: plan.id, activatedTasks: activated };
+  return {
+    ok: true,
+    planId: plan.id,
+    activatedTasks: activated,
+    unclaimed: unassignedHuman.length,
+  };
 }

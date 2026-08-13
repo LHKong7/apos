@@ -248,6 +248,22 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/requirements/:id': 'requirement.edit',
   'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
+  /** ★ 重新打开等于撤销一次确认，与确认同档 */
+  'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
+  /** ★ 组合命令要两个权限都有 —— 它确实同时做了这两件事 */
+  'POST /api/v1/requirements/:id/approve-and-plan': () => [
+    'requirement.approve',
+    'plan.generate',
+  ],
+  'POST /api/v1/requirements/:id/assumptions': 'requirement.edit',
+  /**
+   * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须
+   *   登记进 RESOURCE_SCOPED_URL 与 projectOfResource（见下面那条正则与
+   *   routes.ts），否则成员关系闸门够不着它，这两条路由对任何登录用户敞开。
+   *   与 artifacts 是同一条纪律。
+   */
+  'POST /api/v1/assumptions/:id/confirm': 'requirement.edit',
+  'POST /api/v1/assumptions/:id/invalidate': 'requirement.edit',
   'POST /api/v1/requirements/:id/reject': 'requirement.approve',
   /**
    * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
@@ -281,6 +297,16 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
    */
   'POST /api/v1/projects/:id/work-items': 'work_item.create',
   'POST /api/v1/work-items/:id/assign': 'work_item.execute',
+  /**
+   * ★ 只设执行者要的权限比「开始执行」低一档。
+   *
+   *   把卡片挂到某人名下是排活，不是动预算；要求 work_item.execute
+   *   会让排活这件事只有能派发的人做得了，而排活恰恰是 PM 的日常。
+   *   真正花钱的那一步在 /start，那里仍然是 work_item.execute。
+   */
+  'PUT /api/v1/projects/:id/agents': 'project.settings.update',
+  'PATCH /api/v1/work-items/:id/assignee': 'work_item.assign',
+  'POST /api/v1/work-items/:id/start': 'work_item.execute',
   'POST /api/v1/work-items/:id/retry': 'work_item.execute',
   'POST /api/v1/work-items/:id/takeover': 'work_item.takeover',
 
@@ -340,6 +366,15 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
   'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
   'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
+  /**
+   * ★ probe 也要 storage_target.manage，虽然它是只读的。
+   *   它会拿着登记里的凭证去连远端 —— 能触发一次带凭证的出网请求，
+   *   本身就是「管理存储目标」的一部分，不是一次普通的查询。
+   */
+  'POST /api/v1/admin/storage-targets': 'storage_target.manage',
+  'PATCH /api/v1/admin/storage-targets/:id': 'storage_target.manage',
+  'POST /api/v1/admin/storage-targets/:id/probe': 'storage_target.manage',
+  'DELETE /api/v1/admin/storage-targets/:id': 'storage_target.manage',
   /**
    * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
    *   后者只在组织内部移动权限，前者错了是数据出了租户。
@@ -507,7 +542,7 @@ async function highestRoleOverAgent(
 /** 从 URL 反查项目 id 用的形状，与成员关系闸门同源 */
 export const PROJECT_SCOPED_URL = new RegExp(`^/api/v1/projects/(${UUID})(?:/|$)`, 'i');
 export const RESOURCE_SCOPED_URL = new RegExp(
-  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts)/(${UUID})(?:/|$)`,
+  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts|artifacts|assumptions)/(${UUID})(?:/|$)`,
   'i',
 );
 

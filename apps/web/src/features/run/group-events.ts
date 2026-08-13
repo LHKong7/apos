@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import type { RunEventRow } from '../../lib/api/types';
 
 export interface TimelineEntry {
@@ -39,7 +40,7 @@ export function groupEvents(events: RunEventRow[], merge: boolean): TimelineEntr
     if (mergeable) {
       last.members.push(event);
       last.ts = event.ts;
-      last.summary = `调用 ${tool} ×${last.members.length}`;
+      last.summary = t('timeline.toolCalls', { tool, count: last.members.length });
       continue;
     }
 

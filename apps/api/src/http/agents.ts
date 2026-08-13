@@ -93,7 +93,7 @@ export async function getAgent(
     .orderBy(desc(agentRuns.createdAt))
     .limit(20);
 
-  const itemIds = [...new Set(runs.map((r) => r.workItemId))];
+  const itemIds = [...new Set(runs.map((r) => r.workItemId).filter((id) => id !== null))];
   const items =
     itemIds.length > 0
       ? await db.select().from(workItems).where(inArray(workItems.id, itemIds))
@@ -206,8 +206,12 @@ export async function getAgent(
 
     recentRuns: runs.map((r) => ({
       id: r.id,
+      kind: r.kind,
       workItemId: r.workItemId,
-      workItemTitle: itemById.get(r.workItemId)?.title ?? '（已删除）',
+      // ★ 规划 Run 本来就没有工作项 —— 与「工作项被删了」是两回事，别混成一句话
+      workItemTitle: r.workItemId
+        ? (itemById.get(r.workItemId)?.title ?? '（已删除）')
+        : '（需求分析 / 计划生成）',
       status: r.status,
       attempt: r.attempt,
       cost: Number(r.cost),

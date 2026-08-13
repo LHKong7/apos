@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,6 +22,7 @@ import { DecisionView } from './DecisionView';
 import { MovedToast } from './MovedToast';
 
 export function BoardPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -110,26 +112,26 @@ export function BoardPage() {
 
   const remind = useMutation({
     mutationFn: (decisionId: string) => api.remindDecision(decisionId),
-    onSuccess: () => setToast('已催办，30 分钟内不重复提醒'),
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '催办失败'),
+    onSuccess: () => setToast(t('board.reminded')),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.remindFailed')),
   });
 
   const retry = useMutation({
     mutationFn: (cards: BoardCard[]) => Promise.all(cards.map((c) => api.retry(c.id))),
     onSuccess: (r) => {
-      setToast(`已重新派发 ${r.length} 个任务`);
+      setToast(t('board.redispatched', { count: r.length }));
       invalidateBoard();
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '重试失败'),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.retryFailed')),
   });
 
   const takeover = useMutation({
-    mutationFn: (card: BoardCard) => api.takeover(card.id, '人工接管处理'),
+    mutationFn: (card: BoardCard) => api.takeover(card.id, t('board.takeoverReason')),
     onSuccess: () => {
-      setToast('已接管，执行主体切换为你');
+      setToast(t('board.takenOver'));
       invalidateBoard();
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '接管失败'),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.takeoverFailed')),
   });
 
   const actions: CardActions = useMemo(
@@ -159,6 +161,7 @@ export function BoardPage() {
     Boolean(filters.blocked) ||
     Boolean(filters.humanGate) ||
     Boolean(filters.executorType) ||
+    Boolean(filters.unclaimed) ||
     (filters.risk?.length ?? 0) > 0;
 
   return (
@@ -182,7 +185,7 @@ export function BoardPage() {
       {/* 项目已暂停时给出全局提示（页面文档 05 §7） */}
       {project.data?.project.status === 'paused' && (
         <div className="bg-slate-200 px-4 py-1 text-center text-[11px] text-slate-700">
-          项目已暂停，卡片不会自动流动
+          {t('board.projectPaused')}
         </div>
       )}
 
@@ -249,7 +252,7 @@ export function BoardPage() {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}
@@ -268,7 +271,7 @@ export function BoardPage() {
             manualMove.error instanceof ApiError
               ? manualMove.error.message
               : manualMove.error
-                ? '操作失败'
+                ? t('board.actionFailed')
                 : null
           }
           onCancel={() => {

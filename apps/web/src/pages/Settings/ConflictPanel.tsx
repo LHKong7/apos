@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +8,7 @@ import { qk } from '../../lib/query/keys';
 import { relativeTime } from '../../lib/format';
 import type { SyncConflictRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * 同步冲突处理（页面文档 14 §5.3 的冲突界面）。
@@ -20,6 +22,7 @@ import { Button } from '@/components/ui/button';
  *   那个字段的 SoT 配反了 —— 逐条处理一百次，不如把配置改对一次。
  */
 export function ConflictPanel({ projectId, canResolve }: { projectId: string; canResolve: boolean }) {
+  const t = useT();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: qk.syncConflicts(projectId),
@@ -38,20 +41,22 @@ export function ConflictPanel({ projectId, canResolve }: { projectId: string; ca
     <section className="rounded border border-amber-200 bg-white">
       <div className="flex flex-wrap items-baseline gap-2 border-b border-amber-100 bg-amber-50 px-3 py-1.5">
         <h2 className="text-xs font-medium text-amber-900">
-          ⚠ 同步冲突（{q.data.conflicts.length}）
+          {t('conflict.title', { count: q.data.conflicts.length })}
         </h2>
         {/* §7：冲突积压 > 10 时提醒去看 SoT 配置 */}
         {q.data.conflicts.length > 10 && (
           <span className="text-[11px] text-amber-800">
-            冲突较多，建议先检查 Source of Truth 配置而不是逐条处理
+            {t('conflict.tooMany')}
           </span>
         )}
       </div>
 
       {q.data.hotspots.length > 0 && q.data.hotspots[0]!.count >= 3 && (
         <p className="border-b border-amber-100 px-3 py-1 text-[11px] text-amber-800">
-          {q.data.hotspots[0]!.count} 次冲突集中在「{q.data.hotspots[0]!.fieldLabel}
-          」—— 通常说明这个字段的 Source of Truth 配反了
+          {t('conflict.hotspot', {
+            count: q.data.hotspots[0]!.count,
+            field: q.data.hotspots[0]!.fieldLabel,
+          })}
         </p>
       )}
 
@@ -81,6 +86,7 @@ function ConflictRow({
   canResolve: boolean;
   onResolved: () => void;
 }) {
+  const t = useT();
   const [applyToSimilar, setApplyToSimilar] = useState(false);
 
   const resolve = useMutation({
@@ -111,7 +117,7 @@ function ConflictRow({
         <tbody>
           <Side label="APOS" side={conflict.apos} winner={conflict.sourceOfTruth === 'apos'} />
           <Side
-            label="外部系统"
+            label={t('conflict.externalSystem')}
             side={conflict.external}
             winner={conflict.sourceOfTruth === 'external'}
           />
@@ -126,33 +132,28 @@ function ConflictRow({
             <Button variant="neutral" size="xs"
               disabled={resolve.isPending}
               onClick={() => resolve.mutate('apos')}>
-              以 APOS 为准（回写外部）
+              {t('conflict.preferApos')}
             </Button>
             <Button variant="outline" size="xs"
               disabled={resolve.isPending}
               onClick={() => resolve.mutate('external')}>
-              以外部为准（本次例外）
+              {t('conflict.preferExternal')}
             </Button>
           </div>
           {/* ★ 记的是字段级规则，不是这一条对象 —— 用户勾它时想表达的是
               「这个字段以后别再问我」 */}
           <label className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
-            <input
-              type="checkbox"
-              checked={applyToSimilar}
-              onChange={(e) => setApplyToSimilar(e.target.checked)}
-              className="h-3 w-3"
-            />
-            以后「{conflict.fieldLabel}」的同类冲突自动按此处理
+            <Checkbox checked={applyToSimilar} onCheckedChange={setApplyToSimilar} />
+            {t('conflict.applyToSimilar', { field: conflict.fieldLabel })}
           </label>
         </>
       ) : (
-        <p className="mt-1 text-[11px] text-slate-400">需要项目成员权限才能处理</p>
+        <p className="mt-1 text-[11px] text-slate-400">{t('conflict.needMembership')}</p>
       )}
 
       {resolve.error && (
         <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-          {resolve.error instanceof ApiError ? resolve.error.message : '处理失败'}
+          {resolve.error instanceof ApiError ? resolve.error.message : t('conflict.handleFailed')}
         </p>
       )}
     </li>

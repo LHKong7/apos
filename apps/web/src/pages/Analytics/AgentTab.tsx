@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { Analytics, AgentPerf } from '@apos/domain';
 import { BarChart, StatTile } from '../../features/analytics/charts';
@@ -13,12 +14,13 @@ import { Card } from './Card';
  *   所以主体是一张表，不是一堆卡片。
  */
 export function AgentTab({ data }: { data: Analytics }) {
+  const t = useT();
   const { agent, deltas } = data;
 
   if (agent.agents.length === 0) {
     return (
       <p className="rounded border border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-400">
-        这段时间没有 Agent 执行记录
+        {t('agentTab.noRuns')}
       </p>
     );
   }
@@ -29,41 +31,41 @@ export function AgentTab({ data }: { data: Analytics }) {
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <StatTile
-          label="平均成功率"
+          label={t('agentTab.avgSuccess')}
           value={`${Math.round(weighted(agent.agents, (a) => a.successRate) * 100)}%`}
-          sub={`${agent.agents.reduce((s, a) => s + a.runs, 0)} 次执行`}
+          sub={t('agentTab.runsCount', { count: agent.agents.reduce((s, a) => s + a.runs, 0) })}
           delta={deltas?.agentSuccessRate}
-          hint="按执行次数加权，避免只跑了两次的 Agent 拉高整体。"
+          hint={t('agentTab.avgSuccessHelp')}
         />
         <StatTile
-          label="平均首次成功率"
+          label={t('agentTab.avgFirstTry')}
           value={`${Math.round(weighted(agent.agents, (a) => a.firstTrySuccessRate) * 100)}%`}
-          sub="重试掩盖的问题看这个"
-          hint="只统计 attempt = 1 的执行。总成功率会被重试拉回去，首次成功率才反映「一把做对」的能力。"
+          sub={t('agentTab.firstTryHint')}
+          hint={t('agentTab.avgFirstTryHelp')}
         />
         <StatTile
-          label="平均单次成本"
+          label={t('agentTab.avgCost')}
           value={money(String(weighted(agent.agents, (a) => a.avgCost)))}
-          hint="窗口内全部 Run 的成本 ÷ Run 数。"
+          hint={t('agentTab.avgCostHelp')}
         />
       </div>
 
-      <Card title="Agent 效能对比" subtitle="每列最优的一项加粗，横着看差距">
+      <Card title={t('agentTab.comparison')} subtitle={t('agentTab.comparisonHint')}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-left text-[11px] text-slate-500">
                 <th className="py-1 pr-2 font-medium">Agent</th>
-                <th className="py-1 px-2 text-right font-medium">执行</th>
-                <th className="py-1 px-2 text-right font-medium">成功率</th>
-                <th className="py-1 px-2 text-right font-medium" title="只看第一次尝试">
-                  首次成功
+                <th className="py-1 px-2 text-right font-medium">{t('agentTab.runs')}</th>
+                <th className="py-1 px-2 text-right font-medium">{t('agentTab.successRate')}</th>
+                <th className="py-1 px-2 text-right font-medium" title={t('agentTab.firstTryOnly')}>
+                  {t('agents.col.firstTry')}
                 </th>
-                <th className="py-1 px-2 text-right font-medium" title="任务被人手动改过状态的比例">
-                  人工覆盖
+                <th className="py-1 px-2 text-right font-medium" title={t('agentTab.overrideHelp')}>
+                  {t('agents.col.override')}
                 </th>
-                <th className="py-1 px-2 text-right font-medium">均成本</th>
-                <th className="py-1 pl-2 text-right font-medium">均耗时</th>
+                <th className="py-1 px-2 text-right font-medium">{t('agentTab.avgCostShort')}</th>
+                <th className="py-1 pl-2 text-right font-medium">{t('agentTab.avgDuration')}</th>
               </tr>
             </thead>
             <tbody>
@@ -98,22 +100,23 @@ export function AgentTab({ data }: { data: Analytics }) {
 
         {agent.dominance && (
           <p className="mt-2 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-900">
-            💡 {agent.dominance.betterName} 在成功率、成本、耗时上全面优于{' '}
-            {agent.dominance.worseName} —— 建议调整调度权重，或对比两者的配置差异。
-            只赢一两项不会出现在这里，那属于权衡而非结论。
+            {t('agentTab.dominance', {
+              better: agent.dominance.betterName,
+              worse: agent.dominance.worseName,
+            })}
           </p>
         )}
       </Card>
 
-      <Card title="失败原因分布" subtitle="来自 Agent 协议的错误分类，不是从日志里猜的">
+      <Card title={t('agentTab.failureReasons')} subtitle={t('agentTab.failureReasonsHint')}>
         <BarChart
           data={agent.failureReasons.map((r) => ({
             label: r.label,
             value: r.count,
-            display: `${r.count} 次 ${r.percent}%`,
+            display: t('hitl.timesPercent', { count: r.count, percent: r.percent }),
             tone: 'waiting' as const,
           }))}
-          emptyHint="这段时间没有失败的执行"
+          emptyHint={t('agentTab.noFailures')}
         />
       </Card>
     </div>

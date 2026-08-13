@@ -1,5 +1,7 @@
 # 单机部署
 
+*[English version / 英文版本](DEPLOYMENT.en.md)*
+
 把 APOS 完整跑在一台机器上：一条命令、一个对外端口。
 
 本机开发环境见[运行指南](RUNNING.md)。两者共用**同一个** `docker-compose.yml`：

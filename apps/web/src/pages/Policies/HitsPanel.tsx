@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -8,26 +9,27 @@ import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Button } from '@/components/ui/button';
 
-const OPERATION_LABELS: Record<string, string> = {
-  read: '读取',
-  code_change: '改代码',
-  db_ddl: '库结构变更',
-  db_dml: '库数据变更',
-  deploy: '部署发布',
-  delete_resource: '删除资源',
-  permission_change: '权限变更',
-  access_sensitive_data: '访问敏感数据',
-  send_external: '对外发送',
-  payment: '付款',
-  security_policy_change: '安全策略变更',
-  high_cost_resource: '高成本资源',
+/** 操作类型 / 环境 → 词条键。模块级常量存键不存译文 */
+const OPERATION_KEYS: Record<string, MessageKey> = {
+  read: 'opType.read',
+  code_change: 'opType.code_change',
+  db_ddl: 'opType.schema_change',
+  db_dml: 'opType.data_change',
+  deploy: 'opType.deploy',
+  delete_resource: 'opType.delete_resource',
+  permission_change: 'opType.permission_change',
+  access_sensitive_data: 'opType.access_sensitive',
+  send_external: 'opType.external_send',
+  payment: 'opType.payment',
+  security_policy_change: 'opType.security_policy_change',
+  high_cost_resource: 'opType.high_cost',
 };
 
-const ENV_LABELS: Record<string, string> = {
-  dev: '开发',
-  test: '测试',
-  staging: '预生产',
-  production: '生产',
+const ENV_KEYS: Record<string, MessageKey> = {
+  dev: 'env.dev',
+  test: 'env.test',
+  staging: 'env.staging',
+  production: 'env.prod',
 };
 
 /**
@@ -56,6 +58,7 @@ export function HitsPanel({
   policyName: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const q = useQuery({
     queryKey: qk.policyHits(projectId, policyId),
     queryFn: () => api.policyHits(projectId, policyId),
@@ -63,9 +66,11 @@ export function HitsPanel({
 
   return (
     // 宽度与滚动都归 Modal 管：自己再套一层会长出第二根滚动条
-    <Modal onClose={onClose} title="策略命中明细" width="lg">
+    <Modal onClose={onClose} title={t('policy.hits.title')} width="lg">
       <div>
-        <h2 className="text-sm font-semibold text-slate-900">命中明细 · {policyName}</h2>
+        <h2 className="text-sm font-semibold text-slate-900">
+          {t('policy.hits.heading', { name: policyName })}
+        </h2>
 
         {q.isPending && <CardSkeleton />}
         {q.isError && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
@@ -86,42 +91,42 @@ export function HitsPanel({
             </p>
 
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
-              <span>近 30 天命中 {q.data.stats.hits} 次</span>
+              <span>{t('hits.last30d', { count: q.data.stats.hits })}</span>
               {q.data.stats.byAction.map((a) => (
                 <span key={a.label}>
                   {a.label} {a.count}
                 </span>
               ))}
               {q.data.stats.decisionsCreated > 0 && (
-                <span>生成决策 {q.data.stats.decisionsCreated}</span>
+                <span>{t('hits.decisionsCreated', { count: q.data.stats.decisionsCreated })}</span>
               )}
               {q.data.stats.approvalRate !== null && (
-                <span>批准率 {Math.round(q.data.stats.approvalRate * 100)}%</span>
+                <span>{t('hits.approvalRate', { percent: Math.round(q.data.stats.approvalRate * 100) })}</span>
               )}
               {q.data.stats.avgWaitMinutes !== null && (
-                <span>平均等待 {duration(q.data.stats.avgWaitMinutes)}</span>
+                <span>{t('hits.avgWait', { time: duration(q.data.stats.avgWaitMinutes) })}</span>
               )}
               {q.data.overriddenAfterPass > 0 && (
                 <span className="text-amber-700">
-                  放行后被人工纠正 {q.data.overriddenAfterPass}
+                  {t('hits.overriddenAfterPass', { count: q.data.overriddenAfterPass })}
                 </span>
               )}
             </div>
 
             {q.data.hits.length === 0 ? (
               <p className="mt-2 rounded border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
-                近 30 天没有命中记录
+                {t('hits.none30d')}
               </p>
             ) : (
               <table className="mt-2 w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-slate-500">
-                    <th className="py-1 font-medium">时间</th>
-                    <th className="py-1 font-medium">任务</th>
-                    <th className="py-1 font-medium">触发上下文</th>
-                    <th className="py-1 font-medium">判定</th>
+                    <th className="py-1 font-medium">{t('policy.hits.time')}</th>
+                    <th className="py-1 font-medium">{t('policy.hits.workItem')}</th>
+                    <th className="py-1 font-medium">{t('policy.hits.context')}</th>
+                    <th className="py-1 font-medium">{t('policy.hits.verdict')}</th>
                     {/* ★ 结局是主列，不是附注 —— 这一页的结论全靠它 */}
-                    <th className="py-1 font-medium">结局</th>
+                    <th className="py-1 font-medium">{t('policy.hits.outcome')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -141,16 +146,23 @@ export function HitsPanel({
                       <td className="py-1 pr-2 text-slate-500">
                         {h.context ? (
                           <>
-                            {OPERATION_LABELS[h.context.operationType] ?? h.context.operationType}
+                            {OPERATION_KEYS[h.context.operationType]
+                              ? t(OPERATION_KEYS[h.context.operationType]!)
+                              : h.context.operationType}
                             {h.context.environment && (
-                              <> · {ENV_LABELS[h.context.environment] ?? h.context.environment}</>
+                              <>
+                                {' · '}
+                                {ENV_KEYS[h.context.environment]
+                                  ? t(ENV_KEYS[h.context.environment]!)
+                                  : h.context.environment}
+                              </>
                             )}
                             {' · '}
                             {riskLabel(h.context.riskLevel)}
                           </>
                         ) : (
                           // 没有快照的历史事件，如实说而不是留空让人以为没触发条件
-                          <span className="text-slate-400">未记录上下文</span>
+                          <span className="text-slate-400">{t('policy.hits.noContext')}</span>
                         )}
                       </td>
                       <td className="py-1 pr-2 text-slate-600">{h.actionLabel}</td>
@@ -173,7 +185,7 @@ export function HitsPanel({
                             )}
                             {h.decision.waitMinutes !== null && (
                               <span className="ml-1 text-slate-400">
-                                等 {duration(h.decision.waitMinutes)}
+                                {t('hits.waited', { time: duration(h.decision.waitMinutes) })}
                               </span>
                             )}
                           </span>
@@ -187,7 +199,7 @@ export function HitsPanel({
 
             {q.data.truncated && (
               <p className="mt-1 text-[11px] text-slate-400">
-                只显示最近 100 条 —— 更早的命中在事件流里，没有丢
+                {t('hits.truncated')}
               </p>
             )}
           </>
@@ -196,7 +208,7 @@ export function HitsPanel({
         <div className="mt-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            关闭
+            {t('common.close')}
           </Button>
         </div>
       </div>

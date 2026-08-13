@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import type { RequirementDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -46,10 +47,10 @@ export interface RequirementPatch {
 
 type Criterion = RequirementPatch['acceptanceCriteria'][number];
 
-const VERIFICATION_LABELS: Record<Criterion['verification'], string> = {
-  auto: '自动核验',
-  agent: 'Agent 核验',
-  human: '人工核验',
+const VERIFICATION_KEYS: Record<Criterion['verification'], MessageKey> = {
+  auto: 'editor.verifyAuto',
+  agent: 'editor.verifyAgent',
+  human: 'editor.verifyHuman',
 };
 
 export function StructuredEditor({
@@ -65,6 +66,7 @@ export function StructuredEditor({
   onSave: (patch: RequirementPatch) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [title, setTitle] = useState(r.title ?? '');
   const [businessContext, setBusinessContext] = useState(r.businessContext ?? '');
   const [userProblem, setUserProblem] = useState(r.userProblem ?? '');
@@ -104,11 +106,11 @@ export function StructuredEditor({
 
   return (
     <div className="mt-1 space-y-2 text-xs">
-      <Labeled label="标题">
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="一句话说清要做什么" />
+      <Labeled label={t('editor.title')}>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('editor.titleHelp')} />
       </Labeled>
 
-      <Labeled label="业务背景" help="为什么现在要做这件事。会作为上下文下发给所有 Agent">
+      <Labeled label={t('editor.context')} help={t('editor.contextHelp')}>
         <Textarea
           value={businessContext}
           onChange={(e) => setBusinessContext(e.target.value)}
@@ -116,45 +118,45 @@ export function StructuredEditor({
         />
       </Labeled>
 
-      <Labeled label="用户问题">
+      <Labeled label={t('editor.problem')}>
         <Textarea value={userProblem} onChange={(e) => setUserProblem(e.target.value)} rows={2} />
       </Labeled>
 
-      <Labeled label="业务目标" help="做成之后什么变好了">
+      <Labeled label={t('editor.goal')} help={t('editor.goalHelp')}>
         <Textarea value={businessGoal} onChange={(e) => setBusinessGoal(e.target.value)} rows={2} />
       </Labeled>
 
       <div className="grid gap-2 sm:grid-cols-2">
-        <Labeled label="做什么（一行一条）">
+        <Labeled label={t('editor.inScope')}>
           <Textarea value={inScope} onChange={(e) => setInScope(e.target.value)} rows={3} />
         </Labeled>
         {/*
           ★ 「不做什么」和「做什么」一样重要：没写出来的边界，
             Agent 会自己划一条，而它划在哪你事后才知道。
         */}
-        <Labeled label="不做什么（一行一条）" help="没写出来的边界 Agent 会自己划">
+        <Labeled label={t('editor.outOfScope')} help={t('editor.outOfScopeHelp')}>
           <Textarea value={outOfScope} onChange={(e) => setOutOfScope(e.target.value)} rows={3} />
         </Labeled>
       </div>
 
       <div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-slate-600">验收标准</span>
+          <span className="text-[11px] font-medium text-slate-600">{t('editor.acceptance')}</span>
           <span className="text-[11px] text-slate-400">
-            Review 阶段按它逐条核验，所以要可判定，不要写「体验更好」
+            {t('editor.acceptanceHint')}
           </span>
           <button
             type="button"
             onClick={() => setCriteria((l) => [...l, { text: '', verification: 'human' }])}
             className="ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
           >
-            + 加一条
+            {t('editor.addCriterion')}
           </button>
         </div>
         <div className="mt-1 space-y-1">
           {criteria.length === 0 && (
             <p className="text-[11px] text-amber-700">
-              ⚠ 一条都没有的话，Review 阶段没有任何可校验的依据
+              {t('editor.noCriteriaWarning')}
             </p>
           )}
           {criteria.map((c, i) => (
@@ -162,7 +164,7 @@ export function StructuredEditor({
               <Input
                 value={c.text}
                 onChange={(e) => setCriterion(i, { text: e.target.value })}
-                placeholder="如：按手机号搜索，P95 响应时间 < 500ms"
+                placeholder={t('editor.acceptancePlaceholder')}
               />
               {/*
                 ★ 核验方式必须由人指定，且默认「人工」。
@@ -178,7 +180,7 @@ export function StructuredEditor({
               >
                 {(['auto', 'agent', 'human'] as const).map((v) => (
                   <option key={v} value={v}>
-                    {VERIFICATION_LABELS[v]}
+                    {t(VERIFICATION_KEYS[v])}
                   </option>
                 ))}
               </select>
@@ -186,7 +188,7 @@ export function StructuredEditor({
                 type="button"
                 onClick={() => setCriteria((l) => l.filter((_, idx) => idx !== i))}
                 className="shrink-0 px-1 text-[11px] text-slate-400 hover:text-rose-600"
-                aria-label={`删除第 ${i + 1} 条验收标准`}
+                aria-label={t('editor.removeCriterion', { n: i + 1 })}
               >
                 ✕
               </button>
@@ -195,7 +197,7 @@ export function StructuredEditor({
         </div>
       </div>
 
-      <Labeled label="潜在风险（一行一条）" help="会进计划页的风险清单，也会影响完整度评分">
+      <Labeled label={t('editor.risks')} help={t('editor.risksHelp')}>
         <Textarea value={risks} onChange={(e) => setRisks(e.target.value)} rows={2} />
       </Labeled>
 
@@ -203,10 +205,10 @@ export function StructuredEditor({
 
       <div className="flex justify-end gap-2 border-t border-slate-100 pt-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
-          取消
+          {t('common.cancel')}
         </Button>
         <Button variant="neutral" size="sm" onClick={submit} disabled={saving}>
-          {saving ? '保存中…' : '保存'}
+          {saving ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>

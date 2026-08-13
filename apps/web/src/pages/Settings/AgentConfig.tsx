@@ -1,3 +1,4 @@
+import { t, useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -5,7 +6,7 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { relativeTime } from '../../lib/format';
-import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
+import { CardSkeleton, EmptyState, ErrorState, QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
 import type {
@@ -15,8 +16,10 @@ import type {
   CredentialUsageRow,
   RepositoryRow,
   RuntimeKindSpec,
+  StorageTargetRow,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -44,15 +47,38 @@ import { Textarea } from '@/components/ui/textarea';
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
  */
 
-type Tab = 'agents' | 'repositories' | 'conventions';
+type Tab = 'agents' | 'binding' | 'repositories' | 'storage' | 'conventions';
 
-const TABS: { key: Tab; label: string; hint: string }[] = [
-  { key: 'agents', label: 'Agents', hint: '建 N 个 Agent，每个自带 CLI 类型与它的个性化配置' },
-  { key: 'repositories', label: '代码仓库', hint: 'Agent 的仓库授权指向哪里' },
-  { key: 'conventions', label: '工程约定', hint: '本项目所有 Agent 都要遵守的规范' },
+/**
+ * ★ 存词条键、不存译文：模块级常量取不到 hook，而且切语言时不会重算 ——
+ *   在这里就把 `t()` 调完，标签会永远停在首次渲染时的那个语言。
+ *   Keys, not translated strings: a module constant cannot call the hook and
+ *   is not recomputed when the locale changes, so resolving here would freeze
+ *   these labels in whichever language rendered first.
+ */
+const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { key: 'agents', labelKey: 'agentCfg.tab.agentsLabel', hintKey: 'agentCfg.tab.agents' },
+  /**
+   * ★ 与「Agent 配置」分成两页，不是一页两段。
+   *
+   *   上一页回答「这个 Agent 是什么」（运行时、凭证、模型、工具与资源权限），
+   *   这一页回答「这个项目的哪个角色交给哪个已配置的 Agent」。
+   *   混在一起正是之前的问题：用户在项目设置里被问「用哪个 CLI」，
+   *   而那个选择的后果根本不在这一页上显示。
+   */
+  { key: 'binding', labelKey: 'agentCfg.tab.binding', hintKey: 'agentCfg.tab.bindingDesc' },
+  { key: 'repositories', labelKey: 'agentCfg.tab.repos', hintKey: 'agentCfg.tab.reposDesc' },
+  /**
+   * ★ 与「代码仓库」并列而不是塞进那一页：两者是工作区的**同一头**
+   *   （铺料）的两类来源，但字段完全不重叠 —— 一个 S3 bucket 没有
+   *   「默认分支」，一个 git 仓库没有「寻址风格」。
+   */
+  { key: 'storage', labelKey: 'agentCfg.tab.storage', hintKey: 'agentCfg.tab.storageDesc' },
+  { key: 'conventions', labelKey: 'agentCfg.tab.conventions', hintKey: 'agentCfg.tab.conventionsDesc' },
 ];
 
 export function AgentConfigPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const [tab, setTab] = useState<Tab>('agents');
   const userId = useAuthStore((s) => s.userId);
@@ -63,26 +89,26 @@ export function AgentConfigPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">Agent 配置</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('agentCfg.title')}</h1>
           <Link to={`/projects/${projectId}`} className="text-xs text-slate-500 hover:text-slate-700">
-            ← 项目总览
+            {t('agents.backToOverview')}
           </Link>
         </div>
         <div className="mt-2 flex gap-1">
-          {TABS.map((t) => (
+          {TABS.map((item) => (
             <button
-              key={t.key}
+              key={item.key}
               type="button"
-              onClick={() => setTab(t.key)}
-              title={t.hint}
+              onClick={() => setTab(item.key)}
+              title={t(item.hintKey)}
               className={clsx(
                 'rounded px-3 py-1 text-xs font-medium',
-                tab === t.key
+                tab === item.key
                   ? 'bg-slate-900 text-white'
                   : 'text-slate-600 hover:bg-slate-100',
               )}
             >
-              {t.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
@@ -90,7 +116,9 @@ export function AgentConfigPage() {
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {tab === 'agents' && <AgentsSection />}
+        {tab === 'binding' && <ProjectAgentSection projectId={projectId} />}
         {tab === 'repositories' && <RepositoriesSection projectId={projectId} />}
+        {tab === 'storage' && <StorageTargetsSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
       </div>
     </div>
@@ -100,6 +128,7 @@ export function AgentConfigPage() {
 // ── Agents ────────────────────────────────────────────────────────────
 
 function AgentsSection() {
+  const t = useT();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
   /**
@@ -129,12 +158,12 @@ function AgentsSection() {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <p className="text-xs text-slate-500">
-          每个 Agent 自带一种 headless CLI 与它的个性化配置。同一种 CLI 可以建多个 Agent，各配各的。
+          {t('agentCfg.intro')}
         </p>
         <Button variant="neutral" size="sm"
           onClick={() => openForm('new')}
           className="ml-auto">
-          + 新建 Agent
+          + {t('agentCfg.new')}
         </Button>
       </div>
 
@@ -144,16 +173,15 @@ function AgentsSection() {
       */}
       {!data.encryptsInlineSecrets && (
         <Notice tone="warning">
-          未配置 <code>APOS_SECRET_KEY</code>：直接粘贴的凭证与 JSON 里的敏感值会
-          <strong>明文</strong>存进数据库（接口仍然只回占位符，不回显）。
-          想让它们密文入库就配上这个环境变量，或改用 <code>env:变量名</code> 把值留在进程环境里。
+          {t('agentCfg.noMasterKey')} <strong>{t('agentCfg.plaintext')}</strong>{' '}
+          {t('agentCfg.noMasterKey2')}{' '}
+          {t('agentCfg.noMasterKey3', { ref: t('agentCfg.envRef') })}
         </Notice>
       )}
 
       {unknownKeys.length > 0 && (
         <Notice tone="warning">
-          这些键平台不认识，已按你写的原样保存：<code>{unknownKeys.join('、')}</code>。
-          如果是有意下发给运行时的就不用管；如果只是键名敲错了，它永远不会生效。
+          {t('agentCfg.unknownKeysNotice', { keys: unknownKeys.join('、') })}
         </Notice>
       )}
 
@@ -162,9 +190,9 @@ function AgentsSection() {
       {data.agents.length === 0 ? (
         <EmptyState
           icon="🤖"
-          message="还没有任何 Agent"
-          hint="建一个 Agent 才能派发任务。可以先用「内存运行时」跑通流程，不花钱"
-          action={{ label: '新建 Agent', onClick: () => openForm('new') }}
+          message={t('agentCfg.empty')}
+          hint={t('agentCfg.emptyHint')}
+          action={{ label: t('agentCfg.new'), onClick: () => openForm('new') }}
         />
       ) : (
         <div className="space-y-2">
@@ -212,11 +240,12 @@ function AgentsSection() {
  *   以及为什么 env: 形态只用动一处。
  */
 function CredentialUsage({ rows }: { rows: CredentialUsageRow[] }) {
+  const t = useT();
   const multi = rows.filter((r) => r.rotationCost !== 'one_place' && r.agents.length > 1);
 
   return (
     <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
-      <p className="text-[11px] font-medium text-slate-700">凭证使用情况</p>
+      <p className="text-[11px] font-medium text-slate-700">{t('agentCfg.credentialUsage')}</p>
       <div className="mt-1 space-y-0.5">
         {rows.map((r) => (
           <div key={r.hint ?? '—'} className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -231,16 +260,16 @@ function CredentialUsage({ rows }: { rows: CredentialUsageRow[] }) {
               )}
             >
               {r.rotationCost === 'one_place'
-                ? '轮换只需改环境变量'
-                : `轮换要改 ${r.agents.length} 处`}
+                ? t('agentCfg.rotateHint')
+                : t('agentCfg.rotateCount', { count: r.agents.length })}
             </span>
           </div>
         ))}
       </div>
       {multi.length > 0 && (
         <p className="mt-1 text-[11px] text-amber-800">
-          ⚠ 有内联凭证被多个 Agent 各存一份，轮换时漏改一处会让那个 Agent 静默失效。
-          改用 <code>env:变量名</code> 可以让它们共用一处。
+          {t('agentCfg.inlineCredWarning')}{' '}
+          {t('agentCfg.shareViaEnv', { ref: t('agentCfg.envRef') })}
         </p>
       )}
     </div>
@@ -264,6 +293,8 @@ function AgentCard({
   error: unknown;
   probing: boolean;
 }) {
+  const t = useT();
+  const sx = useSpecText();
   const [showCaps, setShowCaps] = useState(false);
 
   /**
@@ -271,9 +302,9 @@ function AgentCard({
    *   混成一句「不可用」，用户不知道该去装依赖、换 key，还是换个 Agent。
    */
   const health = !agent.registered
-    ? { tone: 'error' as const, text: agent.problem ?? '适配器未在本进程注册' }
+    ? { tone: 'error' as const, text: agent.problem ?? t('agentCfg.health.unregistered') }
     : !agent.credentialUsable && agent.credentialHint
-      ? { tone: 'error' as const, text: agent.credentialProblem ?? '凭证不可用' }
+      ? { tone: 'error' as const, text: agent.credentialProblem ?? t('agentCfg.health.badCredential') }
       : /*
          * ★ 环境变量表里解不开的引用与凭证不可用是同一类问题：
          *   配置看着完好，派发时才炸，而报错不会指向那个没设置的变量。
@@ -281,8 +312,8 @@ function AgentCard({
         agent.runtimeConfigProblems.length > 0
         ? { tone: 'error' as const, text: agent.runtimeConfigProblems[0]! }
         : !agent.reachable
-          ? { tone: 'warning' as const, text: agent.problem ?? '能力探测失败' }
-          : { tone: 'ok' as const, text: '就绪' };
+          ? { tone: 'warning' as const, text: agent.problem ?? t('agentCfg.health.probeFailed') }
+          : { tone: 'ok' as const, text: t('agentCfg.health.ready') };
 
   /** 只展示与默认值不同的配置 —— 全列一遍会淹没真正被改过的那几项 */
   const overrides = spec
@@ -315,15 +346,15 @@ function AgentCard({
         <StatusDot tone={health.tone} label={health.text} />
         {agent.status !== 'active' && (
           <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-            {agent.status === 'paused' ? '已暂停' : '已停用'}
+            {agent.status === 'paused' ? t('agentCfg.status.paused') : t('agentCfg.status.retired')}
           </span>
         )}
         {agent.capability?.restricted && (
           <span
             className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-700"
-            title="该运行时存在 critical 级能力缺失，不应用于高风险任务"
+            title={t('agentCfg.restrictedTitle')}
           >
-            ⚠ 不适合高风险任务
+            {t('agentCfg.notForHighRisk')}
           </span>
         )}
 
@@ -331,28 +362,28 @@ function AgentCard({
           <Button variant="outline" size="xs"
             onClick={onProbe}
             disabled={probing}>
-            {probing ? '探测中…' : '重新探测'}
+            {probing ? t('agentCfg.probing') : t('agentCfg.probe')}
           </Button>
           <Button variant="outline" size="xs"
             onClick={onEdit}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button variant="outline" size="xs"
             onClick={onDelete}
             className="text-rose-600 hover:bg-rose-50">
-            删除
+            {t('common.delete')}
           </Button>
         </div>
       </div>
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
-        <Field label="凭证">
+        <Field label={t('agentCfg.field.credential')}>
           {agent.credentialHint ? (
             <span className={agent.credentialUsable ? '' : 'text-rose-600'}>
               {agent.credentialHint}
             </span>
           ) : (
-            <span className="text-slate-400">未配置</span>
+            <span className="text-slate-400">{t('agentCfg.notConfigured')}</span>
           )}
         </Field>
         {/*
@@ -360,20 +391,23 @@ function AgentCard({
             这个 Agent 会一直闲着，而它的凭证、探针、权限全是绿的 ——
             不在卡片上点破的话，排查会从运行时一路查到调度器。
         */}
-        <Field label="承接范围">
+        <Field label={t('agent.scope.field')}>
           {agent.applicableTypes.length > 0 ? (
             agent.applicableTypes.map((t) => typeLabel(t)).join('、')
           ) : (
-            <span className="text-amber-700">未设置 · 不接任何工作</span>
+            <span className="text-amber-700">{t('agent.scope.unset')}</span>
           )}
         </Field>
-        <Field label="并发 / 超时">
-          {agent.maxConcurrency} · {Math.round(agent.timeoutSeconds / 60)} 分钟
+        <Field label={t('agentCfg.field.concurrency')}>
+          {t('agentCfg.concurrencyValue', {
+            n: agent.maxConcurrency,
+            minutes: Math.round(agent.timeoutSeconds / 60),
+          })}
         </Field>
-        <Field label="单次成本上限">
+        <Field label={t('agentCfg.field.costLimit')}>
           {agent.costLimitPerRun === null ? '—' : `$${agent.costLimitPerRun}`}
         </Field>
-        <Field label="最近探测">{agent.lastCheckAt ? relativeTime(agent.lastCheckAt) : '—'}</Field>
+        <Field label={t('agentCfg.field.lastProbe')}>{agent.lastCheckAt ? relativeTime(agent.lastCheckAt) : '—'}</Field>
       </dl>
 
       {(overrides.length > 0 || customKeys.length > 0) && (
@@ -389,16 +423,16 @@ function AgentCard({
                     ? 'bg-rose-50 text-rose-700'
                     : 'bg-slate-100 text-slate-600',
               )}
-              title={f.help}
+              title={sx(f.help ?? '', f.helpEn)}
             >
-              {f.label}: {formatValue(agent.runtimeConfig[f.key])}
+              {sx(f.label, f.labelEn)}: {formatValue(agent.runtimeConfig[f.key])}
             </span>
           ))}
           {customKeys.map((k) => (
             <span
               key={k}
               className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 font-mono text-[11px] text-slate-600"
-              title="平台不认识这个键，原样保存并下发。如果只是键名敲错了，它不会生效"
+              title={t('agentCfg.unknownKeys')}
             >
               {k}: {formatValue(agent.runtimeConfig[k])}
             </span>
@@ -415,7 +449,7 @@ function AgentCard({
             onClick={() => setShowCaps((v) => !v)}
             className="text-[11px] text-slate-500 underline hover:text-slate-700"
           >
-            {showCaps ? '收起能力清单' : `能力清单（${agent.capability.missing.length} 项缺失）`}
+            {showCaps ? t('agentCfg.collapseCapabilities') : t('agentCfg.capabilityList', { count: agent.capability.missing.length })}
           </button>
           {showCaps && (
             <div className="mt-2 space-y-1">
@@ -424,7 +458,7 @@ function AgentCard({
                   用户在派高风险任务之前有权知道「这个 Agent 的暂停其实是终止」。
               */}
               {agent.capability.missing.length === 0 ? (
-                <p className="text-[11px] text-emerald-700">能力完整，无降级项</p>
+                <p className="text-[11px] text-emerald-700">{t('agentCfg.capabilitiesComplete')}</p>
               ) : (
                 agent.capability.missing.map((m) => (
                   <div
@@ -438,8 +472,10 @@ function AgentCard({
                           : 'bg-slate-50 text-slate-600',
                     )}
                   >
-                    <span className="font-medium">{m.feature}</span> · {m.behavior}
-                    <span className="block text-slate-500">影响：{m.userImpact}</span>
+                    <span className="font-medium">{m.feature}</span> · {sx(m.behavior, m.behaviorEn)}
+                    <span className="block text-slate-500">
+                        {t('agentCfg.userImpact', { impact: sx(m.userImpact, m.userImpactEn) })}
+                      </span>
                   </div>
                 ))
               )}
@@ -467,6 +503,8 @@ function AgentForm({
   onClose: () => void;
   onSaved: (unknownConfigKeys: string[]) => void;
 }) {
+  const t = useT();
+  const sx = useSpecText();
   const users = useQuery({ queryKey: qk.users(), queryFn: api.users, staleTime: Infinity });
   const currentUser = useAuthStore((s) => s.userId);
 
@@ -496,6 +534,17 @@ function AgentForm({
   );
   const [repoAccess, setRepoAccess] = useState(
     agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
+  );
+  /**
+   * ★ 数据集范围此前在界面上填不了 —— 而 storage_targets 那套后端
+   *   （对象存储 / 宿主机目录）全靠它解析。填不了的表现是：登记了存储目标，
+   *   却没有任何 Agent 能被授权用它。
+   */
+  const [datasetRef, setDatasetRef] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.ref ?? '',
+  );
+  const [datasetAccess, setDatasetAccess] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.access ?? 'read',
   );
   const [reason, setReason] = useState('');
   /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
@@ -549,9 +598,12 @@ function AgentForm({
         applicableTypes,
         allowedTools: splitList(allowedTools),
         deniedTools: splitList(deniedTools),
-        resourceScopes: repoRef.trim()
-          ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }]
-          : [],
+        resourceScopes: [
+          ...(repoRef.trim() ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }] : []),
+          ...(datasetRef.trim()
+            ? [{ kind: 'dataset', ref: datasetRef.trim(), access: datasetAccess }]
+            : []),
+        ],
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
@@ -565,7 +617,7 @@ function AgentForm({
   return (
     <Modal
       onClose={onClose}
-      title="Agent 配置"
+      title={t('agentCfg.title')}
       /* ★ 表单长，两栏也挤 —— JSON 文本框在 md 宽度下一行放不下几个字 */
       width="lg"
       footer={
@@ -577,15 +629,19 @@ function AgentForm({
             ★ JSON 解析不通过时按钮必须禁掉，而不是让它存下上一个合法值。
               「显示保存成功、存进去的是改之前那份」比直接报错难查得多。
           */}
-          {jsonProblem && <p className="text-xs text-rose-600">JSON 还没改对：{jsonProblem}</p>}
+          {jsonProblem && (
+            <p className="text-xs text-rose-600">
+              {t('agentCfg.jsonNotFixed', { problem: jsonProblem })}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button variant="neutral" size="sm"
               disabled={!name.trim() || !ownerId || save.isPending || jsonProblem !== null}
               onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '保存'}
+              {save.isPending ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -593,17 +649,17 @@ function AgentForm({
     >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
-          {agent ? `编辑 ${agent.name}` : '新建 Agent'}
+          {agent ? t('agentCfg.editing', { name: agent.name }) : t('agentCfg.new')}
         </h2>
 
         <div className="grid grid-cols-2 gap-2">
-          <Labeled label="名称">
+          <Labeled label={t('agentCfg.form.name')}>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如 refactor-agent" />
+              placeholder={t('agentCfg.form.namePlaceholder')} />
           </Labeled>
-          <Labeled label="类型">
+          <Labeled label={t('agentCfg.form.type')}>
             <select
               value={type}
               onChange={(e) => setType(e.target.value)}
@@ -618,18 +674,23 @@ function AgentForm({
           </Labeled>
         </div>
 
-        <Labeled label="职责描述" help="会作为「人设」进入 prompt，帮 Agent 判断任务是否在自己擅长范围内">
+        <Labeled
+          label={t('agentCfg.form.description')}
+          help={t('agentCfg.form.descriptionHelp')}
+        >
           <Textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            placeholder="负责后端代码实现、重构与单元测试编写"
+            placeholder={t('agentCfg.form.descriptionPlaceholder')}
           />
         </Labeled>
 
         {/* ── 运行时 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-2 text-[11px] font-medium text-slate-700">运行时</p>
+          <p className="mb-2 text-[11px] font-medium text-slate-700">
+            {t('agentCfg.form.runtime')}
+          </p>
 
           <Labeled label="Headless CLI">
             <select
@@ -643,28 +704,40 @@ function AgentForm({
                 </option>
               ))}
             </select>
-            {spec && <p className="mt-1 text-[11px] text-slate-500">{spec.description}</p>}
+            {spec && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                {sx(spec.description, spec.descriptionEn)}
+              </p>
+            )}
             {spec?.prerequisite && (
-              <p className="mt-1 text-[11px] text-amber-800">⚠ {spec.prerequisite}</p>
+              <p className="mt-1 text-[11px] text-amber-800">
+                ⚠ {sx(spec.prerequisite, spec.prerequisiteEn)}
+              </p>
             )}
           </Labeled>
 
           {spec?.credential && (
-            <Labeled label={spec.credential.label} help={credentialHelp}>
+            <Labeled
+              label={sx(spec.credential.label, spec.credential.labelEn)}
+              help={credentialHelp}
+            >
               <Input
                 value={credential}
                 onChange={(e) => setCredential(e.target.value)}
                 type="password"
                 placeholder={
                   agent?.credentialHint
-                    ? `当前 ${agent.credentialHint} —— 留空不改，填入则轮换`
-                    : 'sk-… 或 env:变量名'
+                    ? t('agentCfg.form.credentialCurrent', { hint: agent.credentialHint })
+                    : t('agentCfg.form.credentialPlaceholder')
                 } />
             </Labeled>
           )}
 
           {spec?.endpoint && (
-            <Labeled label={spec.endpoint.label} help={spec.endpoint.help}>
+            <Labeled
+              label={sx(spec.endpoint.label, spec.endpoint.labelEn)}
+              help={sx(spec.endpoint.help, spec.endpoint.helpEn)}
+            >
               <Input
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
@@ -678,12 +751,12 @@ function AgentForm({
               自己加的键原样保存 —— 服务端不认识也照收，只在保存后提示一句。
           */}
           <Labeled
-            label="运行时配置（JSON）"
+            label={t('agentCfg.form.runtimeConfig')}
             help={
-              '平台认识的键见下方「可配置项」，值写错会在保存时被拒；其余键原样保存并下发。' +
-              '敏感键（含 TOKEN / KEY / SECRET / AUTH 字样）' +
-              (encryptsInline ? '加密入库' : '明文入库（未配置 APOS_SECRET_KEY）') +
-              '，保存后回显为 secret://saved —— 原样存回表示「这一项不改」。'
+              t('agentCfg.form.runtimeConfigHelp') +
+              t('agentCfg.form.secretKeys') +
+              (encryptsInline ? t('agentCfg.form.encrypted') : t('agentCfg.form.plaintextStored')) +
+              t('agentCfg.secretEcho')
             }
           >
             <JsonInput
@@ -704,7 +777,9 @@ function AgentForm({
                 onClick={() => setShowReference((v) => !v)}
                 className="text-[11px] text-slate-500 underline hover:text-slate-700"
               >
-                {showReference ? '收起可配置项' : `可配置项（${spec.fields.length}）`}
+                {showReference
+                  ? t('agentCfg.form.collapseOptions')
+                  : t('agentCfg.form.optionsCount', { count: spec.fields.length })}
               </button>
               {showReference && <ConfigReference fields={spec.fields} />}
             </div>
@@ -723,21 +798,20 @@ function AgentForm({
 
         {/* ── 承接范围 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-1 text-[11px] font-medium text-slate-700">承接范围</p>
+          <p className="mb-1 text-[11px] font-medium text-slate-700">{t('agent.scope.heading')}</p>
           <p className="mb-2 text-[11px] text-slate-500">
-            调度器按类型匹配执行者。
+            {t('agent.scope.help')}
             {/*
               ★ 「一个都不勾」的后果要当场说，不能等用户发现 Agent 一直闲着。
                 这是这一栏被漏掉时最贵的那个症状：配置看起来是完整的。
             */}
             <span className={clsx(applicableTypes.length === 0 && 'text-amber-700')}>
-              一个都不勾 = 不接任何工作
+              {t('agent.scope.emptyWarning')}
             </span>
-            ；<code className="text-slate-600">需求</code> 这一项同时决定它能否承接
-            需求结构化与计划生成。
+            {t('agent.scope.requirementNote')}
           </p>
           <div className="flex flex-wrap gap-1">
-            {WORK_ITEM_TYPES.map(([value, label]) => {
+            {WORK_ITEM_TYPES.map(([value, labelKey]) => {
               const on = applicableTypes.includes(value);
               return (
                 <button
@@ -756,7 +830,7 @@ function AgentForm({
                       : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
                   )}
                 >
-                  {label}
+                  {t(labelKey)}
                 </button>
               );
             })}
@@ -765,48 +839,73 @@ function AgentForm({
 
         {/* ── 权限 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-2 text-[11px] font-medium text-slate-700">权限边界</p>
-          <Labeled label="可用工具" help="逗号分隔。可带作用域，如 Bash(npm test:*)">
+          <p className="mb-2 text-[11px] font-medium text-slate-700">
+            {t('agentCfg.form.permissions')}
+          </p>
+          <Labeled label={t('agentCfg.form.allowedTools')} help={t('agentCfg.form.allowedToolsHelp')}>
             <Input
               value={allowedTools}
               onChange={(e) => setAllowedTools(e.target.value)}
               className="font-mono" />
           </Labeled>
-          <Labeled label="禁止工具" help="黑名单优先级高于白名单，不可被覆盖">
+          <Labeled label={t('agentCfg.form.deniedTools')} help={t('agentCfg.form.deniedToolsHelp')}>
             <Input
               value={deniedTools}
               onChange={(e) => setDeniedTools(e.target.value)}
-              placeholder="如 Bash(rm *)"
+              placeholder={t('agentCfg.form.deniedPlaceholder')}
               className="font-mono" />
           </Labeled>
           <div className="grid grid-cols-2 gap-2">
-            <Labeled label="代码仓库" help="填「代码仓库」里登记的标识">
+            <Labeled label={t('agentCfg.form.repo')} help={t('agentCfg.form.repoHelp')}>
               <Input
                 value={repoRef}
                 onChange={(e) => setRepoRef(e.target.value)}
                 placeholder="order-service" />
             </Labeled>
-            <Labeled label="仓库权限">
+            <Labeled label={t('agentCfg.form.repoAccess')}>
               <select
                 value={repoAccess}
                 onChange={(e) => setRepoAccess(e.target.value)}
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
               >
-                <option value="read">只读</option>
-                <option value="write">可写</option>
+                <option value="read">{t('agentCfg.form.readOnly')}</option>
+                <option value="write">{t('agentCfg.form.writable')}</option>
+              </select>
+            </Labeled>
+          </div>
+          {/*
+            ★ 数据集与仓库并列而不是二选一：一次执行可以同时挂代码仓库与
+              数据集（前者是主挂载，后者是只读参考）。做成单选就表达不了
+              「读着数据集改代码」这种最常见的组合。
+          */}
+          <div className="grid grid-cols-2 gap-2">
+            <Labeled label={t('agentCfg.dataset')} help={t('agentCfg.datasetHelp')}>
+              <Input
+                value={datasetRef}
+                onChange={(e) => setDatasetRef(e.target.value)}
+                placeholder="training-set" />
+            </Labeled>
+            <Labeled label={t('agentCfg.datasetAccess')}>
+              <select
+                value={datasetAccess}
+                onChange={(e) => setDatasetAccess(e.target.value)}
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                <option value="read">{t('agentCfg.readOnly')}</option>
+                <option value="write">{t('agentCfg.writable')}</option>
               </select>
             </Labeled>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <Labeled label="负责人" help="出问题时的责任人，不可为空">
+          <Labeled label={t('agentCfg.form.owner')} help={t('agentCfg.form.ownerHelp')}>
             <select
               value={ownerId}
               onChange={(e) => setOwnerId(e.target.value)}
               className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
             >
-              <option value="">请选择</option>
+              <option value="">{t('agentCfg.form.choose')}</option>
               {(users.data?.users ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
@@ -814,16 +913,16 @@ function AgentForm({
               ))}
             </select>
           </Labeled>
-          <Labeled label="技能标签" help="逗号分隔，用于任务匹配">
+          <Labeled label={t('agentCfg.form.skills')} help={t('agentCfg.form.skillsHelp')}>
             <Input
               value={skills}
               onChange={(e) => setSkills(e.target.value)}
-              placeholder="TypeScript, SQL 优化" />
+              placeholder={t('agentCfg.form.skillsPlaceholder')} />
           </Labeled>
         </div>
 
         {agent && (
-          <Labeled label="变更原因" help="放宽权限时必填 —— 收紧不需要">
+          <Labeled label={t('agentCfg.form.reason')} help={t('agentCfg.form.reasonHelp')}>
             <Input
               value={reason}
               onChange={(e) => setReason(e.target.value)} />
@@ -840,25 +939,27 @@ function AgentForm({
  * ★ 顺序跟着 contracts 走，不按字母排 —— 那个顺序是「从需求到交付」的流程序，
  *   界面上照抄能让人一眼看出这个 Agent 站在链路的哪一段。
  */
-const WORK_ITEM_TYPES: [string, string][] = [
-  ['requirement', '需求'],
-  ['feature', '特性'],
-  ['story', '用户故事'],
-  ['task', '任务'],
-  ['bug', '缺陷'],
-  ['research', '调研'],
-  ['review', '评审'],
-  ['test', '测试'],
-  ['incident', '故障'],
-  ['decision', '决策'],
-  ['approval', '审批'],
-  ['release', '发布'],
-  ['knowledge', '知识'],
+const WORK_ITEM_TYPES: [string, MessageKey][] = [
+  ['requirement', 'workItemType.requirement'],
+  ['feature', 'workItemType.feature'],
+  ['story', 'workItemType.story'],
+  ['task', 'workItemType.task'],
+  ['bug', 'workItemType.bug'],
+  ['research', 'workItemType.research'],
+  ['review', 'workItemType.review'],
+  ['test', 'workItemType.test'],
+  ['incident', 'workItemType.incident'],
+  ['decision', 'workItemType.decision'],
+  ['approval', 'workItemType.approval'],
+  ['release', 'workItemType.release'],
+  ['knowledge', 'workItemType.knowledge'],
 ];
 
 /** 认不出来的类型原样显示 —— 库里出现新类型时，显示成空白比显示英文更糟 */
 function typeLabel(value: string): string {
-  return WORK_ITEM_TYPES.find(([v]) => v === value)?.[1] ?? value;
+  // ★ 这个函数不是组件，用模块级 t（取当前语言、不订阅）
+  const key = WORK_ITEM_TYPES.find(([v]) => v === value)?.[1];
+  return key ? t(key) : value;
 }
 
 /**
@@ -908,6 +1009,7 @@ export function JsonInput({
   onError: (key: string, message: string | null) => void;
   rows?: number;
 }) {
+  const t = useT();
   const [text, setText] = useState(() => toJsonText(value));
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -948,14 +1050,14 @@ export function JsonInput({
     try {
       parsed = JSON.parse(next);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '格式不正确';
+      const message = err instanceof Error ? err.message : t('agentCfg.json.invalid');
       setProblem(message);
       onError(errorKey, message);
       return;
     }
 
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      const message = '必须是 JSON 对象，形如 {"KEY": "值"}';
+      const message = t('agentCfg.json.mustBeObject');
       setProblem(message);
       onError(errorKey, message);
       return;
@@ -1008,6 +1110,8 @@ function toJsonText(value: unknown): string {
  *   所以它不是可选的装饰，是从表单里搬过来的那部分内容。
  */
 function ConfigReference({ fields }: { fields: ConfigField[] }) {
+  const t = useT();
+  const sx = useSpecText();
   return (
     <div className="mt-1 space-y-1 rounded border border-slate-200 bg-white p-2">
       {fields.map((f) => (
@@ -1016,18 +1120,20 @@ function ConfigReference({ fields }: { fields: ConfigField[] }) {
             <code className="rounded bg-slate-100 px-1 py-0.5 font-medium text-slate-800">
               {f.key}
             </code>
-            <span className="text-slate-500">{f.label}</span>
-            <span className="text-slate-400">· 默认 {formatValue(f.default)}</span>
+            <span className="text-slate-500">{sx(f.label, f.labelEn)}</span>
+            <span className="text-slate-400">
+              {t('agentCfg.defaultValue', { value: formatValue(f.default) })}
+            </span>
             {f.impact === 'cost' && (
-              <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">影响成本</span>
+              <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">{t('agentCfg.impact.cost')}</span>
             )}
             {f.impact === 'safety' && (
-              <span className="rounded bg-rose-50 px-1 text-[10px] text-rose-700">影响安全边界</span>
+              <span className="rounded bg-rose-50 px-1 text-[10px] text-rose-700">{t('agentCfg.impact.safety')}</span>
             )}
           </div>
           {/* ★ 取值范围要写死在这里：JSON 框不会拦下越界的值，服务端才会 */}
           <p className="text-slate-500">{describeAccepts(f)}</p>
-          {f.help && <p className="text-slate-500">{f.help}</p>}
+          {f.help && <p className="text-slate-500">{sx(f.help, f.helpEn)}</p>}
           {(f.options ?? []).some((o) => o.help) && (
             <ul className="ml-3 list-disc text-slate-400">
               {(f.options ?? [])
@@ -1045,32 +1151,37 @@ function ConfigReference({ fields }: { fields: ConfigField[] }) {
   );
 }
 
-/** 这个键能填什么。写给对着一个空 JSON 框的人看 */
+/**
+ * 这个键能填什么。写给对着一个空 JSON 框的人看。
+ * What this key accepts — written for someone staring at an empty JSON box.
+ */
 function describeAccepts(f: ConfigField): string {
   switch (f.type) {
     case 'select':
-      return `只能是：${(f.options ?? []).map((o) => `"${o.value}"`).join(' / ')}`;
+      return t('agentCfg.accepts.oneOf', {
+        options: (f.options ?? []).map((o) => `"${o.value}"`).join(' / '),
+      });
     case 'number': {
       const range =
         f.min !== undefined && f.max !== undefined
-          ? `（${f.min} ~ ${f.max}）`
+          ? t('agentCfg.accepts.range', { min: f.min, max: f.max })
           : f.min !== undefined
-            ? `（不小于 ${f.min}）`
+            ? t('agentCfg.accepts.min', { min: f.min })
             : f.max !== undefined
-              ? `（不大于 ${f.max}）`
+              ? t('agentCfg.accepts.max', { max: f.max })
               : '';
-      return `数字${range}`;
+      return t('agentCfg.accepts.number', { range });
     }
     case 'boolean':
       return 'true / false';
     case 'string_list':
-      return '字符串数组，如 ["--flag", "值"]';
+      return t('agentCfg.accepts.stringList');
     case 'json':
       return f.jsonShape === 'env'
-        ? 'JSON 对象，键是环境变量名、值必须是字符串（数字要加引号）'
-        : 'JSON 对象';
+        ? t('agentCfg.accepts.envObject')
+        : t('agentCfg.accepts.jsonObject');
     default:
-      return '字符串';
+      return t('agentCfg.accepts.string');
   }
 }
 
@@ -1105,7 +1216,7 @@ function splitList(v: string): string[] {
 }
 
 function formatValue(v: unknown): string {
-  if (Array.isArray(v)) return v.join('、') || '（空）';
+  if (Array.isArray(v)) return v.join('、') || t('agentCfg.emptyValue');
   /**
    * ★ JSON 对象只列键名。
    *   值里可能有网关地址、也可能有 `secret://saved` 这种占位符 ——
@@ -1113,10 +1224,10 @@ function formatValue(v: unknown): string {
    */
   if (v && typeof v === 'object') {
     const keys = Object.keys(v as Record<string, unknown>);
-    return keys.length > 0 ? keys.join('、') : '（空）';
+    return keys.length > 0 ? keys.join('、') : t('agentCfg.emptyValue');
   }
   /** 空串要显示成「（空）」—— 「默认 」后面跟着一片空白看着像坏了 */
-  if (v === '' || v === null || v === undefined) return '（空）';
+  if (v === '' || v === null || v === undefined) return t('agentCfg.emptyValue');
   return String(v);
 }
 
@@ -1124,6 +1235,7 @@ function formatValue(v: unknown): string {
 // ── 代码仓库 ──────────────────────────────────────────────────────────
 
 function RepositoriesSection({ projectId }: { projectId: string }) {
+  const t = useT();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<RepositoryRow | null>(null);
@@ -1145,19 +1257,19 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <p className="text-xs text-slate-500">
-          Agent 的 <code>repo</code> 资源范围按这里的「标识」解析。没登记的仓库，任务派不出去。
+          {t('agentCfg.repo.refNote')}
         </p>
         <Button variant="neutral" size="sm"
           onClick={() => setCreating(true)}
           className="ml-auto">
-          + 登记仓库
+          {t('agentCfg.repo.registerButton')}
         </Button>
       </div>
 
       {/* ★ git 环境问题在这一页说清楚，而不是等第一次派发才炸 */}
       {!data.gitAvailable && (
         <Notice tone="error">
-          {data.gitProblem} —— 需要代码仓库的任务将无法派发。
+          {t('agentCfg.repo.gitProblem', { problem: data.gitProblem ?? '' })}
         </Notice>
       )}
       {/* ★ 同理：少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */}
@@ -1168,9 +1280,9 @@ function RepositoriesSection({ projectId }: { projectId: string }) {
       {data.repositories.length === 0 ? (
         <EmptyState
           icon="📦"
-          message="还没有登记任何代码仓库"
-          hint="Agent 被授权的仓库必须先在这里登记，否则准备工作区时会失败"
-          action={{ label: '登记仓库', onClick: () => setCreating(true) }}
+          message={t('agentCfg.repo.empty')}
+          hint={t('agentCfg.repo.emptyHint')}
+          action={{ label: t('agentCfg.repo.register'), onClick: () => setCreating(true) }}
         />
       ) : (
         <div className="space-y-2">
@@ -1218,14 +1330,19 @@ function guessedAuthUsername(remoteUrl: string): string {
   if (u.includes('github.com')) return 'x-access-token（GitHub）';
   if (u.includes('gitlab.com')) return 'oauth2（GitLab）';
   if (u.includes('bitbucket.org')) return 'x-token-auth（Bitbucket）';
-  if (u.trim()) return '认不出域名 —— 自建 GitLab 请填 oauth2';
+  if (u.trim()) return t('agentCfg.repo.unknownHost');
   return 'x-access-token';
 }
 
-const AUTH_SOURCE_LABEL: Record<string, string> = {
-  explicit: '手动指定',
-  host: '按域名推断',
-  default: '兜底默认值',
+/**
+ * 用户名来源 → 词条键 / Auth username source → message key.
+ *
+ * ★ 模块级常量取不到 hook，存译文的话切语言不重算 —— 存键，渲染处 t()。
+ */
+const AUTH_SOURCE_KEYS: Record<string, MessageKey> = {
+  explicit: 'agentCfg.repo.authManual',
+  host: 'agentCfg.repo.authGuessed',
+  default: 'agentCfg.repo.authFallback',
 };
 
 function RepositoryCard({
@@ -1239,6 +1356,7 @@ function RepositoryCard({
   onEdit: () => void;
   error: unknown;
 }) {
+  const t = useT();
   const probe = useMutation({ mutationFn: () => api.probeRepository(repo.id) });
   const result = probe.data;
 
@@ -1250,7 +1368,7 @@ function RepositoryCard({
         </code>
         <span className="text-sm text-slate-900">{repo.name}</span>
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-          {repo.scope === 'project' ? '本项目' : '组织共享'}
+          {repo.scope === 'project' ? t('agentCfg.repo.scopeProject') : t('agentCfg.repo.scopeOrg')}
         </span>
         <div className="ml-auto flex gap-1.5">
           {/*
@@ -1262,26 +1380,26 @@ function RepositoryCard({
           <Button variant="outline" size="xs"
             onClick={() => probe.mutate()}
             disabled={probe.isPending}>
-            {probe.isPending ? '测试中…' : '测试连接'}
+            {probe.isPending ? t('agentCfg.repo.testing') : t('agentCfg.repo.test')}
           </Button>
           <Button variant="outline" size="xs"
             onClick={onEdit}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button variant="outline" size="xs"
             onClick={onDelete}
             className="text-rose-600 hover:bg-rose-50">
-            删除
+            {t('common.delete')}
           </Button>
         </div>
       </div>
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
-        <Field label="远端">{repo.remoteUrl}</Field>
-        <Field label="默认分支">{repo.defaultBranch}</Field>
-        <Field label="分支前缀">{repo.branchPrefix}</Field>
-        <Field label="凭证">
-          {repo.credentialHint ?? <span className="text-slate-400">未配置</span>}
+        <Field label={t('agentCfg.repo.remote')}>{repo.remoteUrl}</Field>
+        <Field label={t('agentCfg.repo.defaultBranch')}>{repo.defaultBranch}</Field>
+        <Field label={t('agentCfg.repo.branchPrefix')}>{repo.branchPrefix}</Field>
+        <Field label={t('agentCfg.field.credential')}>
+          {repo.credentialHint ?? <span className="text-slate-400">{t('agentCfg.notConfigured')}</span>}
         </Field>
         {/*
           ★ 两种认证形态各显示各的那一项。
@@ -1290,31 +1408,36 @@ function RepositoryCard({
             的是主机公钥有没有固定 —— 没固定的话 TOFU 等于没有校验。
         */}
         {repo.authKind === 'token' ? (
-          <Field label="凭证用户名">
+          <Field label={t('agentCfg.repo.authUsername')}>
             <span className={repo.authUsernameSource === 'default' ? 'text-amber-700' : ''}>
               {repo.authUsername}
             </span>
             <span className="ml-1 text-slate-400">
-              （{AUTH_SOURCE_LABEL[repo.authUsernameSource]}
+              （
+              {AUTH_SOURCE_KEYS[repo.authUsernameSource]
+                ? t(AUTH_SOURCE_KEYS[repo.authUsernameSource]!)
+                : repo.authUsernameSource}
               {repo.authProvider ? ` · ${repo.authProvider}` : ''}）
             </span>
           </Field>
         ) : (
-          <Field label="主机公钥">
+          <Field label={t('agentCfg.repo.hostKey')}>
             {repo.sshHostKeyPinned ? (
               <span className="text-emerald-700">
-                已固定{repo.sshHosts.length > 0 ? `（${repo.sshHosts.join('、')}）` : ''}
+                {t('agentCfg.repo.pinned', {
+                  hosts: repo.sshHosts.length > 0 ? `（${repo.sshHosts.join('、')}）` : '',
+                })}
               </span>
             ) : (
-              <span className="text-amber-700">未固定 · 首次连接学习</span>
+              <span className="text-amber-700">{t('agentCfg.repo.hostKeyUnpinned')}</span>
             )}
           </Field>
         )}
-        <Field label="质量核验">
+        <Field label={t('agentCfg.repo.qualityCheck')}>
           {repo.checkCommand ? (
             <code className="text-slate-800">{repo.checkCommand}</code>
           ) : (
-            <span className="text-amber-700">未配置</span>
+            <span className="text-amber-700">{t('agentCfg.notConfigured')}</span>
           )}
         </Field>
       </dl>
@@ -1362,6 +1485,7 @@ function RepositoryForm({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const isEdit = Boolean(existing);
   const [form, setForm] = useState({
     ref: existing?.ref ?? '',
@@ -1376,6 +1500,16 @@ function RepositoryForm({
     credential: '',
     sshKnownHosts: existing?.sshKnownHosts ?? '',
     orgWide: existing ? existing.scope === 'organization' : false,
+  });
+  const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
+
+  /**
+   * ★ 候选来自「存储目标」那一页 —— 交货目标只能是登记过的东西，
+   *   因为投递要用凭证，而凭证只以引用存在登记表里。
+   */
+  const storage = useQuery({
+    queryKey: qk.storageTargets(projectId),
+    queryFn: () => api.storageTargets(projectId),
   });
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
@@ -1397,6 +1531,7 @@ function RepositoryForm({
             branchPrefix: form.branchPrefix,
             authUsername: form.authUsername.trim() || null,
             checkCommand: form.checkCommand.trim() || null,
+            deliveryTargetId,
             // null = 清空（下次连接重新学习），这是服务器换了密钥时的出路
             sshKnownHosts: form.sshKnownHosts.trim() || null,
             // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
@@ -1413,6 +1548,7 @@ function RepositoryForm({
         //   reviewing 阶段唯一的真实测试数据源
         authUsername: form.authUsername.trim() || null,
         checkCommand: form.checkCommand.trim() || null,
+            deliveryTargetId,
             sshKnownHosts: form.sshKnownHosts.trim() || null,
             credential: form.credential.trim() || null,
             projectId: form.orgWide ? null : projectId,
@@ -1423,7 +1559,7 @@ function RepositoryForm({
   return (
     <Modal
       onClose={onClose}
-      title="代码仓库配置"
+      title={t('agentCfg.repo.sectionTitle')}
       width="lg"
       footer={
         <div className="space-y-2">
@@ -1432,12 +1568,12 @@ function RepositoryForm({
           )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button variant="neutral" size="sm"
               disabled={!form.ref.trim() || !form.remoteUrl.trim() || create.isPending}
               onClick={() => create.mutate()}>
-              {create.isPending ? '登记中…' : '登记'}
+              {create.isPending ? t('agentCfg.repo.registering') : t('agentCfg.repo.submit')}
             </Button>
           </div>
         </div>
@@ -1445,10 +1581,10 @@ function RepositoryForm({
     >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">
-          {isEdit ? `编辑「${existing!.name}」` : '登记代码仓库'}
+          {isEdit ? t('agentCfg.repo.editing', { name: existing!.name }) : t('agentCfg.repo.formTitle')}
         </h2>
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">标识</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.ref')}</span>
           <Input
             value={form.ref}
             disabled={isEdit}
@@ -1456,12 +1592,12 @@ function RepositoryForm({
             placeholder="order-service"
             className="mt-1 disabled:bg-slate-50 disabled:text-slate-500" />
           <p className="mt-1 text-[11px] text-slate-500">
-            Agent 资源范围里填的就是这个值，登记后不建议再改。
+            {t('agentCfg.repo.refHint')}
           </p>
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">显示名</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.displayName')}</span>
           <Input
             value={form.name}
             onChange={(e) => set('name', e.target.value)}
@@ -1469,7 +1605,7 @@ function RepositoryForm({
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">git 地址</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.gitUrl')}</span>
           <Input
             value={form.remoteUrl}
             disabled={isEdit}
@@ -1477,21 +1613,20 @@ function RepositoryForm({
             placeholder="https://github.com/acme/order-service.git"
             className="mt-1 disabled:bg-slate-50 disabled:text-slate-500" />
           <p className="mt-1 text-[11px] text-slate-500">
-            https 用 token 认证，<code>git@…</code> / <code>ssh://…</code> 用 SSH 私钥 ——
-            填完地址下面的凭证字段会跟着切换。
+            {t('agentCfg.repo.authSwitchHint')}
           </p>
         </label>
 
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="text-xs font-medium text-slate-700">默认分支</span>
+            <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.defaultBranch')}</span>
             <Input
               value={form.defaultBranch}
               onChange={(e) => set('defaultBranch', e.target.value)}
               className="mt-1" />
           </label>
           <label className="block">
-            <span className="text-xs font-medium text-slate-700">分支前缀</span>
+            <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.branchPrefix')}</span>
             <Input
               value={form.branchPrefix}
               onChange={(e) => set('branchPrefix', e.target.value)}
@@ -1502,8 +1637,8 @@ function RepositoryForm({
         {!isSsh && (
           <label className="block">
             <span className="text-xs font-medium text-slate-700">
-              凭证用户名占位
-              <span className="ml-1 font-normal text-slate-400">选填</span>
+              {t('agentCfg.repo.authUsernamePlaceholder')}
+              <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
             </span>
             <Input
               value={form.authUsername}
@@ -1516,9 +1651,8 @@ function RepositoryForm({
                 装在 git.acme.com 上推不出来 —— 那正是最常见的部署形态。
             */}
             <p className="mt-1 text-[11px] text-slate-500">
-              留空按域名推断（GitHub → <code>x-access-token</code>，GitLab →{' '}
-              <code>oauth2</code>，Bitbucket → <code>x-token-auth</code>）。
-              <span className="text-amber-700">自建 GitLab 推断不出来，需要手填 oauth2。</span>
+              {t('agentCfg.repo.authUsernameHint')}
+              <span className="text-amber-700">{t('agentCfg.repo.gitlabNote')}</span>
             </p>
           </label>
         )}
@@ -1526,8 +1660,8 @@ function RepositoryForm({
         {isSsh && (
           <label className="block">
             <span className="text-xs font-medium text-slate-700">
-              主机公钥
-              <span className="ml-1 font-normal text-slate-400">选填 · known_hosts 格式</span>
+              {t('agentCfg.repo.hostPublicKey')}
+              <span className="ml-1 font-normal text-slate-400">{t('agentCfg.repo.knownHostsHint')}</span>
             </span>
             <Textarea
               value={form.sshKnownHosts}
@@ -1543,17 +1677,17 @@ function RepositoryForm({
                 必须说清楚，否则会有人把私钥贴进来。
             */}
             <p className="mt-1 text-[11px] text-slate-500">
-              用 <code>ssh-keyscan github.com</code> 生成。留空的话首次连接会自动学习并固定，
-              此后转严格校验 —— 填在这里只是把首次那一次的信任窗口也关掉。
-              <span className="text-amber-700">这是公开信息，不加密保存；私钥请填在下面一栏。</span>
+              {t('agentCfg.repo.keyscanHint')}
+              {t('agentCfg.repo.strictAfterFirst')}
+              <span className="text-amber-700">{t('agentCfg.repo.publicInfo')}</span>
             </p>
           </label>
         )}
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            质量核验命令
-            <span className="ml-1 font-normal text-slate-400">选填</span>
+            {t('agentCfg.repo.checkCommand')}
+            <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
           </span>
           <Input
             value={form.checkCommand}
@@ -1564,14 +1698,20 @@ function RepositoryForm({
             ★ 不填不是「少个功能」，是 reviewing 阶段的门禁没有数据可依据。
           */}
           <p className="mt-1 text-[11px] text-slate-500">
-            Agent 收工后、提交之前在工作区执行。不填的话，reviewing
-            阶段的质量门禁只能依据 Agent 自述 —— 那是一句话，不是证据。
+            {t('agentCfg.repo.checkHint')}
           </p>
         </label>
 
+        <DeliveryTargetPicker
+          value={deliveryTargetId}
+          onChange={setDeliveryTargetId}
+          targets={storage.data?.storageTargets ?? []}
+          defaultLabel={t('agentCfg.repo.defaultDelivery')}
+        />
+
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            {isSsh ? 'SSH 私钥' : '访问凭证'}
+            {isSsh ? t('agentCfg.repo.sshKey') : t('agentCfg.repo.accessToken')}
           </span>
           {/*
             ★★ 私钥必须用 textarea：`<input>` 会把粘贴内容里的换行吃掉，
@@ -1584,7 +1724,7 @@ function RepositoryForm({
               onChange={(e) => set('credential', e.target.value)}
               rows={4}
               placeholder={
-                '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n\n或 env:变量名'
+                t('agentCfg.repo.sshPlaceholder')
               }
               className="mt-1 font-mono"
             />
@@ -1593,33 +1733,565 @@ function RepositoryForm({
               value={form.credential}
               onChange={(e) => set('credential', e.target.value)}
               type="password"
-              placeholder="ghp_… 或 env:变量名"
+              placeholder={t('agentCfg.repo.tokenPlaceholder')}
               className="mt-1" />
           )}
           <p className="mt-1 text-[11px] text-slate-500">
             {isSsh ? (
               <>
-                粘贴私钥全文（部署密钥即可，只需这个仓库的读写权限）。
-                {encryptsInline ? '加密保存' : '明文保存（未配置 APOS_SECRET_KEY）'}，接口永不回显。
-                <span className="text-amber-700">
-                  不支持带密码短语的私钥 —— 无人值守场景没法输入，保存时会被拒。
-                </span>
-                {' '}留空则回退到宿主机的 <code>~/.ssh</code>，容器化部署里通常没有。
+                {t('agentCfg.repo.sshHint')}{' '}
+                {encryptsInline ? t('agentCfg.repo.encrypted') : t('agentCfg.repo.plaintext')}
+                {t('agentCfg.repo.neverEchoed')}{' '}
+                <span className="text-amber-700">{t('agentCfg.repo.noPassphrase')}</span>{' '}
+                {t('agentCfg.repo.sshFallback')}
               </>
             ) : (
-              '私有仓库必填，否则准备工作区时会克隆失败。'
+              t('agentCfg.repo.credentialRequired')
             )}
           </p>
         </label>
 
         <label className="flex items-center gap-2 text-xs text-slate-700">
-          <input
-            type="checkbox"
-            checked={form.orgWide}
-            onChange={(e) => set('orgWide', e.target.checked)}
-          />
-          组织共享（其他项目也能用）
+          <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
+          {t('agentCfg.orgWide')}
         </label>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 「产出交货到哪」选择器 —— 代码仓库与存储目标两张表单共用。
+ *
+ * ★★ 只列**可写**的存储目标。只读的目标在收尾时会被原样跳过，
+ *   摆在这里可选就是在邀请用户配一个不会生效的值 —— 而那种失败
+ *   （任务成功、产物页有记录、目标里什么都没有）极难自己想到。
+ */
+function DeliveryTargetPicker({
+  value,
+  onChange,
+  targets,
+  selfId,
+  defaultLabel,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  targets: StorageTargetRow[];
+  /** 编辑存储目标自身时传，用来把自己从候选里去掉 */
+  selfId?: string;
+  /** 不选时的默认行为说明 */
+  defaultLabel: string;
+}) {
+  const options = targets.filter((t) => t.writable && t.status === 'active' && t.id !== selfId);
+  const chosen = options.find((t) => t.id === value);
+
+  return (
+    <Labeled
+      label={t('agentCfg.delivery.label')}
+      help={
+        chosen
+          ? t('agentCfg.delivery.help', {
+              where:
+                chosen.kind === 'object_storage'
+                  ? `${chosen.bucket}/${chosen.prefix}`
+                  : (chosen.rootPath ?? ''),
+            })
+          : defaultLabel
+      }
+    >
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+      >
+        <option value="">{t('agentCfg.delivery.default', { label: defaultLabel })}</option>
+        {options.map((target) => (
+          <option key={target.id} value={target.id}>
+            {target.ref} · {t(TARGET_KIND_KEYS[target.kind])}
+          </option>
+        ))}
+      </select>
+      {options.length === 0 && (
+        <p className="mt-1 text-[11px] text-slate-500">
+          {t('agentCfg.noWritableTargets')}
+        </p>
+      )}
+    </Labeled>
+  );
+}
+
+// ── 存储目标 ──────────────────────────────────────────────────────────
+
+/**
+ * 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
+ *
+ * ★ 与代码仓库并列的一页，而不是那一页里的一个下拉。两类的字段完全不重叠
+ *   （bucket / 寻址风格 vs 默认分支 / 分支前缀），混在一张表单里，
+ *   不适用的那半边只能显示成灰掉的占位符 —— 而占位符会被当成真实配置。
+ */
+function StorageTargetsSection({ projectId }: { projectId: string }) {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<StorageTargetRow | null>(null);
+
+  const q = useQuery({
+    queryKey: qk.storageTargets(projectId),
+    queryFn: () => api.storageTargets(projectId),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteStorageTarget(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) }),
+  });
+
+  if (q.isLoading) return <CardSkeleton />;
+  if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const data = q.data!;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <p className="text-xs text-slate-500">
+          {t('agentCfg.target.intro')}
+        </p>
+        <Button variant="neutral" size="sm" onClick={() => setCreating(true)} className="ml-auto">
+          {t('agentCfg.target.register')}
+        </Button>
+      </div>
+
+      {/*
+        ★★ 白名单必须在这一页显示出来。
+          它是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员在界面上
+          改不动也看不到，而一条 local 登记过不过闸完全由它决定 ——
+          不显示的话，被闸掉的登记在页面上和正常的一模一样，
+          直到第一次派发才报「不在允许挂载的范围内」。
+      */}
+      <Notice tone={data.localMountRestricted ? 'info' : 'warning'}>
+        {data.localMountRestricted ? (
+          <>
+            {t('agentCfg.target.mountRoots')}
+            {data.localMountRoots.map((r) => (
+              <code key={r} className="mx-1 rounded bg-white px-1 py-0.5">
+                {r}
+              </code>
+            ))}
+            {t('agentCfg.target.mountRootsNote')}
+          </>
+        ) : (
+          <>
+            {t('agentCfg.target.noMountRoots')}
+          </>
+        )}
+      </Notice>
+
+      {data.storageTargets.length === 0 ? (
+        <EmptyState
+          icon="🗄️"
+          message={t('agentCfg.target.emptyMessage')}
+          hint={t('agentCfg.target.emptyHint')}
+          action={{ label: t('agentCfg.target.registerShort'), onClick: () => setCreating(true) }}
+        />
+      ) : (
+        <div className="space-y-2">
+          {data.storageTargets.map((t) => (
+            <StorageTargetCard
+              key={t.id}
+              target={t}
+              onDelete={() => remove.mutate(t.id)}
+              onEdit={() => setEditing(t)}
+              error={remove.error}
+            />
+          ))}
+        </div>
+      )}
+
+      {(creating || editing) && (
+        <StorageTargetForm
+          projectId={projectId}
+          existing={editing}
+          targets={data.storageTargets}
+          encryptsInline={data.encryptsInlineSecrets}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onDone={() => {
+            setCreating(false);
+            setEditing(null);
+            void qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 存储目标类型 → 词条键 / Storage target kind → message key（模块级只存键） */
+const TARGET_KIND_KEYS: Record<StorageTargetRow['kind'], MessageKey> = {
+  object_storage: 'agentCfg.target.objectStorage',
+  local: 'agentCfg.target.localDir',
+};
+
+function StorageTargetCard({
+  target,
+  onDelete,
+  onEdit,
+  error,
+}: {
+  target: StorageTargetRow;
+  onDelete: () => void;
+  onEdit: () => void;
+  error: unknown;
+}) {
+  const probe = useMutation({ mutationFn: () => api.probeStorageTarget(target.id) });
+  const result = probe.data;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-800">
+          {target.ref}
+        </code>
+        <span className="text-sm text-slate-900">{target.name}</span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          {t(TARGET_KIND_KEYS[target.kind])}
+        </span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          {target.scope === 'project' ? t('agentCfg.target.scopeProject') : t('agentCfg.target.scopeOrg')}
+        </span>
+        {/*
+          ★ 可写与否要在卡片上一眼看到：只读挂载在交货阶段会被原样跳过，
+            而「登记成只读却指望它接收产物」的表现是「任务成功但里面什么都没有」。
+        */}
+        <StatusDot
+          tone={target.writable ? 'ok' : 'warning'}
+          label={target.writable ? t('agentCfg.writable') : t('agentCfg.readOnly')}
+        />
+        <div className="ml-auto flex gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={probe.isPending}
+            onClick={() => probe.mutate()}
+          >
+            {probe.isPending ? t('agentCfg.target.probing') : t('agentCfg.target.probe')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            {t('common.edit')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onDelete}>
+            {t('common.delete')}
+          </Button>
+        </div>
+      </div>
+
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
+        {target.kind === 'object_storage' ? (
+          <>
+            <Field label={t('agentCfg.target.endpoint')}>{target.endpoint ?? '—'}</Field>
+            <Field label={t('agentCfg.target.bucketPrefix')}>
+              {`${target.bucket ?? '—'}/${target.prefix}`}
+            </Field>
+            <Field label={t('agentCfg.target.region')}>{target.region}</Field>
+            <Field label={t('agentCfg.target.addressing')}>
+              {target.forcePathStyle ? t('agentCfg.target.pathStyle') : 'virtual-host'}
+            </Field>
+            <Field label={t('agentCfg.target.credential')}>
+              {target.credentialHint ?? t('agentCfg.target.unset')}
+            </Field>
+          </>
+        ) : (
+          <>
+            <Field label={t('agentCfg.target.rootPath')}>{target.rootPath ?? '—'}</Field>
+            <Field label={t('agentCfg.target.status')}>{target.status}</Field>
+          </>
+        )}
+      </dl>
+
+      {target.credentialProblem && <p className="mt-1 text-[11px] text-rose-600">{target.credentialProblem}</p>}
+
+      {target.warnings.map((w) => (
+        <p key={w} className="mt-1 text-[11px] text-amber-700">
+          ⚠ {w}
+        </p>
+      ))}
+
+      {error instanceof ApiError && <p className="mt-1 text-[11px] text-rose-600">{error.message}</p>}
+
+      {result && (
+        <div
+          className={clsx(
+            'mt-2 rounded border px-2 py-1.5 text-[11px] whitespace-pre-wrap',
+            result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700',
+          )}
+        >
+          {result.message}
+          {result.samples.length > 0 && (
+            <p className="mt-1 text-slate-500">
+              {t('agentCfg.target.samples', { samples: result.samples.slice(0, 5).join('、') })}
+            </p>
+          )}
+        </div>
+      )}
+      {probe.error instanceof ApiError && (
+        <p className="mt-1 text-[11px] text-rose-600">{probe.error.message}</p>
+      )}
+    </div>
+  );
+}
+
+function StorageTargetForm({
+  projectId,
+  existing,
+  targets,
+  encryptsInline,
+  onClose,
+  onDone,
+}: {
+  projectId: string;
+  /** 传了就是编辑；标识与类型不可改 */
+  existing?: StorageTargetRow | null;
+  /** 交货目标的候选 */
+  targets: StorageTargetRow[];
+  encryptsInline: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const isEdit = Boolean(existing);
+  const [form, setForm] = useState({
+    ref: existing?.ref ?? '',
+    name: existing?.name ?? '',
+    kind: existing?.kind ?? ('object_storage' as StorageTargetRow['kind']),
+    endpoint: existing?.endpoint ?? '',
+    region: existing?.region ?? 'us-east-1',
+    bucket: existing?.bucket ?? '',
+    prefix: existing?.prefix ?? '',
+    forcePathStyle: existing?.forcePathStyle ?? true,
+    rootPath: existing?.rootPath ?? '',
+    writable: existing?.writable ?? false,
+    credential: '',
+    orgWide: existing ? existing.scope === 'organization' : false,
+  });
+  const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
+
+  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+  const isObject = form.kind === 'object_storage';
+
+  const save = useMutation({
+    mutationFn: () =>
+      isEdit
+        ? api.updateStorageTarget(existing!.id, {
+            name: form.name,
+            writable: form.writable,
+            deliveryTargetId,
+            ...(isObject
+              ? {
+                  endpoint: form.endpoint.trim(),
+                  region: form.region.trim() || 'us-east-1',
+                  bucket: form.bucket.trim(),
+                  prefix: form.prefix.trim(),
+                  forcePathStyle: form.forcePathStyle,
+                }
+              : { rootPath: form.rootPath.trim() }),
+            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
+          })
+        : api.createStorageTarget({
+            ref: form.ref.trim(),
+            name: form.name,
+            kind: form.kind,
+            writable: form.writable,
+            deliveryTargetId,
+            ...(isObject
+              ? {
+                  endpoint: form.endpoint.trim(),
+                  region: form.region.trim() || 'us-east-1',
+                  bucket: form.bucket.trim(),
+                  prefix: form.prefix.trim(),
+                  forcePathStyle: form.forcePathStyle,
+                  credential: form.credential.trim() || null,
+                }
+              : { rootPath: form.rootPath.trim() }),
+            projectId: form.orgWide ? null : projectId,
+          }),
+    onSuccess: onDone,
+  });
+
+  const incomplete = isObject
+    ? !form.endpoint.trim() || !form.bucket.trim()
+    : !form.rootPath.trim();
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={t('agentCfg.target.dialogTitle')}
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && <p className="text-xs text-rose-600">{save.error.message}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="neutral"
+              size="sm"
+              disabled={(!isEdit && !form.ref.trim()) || !form.name.trim() || incomplete || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending
+                ? t('common.saving')
+                : isEdit
+                  ? t('common.save')
+                  : t('agentCfg.target.registerAction')}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">
+          {isEdit
+            ? t('agentCfg.target.editNamed', { name: existing!.name })
+            : t('agentCfg.target.registerShort')}
+        </h2>
+
+        <Labeled label={t('agentCfg.target.ref')} help={t('agentCfg.target.refHelp')}>
+          <Input
+            value={form.ref}
+            disabled={isEdit}
+            onChange={(e) => set('ref', e.target.value)}
+            placeholder="training-set"
+            className="disabled:bg-slate-50 disabled:text-slate-500"
+          />
+        </Labeled>
+
+        <Labeled label={t('agentCfg.target.displayName')}>
+          <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
+        </Labeled>
+
+        {/*
+          ★ 类型登记后不可改：两类的必填列完全不重叠，改一半会被库约束
+            整个拒掉，而报错指向的是约束名不是字段。要换就删了重建 ——
+            那条路上还有「有没有 Agent 授权指向它」这道检查。
+        */}
+        <Labeled
+          label={t('agentCfg.target.kind')}
+          {...(isEdit ? { help: t('agentCfg.target.kindLocked') } : {})}
+        >
+          <div className="flex gap-1.5">
+            {(['object_storage', 'local'] as const).map((k) => (
+              <Button
+                key={k}
+                variant={form.kind === k ? 'neutral' : 'outline'}
+                size="sm"
+                disabled={isEdit}
+                onClick={() => set('kind', k)}
+              >
+                {t(TARGET_KIND_KEYS[k])}
+              </Button>
+            ))}
+          </div>
+        </Labeled>
+
+        {isObject ? (
+          <>
+            <Labeled label={t('agentCfg.target.endpointField')} help={t('agentCfg.target.endpointHelp')}>
+              <Input
+                value={form.endpoint}
+                onChange={(e) => set('endpoint', e.target.value)}
+                placeholder="https://s3.us-east-1.amazonaws.com"
+              />
+            </Labeled>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Labeled label="Bucket">
+                <Input value={form.bucket} onChange={(e) => set('bucket', e.target.value)} />
+              </Labeled>
+              <Labeled label={t('agentCfg.target.region')}>
+                <Input value={form.region} onChange={(e) => set('region', e.target.value)} />
+              </Labeled>
+            </div>
+
+            <Labeled label={t('agentCfg.target.prefix')} help={t('agentCfg.target.prefixHelp')}>
+              <Input
+                value={form.prefix}
+                onChange={(e) => set('prefix', e.target.value)}
+                placeholder="datasets/train/"
+              />
+            </Labeled>
+
+            {/*
+              ★★ 寻址风格选反了的表现是 DNS 解析失败，而那条报错里没有任何
+                东西指向「寻址风格」。所以默认打开路径风格，并在这里说清楚
+                什么时候该关掉。
+            */}
+            <label className="flex items-start gap-2 text-xs text-slate-700">
+              <Checkbox
+                checked={form.forcePathStyle}
+                onCheckedChange={(v) => set('forcePathStyle', v)}
+              />
+              <span>
+                {t('agentCfg.target.pathStyleLabel')}
+                <span className="mt-0.5 block text-[11px] text-slate-500">
+                  {t('agentCfg.target.pathStyleHint')}
+                </span>
+              </span>
+            </label>
+
+            <Labeled
+              label={isEdit ? t('agentCfg.target.rotateCredential') : t('agentCfg.target.credential')}
+              help={
+                (encryptsInline
+                  ? t('agentCfg.target.credentialEncrypted')
+                  : t('agentCfg.target.credentialPlaintext')) +
+                t('agentCfg.target.credentialEnv')
+              }
+            >
+              <Input
+                type="password"
+                value={form.credential}
+                onChange={(e) => set('credential', e.target.value)}
+                placeholder="AKIA…:wJalrXUt…"
+              />
+            </Labeled>
+          </>
+        ) : (
+          <Labeled
+            label={t('agentCfg.target.rootPathField')}
+            help={t('agentCfg.target.rootPathHelp')}
+          >
+            <Input
+              value={form.rootPath}
+              onChange={(e) => set('rootPath', e.target.value)}
+              placeholder="/srv/data/training-set"
+            />
+          </Labeled>
+        )}
+
+        <label className="flex items-start gap-2 text-xs text-slate-700">
+          <Checkbox checked={form.writable} onCheckedChange={(v) => set('writable', v)} />
+          <span>
+            {t('agentCfg.writable')}
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              {t('agentCfg.target.writableHint')}
+            </span>
+          </span>
+        </label>
+
+        <DeliveryTargetPicker
+          value={deliveryTargetId}
+          onChange={setDeliveryTargetId}
+          targets={targets}
+          {...(existing ? { selfId: existing.id } : {})}
+          defaultLabel={t('agentCfg.target.defaultDelivery')}
+        />
+
+        {!isEdit && (
+          <label className="flex items-center gap-2 text-xs text-slate-700">
+            <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
+            {t('agentCfg.orgWide')}
+          </label>
+        )}
       </div>
     </Modal>
   );
@@ -1628,6 +2300,7 @@ function RepositoryForm({
 // ── 工程约定 ──────────────────────────────────────────────────────────
 
 function ConventionsSection({ projectId }: { projectId: string }) {
+  const t = useT();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<ConventionRow | 'new' | null>(null);
 
@@ -1660,20 +2333,20 @@ function ConventionsSection({ projectId }: { projectId: string }) {
       <Notice tone="info">{data.notice}</Notice>
 
       <div className="flex items-center gap-2">
-        <p className="text-xs text-slate-500">按顺序作为「必读上下文」下发给本项目所有 Agent。</p>
+        <p className="text-xs text-slate-500">{t('agentCfg.conv.intro')}</p>
         <Button variant="neutral" size="sm"
           onClick={() => setEditing('new')}
           className="ml-auto">
-          + 新增约定
+          {t('agentCfg.convention.add')}
         </Button>
       </div>
 
       {data.conventions.length === 0 ? (
         <EmptyState
           icon="📐"
-          message="还没有工程约定"
-          hint="写下编码规范、测试要求、提交规范，Agent 每次执行都会读到"
-          action={{ label: '新增约定', onClick: () => setEditing('new') }}
+          message={t('agentCfg.conv.empty')}
+          hint={t('agentCfg.conv.emptyHint')}
+          action={{ label: t('agentCfg.conv.new'), onClick: () => setEditing('new') }}
         />
       ) : (
         <div className="space-y-2">
@@ -1688,26 +2361,26 @@ function ConventionsSection({ projectId }: { projectId: string }) {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium text-slate-900">{c.title}</span>
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-                  {c.priority === 'must_read' ? '必读' : '参考'}
+                  {c.priority === 'must_read' ? t('agentCfg.conv.mustRead') : t('agentCfg.conv.reference')}
                 </span>
                 {c.appliesTo.length > 0 && (
                   <span className="text-[11px] text-slate-500">
-                    仅 {c.appliesTo.join('、')}
+                    {t('agentCfg.convention.appliesTo', { types: c.appliesTo.join('、') })}
                   </span>
                 )}
                 <div className="ml-auto flex gap-1">
                   <Button variant="outline" size="xs"
                     onClick={() => toggle.mutate(c)}>
-                    {c.enabled ? '停用' : '启用'}
+                    {c.enabled ? t('agentCfg.conv.disable') : t('agentCfg.conv.enable')}
                   </Button>
                   <Button variant="outline" size="xs"
                     onClick={() => setEditing(c)}>
-                    编辑
+                    {t('common.edit')}
                   </Button>
                   <Button variant="outline" size="xs"
                     onClick={() => remove.mutate(c.id)}
                     className="text-rose-600 hover:bg-rose-50">
-                    删除
+                    {t('common.delete')}
                   </Button>
                 </div>
               </div>
@@ -1745,6 +2418,7 @@ function ConventionForm({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const [title, setTitle] = useState(row?.title ?? '');
   const [content, setContent] = useState(row?.content ?? '');
   const [priority, setPriority] = useState(row?.priority ?? 'must_read');
@@ -1760,7 +2434,7 @@ function ConventionForm({
   return (
     <Modal
       onClose={onClose}
-      title="工程约定"
+      title={t('agentCfg.conv.title')}
       width="lg"
       footer={
         <div className="space-y-2">
@@ -1769,48 +2443,48 @@ function ConventionForm({
           )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button variant="neutral" size="sm"
               disabled={!title.trim() || !content.trim() || save.isPending}
               onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '保存'}
+              {save.isPending ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
       }
     >
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">{row ? '编辑工程约定' : '新增工程约定'}</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{row ? t('agentCfg.conv.edit') : t('agentCfg.conv.add')}</h2>
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">标题</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.titleField')}</span>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="如：提交规范"
+            placeholder={t('agentCfg.conv.titlePlaceholder')}
             className="mt-1" />
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">内容</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.content')}</span>
           <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={8}
-            placeholder={'如：\n- 每个提交只做一件事\n- 新增逻辑必须带单元测试\n- 不要引入新依赖，先提出来讨论'}
+            placeholder={t('agentCfg.conv.contentPlaceholder')}
             className="mt-1 font-mono"
           />
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-slate-700">优先级</span>
+          <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.priority')}</span>
           <select
             value={priority}
             onChange={(e) => setPriority(e.target.value)}
             className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
           >
-            <option value="must_read">必读（进「必读上下文」）</option>
-            <option value="reference">参考（进「参考上下文」）</option>
+            <option value="must_read">{t('agentCfg.conv.mustReadOption')}</option>
+            <option value="reference">{t('agentCfg.conv.referenceOption')}</option>
           </select>
         </label>
       </div>
@@ -1863,5 +2537,139 @@ function Notice({ tone, children }: { tone: 'info' | 'warning' | 'error'; childr
     >
       {children}
     </div>
+  );
+}
+
+/** 项目 Agent 角色绑定 —— planner / coordinator / reviewer 各交给哪个已配置的 Agent */
+const BINDING_ROLES: { role: string; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { role: 'planner', labelKey: 'binding.planner', hintKey: 'binding.plannerHint' },
+  { role: 'coordinator', labelKey: 'binding.coordinator', hintKey: 'binding.coordinatorHint' },
+  { role: 'reviewer', labelKey: 'binding.reviewer', hintKey: 'binding.reviewerHint' },
+];
+
+/**
+ * 项目 Agent 绑定。
+ *
+ * ★★ 在这一页出现之前，「Project Agent」是现算的：从组织里找第一个
+ *   status=active 且适用类型含 requirement 的 Agent，按创建时间取第一个。
+ *   用户指定不了，想换只能去改另一个 Agent 的配置或建号顺序 ——
+ *   而这个 Agent 决定了此后所有需求分析与计划的产出。
+ *
+ * ★ 可选项只列**本项目成员**里的 Agent。列全组织的话，用户会选到一个
+ *   保存时才被拒的 Agent，而那条报错出现在提交之后、不在选择的时候。
+ */
+function ProjectAgentSection({ projectId }: { projectId: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: qk.projectAgents(projectId),
+    queryFn: () => api.projectAgents(projectId),
+  });
+
+  const save = useMutation({
+    mutationFn: (body: { role: string; agentId: string | null; priority?: number }) =>
+      api.setProjectAgent(projectId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.projectAgents(projectId) });
+    },
+  });
+
+  return (
+    <QueryBoundary query={q}>
+      {(data) => (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">{t('binding.intro')}</p>
+
+          {data.available.length === 0 && (
+            <Notice tone="warning">{t('binding.noMembers')}</Notice>
+          )}
+
+          <div className="space-y-2">
+            {BINDING_ROLES.map(({ role, labelKey, hintKey }) => {
+              const bound = data.bindings.find((b) => b.role === role && b.priority === 0);
+              const fallback = data.bindings.find((b) => b.role === role && b.priority === 1);
+              return (
+                <div key={role} className="rounded border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-slate-800">{t(labelKey)}</span>
+                    {bound && (
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                        {bound.runtimeKind}
+                      </span>
+                    )}
+                    <select
+                      value={bound?.agentId ?? ''}
+                      disabled={save.isPending}
+                      onChange={(e) =>
+                        save.mutate({ role, agentId: e.target.value || null, priority: 0 })
+                      }
+                      className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
+                      aria-label={t(labelKey)}
+                    >
+                      {/* ★ 解绑不是「没配」，是显式回到「按项目成员自动挑」 */}
+                      <option value="">{t('binding.unbound')}</option>
+                      {data.available.map((a) => (
+                        <option key={a.agentId} value={a.agentId}>
+                          {a.name} · {a.runtimeKind}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/*
+                    ★★ 备选只在主 Agent 已经绑了之后才出现。
+                      没有主的时候先问备选是本末倒置 —— 而且那时「退到备选」
+                      根本无从谈起。
+                  */}
+                  {bound && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] text-slate-500">{t('binding.fallback')}</span>
+                      <select
+                        value={fallback?.agentId ?? ''}
+                        disabled={save.isPending}
+                        onChange={(e) =>
+                          save.mutate({ role, agentId: e.target.value || null, priority: 1 })
+                        }
+                        className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
+                        aria-label={t('binding.fallback')}
+                      >
+                        <option value="">{t('binding.noFallback')}</option>
+                        {data.available
+                          // ★ 主 Agent 不能同时当自己的备选
+                          .filter((a) => a.agentId !== bound.agentId)
+                          .map((a) => (
+                            <option key={a.agentId} value={a.agentId}>
+                              {a.name} · {a.runtimeKind}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <p className="mt-0.5 text-[11px] text-slate-400">{t(hintKey)}</p>
+                  {/*
+                    ★ planner 必须能处理 requirement。在这里就说出来，
+                      而不是等第一次分析失败 —— 那时用户已经在等结果了。
+                  */}
+                  {role === 'planner' &&
+                    bound &&
+                    !bound.applicableTypes.includes('requirement') && (
+                      <p className="mt-1 text-[11px] text-amber-700">
+                        {t('binding.plannerNeedsRequirement', { name: bound.agentName })}
+                      </p>
+                    )}
+                </div>
+              );
+            })}
+          </div>
+
+          {save.error instanceof ApiError && (
+            <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">
+              {save.error.message}
+            </p>
+          )}
+        </div>
+      )}
+    </QueryBoundary>
   );
 }

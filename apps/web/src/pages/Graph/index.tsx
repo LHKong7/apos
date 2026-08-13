@@ -1,3 +1,4 @@
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,17 +15,18 @@ import { GraphCanvas } from '../../features/graph/GraphCanvas';
 import { Legend } from '../../features/graph/shapes';
 import {
   HIGHLIGHT_MODES,
-  MODE_LABELS,
+  MODE_KEYS,
   computeHighlight,
   type HighlightMode,
 } from '../../features/graph/highlight';
 import { resolveDiagnosticAction } from '../../features/graph/diagnostic-actions';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
+import { Checkbox } from '@/components/ui/checkbox';
 
-const LAYOUT_LABELS: Record<LayoutKind, string> = {
-  layered: '分层',
-  stage: '阶段泳道',
-  executor: '执行者泳道',
+const LAYOUT_KEYS: Record<LayoutKind, MessageKey> = {
+  layered: 'graph.layout.layered',
+  stage: 'graph.layout.stageLanes',
+  executor: 'graph.layout.executorLanes',
 };
 
 /** 超过这个节点数，SVG 渲染开始吃力（页面文档 07 §7 建议改 Canvas） */
@@ -33,6 +35,7 @@ const LARGE_GRAPH = 100;
 const TINY_GRAPH = 5;
 
 export function GraphPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -69,8 +72,8 @@ export function GraphPage() {
 
   const remind = useMutation({
     mutationFn: (decisionId: string) => api.remindDecision(decisionId),
-    onSuccess: () => setToast('已催办，30 分钟内不重复提醒'),
-    onError: (e) => setToast(e instanceof ApiError ? e.message : '催办失败'),
+    onSuccess: () => setToast(t('graph.reminded')),
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('graph.remindFailed')),
   });
 
   const highlight = useMemo(
@@ -107,38 +110,37 @@ export function GraphPage() {
       {/* ── 工具栏 ── */}
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">执行图</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('graph.title')}</h1>
           <Link
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
 
           <select
             value={layout}
             onChange={(e) => setParam('layout', e.target.value)}
             className="ml-2 rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label="布局"
+            aria-label={t('graph.layout')}
           >
             {LAYOUTS.map((l) => (
               <option key={l} value={l}>
-                {LAYOUT_LABELS[l]}
+                {t(LAYOUT_KEYS[l])}
               </option>
             ))}
           </select>
 
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-slate-400">高亮</span>
+            <span className="text-[11px] text-slate-400">{t('graph.highlight')}</span>
             {HIGHLIGHT_MODES.map((mode) => (
               <label key={mode} className="flex cursor-pointer items-center gap-1 text-xs text-slate-600">
-                <input
-                  type="checkbox"
+                <Checkbox
+                  tone="neutral"
                   checked={modes.includes(mode)}
-                  onChange={() => toggleMode(mode)}
-                  className="h-3.5 w-3.5 accent-slate-900"
+                  onCheckedChange={() => toggleMode(mode)}
                 />
-                {MODE_LABELS[mode]}
+                {t(MODE_KEYS[mode])}
               </label>
             ))}
           </div>
@@ -148,8 +150,10 @@ export function GraphPage() {
         {graph.data && nodeCount > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
             <span className="text-slate-600">
-              关键路径 {formatHours(graph.data.metrics.totalHours)} · 剩余{' '}
-              {formatHours(graph.data.metrics.remainingHours)}
+              {t('graph.criticalPathHours', {
+                total: formatHours(graph.data.metrics.totalHours),
+                remaining: formatHours(graph.data.metrics.remainingHours),
+              })}
             </span>
             <span
               className={clsx(
@@ -162,15 +166,17 @@ export function GraphPage() {
               )}
             >
               {graph.data.metrics.delayRisk > 0 &&
-                `⚠ 延期风险 ${Math.round(graph.data.metrics.delayRisk * 100)}%`}
+                t('graph.delayRisk', { percent: Math.round(graph.data.metrics.delayRisk * 100) })}
             </span>
             {/* ★ 归因是本页价值的浓缩：直接告诉负责人该去解决什么 */}
             {graph.data.metrics.primaryCause && (
-              <span className="text-slate-700">主因：{graph.data.metrics.primaryCause}</span>
+              <span className="text-slate-700">{t('graph.primaryCause', { cause: graph.data.metrics.primaryCause })}</span>
             )}
             {graph.data.metrics.criticalPaths.length > 1 && (
               <span className="text-slate-500">
-                存在 {graph.data.metrics.criticalPaths.length} 条等长关键路径
+                {t('graph.tiedCriticalPaths', {
+                  count: graph.data.metrics.criticalPaths.length,
+                })}
               </span>
             )}
           </div>
@@ -196,22 +202,22 @@ export function GraphPage() {
         <div className="p-8">
           <EmptyState
             icon="🕸"
-            message="这个项目还没有任务"
-            hint="计划批准后任务会出现在这里，依赖关系也会一并画出"
-            action={{ label: '回到看板', onClick: () => history.back() }}
+            message={t('graph.empty')}
+            hint={t('graph.emptyHint')}
+            action={{ label: t('graph.backToBoard'), onClick: () => history.back() }}
           />
         </div>
       )}
 
       {graph.data && nodeCount > 0 && nodeCount < TINY_GRAPH && graph.data.edges.length === 0 && (
         <p className="bg-sky-50 px-4 py-1 text-center text-[11px] text-sky-800">
-          任务较少且相互独立，看板可能比执行图更合适
+          {t('graph.fewTasksHint', { graph: t('graph.title') })}
         </p>
       )}
 
       {nodeCount > LARGE_GRAPH && (
         <p className="bg-amber-50 px-4 py-1 text-center text-[11px] text-amber-800">
-          共 {nodeCount} 个节点，当前用 SVG 渲染可能卡顿。建议开「关键路径」高亮后聚焦主链
+          {t('graph.largeGraphWarning', { count: nodeCount })}
         </p>
       )}
 
@@ -248,7 +254,7 @@ export function GraphPage() {
                   // 催办的对象是决策，不是任务 —— 要从节点上取 humanGateRef
                   const node = graph.data.nodes.find((n) => n.id === intent.nodeId);
                   if (node?.humanGateRef) remind.mutate(node.humanGateRef);
-                  else setToast('这个节点上没有待办决策，无法催办');
+                  else setToast(t('graph.noPendingDecision'));
                   break;
                 }
                 case 'explain':
@@ -264,7 +270,7 @@ export function GraphPage() {
         <>
           <button
             type="button"
-            aria-label="关闭菜单"
+            aria-label={t('graph.closeMenu')}
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setMenu(null)}
           />
@@ -278,7 +284,7 @@ export function GraphPage() {
                 setMenu(null);
               }}
             >
-              查看详情
+              {t('graph.menu.viewDetail')}
             </MenuItem>
             {menu.node.humanGateRef && (
               <MenuItem
@@ -287,7 +293,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                处理决策
+                {t('graph.menu.handleDecision')}
               </MenuItem>
             )}
             {menu.node.humanGateRef && (
@@ -297,7 +303,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                催办
+                {t('graph.menu.remind')}
               </MenuItem>
             )}
             {menu.node.runId && (
@@ -307,7 +313,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                查看执行记录
+                {t('graph.menu.viewRun')}
               </MenuItem>
             )}
             <MenuItem
@@ -316,7 +322,7 @@ export function GraphPage() {
                 setMenu(null);
               }}
             >
-              在看板中定位
+              {t('graph.menu.locateOnBoard')}
             </MenuItem>
           </div>
         </>
@@ -330,7 +336,7 @@ export function GraphPage() {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

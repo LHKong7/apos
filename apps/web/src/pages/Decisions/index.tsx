@@ -1,3 +1,4 @@
+import { useT } from '../../lib/i18n';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +9,7 @@ import { qk } from '../../lib/query/keys';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionCardView } from './Card';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * 决策中心（页面文档 10）。
@@ -22,6 +24,7 @@ import { DecisionCardView } from './Card';
  *   顺序由系统给（超时 → 剩余时间 → 风险），用户只管从上往下拍。
  */
 export function DecisionsPage() {
+  const t = useT();
   const { projectId } = useParams<{ projectId?: string }>();
   const qc = useQueryClient();
 
@@ -88,21 +91,23 @@ export function DecisionsPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">决策中心</h1>
+          <h1 className="text-sm font-semibold text-slate-900">{t('decisions.title')}</h1>
           {projectId && (
             <Link
               to={`/projects/${projectId}`}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              ← 项目总览
+              {t('agents.backToOverview')}
             </Link>
           )}
           <div className="ml-auto flex gap-1">
             <Tab active={scope === 'mine'} onClick={() => setScope('mine')}>
-              待我处理{stats ? ` ${stats.mine}` : ''}
+              {t('decisions.tab.mine')}
+              {stats ? ` ${stats.mine}` : ''}
             </Tab>
             <Tab active={scope === 'all'} onClick={() => setScope('all')}>
-              全部{stats ? ` ${stats.total}` : ''}
+              {t('decisions.tab.all')}
+              {stats ? ` ${stats.total}` : ''}
             </Tab>
           </div>
         </div>
@@ -110,12 +115,12 @@ export function DecisionsPage() {
         {stats && (
           <p className="mt-1 text-[11px] text-slate-500">
             {stats.overdue > 0 && (
-              <span className="font-medium text-red-700">超时 {stats.overdue} 条 · </span>
+              <span className="font-medium text-red-700">{t('decisions.overdueCount', { count: stats.overdue })}</span>
             )}
-            {stats.dueSoon > 0 && <span className="text-amber-700">4 小时内到期 {stats.dueSoon} 条 · </span>}
-            可处理 {stats.actionable} 条
+            {stats.dueSoon > 0 && <span className="text-amber-700">{t('decisions.dueSoon', { count: stats.dueSoon })}</span>}
+            {t('decisions.actionable', { count: stats.actionable })}
             {mustReadOne > 0 && (
-              <span className="text-slate-400"> · 其中 {mustReadOne} 条不可逆或高风险，需逐条确认</span>
+              <span className="text-slate-400">{t('decisions.mustConfirmOne', { count: mustReadOne })}</span>
             )}
           </p>
         )}
@@ -131,8 +136,8 @@ export function DecisionsPage() {
           {inbox.data && cards.length === 0 && (
             <EmptyState
               icon="✅"
-              message={scope === 'mine' ? '没有等你拍板的决策' : '当前没有待处理决策'}
-              hint="队列空了就说明系统在自己跑 —— 这是常态，不是异常"
+              message={scope === 'mine' ? t('decisions.noneForYou') : t('decisions.noneAtAll')}
+              hint={t('decisions.emptyHint')}
             />
           )}
 
@@ -144,12 +149,12 @@ export function DecisionsPage() {
           {inbox.data && inbox.data.repeated.length > 0 && (
             <div className="rounded border border-slate-300 bg-white px-3 py-2">
               <p className="text-xs text-slate-700">
-                这些决策在反复出现，也许该变成规则而不是每次都问你：
+                {t('decisions.repeatedHint')}
               </p>
               <ul className="mt-0.5 space-y-0.5">
                 {inbox.data.repeated.map((r) => (
                   <li key={r.type} className="text-[11px] text-slate-600">
-                    · {r.label} —— 当前队列里 {r.count} 条
+                    {t('decisions.repeatedItem', { label: r.label, count: r.count })}
                   </li>
                 ))}
               </ul>
@@ -158,7 +163,7 @@ export function DecisionsPage() {
                   to={`/projects/${projectId}/settings/policies`}
                   className="mt-1 inline-block text-[11px] text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline"
                 >
-                  去 Policy 配置 →
+                  {t('decisions.toPolicies')}
                 </Link>
               )}
             </div>
@@ -166,42 +171,45 @@ export function DecisionsPage() {
 
           {selected.length > 0 && (
             <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs text-white">
-              <span>已选 {selected.length} 条</span>
+              <span>{t('decisions.selectedCount', { count: selected.length })}</span>
               <button
                 type="button"
                 disabled={batch.isPending}
                 onClick={() => batch.mutate(selected)}
                 className="rounded bg-emerald-600 px-2 py-0.5 hover:bg-emerald-700 disabled:opacity-40"
               >
-                {batch.isPending ? '处理中…' : '批量批准'}
+                {batch.isPending ? t('decisions.processing') : t('decisions.bulkApprove')}
               </button>
               <button
                 type="button"
                 onClick={() => setPicked(new Set())}
                 className="text-slate-300 hover:text-white"
               >
-                取消选择
+                {t('list.clearSelection')}
               </button>
               {/* ★ 没有「批量驳回」：驳回必须写原因，而每条的原因各不相同。
                   批量驳回要么逼用户写一句放之四海皆准的废话，要么干脆不写。 */}
-              <span className="ml-auto text-[11px] text-slate-400">驳回需逐条写明原因</span>
+              <span className="ml-auto text-[11px] text-slate-400">{t('decisions.rejectNeedsReason')}</span>
             </div>
           )}
 
           {batch.isError && (
             <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
-              {batch.error instanceof ApiError ? batch.error.message : '批量批准失败'}
+              {batch.error instanceof ApiError ? batch.error.message : t('decisions.bulkApproveFailed')}
             </p>
           )}
           {batch.data && batch.data.failed.length > 0 && (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <p>
-                批准 {batch.data.approved} 条，{batch.data.failed.length} 条失败：
+                {t('decisions.bulkResult', {
+                  approved: batch.data.approved,
+                  failed: batch.data.failed.length,
+                })}
               </p>
               <ul className="mt-0.5 space-y-0.5">
                 {batch.data.failed.map((f) => (
                   <li key={f.id} className="text-[11px]">
-                    · {f.error ?? '处理失败'}
+                    · {f.error ?? t('decisions.actionFailed')}
                   </li>
                 ))}
               </ul>
@@ -210,15 +218,11 @@ export function DecisionsPage() {
 
           {batchable.length > 1 && (
             <label className="flex items-center gap-1.5 px-1 text-[11px] text-slate-500">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected.length === batchable.length}
-                onChange={(e) =>
-                  setPicked(e.target.checked ? new Set(batchableIds) : new Set())
-                }
-                className="h-3.5 w-3.5"
+                onCheckedChange={(v) => setPicked(v ? new Set(batchableIds) : new Set())}
               />
-              全选可批量的 {batchable.length} 条（低风险且可逆）
+              {t('decisions.selectAllBatchable', { count: batchable.length })}
             </label>
           )}
 

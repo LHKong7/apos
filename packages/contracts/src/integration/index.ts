@@ -9,6 +9,16 @@ import { z } from 'zod';
  *   把这件事说清楚（谁说了算、另一边怎么办、丢掉的怎么留痕），
  *   是集成能不能被信任的分水岭。做不到就只能是「同步过一阵子，
  *   然后大家都不敢看哪边的数据」。
+ *
+ * Integrations (page doc 14 / product doc part nine, 9.1 Source of Truth).
+ *
+ * ★ Every hard problem in this layer sits in one sentence from 9.1: "a Source
+ *   of Truth has to be defined so systems do not overwrite each other". If two
+ *   systems can both edit a field, one side's edit is necessarily discarded —
+ *   and stating that plainly (who decides, what happens to the other side, how
+ *   the discarded edit is recorded) is what separates an integration people
+ *   trust from one that "synced for a while, after which nobody dared believe
+ *   either side's data".
  */
 
 export const IntegrationCategory = z.enum([
@@ -22,6 +32,9 @@ export type IntegrationCategory = z.infer<typeof IntegrationCategory>;
 /**
  * MVP 集成范围（产品文档 12.2）：GitHub、一个 Code Agent、
  * Slack 或飞书、Jira 或 Plane。Agent 运行时走 agent_runtimes，不在这里。
+ *
+ * MVP integration scope (product doc 12.2): GitHub, one code Agent, Slack or
+ * Feishu, Jira or Plane. Agent runtimes live in `agent_runtimes`, not here.
  */
 export const IntegrationProvider = z.enum([
   'github',
@@ -57,9 +70,15 @@ export const CATEGORY_LABELS: Record<IntegrationCategory, string> = {
 
 export const IntegrationStatus = z.enum([
   'active',
-  /** token 过期 / 权限不足 / 服务不可达，见 §7 */
+  /**
+   * token 过期 / 权限不足 / 服务不可达，见 §7。
+   * Expired token / insufficient permission / service unreachable — see §7.
+   */
   'error',
-  /** 外部服务不可用时自动暂停，恢复后补同步（§11）*/
+  /**
+   * 外部服务不可用时自动暂停，恢复后补同步（§11）。
+   * Auto-paused while the external service is down; catches up on recovery (§11).
+   */
   'paused',
 ]);
 export type IntegrationStatus = z.infer<typeof IntegrationStatus>;
@@ -70,6 +89,13 @@ export type IntegrationStatus = z.infer<typeof IntegrationStatus>;
  * ★ 刻意是一个封闭枚举而不是任意字符串。
  *   SoT 配置是「关键配置」，能配的字段必须有限且每个都想清楚了
  *   默认归谁 —— 一个能配任意字段的界面，等于把想清楚的责任推给用户。
+ *
+ * The fields that take part in a sync (the table in page doc 14 §5.3).
+ *
+ * ★ Deliberately a closed enum rather than arbitrary strings. SoT is critical
+ *   configuration: the configurable fields must be finite and each one must
+ *   have had its default thought through. A screen that lets you configure any
+ *   field hands the thinking back to the user.
  */
 export const SyncField = z.enum([
   'requirement_content',
@@ -90,20 +116,48 @@ export const SYNC_FIELD_LABELS: Record<SyncField, string> = {
   artifact_links: '产物链接',
 };
 
-/** 谁说了算。merge 只对可合并的字段有意义（当前只有评论）。 */
+/**
+ * 英文对照。类型与中文表同为 Record，新增字段时两边一起编译不过。
+ * English counterparts. The same Record type as the Chinese table, so adding a
+ * field breaks the build on both sides rather than leaking a raw key.
+ */
+export const SYNC_FIELD_LABELS_EN: Record<SyncField, string> = {
+  requirement_content: 'Requirement content',
+  status: 'Status',
+  assignee: 'Assignee',
+  due_date: 'Due date',
+  comments: 'Comments',
+  artifact_links: 'Artifact links',
+};
+
+/**
+ * 谁说了算。merge 只对可合并的字段有意义（当前只有评论）。
+ * Who decides. `merge` only makes sense for mergeable fields — currently just
+ * comments.
+ */
 export const SourceOfTruth = z.enum(['apos', 'external', 'merge']);
 export type SourceOfTruth = z.infer<typeof SourceOfTruth>;
 
-/** 非 SoT 端被改动时怎么办（页面文档 14 §5.3 的三种策略） */
+/**
+ * 非 SoT 端被改动时怎么办（页面文档 14 §5.3 的三种策略）。
+ * What to do when the non-SoT side is edited (the three strategies in page
+ * doc 14 §5.3).
+ */
 export const ConflictStrategy = z.enum([
-  /** 以 SoT 为准，把 SoT 的值写回另一端 */
+  /** 以 SoT 为准，把 SoT 的值写回另一端 / SoT wins; write its value back */
   'writeback',
-  /** 生成冲突条目，等人处理 */
+  /** 生成冲突条目，等人处理 / Raise a conflict entry and wait for a person */
   'record_conflict',
-  /** 接受修改但通知负责人 */
+  /** 接受修改但通知负责人 / Accept the edit but notify the owner */
   'accept_and_warn',
 ]);
 export type ConflictStrategy = z.infer<typeof ConflictStrategy>;
+
+export const STRATEGY_LABELS_EN: Record<ConflictStrategy, string> = {
+  writeback: 'Ignore and write back',
+  record_conflict: 'Record a conflict for a person',
+  accept_and_warn: 'Accept and warn',
+};
 
 export const STRATEGY_LABELS: Record<ConflictStrategy, string> = {
   writeback: '忽略并回写',
@@ -125,40 +179,59 @@ export type SyncMapping = z.infer<typeof SyncMapping>;
  *   而是「为什么默认是这个」。用户看不懂默认值的道理，
  *   就只会照抄或者乱改 —— 两种都通向同一个下场：
  *   哪边的数据都不敢信。
+ *
+ * Per-field SoT defaults and the reasoning behind them (page doc 14 §5.3).
+ *
+ * ★ Every entry carries a `why`, because what this screen most needs to
+ *   explain is not "what can I pick" but "why is this the default". A user who
+ *   cannot see the reasoning either copies it blindly or changes it at random,
+ *   and both roads end in the same place: not trusting either side's data.
  */
 export const FIELD_DEFAULTS: Record<
   SyncField,
-  { sourceOfTruth: SourceOfTruth; options: SourceOfTruth[]; why: string }
+  {
+    sourceOfTruth: SourceOfTruth;
+    options: SourceOfTruth[];
+    why: string;
+    /** 英文对照；缺省时界面回落中文 / English counterpart, falls back to `why` */
+    whyEn?: string;
+  }
 > = {
   requirement_content: {
     sourceOfTruth: 'apos',
     options: ['apos', 'external'],
     why: 'AI 结构化的需求更完整',
+    whyEn: 'The AI-structured requirement is the more complete one',
   },
   status: {
     sourceOfTruth: 'apos',
     options: ['apos', 'external'],
     why: '状态由 Flow Engine 事件驱动，外部手改会打乱',
+    whyEn: 'Status is driven by Flow Engine events; editing it externally disrupts that',
   },
   assignee: {
     sourceOfTruth: 'external',
     options: ['apos', 'external'],
     why: '人员分配通常在原系统管理',
+    whyEn: 'Assignment is normally managed in the originating system',
   },
   due_date: {
     sourceOfTruth: 'external',
     options: ['apos', 'external'],
     why: '排期通常在原系统管理',
+    whyEn: 'Scheduling is normally managed in the originating system',
   },
   comments: {
     sourceOfTruth: 'merge',
     options: ['apos', 'external', 'merge'],
     why: '讨论应两边都看得到',
+    whyEn: 'Discussion should be visible on both sides',
   },
   artifact_links: {
     sourceOfTruth: 'apos',
     options: ['apos'],
     why: 'APOS 是产物的产生方',
+    whyEn: 'APOS is where the artifacts are produced',
   },
 };
 
@@ -168,11 +241,22 @@ export const FIELD_DEFAULTS: Record<
  * ★ 字段级配置对普通用户偏复杂，但把它藏起来只给预设同样不行 ——
  *   SoT 是会决定「谁的修改被丢掉」的配置，用户有权看到每个字段的归属。
  *   所以做法是：预设一键铺满，铺完之后每一格仍然摆在明面上可改。
+ *
+ * Three presets (page doc 14 §12.1, "leaning towards yes").
+ *
+ * ★ Per-field configuration is complex for an ordinary user, but hiding it
+ *   behind presets alone is equally wrong: SoT decides *whose edits get
+ *   discarded*, and the user is entitled to see where each field sits. So a
+ *   preset fills every cell in one click, and every cell stays visible and
+ *   editable afterwards.
  */
 export const SOT_PRESETS = {
   apos_led: {
     label: 'APOS 主导',
+    labelEn: 'APOS-led',
     description: '除评论外全部以 APOS 为准。适合把 APOS 当作主工作台的团队',
+    descriptionEn:
+      'APOS wins on everything except comments. Suits a team that treats APOS as its main workbench',
     fields: {
       requirement_content: 'apos',
       status: 'apos',
@@ -184,7 +268,10 @@ export const SOT_PRESETS = {
   },
   external_led: {
     label: '外部系统主导',
+    labelEn: 'External-led',
     description: '除产物外全部以外部系统为准。适合 Jira 仍是全公司口径的团队',
+    descriptionEn:
+      'The external system wins on everything except artifacts. Suits a team where Jira is still the company-wide record',
     fields: {
       requirement_content: 'external',
       status: 'external',
@@ -196,7 +283,10 @@ export const SOT_PRESETS = {
   },
   split: {
     label: 'APOS 管执行，外部管计划',
+    labelEn: 'APOS runs execution, external runs planning',
     description: '需求、状态、产物归 APOS，人和排期归外部系统。默认就是这一档',
+    descriptionEn:
+      'Requirements, status and artifacts belong to APOS; people and scheduling to the external system. This is the default',
     fields: {
       requirement_content: 'apos',
       status: 'apos',
@@ -208,7 +298,13 @@ export const SOT_PRESETS = {
   },
 } as const satisfies Record<
   string,
-  { label: string; description: string; fields: Record<SyncField, SourceOfTruth> }
+  {
+    label: string;
+    labelEn: string;
+    description: string;
+    descriptionEn: string;
+    fields: Record<SyncField, SourceOfTruth>;
+  }
 >;
 
 export type SotPreset = keyof typeof SOT_PRESETS;

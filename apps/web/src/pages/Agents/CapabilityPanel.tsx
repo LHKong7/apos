@@ -1,3 +1,4 @@
+import { useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { CapabilityReport } from '../../lib/api/types';
@@ -22,6 +23,8 @@ export function CapabilityPanel({
   report: CapabilityReport;
   runtimeName: string;
 }) {
+  const t = useT();
+  const sx = useSpecText();
   const [showTools, setShowTools] = useState(false);
 
   // critical 排最前 —— 它决定「这个运行时能不能碰高风险任务」
@@ -32,14 +35,21 @@ export function CapabilityPanel({
   return (
     <section className="rounded border border-slate-200 bg-white">
       <div className="flex flex-wrap items-baseline gap-2 border-b border-slate-100 px-3 py-1.5">
-        <h2 className="text-xs font-medium text-slate-700">⚙ 运行时能力</h2>
+        <h2 className="text-xs font-medium text-slate-700">{t('cap.title')}</h2>
         {/* 数据库里的运行时名和适配器自报的名字常常是同一个，重复印两遍只是噪音 */}
         <span className="text-[11px] text-slate-500">
           {runtimeName === report.runtime.name ? '' : `${runtimeName} · `}
-          {report.runtime.name} {report.runtime.version} · 协议 {report.protocolVersion}
+          {t('cap.runtimeProtocol', {
+            name: report.runtime.name,
+            version: report.runtime.version,
+            protocol: report.protocolVersion,
+          })}
         </span>
         <span className="ml-auto text-[11px] text-slate-500">
-          支持 {report.supported.length} / {report.supported.length + report.missing.length}
+          {t('cap.supportedOf', {
+            n: report.supported.length,
+            total: report.supported.length + report.missing.length,
+          })}
         </span>
       </div>
 
@@ -47,14 +57,14 @@ export function CapabilityPanel({
           终止不可靠、成本可能泄漏，这类运行时不该承接高风险任务。 */}
       {report.restricted && (
         <p className="border-b border-red-100 bg-red-50 px-3 py-1.5 text-[11px] text-red-800">
-          ⚠ 存在 critical 级缺失，不应把高风险任务派给这个运行时上的 Agent
+          {t('cap.restrictedWarning')}
         </p>
       )}
 
       {/* ── 做不到什么（先说这个） ── */}
       {missing.length === 0 ? (
         <p className="px-3 py-2 text-[11px] text-slate-500">
-          协议定义的 {report.supported.length} 项能力全部支持，没有降级
+          {t('cap.allSupported', { n: report.supported.length })}
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
@@ -70,12 +80,12 @@ export function CapabilityPanel({
                     SEVERITY_BADGE[m.severity] ?? 'bg-slate-100 text-slate-600',
                   )}
                 >
-                  {SEVERITY_LABELS[m.severity] ?? m.severity}
+                  {SEVERITY_KEYS[m.severity] ? t(SEVERITY_KEYS[m.severity]!) : m.severity}
                 </span>
               </p>
               {/* 降级后系统实际怎么做 → 用户会感受到什么 */}
-              <p className="text-[11px] text-slate-600">{m.behavior}</p>
-              <p className="text-[11px] text-slate-500">→ {m.userImpact}</p>
+              <p className="text-[11px] text-slate-600">{sx(m.behavior, m.behaviorEn)}</p>
+              <p className="text-[11px] text-slate-500">→ {sx(m.userImpact, m.userImpactEn)}</p>
             </li>
           ))}
         </ul>
@@ -84,7 +94,7 @@ export function CapabilityPanel({
       {/* ── 能做什么 ── */}
       {report.supported.length > 0 && (
         <div className="border-t border-slate-100 px-3 py-1.5">
-          <p className="text-[11px] text-slate-500">已支持</p>
+          <p className="text-[11px] text-slate-500">{t('cap.supported')}</p>
           <p className="text-[11px] text-slate-600">
             {report.supported.map((s) => s.label).join('、')}
           </p>
@@ -93,19 +103,25 @@ export function CapabilityPanel({
 
       {/* ── 运行参数 ── */}
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-500">
-        <span>事件通道 {TRANSPORT_LABELS[report.transport.eventDelivery] ?? report.transport.eventDelivery}</span>
         <span>
-          心跳{' '}
+          {t('cap.eventChannel', {
+            transport: TRANSPORT_KEYS[report.transport.eventDelivery]
+              ? t(TRANSPORT_KEYS[report.transport.eventDelivery]!)
+              : report.transport.eventDelivery,
+          })}
+        </span>
+        <span>
+          {t('cap.heartbeat')}{' '}
           {report.transport.heartbeatIntervalSeconds === null
-            ? '无'
+            ? t('cap.none')
             : `${report.transport.heartbeatIntervalSeconds}s`}
         </span>
-        <span>并发上限 {report.limits.maxConcurrentRuns}</span>
-        <span>单次最长 {Math.round(report.limits.maxRunDurationSeconds / 60)} 分钟</span>
+        <span>{t('cap.maxConcurrency', { n: report.limits.maxConcurrentRuns })}</span>
+        <span>{t('cap.maxDuration', { n: Math.round(report.limits.maxRunDurationSeconds / 60) })}</span>
         {report.limits.maxContextTokens !== null && (
-          <span>上下文 {formatTokens(report.limits.maxContextTokens)}</span>
+          <span>{t('cap.context', { tokens: formatTokens(report.limits.maxContextTokens) })}</span>
         )}
-        {report.models.length > 0 && <span>模型 {report.models.join('、')}</span>}
+        {report.models.length > 0 && <span>{t('cap.models', { list: report.models.join('、') })}</span>}
       </div>
 
       {/* ── 工具清单 ──
@@ -118,28 +134,32 @@ export function CapabilityPanel({
             onClick={() => setShowTools((v) => !v)}
             className="text-[11px] text-slate-500 hover:text-slate-700"
           >
-            {showTools ? '▾' : '▸'} 运行时提供的工具（{report.tools.length}）
+            {showTools ? '▾' : '▸'} {t('cap.toolsProvided', { count: report.tools.length })}
             {!showTools && riskyCount(report) > 0 && (
-              <span className="ml-1 text-amber-700">其中 {riskyCount(report)} 个有写入或外部副作用</span>
+              <span className="ml-1 text-amber-700">{t('cap.riskyTools', { count: riskyCount(report) })}</span>
             )}
           </button>
           {showTools && (
             <ul className="mt-1 space-y-0.5">
               {[...report.tools]
                 .sort((a, b) => effectRank(b.sideEffects) - effectRank(a.sideEffects))
-                .map((t) => (
-                  <li key={t.name} className="text-[11px]">
-                    <span className="text-slate-700">{t.name}</span>
-                    <span className="ml-1 text-slate-500">{t.description}</span>
-                    <span className={clsx('ml-1', EFFECT_TONE[t.sideEffects] ?? 'text-slate-400')}>
-                      {EFFECT_LABELS[t.sideEffects] ?? t.sideEffects}
+                .map((tool) => (
+                  <li key={tool.name} className="text-[11px]">
+                    <span className="text-slate-700">{tool.name}</span>
+                    <span className="ml-1 text-slate-500">{tool.description}</span>
+                    <span
+                      className={clsx('ml-1', EFFECT_TONE[tool.sideEffects] ?? 'text-slate-400')}
+                    >
+                      {EFFECT_KEYS[tool.sideEffects]
+                        ? t(EFFECT_KEYS[tool.sideEffects]!)
+                        : tool.sideEffects}
                     </span>
                   </li>
                 ))}
             </ul>
           )}
           <p className="mt-1 text-[11px] text-slate-400">
-            这是运行时声明能提供的工具；某个 Agent 实际能用哪些，由它自己的权限边界决定
+            {t('cap.toolsNote')}
           </p>
         </div>
       )}
@@ -159,16 +179,16 @@ const SEVERITY_BADGE: Record<string, string> = {
   info: 'bg-slate-100 text-slate-600',
 };
 
-const SEVERITY_LABELS: Record<string, string> = {
-  critical: '严重',
-  warning: '注意',
-  info: '提示',
+const SEVERITY_KEYS: Record<string, MessageKey> = {
+  critical: 'cap.critical',
+  warning: 'cap.warning',
+  info: 'cap.info',
 };
 
-const TRANSPORT_LABELS: Record<string, string> = {
-  sse: 'SSE 推送',
-  webhook: 'Webhook 回调',
-  poll: '轮询',
+const TRANSPORT_KEYS: Record<string, MessageKey> = {
+  sse: 'cap.sse',
+  webhook: 'cap.webhook',
+  poll: 'cap.polling',
 };
 
 const EFFECT_TONE: Record<string, string> = {
@@ -179,12 +199,12 @@ const EFFECT_TONE: Record<string, string> = {
   none: 'text-slate-400',
 };
 
-const EFFECT_LABELS: Record<string, string> = {
-  destructive: '破坏性',
-  external: '外部系统',
-  write: '写入',
-  read: '只读',
-  none: '无副作用',
+const EFFECT_KEYS: Record<string, MessageKey> = {
+  destructive: 'cap.destructive',
+  external: 'cap.external',
+  write: 'cap.write',
+  read: 'cap.readOnly',
+  none: 'cap.noSideEffects',
 };
 
 function severityRank(s: string): number {
