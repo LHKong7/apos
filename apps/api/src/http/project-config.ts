@@ -32,6 +32,7 @@ import {
   SecretConfigError,
 } from '../modules/security/secrets';
 import { ApiError, notFound } from './errors';
+import { resolveDeliveryTarget } from './storage-targets';
 
 /**
  * 项目工程约定 —— 三块信息架构里的第三块。
@@ -108,6 +109,17 @@ export const RepositoryInput = z.object({
    */
   checkCommand: z.string().max(500).nullable().optional(),
   checkTimeoutSeconds: z.number().int().min(10).max(7200).optional(),
+  /**
+   * 产出交货到哪个存储目标。不传 / null = 推分支（默认）。
+   *
+   * ★★ 这一栏兑现的是「铺料与交货两头独立可选」：从 Git 拉代码、
+   *   把生成的报告投递到对象存储，是文档 §2 举的例子，而在它出现之前
+   *   交货后端只能由主挂载的种类决定，这种组合表达不了。
+   *
+   * ★ 填了就**不推分支**了 —— 是覆盖不是追加。产出是报告而不是代码时
+   *   正好合适；两样都要的话目前得跑两个任务。
+   */
+  deliveryTargetId: z.string().uuid().nullable().optional(),
   /** 不传表示组织级共享仓库 */
   projectId: z.string().uuid().nullable().optional(),
 });
@@ -167,6 +179,7 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
         sshHosts: inspectKnownHosts(r.sshKnownHosts ?? '').hosts,
         checkCommand: r.checkCommand,
         checkTimeoutSeconds: r.checkTimeoutSeconds,
+        deliveryTargetId: r.deliveryTargetId,
         warnings: repoWarnings(r, auth, sshEnv),
       };
     }),
@@ -286,6 +299,7 @@ export async function createRepository(
       sshKnownHosts: input.sshKnownHosts?.trim() || null,
       checkCommand: input.checkCommand?.trim() || null,
       ...(input.checkTimeoutSeconds ? { checkTimeoutSeconds: input.checkTimeoutSeconds } : {}),
+      deliveryTargetId: await resolveDeliveryTarget(db, orgId, input.deliveryTargetId ?? null, null),
       ...credentialColumns(input.credential ?? null, input.remoteUrl),
       createdBy: userId,
     })
@@ -330,6 +344,16 @@ export async function updateRepository(
         : {}),
       ...(input.checkTimeoutSeconds !== undefined
         ? { checkTimeoutSeconds: input.checkTimeoutSeconds }
+        : {}),
+      ...(input.deliveryTargetId !== undefined
+        ? {
+            deliveryTargetId: await resolveDeliveryTarget(
+              db,
+              existing.orgId,
+              input.deliveryTargetId,
+              null,
+            ),
+          }
         : {}),
       ...(credential !== undefined ? credentialColumns(credential, remoteUrl) : {}),
       ...(input.status ? { status: input.status } : {}),

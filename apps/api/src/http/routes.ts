@@ -137,6 +137,14 @@ import {
   updateConvention,
   updateRepository,
 } from './project-config';
+import {
+  createStorageTarget,
+  deleteStorageTarget,
+  listStorageTargets,
+  probeStorageTarget,
+  StorageTargetInput,
+  updateStorageTarget,
+} from './storage-targets';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
@@ -1671,6 +1679,49 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     await callerOrg(req);
     const { id } = req.params as { id: string };
     return deleteRepository(db, id);
+  });
+
+  // ── 存储目标登记（非 Git 的工作区来源）──────────────────────────────
+  app.get('/api/v1/admin/storage-targets', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const q = req.query as { projectId?: string };
+    const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
+    return listStorageTargets(db, orgId, projectId);
+  });
+
+  app.post('/api/v1/admin/storage-targets', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const body = StorageTargetInput.parse(req.body);
+    return reply.status(201).send(await createStorageTarget(db, orgId, userId, body));
+  });
+
+  app.patch('/api/v1/admin/storage-targets/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    /**
+     * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
+     *   StorageTargetInput 外面裹了一层 superRefine（ZodEffects），
+     *   ZodEffects 上没有 partial()。而那层交叉校验本来也只对**完整**
+     *   输入成立 —— 局部更新时缺 bucket 不代表配错了，代表这次没改它。
+     */
+    const body = StorageTargetInput.innerType()
+      .partial()
+      .extend({ status: z.enum(['active', 'disabled']).optional() })
+      .parse(req.body);
+    return updateStorageTarget(db, id, body);
+  });
+
+  /** 连通性探测。★ 与仓库那边同理：配错了要在配置页上知道，而不是等第一次派发 */
+  app.post('/api/v1/admin/storage-targets/:id/probe', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return probeStorageTarget(db, id);
+  });
+
+  app.delete('/api/v1/admin/storage-targets/:id', async (req) => {
+    await callerOrg(req);
+    const { id } = req.params as { id: string };
+    return deleteStorageTarget(db, id);
   });
 
   // ── 项目工程约定 ────────────────────────────────────────────────────

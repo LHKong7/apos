@@ -34,6 +34,8 @@ import type {
   AgentAdminResponse,
   RepositoriesResponse,
   RepositoryProbe,
+  StorageTargetProbe,
+  StorageTargetsResponse,
   ConventionsResponse,
   RequirementDetail,
   RequirementSummary,
@@ -403,6 +405,23 @@ export const api = {
     request<unknown>(`/admin/repositories/${id}`, { method: 'PATCH', json: body }),
   deleteRepository: (id: string) =>
     request<{ ok: true }>(`/admin/repositories/${id}`, { method: 'DELETE' }),
+
+  storageTargets: (projectId?: string) =>
+    request<StorageTargetsResponse>(
+      `/admin/storage-targets${projectId ? `?projectId=${projectId}` : ''}`,
+    ),
+  createStorageTarget: (body: Record<string, unknown>) =>
+    request<{ storageTarget: { id: string } }>('/admin/storage-targets', {
+      method: 'POST',
+      json: body,
+    }),
+  updateStorageTarget: (id: string, body: Record<string, unknown>) =>
+    request<unknown>(`/admin/storage-targets/${id}`, { method: 'PATCH', json: body }),
+  deleteStorageTarget: (id: string) =>
+    request<{ ok: true }>(`/admin/storage-targets/${id}`, { method: 'DELETE' }),
+  /** 存储目标连通性探测 —— 与仓库同理：配错了要在这一页知道 */
+  probeStorageTarget: (id: string) =>
+    request<StorageTargetProbe>(`/admin/storage-targets/${id}/probe`, { method: 'POST' }),
 
   conventions: (projectId: string) =>
     request<ConventionsResponse>(`/projects/${projectId}/conventions`),

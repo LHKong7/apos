@@ -360,6 +360,21 @@ git 仓库时踩过的坑（§1）。
 `ResourceScope` 里用 `kind: 'dataset'` 引用它，与仓库的 `kind: 'repo'` 分开 ——
 「授权了什么」在权限快照里因此是自解释的。
 
+登记入口在**设置 → Agent 配置 → 存储目标**，与「代码仓库」并列的一页
+（`POST/PATCH/DELETE /api/v1/admin/storage-targets`，权限 `storage_target.manage`）。
+与 `repository.manage` 分开是因为风险面不同：登记一个仓库最坏是让 Agent 往一个
+仓库里写代码，而登记一个 `local` 目标是把宿主机上的一个目录交给 Agent。
+
+那一页上有两件在别处看不到的事，都是「不说就要等第一次派发才炸」的：
+
+- **`APOS_LOCAL_MOUNT_ROOTS` 的当前取值**。它是部署环境的变量，管理员在界面上
+  改不动也看不到，而一条 `local` 登记过不过闸完全由它决定 —— 不显示的话，
+  被闸掉的登记在页面上和正常的一模一样。
+- **连通性探测**（`POST …/probe`）。对象存储列一页对象、本地目录 stat 一下，
+  且**复用 `isMountRootAllowed` 这同一个判据函数**。抄第二遍的代价是界面上说
+  「可以挂」而派发时报「不在允许范围内」，而管理员看着那条绿色的探测结果，
+  根本不会想到去查环境变量。
+
 ### 7.3 主挂载与交货后端的选择
 
 一次执行可以同时挂多个资源。**交货只对主挂载做**：
@@ -371,9 +386,52 @@ git 仓库时踩过的坑（§1）。
 仓库优先于数据集，是因为一个既挂了代码仓库又挂了数据集的任务，产出该进仓库的
 分支，而不是覆盖数据集。其余挂载一律是只读参考。
 
-交货后端由主挂载的种类决定：`git → GitPublisher`、`object_storage →
-ObjectStoragePublisher`、`local → LocalPublisher`（没配归档根则退回 `none`）、
-`empty → NonePublisher`。
+交货后端**先看登记里配的交货目标，没配才按主挂载的种类推断**：
+
+```
+repositories.delivery_target_id / storage_targets.delivery_target_id
+  ├── 配了 → 按目标的种类：object_storage → ObjectStoragePublisher（deliver 语义）
+  │                        local          → LocalPublisher（归档根 = 目标的 rootPath）
+  └── 没配 → 按主挂载：git → GitPublisher、object_storage → ObjectStoragePublisher
+                      （sync 语义）、local → LocalPublisher（归档根来自
+                      APOS_ARCHIVE_ROOT，没配则退回 none）、empty → NonePublisher
+```
+
+这一列兑现的是 §2 承诺的「两头独立可选」。在它出现之前交货后端**只能**由主挂载
+决定，于是 §2 用来说明这个设计的那个例子 ——「从 Git 拉代码、把生成的报告传
+对象存储」—— 恰恰是表达不了的。
+
+**是覆盖不是追加。** 配了交货目标就不再推分支。要「既推分支又传一份到 S3」
+得让 `pipeline` 支持多个 publisher、`PublishResult` 变数组、artifacts 落多行，
+是另一个量级的改动。
+
+### 7.4 `sync` 与 `deliver` 是两种语义，必须在类型上分开
+
+| | 目标 | `changes.deleted` | 落点 |
+| --- | --- | --- | --- |
+| `sync` | 就是主挂载的来源 | **删除**远端对象 | `{prefix}` 原位置 |
+| `deliver` | 另一个目标 | **不动** | `{prefix}{runId}/` |
+
+★★ 不分开的后果是**数据丢失**：deliver 时 `changes.deleted` 说的是「Agent 在
+工作区里删了这些文件」，而目标 bucket 里同名的 key 属于别人 —— 照着删就是拿
+一次 Run 的变更集去删一个不相干的 bucket。这是整套交货逻辑里唯一可能毁掉
+别人数据的操作，所以它被关在 `if (!deliver)` 后面。
+
+按 `runId` 分目录同理：不分的话两次 Run 都产出 `report.md` 时后一次静默覆盖
+前一次，而产物页上两条记录指向同一个 key。
+
+deliver 时**不看主挂载的 `writable`** —— 主挂载可能是一棵只读的 git 工作树，
+那与「能不能往目标写」毫无关系；目标自身的可写性由 `WorkspaceService` 在挑
+后端时就判过了。
+
+**投递到宿主机目录同样要过 `APOS_LOCAL_MOUNT_ROOTS`。** 那道闸此前只挡
+「挂进来」，而「写出去」的破坏力只大不小 —— 一条指向 `/etc` 的登记，挂进来
+是泄露，写出去是覆盖。
+
+**配了却没生效的每一种情况都要给出原因**（目标不存在 / 已停用 / 只读 /
+被白名单挡住），经 `NonePublisher(reason)` 带进收尾说明。不给的话，用户看到的
+文字与「本来就没配交货目标」一模一样 —— 而这两者一个是配置没生效、
+一个是符合预期。
 
 > ★ `ObjectStoragePublisher` 必须**按次构造**，不能像 git 那样全局注册一个。
 > 交货时挂载点上只剩快照键，要换回 endpoint 与凭证就得知道 `targetId` ——
@@ -411,6 +469,13 @@ ObjectStoragePublisher`、`local → LocalPublisher`（没配归档根则退回 
 | --- | --- |
 | `0019_storage_targets` | 建 `storage_targets` 表（drizzle-kit 由 schema 生成） |
 | `0020_workspace_mounts_backfill` | 给它补 RLS；回填 `agent_runs.workspace.mounts` |
+| `0021_delivery_target` | 给 `repositories` 与 `storage_targets` 加 `delivery_target_id` |
+
+`delivery_target_id` **刻意没有外键**：两张表指向同一处要建两条约束，而删除
+语义也不是级联（删掉目标不该悄悄把依赖它的登记改成「不交货」）。把关放在
+`deleteStorageTarget` 里 —— 还有登记交货到它就拒绝删除。少了这道检查，删除会
+成功，而那些登记的产出在下一次收尾时静默落回「不交货」：任务照样成功、
+产物页照样有记录，只是东西哪儿都没到。
 
 **为什么 RLS 要单独补**：`0017_supabase_rls` 是「遍历当时存在的所有表」，
 管不到之后新建的表。而 `storage_targets` 里存的是对象存储的凭证引用 ——

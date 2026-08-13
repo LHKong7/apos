@@ -620,6 +620,20 @@ export const repositories = pgTable(
     checkCommand: text(),
     checkTimeoutSeconds: integer().notNull().default(900),
 
+    /**
+     * 产出交货到哪个存储目标。为空 = 按主挂载的种类推断（git 就推分支）。
+     *
+     * ★★ 这一列兑现的是抽象里「两头独立可选」那半边：铺料与交货本来就
+     *   不该 1:1 绑定，而在它出现之前，交货后端**只能**由主挂载的种类决定
+     *   （见 modules/workspace 的 publisherFor）。于是「从 Git 拉代码、
+     *   把生成的报告传对象存储」这种最常见的组合表达不了 ——
+     *   而那正是 docs/tech/11 §2 用来说明这个设计的例子。
+     *
+     * ★ 指向 storage_targets 而不是自由填一个 URL：交货要用凭证，
+     *   而凭证只以引用入库、只在登记表里。填 URL 就得在这一行再存一份凭证。
+     */
+    deliveryTargetId: uuid(),
+
     status: text().notNull().default('active'),
     createdBy: uuid().notNull().references(() => users.id),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
@@ -687,6 +701,15 @@ export const storageTargets = pgTable(
 
     /** 只读挂载时为 false —— 交货阶段据此拒绝写回 */
     writable: boolean().notNull().default(false),
+
+    /**
+     * 产出交货到哪个存储目标。为空 = 写回自己（sync 语义）。
+     *
+     * ★ 与 repositories 上那一列同义。指向别处时语义变成**投递**
+     *   （deliver）：只上传变更集里新增/修改的文件，落在 `{前缀}{runId}/` 下，
+     *   **不删除**目标里的任何东西 —— 那些 key 跟本次变更集毫无关系。
+     */
+    deliveryTargetId: uuid(),
 
     status: text().notNull().default('active'),
     createdBy: uuid().notNull().references(() => users.id),

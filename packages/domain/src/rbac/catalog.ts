@@ -76,6 +76,7 @@ export const PERMISSIONS = [
 
   // ── 组织配置 ──────────────────────────────────────────────────────
   'repository.manage',
+  'storage_target.manage',
   'convention.manage',
   'org.members.manage',
   'org.roles.manage',
@@ -491,6 +492,20 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     scope: 'org',
     label: '管理代码仓库登记',
     requires: '代码仓库登记需要组织管理员',
+  },
+  /**
+   * ★ 与 repository.manage 分开而不是合成一个「资源登记」权限。
+   *
+   *   两者的风险面不同：登记一个仓库最坏是让 Agent 往一个仓库里写代码，
+   *   而登记一个 local 目标是把**宿主机上的一个目录**交给 Agent
+   *   （能不能真挂还要过 APOS_LOCAL_MOUNT_ROOTS 那道闸，但登记本身
+   *   已经表达了意图）。合成一个的话，想授出「能配仓库」就等于同时
+   *   授出了「能指定宿主机目录」。
+   */
+  'storage_target.manage': {
+    scope: 'org',
+    label: '管理存储目标登记',
+    requires: '存储目标登记需要组织管理员',
   },
   'convention.manage': {
     scope: 'project',

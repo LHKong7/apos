@@ -304,4 +304,122 @@ describe('对象存储交货', () => {
     if (result.kind !== 'object_storage') return;
     expect(result.url).toBeNull();
   });
+
+  /**
+   * ★★ deliver 语义：目标是**另一个** bucket，主挂载可能是一棵 git 工作树。
+   *
+   *   这几条断言各自挡住一种真实的破坏：
+   *   - 不删除 —— changes.deleted 里的路径说的是「Agent 在工作区里删了它」，
+   *     而目标 bucket 里同名的 key 属于别人。这是整个改动里唯一可能造成
+   *     数据丢失的操作。
+   *   - 按 runId 分目录 —— 不分的话两次 Run 都产出 report.md 时，
+   *     后一次会静默覆盖前一次，而产物页上两条记录指向同一个 key。
+   *   - 不看主挂载的 writable —— 主挂载是只读 git 工作树时它必然是 false，
+   *     而那与「能不能往目标 bucket 写」毫无关系。
+   */
+  describe('投递到另一个目标（deliver）', () => {
+    const gitWs = (path: string): import('@apos/contracts').Workspace => ({
+      id: 'w',
+      runId: 'run-1',
+      root: path,
+      // ★ 主挂载是**只读的 git 工作树** —— 正是 deliver 要支持的形态
+      mounts: [
+        {
+          path,
+          role: 'primary',
+          writable: false,
+          source: { kind: 'git', identifier: 'repo-1', label: 'order-service', baseVersion: 'abc' },
+        },
+      ],
+      writable: false,
+    });
+
+    it('★ 只上传、绝不删除目标里的对象', async () => {
+      const { fetchImpl, writes, store } = fakeBucket({ 'runs/gone.txt': '目标里本来就有的东西' });
+      const m = materializer(fetchImpl);
+      const path = join(root, 'runs', 'd1', 'repo');
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'report.md'), '# 报告');
+
+      const result = await new ObjectStoragePublisher(m, {
+        resolveStore: async () => STORE,
+        mode: 'deliver',
+      }).publish(
+        gitWs(path),
+        { added: ['report.md'], modified: [], deleted: ['gone.txt'], total: 2, truncated: false },
+        ctx,
+      );
+
+      if (result.kind !== 'object_storage') return;
+      expect(result.uploaded).toBe(1);
+      expect(result.removed).toBe(0);
+      expect(writes.some((w) => w.method === 'DELETE')).toBe(false);
+      // 目标里原有的对象原封不动
+      expect(store.get('runs/gone.txt')).toBe('目标里本来就有的东西');
+    });
+
+    it('★ 落在 {前缀}{runId}/ 下，两次 Run 不会互相覆盖', async () => {
+      const { fetchImpl, store } = fakeBucket();
+      const m = materializer(fetchImpl);
+      const path = join(root, 'runs', 'd2', 'repo');
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'report.md'), '# 报告');
+
+      const result = await new ObjectStoragePublisher(m, {
+        resolveStore: async () => STORE,
+        mode: 'deliver',
+      }).publish(
+        gitWs(path),
+        { added: ['report.md'], modified: [], deleted: [], total: 1, truncated: false },
+        ctx,
+      );
+
+      if (result.kind !== 'object_storage') return;
+      expect(result.prefix).toBe('runs/run-1/');
+      expect(store.get('runs/run-1/report.md')).toBe('# 报告');
+      expect(result.note).toContain('投递');
+    });
+
+    it('★ 主挂载只读不影响投递 —— 可写性是目标的属性，不是挂载的', async () => {
+      const { fetchImpl } = fakeBucket();
+      const m = materializer(fetchImpl);
+      const path = join(root, 'runs', 'd3', 'repo');
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'a.txt'), 'A');
+
+      const result = await new ObjectStoragePublisher(m, {
+        resolveStore: async () => STORE,
+        mode: 'deliver',
+      }).publish(
+        gitWs(path),
+        { added: ['a.txt'], modified: [], deleted: [], total: 1, truncated: false },
+        ctx,
+      );
+
+      if (result.kind !== 'object_storage') return;
+      expect(result.uploaded).toBe(1);
+      expect(result.persisted).toBe(true);
+    });
+
+    /** ★ 变更集不完整时照样拒绝上传 —— 这条纪律对两种语义都成立 */
+    it('变更集不完整时不投递', async () => {
+      const { fetchImpl, writes } = fakeBucket();
+      const m = materializer(fetchImpl);
+      const path = join(root, 'runs', 'd4', 'repo');
+      await mkdir(path, { recursive: true });
+
+      const result = await new ObjectStoragePublisher(m, {
+        resolveStore: async () => STORE,
+        mode: 'deliver',
+      }).publish(
+        gitWs(path),
+        { added: ['a.txt'], modified: [], deleted: [], total: 1, truncated: true },
+        ctx,
+      );
+
+      if (result.kind !== 'object_storage') return;
+      expect(result.persisted).toBe(false);
+      expect(writes).toHaveLength(0);
+    });
+  });
 });

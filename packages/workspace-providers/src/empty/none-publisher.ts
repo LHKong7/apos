@@ -16,14 +16,25 @@ import type { Publisher, ReleaseContext } from '../publisher-types';
 export class NonePublisher implements Publisher {
   readonly kind = 'none' as const;
 
+  /**
+   * @param reason 为什么落到「不交货」。
+   *
+   * ★ 配了交货目标却没生效（目标只读、路径被白名单挡住、登记已停用）时，
+   *   必须说出原因。不说的话，用户看到的是一句「产出留在 …」——
+   *   与「本来就没配交货目标」一模一样，而这两种情况一个是配置没生效、
+   *   一个是符合预期。
+   */
+  constructor(private readonly reason?: string) {}
+
   async publish(ws: Workspace, changes: ChangeSet, _ctx: ReleaseContext): Promise<PublishResult> {
     const where = ws.mounts.find((m) => m.role === 'primary')?.path ?? ws.root;
+    const suffix = this.reason ? `；${this.reason}` : '';
 
     if (changes.truncated) {
       return {
         kind: 'none',
         persisted: false,
-        note: `产出留在 ${where}，但变更集不完整（目录过大或基线丢失），无法确定改了什么`,
+        note: `产出留在 ${where}，但变更集不完整（目录过大或基线丢失），无法确定改了什么${suffix}`,
       };
     }
 
@@ -31,9 +42,9 @@ export class NonePublisher implements Publisher {
       kind: 'none',
       persisted: false,
       note:
-        changes.total > 0
+        (changes.total > 0
           ? `${changes.total} 处改动留在 ${where}；该目录不在版本控制下，也未上传到持久存储`
-          : `${where} 里没有任何改动`,
+          : `${where} 里没有任何改动`) + suffix,
     };
   }
 }

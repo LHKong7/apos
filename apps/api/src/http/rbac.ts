@@ -341,6 +341,15 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
   'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
   /**
+   * ★ probe 也要 storage_target.manage，虽然它是只读的。
+   *   它会拿着登记里的凭证去连远端 —— 能触发一次带凭证的出网请求，
+   *   本身就是「管理存储目标」的一部分，不是一次普通的查询。
+   */
+  'POST /api/v1/admin/storage-targets': 'storage_target.manage',
+  'PATCH /api/v1/admin/storage-targets/:id': 'storage_target.manage',
+  'POST /api/v1/admin/storage-targets/:id/probe': 'storage_target.manage',
+  'DELETE /api/v1/admin/storage-targets/:id': 'storage_target.manage',
+  /**
    * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
    *   后者只在组织内部移动权限，前者错了是数据出了租户。
    */

@@ -1159,6 +1159,12 @@ export interface RepositoryRow {
   sshHosts: string[];
   checkCommand: string | null;
   checkTimeoutSeconds: number;
+  /**
+   * 产出交货到哪个存储目标。null = 推分支（默认）。
+   *
+   * ★ 填了就**不推分支**了 —— 是覆盖不是追加。
+   */
+  deliveryTargetId: string | null;
   warnings: string[];
 }
 
@@ -1188,6 +1194,64 @@ export interface RepositoriesResponse {
   sshAvailable: boolean;
   sshProblem: string | null;
   /** 直接粘贴的凭证是不是密文入库。false = 明文进库，不是存不下 */
+  encryptsInlineSecrets: boolean;
+}
+
+/**
+ * 存储目标 —— 非 Git 的工作区来源。
+ *
+ * ★ 与仓库分开的理由见 docs/tech/11-workspace-abstraction.md §7.2：
+ *   repositories 的每一列都是 git 概念，一个 S3 bucket 塞进去要填占位符，
+ *   而占位符会一路流到界面上（「默认分支：main」）。
+ */
+export interface StorageTargetRow {
+  id: string;
+  ref: string;
+  name: string;
+  kind: 'object_storage' | 'local';
+  endpoint: string | null;
+  region: string;
+  bucket: string | null;
+  prefix: string;
+  /** path-style（host/bucket/key）还是 virtual-host-style（bucket.host/key） */
+  forcePathStyle: boolean;
+  rootPath: string | null;
+  /** 只读挂载在交货阶段会被原样跳过 —— 登记成只读却指望它接收产物是常见的坑 */
+  writable: boolean;
+  /** 产出交货到哪个存储目标。null = 写回自己 */
+  deliveryTargetId: string | null;
+  scope: 'project' | 'organization';
+  projectId: string | null;
+  status: string;
+  credentialHint: string | null;
+  credentialUsable: boolean;
+  credentialProblem: string | null;
+  warnings: string[];
+}
+
+export interface StorageTargetProbe {
+  ok: boolean;
+  /**
+   * ★ allowlist 与 not_found 是两档独立的失败：前者要改**部署环境**的
+   *   APOS_LOCAL_MOUNT_ROOTS，后者要改登记里的路径。混成一句的话，
+   *   管理员会一直在界面上改路径，而闸门根本不在界面上。
+   */
+  stage: 'ok' | 'config' | 'credential' | 'allowlist' | 'network' | 'auth' | 'not_found';
+  message: string;
+  objectCount: number | null;
+  samples: string[];
+}
+
+export interface StorageTargetsResponse {
+  storageTargets: StorageTargetRow[];
+  /**
+   * 部署方允许挂载的宿主目录白名单。
+   *
+   * ★ 它是环境变量，管理员在界面上看不到，而一条 local 登记「过没过闸」
+   *   完全由它决定 —— 不显示的话，被闸掉的登记在页面上和正常的一模一样。
+   */
+  localMountRoots: string[];
+  localMountRestricted: boolean;
   encryptsInlineSecrets: boolean;
 }
 

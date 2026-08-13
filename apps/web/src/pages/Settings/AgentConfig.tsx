@@ -15,6 +15,7 @@ import type {
   CredentialUsageRow,
   RepositoryRow,
   RuntimeKindSpec,
+  StorageTargetRow,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -45,11 +46,17 @@ import { Textarea } from '@/components/ui/textarea';
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
  */
 
-type Tab = 'agents' | 'repositories' | 'conventions';
+type Tab = 'agents' | 'repositories' | 'storage' | 'conventions';
 
 const TABS: { key: Tab; label: string; hint: string }[] = [
   { key: 'agents', label: 'Agents', hint: '建 N 个 Agent，每个自带 CLI 类型与它的个性化配置' },
   { key: 'repositories', label: '代码仓库', hint: 'Agent 的仓库授权指向哪里' },
+  /**
+   * ★ 与「代码仓库」并列而不是塞进那一页：两者是工作区的**同一头**
+   *   （铺料）的两类来源，但字段完全不重叠 —— 一个 S3 bucket 没有
+   *   「默认分支」，一个 git 仓库没有「寻址风格」。
+   */
+  { key: 'storage', label: '存储目标', hint: 'Agent 的数据集授权指向哪里：对象存储桶或宿主机目录' },
   { key: 'conventions', label: '工程约定', hint: '本项目所有 Agent 都要遵守的规范' },
 ];
 
@@ -92,6 +99,7 @@ export function AgentConfigPage() {
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {tab === 'agents' && <AgentsSection />}
         {tab === 'repositories' && <RepositoriesSection projectId={projectId} />}
+        {tab === 'storage' && <StorageTargetsSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
       </div>
     </div>
@@ -498,6 +506,17 @@ function AgentForm({
   const [repoAccess, setRepoAccess] = useState(
     agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
   );
+  /**
+   * ★ 数据集范围此前在界面上填不了 —— 而 storage_targets 那套后端
+   *   （对象存储 / 宿主机目录）全靠它解析。填不了的表现是：登记了存储目标，
+   *   却没有任何 Agent 能被授权用它。
+   */
+  const [datasetRef, setDatasetRef] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.ref ?? '',
+  );
+  const [datasetAccess, setDatasetAccess] = useState(
+    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.access ?? 'read',
+  );
   const [reason, setReason] = useState('');
   /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
   const [showReference, setShowReference] = useState(true);
@@ -550,9 +569,12 @@ function AgentForm({
         applicableTypes,
         allowedTools: splitList(allowedTools),
         deniedTools: splitList(deniedTools),
-        resourceScopes: repoRef.trim()
-          ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }]
-          : [],
+        resourceScopes: [
+          ...(repoRef.trim() ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }] : []),
+          ...(datasetRef.trim()
+            ? [{ kind: 'dataset', ref: datasetRef.trim(), access: datasetAccess }]
+            : []),
+        ],
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
@@ -791,6 +813,29 @@ function AgentForm({
               <select
                 value={repoAccess}
                 onChange={(e) => setRepoAccess(e.target.value)}
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                <option value="read">只读</option>
+                <option value="write">可写</option>
+              </select>
+            </Labeled>
+          </div>
+          {/*
+            ★ 数据集与仓库并列而不是二选一：一次执行可以同时挂代码仓库与
+              数据集（前者是主挂载，后者是只读参考）。做成单选就表达不了
+              「读着数据集改代码」这种最常见的组合。
+          */}
+          <div className="grid grid-cols-2 gap-2">
+            <Labeled label="数据集" help="填「存储目标」里登记的标识">
+              <Input
+                value={datasetRef}
+                onChange={(e) => setDatasetRef(e.target.value)}
+                placeholder="training-set" />
+            </Labeled>
+            <Labeled label="数据集权限">
+              <select
+                value={datasetAccess}
+                onChange={(e) => setDatasetAccess(e.target.value)}
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
               >
                 <option value="read">只读</option>
@@ -1378,6 +1423,16 @@ function RepositoryForm({
     sshKnownHosts: existing?.sshKnownHosts ?? '',
     orgWide: existing ? existing.scope === 'organization' : false,
   });
+  const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
+
+  /**
+   * ★ 候选来自「存储目标」那一页 —— 交货目标只能是登记过的东西，
+   *   因为投递要用凭证，而凭证只以引用存在登记表里。
+   */
+  const storage = useQuery({
+    queryKey: qk.storageTargets(projectId),
+    queryFn: () => api.storageTargets(projectId),
+  });
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -1398,6 +1453,7 @@ function RepositoryForm({
             branchPrefix: form.branchPrefix,
             authUsername: form.authUsername.trim() || null,
             checkCommand: form.checkCommand.trim() || null,
+            deliveryTargetId,
             // null = 清空（下次连接重新学习），这是服务器换了密钥时的出路
             sshKnownHosts: form.sshKnownHosts.trim() || null,
             // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
@@ -1414,6 +1470,7 @@ function RepositoryForm({
         //   reviewing 阶段唯一的真实测试数据源
         authUsername: form.authUsername.trim() || null,
         checkCommand: form.checkCommand.trim() || null,
+            deliveryTargetId,
             sshKnownHosts: form.sshKnownHosts.trim() || null,
             credential: form.credential.trim() || null,
             projectId: form.orgWide ? null : projectId,
@@ -1570,6 +1627,13 @@ function RepositoryForm({
           </p>
         </label>
 
+        <DeliveryTargetPicker
+          value={deliveryTargetId}
+          onChange={setDeliveryTargetId}
+          targets={storage.data?.storageTargets ?? []}
+          defaultLabel="提交并推送到这个仓库的分支"
+        />
+
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
             {isSsh ? 'SSH 私钥' : '访问凭证'}
@@ -1617,6 +1681,523 @@ function RepositoryForm({
           <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
           组织共享（其他项目也能用）
         </label>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 「产出交货到哪」选择器 —— 代码仓库与存储目标两张表单共用。
+ *
+ * ★★ 只列**可写**的存储目标。只读的目标在收尾时会被原样跳过，
+ *   摆在这里可选就是在邀请用户配一个不会生效的值 —— 而那种失败
+ *   （任务成功、产物页有记录、目标里什么都没有）极难自己想到。
+ */
+function DeliveryTargetPicker({
+  value,
+  onChange,
+  targets,
+  selfId,
+  defaultLabel,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  targets: StorageTargetRow[];
+  /** 编辑存储目标自身时传，用来把自己从候选里去掉 */
+  selfId?: string;
+  /** 不选时的默认行为说明 */
+  defaultLabel: string;
+}) {
+  const options = targets.filter((t) => t.writable && t.status === 'active' && t.id !== selfId);
+  const chosen = options.find((t) => t.id === value);
+
+  return (
+    <Labeled
+      label="产出交货到"
+      help={
+        chosen
+          ? `产出会投递到 ${chosen.kind === 'object_storage' ? `${chosen.bucket}/${chosen.prefix}` : chosen.rootPath}${chosen.kind === 'object_storage' ? '' : ''} 的 {runId}/ 下，只上传不删除。★ 这是覆盖不是追加 —— 选了它就不走默认交货了。`
+          : defaultLabel
+      }
+    >
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+      >
+        <option value="">默认（{defaultLabel}）</option>
+        {options.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.ref} · {TARGET_KIND_LABEL[t.kind]}
+          </option>
+        ))}
+      </select>
+      {options.length === 0 && (
+        <p className="mt-1 text-[11px] text-slate-500">
+          还没有可写的存储目标。要投递产出，先在「存储目标」页登记一个并勾上「可写」。
+        </p>
+      )}
+    </Labeled>
+  );
+}
+
+// ── 存储目标 ──────────────────────────────────────────────────────────
+
+/**
+ * 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
+ *
+ * ★ 与代码仓库并列的一页，而不是那一页里的一个下拉。两类的字段完全不重叠
+ *   （bucket / 寻址风格 vs 默认分支 / 分支前缀），混在一张表单里，
+ *   不适用的那半边只能显示成灰掉的占位符 —— 而占位符会被当成真实配置。
+ */
+function StorageTargetsSection({ projectId }: { projectId: string }) {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<StorageTargetRow | null>(null);
+
+  const q = useQuery({
+    queryKey: qk.storageTargets(projectId),
+    queryFn: () => api.storageTargets(projectId),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteStorageTarget(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) }),
+  });
+
+  if (q.isLoading) return <CardSkeleton />;
+  if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const data = q.data!;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <p className="text-xs text-slate-500">
+          Agent 的 <code>dataset</code> 资源范围按这里的「标识」解析。没登记的目标，任务派不出去。
+        </p>
+        <Button variant="neutral" size="sm" onClick={() => setCreating(true)} className="ml-auto">
+          + 登记存储目标
+        </Button>
+      </div>
+
+      {/*
+        ★★ 白名单必须在这一页显示出来。
+          它是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员在界面上
+          改不动也看不到，而一条 local 登记过不过闸完全由它决定 ——
+          不显示的话，被闸掉的登记在页面上和正常的一模一样，
+          直到第一次派发才报「不在允许挂载的范围内」。
+      */}
+      <Notice tone={data.localMountRestricted ? 'info' : 'warning'}>
+        {data.localMountRestricted ? (
+          <>
+            部署方允许挂载的宿主目录：
+            {data.localMountRoots.map((r) => (
+              <code key={r} className="mx-1 rounded bg-white px-1 py-0.5">
+                {r}
+              </code>
+            ))}
+            。这道闸在环境变量 <code>APOS_LOCAL_MOUNT_ROOTS</code> 里，改数据库不生效。
+          </>
+        ) : (
+          <>
+            部署方没有配置 <code>APOS_LOCAL_MOUNT_ROOTS</code>，任何被登记的宿主目录都能挂 ——
+            一条填成 <code>/</code> 的登记等于把整台机器交给 Agent。建议在部署环境里限定范围。
+          </>
+        )}
+      </Notice>
+
+      {data.storageTargets.length === 0 ? (
+        <EmptyState
+          icon="🗄️"
+          message="还没有登记任何存储目标"
+          hint="对象存储桶与宿主机目录都在这里登记；Agent 被授权的数据集必须先登记，否则准备工作区时会失败"
+          action={{ label: '登记存储目标', onClick: () => setCreating(true) }}
+        />
+      ) : (
+        <div className="space-y-2">
+          {data.storageTargets.map((t) => (
+            <StorageTargetCard
+              key={t.id}
+              target={t}
+              onDelete={() => remove.mutate(t.id)}
+              onEdit={() => setEditing(t)}
+              error={remove.error}
+            />
+          ))}
+        </div>
+      )}
+
+      {(creating || editing) && (
+        <StorageTargetForm
+          projectId={projectId}
+          existing={editing}
+          targets={data.storageTargets}
+          encryptsInline={data.encryptsInlineSecrets}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onDone={() => {
+            setCreating(false);
+            setEditing(null);
+            void qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const TARGET_KIND_LABEL: Record<StorageTargetRow['kind'], string> = {
+  object_storage: '对象存储',
+  local: '宿主机目录',
+};
+
+function StorageTargetCard({
+  target,
+  onDelete,
+  onEdit,
+  error,
+}: {
+  target: StorageTargetRow;
+  onDelete: () => void;
+  onEdit: () => void;
+  error: unknown;
+}) {
+  const probe = useMutation({ mutationFn: () => api.probeStorageTarget(target.id) });
+  const result = probe.data;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-800">
+          {target.ref}
+        </code>
+        <span className="text-sm text-slate-900">{target.name}</span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          {TARGET_KIND_LABEL[target.kind]}
+        </span>
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+          {target.scope === 'project' ? '本项目' : '组织共享'}
+        </span>
+        {/*
+          ★ 可写与否要在卡片上一眼看到：只读挂载在交货阶段会被原样跳过，
+            而「登记成只读却指望它接收产物」的表现是「任务成功但里面什么都没有」。
+        */}
+        <StatusDot
+          tone={target.writable ? 'ok' : 'warning'}
+          label={target.writable ? '可写' : '只读'}
+        />
+        <div className="ml-auto flex gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={probe.isPending}
+            onClick={() => probe.mutate()}
+          >
+            {probe.isPending ? '测试中…' : '测试连接'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            编辑
+          </Button>
+          <Button variant="outline" size="sm" onClick={onDelete}>
+            删除
+          </Button>
+        </div>
+      </div>
+
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
+        {target.kind === 'object_storage' ? (
+          <>
+            <Field label="端点">{target.endpoint ?? '—'}</Field>
+            <Field label="Bucket / 前缀">{`${target.bucket ?? '—'}/${target.prefix}`}</Field>
+            <Field label="区域">{target.region}</Field>
+            <Field label="寻址风格">{target.forcePathStyle ? '路径风格' : 'virtual-host'}</Field>
+            <Field label="凭证">{target.credentialHint ?? '未配置'}</Field>
+          </>
+        ) : (
+          <>
+            <Field label="宿主机路径">{target.rootPath ?? '—'}</Field>
+            <Field label="状态">{target.status}</Field>
+          </>
+        )}
+      </dl>
+
+      {target.credentialProblem && <p className="mt-1 text-[11px] text-rose-600">{target.credentialProblem}</p>}
+
+      {target.warnings.map((w) => (
+        <p key={w} className="mt-1 text-[11px] text-amber-700">
+          ⚠ {w}
+        </p>
+      ))}
+
+      {error instanceof ApiError && <p className="mt-1 text-[11px] text-rose-600">{error.message}</p>}
+
+      {result && (
+        <div
+          className={clsx(
+            'mt-2 rounded border px-2 py-1.5 text-[11px] whitespace-pre-wrap',
+            result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700',
+          )}
+        >
+          {result.message}
+          {result.samples.length > 0 && (
+            <p className="mt-1 text-slate-500">示例：{result.samples.slice(0, 5).join('、')}</p>
+          )}
+        </div>
+      )}
+      {probe.error instanceof ApiError && (
+        <p className="mt-1 text-[11px] text-rose-600">{probe.error.message}</p>
+      )}
+    </div>
+  );
+}
+
+function StorageTargetForm({
+  projectId,
+  existing,
+  targets,
+  encryptsInline,
+  onClose,
+  onDone,
+}: {
+  projectId: string;
+  /** 传了就是编辑；标识与类型不可改 */
+  existing?: StorageTargetRow | null;
+  /** 交货目标的候选 */
+  targets: StorageTargetRow[];
+  encryptsInline: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const isEdit = Boolean(existing);
+  const [form, setForm] = useState({
+    ref: existing?.ref ?? '',
+    name: existing?.name ?? '',
+    kind: existing?.kind ?? ('object_storage' as StorageTargetRow['kind']),
+    endpoint: existing?.endpoint ?? '',
+    region: existing?.region ?? 'us-east-1',
+    bucket: existing?.bucket ?? '',
+    prefix: existing?.prefix ?? '',
+    forcePathStyle: existing?.forcePathStyle ?? true,
+    rootPath: existing?.rootPath ?? '',
+    writable: existing?.writable ?? false,
+    credential: '',
+    orgWide: existing ? existing.scope === 'organization' : false,
+  });
+  const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
+
+  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+  const isObject = form.kind === 'object_storage';
+
+  const save = useMutation({
+    mutationFn: () =>
+      isEdit
+        ? api.updateStorageTarget(existing!.id, {
+            name: form.name,
+            writable: form.writable,
+            deliveryTargetId,
+            ...(isObject
+              ? {
+                  endpoint: form.endpoint.trim(),
+                  region: form.region.trim() || 'us-east-1',
+                  bucket: form.bucket.trim(),
+                  prefix: form.prefix.trim(),
+                  forcePathStyle: form.forcePathStyle,
+                }
+              : { rootPath: form.rootPath.trim() }),
+            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
+          })
+        : api.createStorageTarget({
+            ref: form.ref.trim(),
+            name: form.name,
+            kind: form.kind,
+            writable: form.writable,
+            deliveryTargetId,
+            ...(isObject
+              ? {
+                  endpoint: form.endpoint.trim(),
+                  region: form.region.trim() || 'us-east-1',
+                  bucket: form.bucket.trim(),
+                  prefix: form.prefix.trim(),
+                  forcePathStyle: form.forcePathStyle,
+                  credential: form.credential.trim() || null,
+                }
+              : { rootPath: form.rootPath.trim() }),
+            projectId: form.orgWide ? null : projectId,
+          }),
+    onSuccess: onDone,
+  });
+
+  const incomplete = isObject
+    ? !form.endpoint.trim() || !form.bucket.trim()
+    : !form.rootPath.trim();
+
+  return (
+    <Modal
+      onClose={onClose}
+      title="存储目标配置"
+      width="lg"
+      footer={
+        <div className="space-y-2">
+          {save.error instanceof ApiError && <p className="text-xs text-rose-600">{save.error.message}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              取消
+            </Button>
+            <Button
+              variant="neutral"
+              size="sm"
+              disabled={(!isEdit && !form.ref.trim()) || !form.name.trim() || incomplete || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? '保存中…' : isEdit ? '保存' : '登记'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">
+          {isEdit ? `编辑「${existing!.name}」` : '登记存储目标'}
+        </h2>
+
+        <Labeled label="标识" help="Agent 资源范围（dataset）里填的就是这个值，登记后不能改。与代码仓库共用一个命名空间。">
+          <Input
+            value={form.ref}
+            disabled={isEdit}
+            onChange={(e) => set('ref', e.target.value)}
+            placeholder="training-set"
+            className="disabled:bg-slate-50 disabled:text-slate-500"
+          />
+        </Labeled>
+
+        <Labeled label="显示名">
+          <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
+        </Labeled>
+
+        {/*
+          ★ 类型登记后不可改：两类的必填列完全不重叠，改一半会被库约束
+            整个拒掉，而报错指向的是约束名不是字段。要换就删了重建 ——
+            那条路上还有「有没有 Agent 授权指向它」这道检查。
+        */}
+        <Labeled label="类型" help={isEdit ? '登记后不能改类型，需要换请删除后重新登记' : undefined}>
+          <div className="flex gap-1.5">
+            {(['object_storage', 'local'] as const).map((k) => (
+              <Button
+                key={k}
+                variant={form.kind === k ? 'neutral' : 'outline'}
+                size="sm"
+                disabled={isEdit}
+                onClick={() => set('kind', k)}
+              >
+                {TARGET_KIND_LABEL[k]}
+              </Button>
+            ))}
+          </div>
+        </Labeled>
+
+        {isObject ? (
+          <>
+            <Labeled label="端点地址" help="S3 兼容端点，如 https://s3.us-east-1.amazonaws.com 或自建 MinIO 的地址">
+              <Input
+                value={form.endpoint}
+                onChange={(e) => set('endpoint', e.target.value)}
+                placeholder="https://s3.us-east-1.amazonaws.com"
+              />
+            </Labeled>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Labeled label="Bucket">
+                <Input value={form.bucket} onChange={(e) => set('bucket', e.target.value)} />
+              </Labeled>
+              <Labeled label="区域">
+                <Input value={form.region} onChange={(e) => set('region', e.target.value)} />
+              </Labeled>
+            </div>
+
+            <Labeled label="前缀" help="只挂这个前缀下的对象；留空表示整个 bucket">
+              <Input
+                value={form.prefix}
+                onChange={(e) => set('prefix', e.target.value)}
+                placeholder="datasets/train/"
+              />
+            </Labeled>
+
+            {/*
+              ★★ 寻址风格选反了的表现是 DNS 解析失败，而那条报错里没有任何
+                东西指向「寻址风格」。所以默认打开路径风格，并在这里说清楚
+                什么时候该关掉。
+            */}
+            <label className="flex items-start gap-2 text-xs text-slate-700">
+              <Checkbox
+                checked={form.forcePathStyle}
+                onCheckedChange={(v) => set('forcePathStyle', v)}
+              />
+              <span>
+                路径风格寻址（<code>host/bucket/key</code>）
+                <span className="mt-0.5 block text-[11px] text-slate-500">
+                  MinIO / Ceph / 自建网关基本只支持它，AWS 两种都支持。关掉后走
+                  <code> bucket.host/key</code>，端点不支持时表现为 DNS 解析失败。
+                </span>
+              </span>
+            </label>
+
+            <Labeled
+              label={isEdit ? '轮换凭证（留空不改）' : '凭证'}
+              help={
+                (encryptsInline
+                  ? '格式 accessKeyId:secretAccessKey，加密后入库，接口永远读不回原值。'
+                  : '格式 accessKeyId:secretAccessKey。★ 未配置 APOS_SECRET_KEY，直接粘贴的值会明文入库。') +
+                ' 也可以填 env:变量名，值只留在进程环境里。'
+              }
+            >
+              <Input
+                type="password"
+                value={form.credential}
+                onChange={(e) => set('credential', e.target.value)}
+                placeholder="AKIA…:wJalrXUt…"
+              />
+            </Labeled>
+          </>
+        ) : (
+          <Labeled
+            label="宿主机绝对路径"
+            help="必须以 / 开头。★ 内容会被复制进工作区，Agent 不会直接在源目录里干活 —— 否则两个并发 Run 会互相覆盖，失败的 Run 还会把源目录改坏。"
+          >
+            <Input
+              value={form.rootPath}
+              onChange={(e) => set('rootPath', e.target.value)}
+              placeholder="/srv/data/training-set"
+            />
+          </Labeled>
+        )}
+
+        <label className="flex items-start gap-2 text-xs text-slate-700">
+          <Checkbox checked={form.writable} onCheckedChange={(v) => set('writable', v)} />
+          <span>
+            可写
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              只读挂载在交货阶段会被原样跳过 —— 登记成只读却指望它接收产物，
+              表现是「任务成功但里面什么都没有」。默认只读。
+            </span>
+          </span>
+        </label>
+
+        <DeliveryTargetPicker
+          value={deliveryTargetId}
+          onChange={setDeliveryTargetId}
+          targets={targets}
+          {...(existing ? { selfId: existing.id } : {})}
+          defaultLabel="写回这个目标自己"
+        />
+
+        {!isEdit && (
+          <label className="flex items-center gap-2 text-xs text-slate-700">
+            <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
+            组织共享（其他项目也能用）
+          </label>
+        )}
       </div>
     </Modal>
   );

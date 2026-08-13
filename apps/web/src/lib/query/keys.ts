@@ -44,6 +44,7 @@ export const qk = {
   runtimes: () => ['runtimes'] as const,
   adminAgents: () => ['adminAgents'] as const,
   repositories: (projectId?: string) => ['repositories', projectId ?? 'all'] as const,
+  storageTargets: (projectId?: string) => ['storageTargets', projectId ?? 'all'] as const,
   conventions: (projectId: string) => ['conventions', projectId] as const,
   integrations: (projectId: string) => ['integrations', projectId] as const,
   syncConflicts: (projectId: string) => ['syncConflicts', projectId] as const,

@@ -37,7 +37,7 @@ export { EmptyMaterializer } from './empty/source';
 export { NonePublisher } from './empty/none-publisher';
 
 // 本地文件系统
-export { LocalMaterializer, LocalMountError } from './local/source';
+export { LocalMaterializer, LocalMountError, isMountRootAllowed } from './local/source';
 export { LocalPublisher } from './local/publisher';
 export type { LocalPublisherOptions } from './local/publisher';
 
@@ -52,5 +52,6 @@ export {
 } from './object-storage/source';
 export type { ObjectStorageDeps } from './object-storage/source';
 export { ObjectStoragePublisher } from './object-storage/publisher';
+export type { PublishMode } from './object-storage/publisher';
 export { signRequest, encodeKey, uriEncode } from './object-storage/sigv4';
 export type { SigV4Credentials } from './object-storage/sigv4';
