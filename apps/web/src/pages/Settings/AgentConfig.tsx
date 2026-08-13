@@ -2567,7 +2567,7 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
   });
 
   const save = useMutation({
-    mutationFn: (body: { role: string; agentId: string | null }) =>
+    mutationFn: (body: { role: string; agentId: string | null; priority?: number }) =>
       api.setProjectAgent(projectId, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.projectAgents(projectId) });
@@ -2586,7 +2586,8 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
 
           <div className="space-y-2">
             {BINDING_ROLES.map(({ role, labelKey, hintKey }) => {
-              const bound = data.bindings.find((b) => b.role === role);
+              const bound = data.bindings.find((b) => b.role === role && b.priority === 0);
+              const fallback = data.bindings.find((b) => b.role === role && b.priority === 1);
               return (
                 <div key={role} className="rounded border border-slate-200 bg-white px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -2599,7 +2600,9 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
                     <select
                       value={bound?.agentId ?? ''}
                       disabled={save.isPending}
-                      onChange={(e) => save.mutate({ role, agentId: e.target.value || null })}
+                      onChange={(e) =>
+                        save.mutate({ role, agentId: e.target.value || null, priority: 0 })
+                      }
                       className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
                       aria-label={t(labelKey)}
                     >
@@ -2612,6 +2615,37 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
                       ))}
                     </select>
                   </div>
+
+                  {/*
+                    ★★ 备选只在主 Agent 已经绑了之后才出现。
+                      没有主的时候先问备选是本末倒置 —— 而且那时「退到备选」
+                      根本无从谈起。
+                  */}
+                  {bound && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] text-slate-500">{t('binding.fallback')}</span>
+                      <select
+                        value={fallback?.agentId ?? ''}
+                        disabled={save.isPending}
+                        onChange={(e) =>
+                          save.mutate({ role, agentId: e.target.value || null, priority: 1 })
+                        }
+                        className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
+                        aria-label={t('binding.fallback')}
+                      >
+                        <option value="">{t('binding.noFallback')}</option>
+                        {data.available
+                          // ★ 主 Agent 不能同时当自己的备选
+                          .filter((a) => a.agentId !== bound.agentId)
+                          .map((a) => (
+                            <option key={a.agentId} value={a.agentId}>
+                              {a.name} · {a.runtimeKind}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+
                   <p className="mt-0.5 text-[11px] text-slate-400">{t(hintKey)}</p>
                   {/*
                     ★ planner 必须能处理 requirement。在这里就说出来，

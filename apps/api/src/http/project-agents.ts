@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { agents, projectAgentBindings, projectMembers, type Database } from '@apos/db';
 import { ProjectAgentRole } from '@apos/contracts';
@@ -17,8 +17,14 @@ import { ApiError, notFound } from './errors';
 
 export const BindingInput = z.object({
   role: ProjectAgentRole,
-  /** null = 解除绑定，回到「按项目成员自动挑」 */
+  /** null = 解除这一格的绑定 */
   agentId: z.string().uuid().nullable(),
+  /**
+   * 同一角色里的优先级，0 是主 Agent。
+   *
+   * ★ 主 Agent 不可用时按这个顺序往下退（见 agent-provider 的 pickAgent）。
+   */
+  priority: z.number().int().min(0).max(4).default(0),
 });
 
 export async function listProjectAgents(db: Database, projectId: string) {
@@ -26,6 +32,7 @@ export async function listProjectAgents(db: Database, projectId: string) {
     .select({
       id: projectAgentBindings.id,
       role: projectAgentBindings.role,
+      priority: projectAgentBindings.priority,
       agentId: projectAgentBindings.agentId,
       agentName: agents.name,
       runtimeKind: agents.runtimeKind,
@@ -35,7 +42,8 @@ export async function listProjectAgents(db: Database, projectId: string) {
     })
     .from(projectAgentBindings)
     .innerJoin(agents, eq(agents.id, projectAgentBindings.agentId))
-    .where(eq(projectAgentBindings.projectId, projectId));
+    .where(eq(projectAgentBindings.projectId, projectId))
+    .orderBy(asc(projectAgentBindings.role), asc(projectAgentBindings.priority));
 
   /**
    * ★ 可选项只列**本项目成员**里的 Agent。
@@ -74,15 +82,17 @@ export async function setProjectAgent(
   input: z.infer<typeof BindingInput>,
 ) {
   if (input.agentId === null) {
+    // ★ 只解绑这一格，不是整个角色 —— 清主 Agent 不该顺手把备选也删了
     await db
       .delete(projectAgentBindings)
       .where(
         and(
           eq(projectAgentBindings.projectId, ctx.projectId),
           eq(projectAgentBindings.role, input.role),
+          eq(projectAgentBindings.priority, input.priority),
         ),
       );
-    return { ok: true as const, role: input.role, agentId: null };
+    return { ok: true as const, role: input.role, agentId: null, priority: input.priority };
   }
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
@@ -126,13 +136,18 @@ export async function setProjectAgent(
       orgId: ctx.orgId,
       projectId: ctx.projectId,
       role: input.role,
+      priority: input.priority,
       agentId: input.agentId,
       createdBy: ctx.userId,
     })
     .onConflictDoUpdate({
-      target: [projectAgentBindings.projectId, projectAgentBindings.role],
+      target: [
+        projectAgentBindings.projectId,
+        projectAgentBindings.role,
+        projectAgentBindings.priority,
+      ],
       set: { agentId: input.agentId, updatedAt: new Date() },
     });
 
-  return { ok: true as const, role: input.role, agentId: input.agentId };
+  return { ok: true as const, role: input.role, agentId: input.agentId, priority: input.priority };
 }

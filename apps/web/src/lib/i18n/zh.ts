@@ -1920,6 +1920,8 @@ export const zh: Record<keyof typeof en, string> = {
   'binding.reviewer': '评审 Agent',
   'binding.reviewerHint': '审查交付物。',
   'binding.plannerNeedsRequirement': '⚠ {name} 的适用类型里没有 requirement，做不了规划 —— 去 Agent 配置里勾上它。',
+  'binding.fallback': '备选',
+  'binding.noFallback': '不设 —— 主 Agent 不可用就直接失败',
   'artifact.fileCount': '{count} 个文件',
   'artifact.truncated': '只列出了前若干条',
   'artifact.download': '下载',

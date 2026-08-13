@@ -1403,6 +1403,8 @@ export interface ProjectAgentBindings {
   bindings: {
     id: string;
     role: string;
+    /** 0 = 主 Agent，往后是备选。主的不可用时按这个顺序退 */
+    priority: number;
     agentId: string;
     agentName: string;
     runtimeKind: string;

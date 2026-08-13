@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { agentRuns, agents, projectAgentBindings, projectMembers, type Database } from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
@@ -349,8 +349,15 @@ export class AgentPlanningProvider implements PlanningProvider {
   private async pickAgent(
     scope: PlanningScope,
   ): Promise<{ agent: typeof agents.$inferSelect | null; reason: string }> {
-    const [bound] = await this.db
-      .select({ agent: agents })
+    /**
+     * ★★ 按 priority 顺着往下退，而不是只看主 Agent。
+     *
+     *   只有主 Agent 时，它一停用整个项目的规划就断了，唯一补救是管理员
+     *   去改绑定 —— 而那通常发生在有人等着结果的时候。备选让它能自己
+     *   退一格继续跑，并把「为什么没用主的」说出来。
+     */
+    const bound = await this.db
+      .select({ agent: agents, priority: projectAgentBindings.priority })
       .from(projectAgentBindings)
       .innerJoin(agents, eq(agents.id, projectAgentBindings.agentId))
       .where(
@@ -358,22 +365,39 @@ export class AgentPlanningProvider implements PlanningProvider {
           eq(projectAgentBindings.projectId, scope.projectId),
           eq(projectAgentBindings.role, 'planner'),
         ),
-      );
+      )
+      .orderBy(asc(projectAgentBindings.priority));
 
-    if (bound) {
-      if (bound.agent.status !== 'active') {
-        return {
-          agent: null,
-          reason: `项目绑定的规划 Agent「${bound.agent.name}」当前状态是 ${bound.agent.status}`,
-        };
+    if (bound.length > 0) {
+      const skipped: string[] = [];
+      for (const row of bound) {
+        if (row.agent.status !== 'active') {
+          skipped.push(`${row.agent.name}（${row.agent.status}）`);
+          continue;
+        }
+        if (!row.agent.applicableTypes.includes(PLANNING_TYPE)) {
+          skipped.push(`${row.agent.name}（适用类型里没有 ${PLANNING_TYPE}）`);
+          continue;
+        }
+        if (!this.registry.has(row.agent.id)) {
+          skipped.push(`${row.agent.name}（运行时未注册）`);
+          continue;
+        }
+        /**
+         * ★ 退到备选时要说出来。不说的话，用户看到的产出来自一个他没指定的
+         *   Agent，而界面上一切正常 —— 规划质量突然变了却查不到原因。
+         */
+        if (skipped.length > 0) {
+          this.diag(
+            `[planning] 主规划 Agent 不可用（${skipped.join('、')}），退到备选「${row.agent.name}」`,
+          );
+        }
+        return { agent: row.agent, reason: '' };
       }
-      if (!bound.agent.applicableTypes.includes(PLANNING_TYPE)) {
-        return {
-          agent: null,
-          reason: `项目绑定的规划 Agent「${bound.agent.name}」的适用类型里没有 ${PLANNING_TYPE}`,
-        };
-      }
-      return { agent: bound.agent, reason: '' };
+      return {
+        agent: null,
+        reason: `项目绑定的规划 Agent 都不可用：${skipped.join('、')}`,
+      };
     }
 
     const members = await this.db

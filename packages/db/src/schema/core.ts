@@ -855,12 +855,33 @@ export const projectAgentBindings = pgTable(
     /** planner / coordinator / reviewer */
     role: text().notNull(),
     agentId: uuid().notNull().references(() => agents.id),
+    /**
+     * 同一角色内的优先级，0 是主 Agent，往后是备选。
+     *
+     * ★★ 只有主 Agent 时，绑定的 Agent 一停用，整个项目的规划就断了 ——
+     *   而唯一的补救是管理员去改绑定。备选让它能自己往下退一格。
+     *
+     * ★ 显式一列而不是靠 created_at 排：靠时间排的话，「换一下优先级」
+     *   要靠删了重建，而那会丢掉 createdBy 与 createdAt 这两条问责线索。
+     */
+    priority: integer().notNull().default(0),
     createdBy: uuid().notNull().references(() => users.id),
     createdAt: timestamp({ withTimezone: true }).notNull().default(now),
     updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
   },
   (t) => [
-    uniqueIndex('project_agent_bindings_project_role_idx').on(t.projectId, t.role),
+    /**
+     * ★ 唯一性从 (project, role) 放宽到 (project, role, priority)：
+     *   一个角色可以有主 + 备选，但同一优先级只能有一个 ——
+     *   否则「谁是主」在两条 priority=0 的记录之间无从判定。
+     */
+    uniqueIndex('project_agent_bindings_project_role_idx').on(t.projectId, t.role, t.priority),
+    /** ★ 同一个 Agent 不该在同一角色里占两格 */
+    uniqueIndex('project_agent_bindings_project_role_agent_idx').on(
+      t.projectId,
+      t.role,
+      t.agentId,
+    ),
     index('project_agent_bindings_agent_idx').on(t.agentId),
     check(
       'project_agent_bindings_role_check',

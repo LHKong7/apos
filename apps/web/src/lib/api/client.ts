@@ -496,8 +496,13 @@ export const api = {
   projectAgents: (projectId: string) =>
     request<ProjectAgentBindings>(`/projects/${projectId}/agents`),
 
-  setProjectAgent: (projectId: string, body: { role: string; agentId: string | null }) =>
-    request<{ ok: true; role: string; agentId: string | null }>(`/projects/${projectId}/agents`, {
+  setProjectAgent: (
+    projectId: string,
+    body: { role: string; agentId: string | null; priority?: number },
+  ) =>
+    request<{ ok: true; role: string; agentId: string | null; priority: number }>(
+      `/projects/${projectId}/agents`,
+      {
       method: 'PUT',
       json: body,
     }),
