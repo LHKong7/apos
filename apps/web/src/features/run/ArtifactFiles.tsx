@@ -55,6 +55,10 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
         {d.truncated && (
           <span className="text-[11px] text-amber-700">{t('artifact.truncated')}</span>
         )}
+        {/* ★ 如实说明没有对照 diff 的原因，而不是让人以为功能坏了 */}
+        {!d.diffAvailable && (
+          <span className="ml-auto text-[11px] text-slate-400">{t('artifact.noDiff')}</span>
+        )}
       </div>
 
       <ul className="max-h-40 overflow-y-auto">
@@ -62,14 +66,45 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
           <li key={f.path}>
             <button
               type="button"
+              // ★ 被删掉的文件不在归档里，点开也没有内容可看
+              disabled={f.change === 'deleted'}
               onClick={() => setOpen(open === f.path ? null : f.path)}
               className={clsx(
-                'flex w-full items-center gap-2 px-2 py-0.5 text-left text-[11px] hover:bg-slate-50',
+                'flex w-full items-center gap-2 px-2 py-0.5 text-left text-[11px]',
+                f.change === 'deleted' ? 'cursor-default' : 'hover:bg-slate-50',
                 open === f.path && 'bg-slate-100',
               )}
             >
-              <span className="min-w-0 flex-1 truncate font-mono text-slate-700">{f.path}</span>
-              <span className="shrink-0 tabular-nums text-slate-400">{sizeOf(f.size)}</span>
+              {/*
+                ★ 改动类型要标出来：只列文件名的话，「新写了这个文件」和
+                  「改了这个文件」分不清 —— 而 review 时对两者的看法完全不同。
+              */}
+              <span
+                className={clsx(
+                  'w-4 shrink-0 text-center font-mono',
+                  f.change === 'added'
+                    ? 'text-green-700'
+                    : f.change === 'modified'
+                      ? 'text-amber-700'
+                      : f.change === 'deleted'
+                        ? 'text-red-700'
+                        : 'text-slate-300',
+                )}
+                title={f.change ?? undefined}
+              >
+                {f.change === 'added' ? '+' : f.change === 'modified' ? '~' : f.change === 'deleted' ? '−' : ''}
+              </span>
+              <span
+                className={clsx(
+                  'min-w-0 flex-1 truncate font-mono',
+                  f.change === 'deleted' ? 'text-slate-400 line-through' : 'text-slate-700',
+                )}
+              >
+                {f.path}
+              </span>
+              <span className="shrink-0 tabular-nums text-slate-400">
+                {f.change === 'deleted' ? '' : sizeOf(f.size)}
+              </span>
             </button>
           </li>
         ))}

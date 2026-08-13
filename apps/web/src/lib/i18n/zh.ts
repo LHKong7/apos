@@ -1929,4 +1929,5 @@ export const zh: Record<keyof typeof en, string> = {
   'artifact.fileCount': '{count} 个文件',
   'artifact.truncated': '只列出了前若干条',
   'artifact.download': '下载',
+  'artifact.noDiff': '只有改完之后的内容 —— 归档没有保留变更前的版本',
 };

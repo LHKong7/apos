@@ -1954,6 +1954,7 @@ export const en = {
   'artifact.fileCount': '{count} files',
   'artifact.truncated': 'Only the first entries are listed',
   'artifact.download': 'Download',
+  'artifact.noDiff': 'Post-change content only — the archive keeps no before version',
 } as const;
 
 export type MessageKey = keyof typeof en;

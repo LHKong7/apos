@@ -1429,8 +1429,16 @@ export interface ArtifactFileList {
   /** ★ 目录可能已随工作区回收 —— 与「这次没产出」是两回事，所以带原因 */
   available: boolean;
   reason: string | null;
-  files: { path: string; size: number; isDirectory: boolean }[];
+  files: {
+    path: string;
+    size: number;
+    isDirectory: boolean;
+    /** 新增 / 修改 / 删除。deleted 的文件不在归档里，但必须列出来 */
+    change: 'added' | 'modified' | 'deleted' | null;
+  }[];
   truncated: boolean;
+  /** ★ 本地归档只存改完之后的内容，没有变更前的版本 —— 所以没有对照 diff */
+  diffAvailable: boolean;
 }
 
 export interface ArtifactFileContent {

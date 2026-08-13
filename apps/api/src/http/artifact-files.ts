@@ -34,6 +34,37 @@ export interface ArtifactFileEntry {
   size: number;
   /** 目录不给 preview，前端据此决定能不能点开 */
   isDirectory: boolean;
+  /**
+   * 这个文件在这次执行里是新增、修改还是删除。
+   *
+   * ★★ 只列文件名不说改动类型，用户分不清「Agent 新写了这个文件」和
+   *   「Agent 改了这个文件」—— 而这两件事在 review 时的看法完全不同。
+   *
+   * ★ `deleted` 的文件**不在归档里**（归档只复制新增与修改的内容），
+   *   但必须列出来：一次执行删掉了什么，是变更集里最该被看见的部分。
+   */
+  change: 'added' | 'modified' | 'deleted' | null;
+}
+
+/** 产物元数据里存下来的变更集（ingest 写的） */
+interface StoredChangeSet {
+  added?: string[];
+  modified?: string[];
+  deleted?: string[];
+  listTruncated?: boolean;
+}
+
+function changeIndex(meta: Record<string, unknown>): {
+  byPath: Map<string, 'added' | 'modified' | 'deleted'>;
+  deleted: string[];
+  truncated: boolean;
+} {
+  const cs = (meta['changes'] ?? {}) as StoredChangeSet;
+  const byPath = new Map<string, 'added' | 'modified' | 'deleted'>();
+  for (const p of cs.added ?? []) byPath.set(p, 'added');
+  for (const p of cs.modified ?? []) byPath.set(p, 'modified');
+  for (const p of cs.deleted ?? []) byPath.set(p, 'deleted');
+  return { byPath, deleted: cs.deleted ?? [], truncated: cs.listTruncated === true };
 }
 
 async function loadLocalArtifact(db: Database, artifactId: string) {
@@ -85,6 +116,7 @@ async function safeResolve(root: string, rel: string): Promise<string> {
 export async function listArtifactFiles(db: Database, artifactId: string) {
   const { row, root } = await loadLocalArtifact(db, artifactId);
 
+  const changes = changeIndex(row.metadata);
   const out: ArtifactFileEntry[] = [];
   let truncated = false;
 
@@ -102,11 +134,16 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
       const full = join(dir, e.name);
       const rel = relative(root, full);
       if (e.isDirectory()) {
-        out.push({ path: rel, size: 0, isDirectory: true });
+        out.push({ path: rel, size: 0, isDirectory: true, change: null });
         await walk(full);
       } else if (e.isFile()) {
         const st = await stat(full).catch(() => null);
-        out.push({ path: rel, size: st?.size ?? 0, isDirectory: false });
+        out.push({
+          path: rel,
+          size: st?.size ?? 0,
+          isDirectory: false,
+          change: changes.byPath.get(rel) ?? null,
+        });
       }
       // ★ symlink 既不列也不跟进 —— 归档里不该有，出现了也不该被当成内容
     }
@@ -126,17 +163,37 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
       reason: '归档目录已不存在（可能随工作区一起被回收了）',
       files: [],
       truncated: false,
+      diffAvailable: false as const,
     };
   }
 
   await walk(root);
+
+  /**
+   * ★★ 被删掉的文件要补进列表。
+   *
+   *   归档里只有新增与修改的内容（LocalPublisher 就是这么复制的），
+   *   所以走目录永远走不到它们。而「这次执行删了哪几个文件」恰恰是变更集里
+   *   最该被看见的部分 —— 漏掉它，产物页会让人以为这次只是加了东西。
+   */
+  for (const path of changes.deleted) {
+    if (!out.some((f) => f.path === path)) {
+      out.push({ path, size: 0, isDirectory: false, change: 'deleted' });
+    }
+  }
+
   return {
     artifactId,
     projectId: row.projectId,
     available: true as const,
     reason: null,
     files: out.sort((a, b) => a.path.localeCompare(b.path)),
-    truncated,
+    truncated: truncated || changes.truncated,
+    /**
+     * ★ 如实说明为什么没有 before/after 对照：本地归档只存改完之后的内容，
+     *   变更前的版本没有留。给一个只有一侧的「diff」比不给更容易误导。
+     */
+    diffAvailable: false as const,
   };
 }
 
