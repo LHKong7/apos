@@ -462,13 +462,20 @@ export const api = {
    */
   setWorkItemAssignee: (
     id: string,
-    body: { agentId?: string | null; userId?: string | null; executionMode?: ExecutionModeValue },
+    body: {
+      agentId?: string | null;
+      userId?: string | null;
+      executionMode?: ExecutionModeValue;
+      /** 有 Run 在跑时必须给：terminate / wait / handover */
+      takeover?: 'terminate' | 'wait' | 'handover';
+    },
   ) =>
     request<{
       ok: true;
       executorType: 'agent' | 'human' | null;
       executorId: string | null;
       executionMode: ExecutionModeValue;
+      terminatedRuns: string[];
     }>(`/work-items/${id}/assignee`, { method: 'PATCH', json: body }),
 
   startWorkItem: (id: string, body: { agentId?: string; note?: string } = {}) =>

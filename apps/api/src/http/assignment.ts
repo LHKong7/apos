@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { agents, projectMembers, users, workItems, type Database } from '@apos/db';
-import { ExecutionMode } from '@apos/contracts';
+import { agentRuns, agents, projectMembers, users, workItems, type Database } from '@apos/db';
+import { ACTIVE_RUN_STATUSES, ExecutionMode } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { executionModeOf, resolveExecutor } from '../modules/agent/matching';
 import { ApiError, notFound } from './errors';
@@ -25,6 +25,24 @@ import { ApiError, notFound } from './errors';
  *   这样已经接了它的调用方不会断，但新界面一律走拆开的这两个。
  */
 
+/**
+ * 运行中的任务被改派时怎么处置那次执行。
+ *
+ * ★★ 没有这一档时，改派是**静默**的：Run 还在跑，卡片上却已经写着另一个人。
+ *   那次执行继续改文件、继续花钱，产出最后挂在一张不属于它的卡上，
+ *   而新执行者对此一无所知。三种处置都合理，但必须由人选一个 ——
+ *   默认哪一个都会在某些场景下出错，所以不给默认值。
+ */
+export const TakeoverMode = z.enum([
+  /** 终止当前 Run，立刻交给新执行者 */
+  'terminate',
+  /** 让它跑完，改派只对**下一次**执行生效 */
+  'wait',
+  /** 转人工接管：终止 Run 并把卡片交给人 */
+  'handover',
+]);
+export type TakeoverMode = z.infer<typeof TakeoverMode>;
+
 export const AssigneeInput = z
   .object({
     /** 二选一；两个都不传表示清空执行者，回到「未指定」 */
@@ -35,6 +53,10 @@ export const AssigneeInput = z
      * 指了 Agent 就是 agent，指了人就是 human，都清空就是 auto。
      */
     executionMode: ExecutionMode.optional(),
+    /**
+     * 有 Run 在跑时必须给出处置方式。不给就拒 —— 见 TakeoverMode 的理由。
+     */
+    takeover: TakeoverMode.optional(),
   })
   .refine((v) => !(v.agentId && v.userId), {
     message: '不能同时指定 agentId 与 userId',
@@ -54,12 +76,63 @@ export async function setAssignee(
   db: Database,
   workItemId: string,
   input: AssigneeInputType,
+  deps: { registry?: RuntimeRegistry } = {},
 ) {
   const [item] = await db.select().from(workItems).where(eq(workItems.id, workItemId));
   if (!item) throw notFound('任务');
 
+  /**
+   * ★★ 有 Run 在跑时不能静默改派。
+   *
+   *   Run 还在执行，卡片却已经写着另一个人：那次执行继续改文件、继续花钱，
+   *   产出最后挂在一张不属于它的卡上，而新执行者对此一无所知。
+   *   拦下来要求调用方明确选一种处置 —— 三种都合理，但没有一个可以当默认。
+   */
+  const active = await db
+    .select({ id: agentRuns.id, agentId: agentRuns.agentId })
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.workItemId, workItemId),
+        inArray(agentRuns.status, [...ACTIVE_RUN_STATUSES]),
+      ),
+    );
+
+  const changingExecutor =
+    (input.agentId ?? input.userId ?? null) !== item.executorId;
+
+  if (active.length > 0 && changingExecutor && !input.takeover) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      '这张卡还有执行中的 Run。改派前要说明怎么处置它：terminate（终止后立刻交接）、' +
+        'wait（让它跑完，改派对下一次生效）、handover（终止并转人工接管）。',
+      { runIds: active.map((r) => r.id), currentExecutorId: item.executorId },
+    );
+  }
+
   if (input.agentId) await assertAgentAssignable(db, item.projectId, input.agentId);
   if (input.userId) await assertUserAssignable(db, item.projectId, input.userId);
+
+  /**
+   * ★ handover 要求交给人。交给另一个 Agent 却说「转人工接管」，
+   *   两者会在事件流里对不上 —— 而事件流是审计的唯一依据。
+   */
+  if (input.takeover === 'handover' && !input.userId) {
+    throw new ApiError('VALIDATION_FAILED', '转人工接管必须指定接手的人（userId）');
+  }
+
+  /**
+   * ★★ wait 语义下**不动**正在跑的 Run：改派只对下一次执行生效。
+   *   另外两种都要先把 Run 停掉，否则它会继续改文件、继续花钱，
+   *   而卡片已经不属于它了。
+   */
+  const terminated: string[] = [];
+  if (active.length > 0 && (input.takeover === 'terminate' || input.takeover === 'handover')) {
+    for (const run of active) {
+      await terminateRun(db, deps.registry, run, input.takeover);
+      terminated.push(run.id);
+    }
+  }
 
   const executorType = input.agentId ? 'agent' : input.userId ? 'human' : null;
   const executorId = input.agentId ?? input.userId ?? null;
@@ -84,7 +157,45 @@ export async function setAssignee(
     executorType,
     executorId,
     executionMode: mode,
+    /** ★ 明确回报终止了哪几个 Run —— 调用方要能把这件事显示给用户 */
+    terminatedRuns: terminated,
   };
+}
+
+/**
+ * 改派时终止一次执行。
+ *
+ * ★ 先发控制指令再写库：库先写完而指令失败的话，Run 在库里是 terminated、
+ *   在运行时里还在跑 —— 那种不一致没有任何地方能发现。
+ *
+ * ★ 运行时不认识这个 Run（进程重启过、适配器没注册）不算失败：
+ *   库里标成 terminated 之后，supervisor 那条心跳超时的路径本来就会兜底。
+ */
+async function terminateRun(
+  db: Database,
+  registry: RuntimeRegistry | undefined,
+  run: { id: string; agentId: string },
+  mode: TakeoverMode,
+): Promise<void> {
+  if (registry?.has(run.agentId)) {
+    await registry
+      .get(run.agentId)
+      .control(run.id, {
+        action: 'terminate',
+        reason: mode === 'handover' ? '改派：转人工接管' : '改派：更换执行者',
+      })
+      .catch(() => undefined);
+  }
+
+  await db
+    .update(agentRuns)
+    .set({
+      status: 'terminated',
+      endedAt: new Date(),
+      errorClass: 'runtime_error',
+      errorMessage: mode === 'handover' ? '改派：转人工接管' : '改派：更换执行者',
+    })
+    .where(eq(agentRuns.id, run.id));
 }
 
 /**

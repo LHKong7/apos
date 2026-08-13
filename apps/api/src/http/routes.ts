@@ -2749,7 +2749,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
     if (!before) throw notFound('任务');
 
-    const result = await setAssignee(db, id, body);
+    const result = await setAssignee(db, id, body, { registry: deps.registry });
 
     await emitAndPublish(db, {
       orgId: before.orgId,
@@ -2763,6 +2763,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         to: { executorType: result.executorType, executorId: result.executorId },
         executionMode: result.executionMode,
         byUserId: userId,
+        /** ★ 改派顺手终止了哪几次执行 —— 这是花过钱的事，必须留痕 */
+        takeover: body.takeover ?? null,
+        terminatedRuns: result.terminatedRuns,
       },
       correlationId: corr(req),
     });

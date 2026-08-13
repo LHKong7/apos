@@ -1,4 +1,5 @@
 import { useT } from '../../lib/i18n';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
@@ -49,10 +50,36 @@ export function ExecutorPicker({
     void qc.invalidateQueries({ queryKey: qk.boardAll(projectId) });
   };
 
+  /**
+   * ★★ 有 Run 在跑时，服务端会拒掉改派并要求说明怎么处置那次执行。
+   *
+   *   这不是错误，是一次必须由人回答的问题：终止后立刻交接、让它跑完、
+   *   还是终止并转人工。默认哪一个都会在某些场景下出错 —— 一次跑了半小时、
+   *   快要完成的执行被静默终止，和一次早就跑偏的执行被放任跑完，
+   *   都是这里选错的后果。
+   */
+  const [pendingTakeover, setPendingTakeover] = useState<{
+    body: { agentId?: string | null; userId?: string | null };
+    runIds: string[];
+  } | null>(null);
+
   const setAssignee = useMutation({
-    mutationFn: (body: { agentId?: string | null; userId?: string | null }) =>
-      api.setWorkItemAssignee(workItemId, body),
-    onSuccess: invalidate,
+    mutationFn: (body: {
+      agentId?: string | null;
+      userId?: string | null;
+      takeover?: 'terminate' | 'wait' | 'handover';
+    }) => api.setWorkItemAssignee(workItemId, body),
+    onSuccess: () => {
+      setPendingTakeover(null);
+      invalidate();
+    },
+    onError: (e, body) => {
+      const runIds =
+        e instanceof ApiError
+          ? ((e.details as { runIds?: string[] } | undefined)?.runIds ?? null)
+          : null;
+      if (runIds) setPendingTakeover({ body, runIds });
+    },
   });
 
   const start = useMutation({
@@ -194,7 +221,37 @@ export function ExecutorPicker({
         </Row>
       </div>
 
-      {(setAssignee.error || start.error) && (
+      {pendingTakeover && (
+        <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 p-2">
+          <p className="text-[11px] font-medium text-amber-900">
+            {t('executor.takeoverTitle', { count: pendingTakeover.runIds.length })}
+          </p>
+          <p className="mt-0.5 text-[11px] text-amber-800">{t('executor.takeoverWhy')}</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {(['terminate', 'wait', 'handover'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={setAssignee.isPending}
+                onClick={() => setAssignee.mutate({ ...pendingTakeover.body, takeover: mode })}
+                className="rounded border border-amber-400 bg-white px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+              >
+                {t(`executor.takeover.${mode}` as const)}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setPendingTakeover(null)}
+              className="px-1 text-[11px] text-slate-500"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ★ 改派拦截已经用上面那块专门表达了，不要再当成一条红色报错重复一遍 */}
+      {((setAssignee.error && !pendingTakeover) || start.error) && (
         <p className="mt-1 rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
           {errorText(setAssignee.error ?? start.error)}
         </p>
