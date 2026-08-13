@@ -115,7 +115,7 @@ export function GraphPage() {
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
 
           <select
@@ -150,8 +150,10 @@ export function GraphPage() {
         {graph.data && nodeCount > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
             <span className="text-slate-600">
-              关键路径 {formatHours(graph.data.metrics.totalHours)} · 剩余{' '}
-              {formatHours(graph.data.metrics.remainingHours)}
+              {t('graph.criticalPathHours', {
+                total: formatHours(graph.data.metrics.totalHours),
+                remaining: formatHours(graph.data.metrics.remainingHours),
+              })}
             </span>
             <span
               className={clsx(
@@ -172,7 +174,9 @@ export function GraphPage() {
             )}
             {graph.data.metrics.criticalPaths.length > 1 && (
               <span className="text-slate-500">
-                存在 {graph.data.metrics.criticalPaths.length} 条等长关键路径
+                {t('graph.tiedCriticalPaths', {
+                  count: graph.data.metrics.criticalPaths.length,
+                })}
               </span>
             )}
           </div>
@@ -213,7 +217,7 @@ export function GraphPage() {
 
       {nodeCount > LARGE_GRAPH && (
         <p className="bg-amber-50 px-4 py-1 text-center text-[11px] text-amber-800">
-          共 {nodeCount} 个节点，当前用 SVG 渲染可能卡顿。建议开「关键路径」高亮后聚焦主链
+          {t('graph.largeGraphWarning', { count: nodeCount })}
         </p>
       )}
 
@@ -280,7 +284,7 @@ export function GraphPage() {
                 setMenu(null);
               }}
             >
-              查看详情
+              {t('graph.menu.viewDetail')}
             </MenuItem>
             {menu.node.humanGateRef && (
               <MenuItem
@@ -289,7 +293,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                处理决策
+                {t('graph.menu.handleDecision')}
               </MenuItem>
             )}
             {menu.node.humanGateRef && (
@@ -299,7 +303,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                催办
+                {t('graph.menu.remind')}
               </MenuItem>
             )}
             {menu.node.runId && (
@@ -309,7 +313,7 @@ export function GraphPage() {
                   setMenu(null);
                 }}
               >
-                查看执行记录
+                {t('graph.menu.viewRun')}
               </MenuItem>
             )}
             <MenuItem
@@ -318,7 +322,7 @@ export function GraphPage() {
                 setMenu(null);
               }}
             >
-              在看板中定位
+              {t('graph.menu.locateOnBoard')}
             </MenuItem>
           </div>
         </>
@@ -332,7 +336,7 @@ export function GraphPage() {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

@@ -114,13 +114,13 @@ export function MembersPage() {
             to={`/projects/${projectId}`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到项目
+            {t('nav.backToProject')}
           </Link>
           <Link
             to={`/projects/${projectId}/settings/roles`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            角色定义 →
+            {t('members.toRoles')}
           </Link>
           {/*
             ★ 通向「开账号」的入口必须在这里。
@@ -131,7 +131,7 @@ export function MembersPage() {
             to={`/projects/${projectId}/settings/accounts`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            账号 →
+            {t('members.toAccounts')}
           </Link>
           <div className="ml-auto flex gap-1.5">
             <GatedButton
@@ -140,7 +140,7 @@ export function MembersPage() {
               onClick={() => setAdding('human')}
               className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
             >
-              添加成员
+              {t('members.addMember')}
             </GatedButton>
             <GatedButton
               permission="project.members.manage"
@@ -148,12 +148,12 @@ export function MembersPage() {
               onClick={() => setAdding('agent')}
               className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
             >
-              添加 Agent
+              {t('members.addAgent')}
             </GatedButton>
           </div>
         </div>
         <p className="mt-0.5 text-[11px] text-slate-400">
-          角色决定这个人 / 这个 Agent 在本项目里能做什么。权限变更全部记入审计
+          {t('members.roleHint')}
         </p>
       </div>
 
@@ -175,7 +175,7 @@ export function MembersPage() {
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}
                 <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                  知道了
+                  {t('common.gotIt')}
                 </button>
               </p>
             )}
@@ -183,7 +183,7 @@ export function MembersPage() {
             {adding && (
               <section className="rounded border border-slate-300 bg-white px-3 py-2">
                 <h2 className="text-xs font-medium text-slate-700">
-                  添加{adding === 'agent' ? ' Agent' : t('members.member')}
+                  {adding === 'agent' ? t('members.addAgent') : t('members.addMember')}
                 </h2>
                 <p className="text-[11px] text-slate-400">
                   {adding === 'agent'
@@ -230,7 +230,7 @@ export function MembersPage() {
                   onClick={() => setAdding(null)}
                   className="mt-1.5 text-[11px] text-slate-500 underline"
                 >
-                  收起
+                  {t('members.collapse')}
                 </button>
               </section>
             )}
@@ -334,7 +334,10 @@ function MemberTable({
                     )}
                   </p>
                   <p className="truncate text-[11px] text-slate-400">
-                    {m.email ?? m.detail} · 加入于 {relativeTime(m.addedAt)}
+                    {t('members.joinedAt', {
+                      detail: m.email ?? m.detail ?? '',
+                      time: relativeTime(m.addedAt),
+                    })}
                   </p>
                 </div>
 
@@ -356,7 +359,9 @@ function MemberTable({
                 >
                   {/* 当前角色可能已不适用于这一类担任者（角色被改窄了），仍要显示出来 */}
                   {!roles.some((r) => r.role === m.role) && (
-                    <option value={m.role}>{m.roleLabel}（已不适用）</option>
+                    <option value={m.role}>
+                      {t('members.roleNoLongerApplies', { label: m.roleLabel })}
+                    </option>
                   )}
                   {roles.map((r) => (
                     <option key={r.role} value={r.role}>
@@ -375,7 +380,7 @@ function MemberTable({
                   onClick={() => onRemove(m.actorId)}
                   className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                 >
-                  移除
+                  {t('members.remove')}
                 </GatedButton>
               </li>
             );

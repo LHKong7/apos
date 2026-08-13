@@ -96,15 +96,13 @@ export function NotificationPanel({
        */}
       {noisyOn.length > 0 && (
         <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-          你打开了「{noisyOn.map((e) => e.label).join('、')}
-          」。这类通知量大，历史上打开它的团队多数会在几天内把整个机器人屏蔽掉 ——
-          之后连需要决策的提醒也收不到
+          {t('notify.noisyWarning', { events: noisyOn.map((e) => e.label).join('、') })}
         </p>
       )}
 
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
         <label className="flex items-center gap-1">
-          每日摘要
+          {t('notify.dailyDigest')}
           <Input
             type="time"
             disabled={!canEdit}
@@ -112,7 +110,7 @@ export function NotificationPanel({
             onChange={(e) => setDraft({ ...config, dailyDigestAt: e.target.value || null })} />
         </label>
         <label className="flex items-center gap-1">
-          免打扰
+          {t('notify.quietHours')}
           <Input
             type="time"
             disabled={!canEdit}
@@ -142,7 +140,7 @@ export function NotificationPanel({
             checked={config.quietHoursExceptHighRisk}
             onCheckedChange={(v) => setDraft({ ...config, quietHoursExceptHighRisk: v })}
           />
-          高风险决策不受免打扰限制
+          {t('notify.highRiskExempt')}
         </label>
       </div>
 
@@ -173,9 +171,7 @@ export function NotificationPanel({
        *   变成谁点谁算，那比不做更糟。
        */}
       <p className="mt-1.5 text-[11px] text-slate-400">
-        通知里只放跳转链接，不放「直接批准」按钮：在第三方平台内确认
-        「点按钮的人真的是决策责任人」各平台机制都不同，做不到这一点的直接批准
-        会把不可代行的决策变成谁点谁算
+        {t('notify.linkOnlyNote')}
       </p>
 
       {canEdit ? (
@@ -191,13 +187,13 @@ export function NotificationPanel({
               onClick={() => setDraft(null)}
               className="text-[11px] text-slate-500 hover:text-slate-700"
             >
-              撤销
+              {t('notify.revert')}
             </button>
           </div>
         )
       ) : (
         <p className="mt-1.5 text-[11px] text-slate-400">
-          群组通知配置需要 pm 权限；你自己的通知偏好在个人设置里
+          {t('notify.needPm')}
         </p>
       )}
 

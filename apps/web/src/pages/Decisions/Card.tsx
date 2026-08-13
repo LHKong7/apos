@@ -106,7 +106,7 @@ export function DecisionCardView({
             {/* ★ 时限是这一页的主排序依据，所以它必须一眼可见 */}
             {overdue ? (
               <span className="text-[11px] font-medium text-red-700">
-                ⏰ 超时 {duration(card.overdueMinutes)}
+                {t('decision.overdueBy', { time: duration(card.overdueMinutes) })}
               </span>
             ) : card.dueInMinutes !== null ? (
               <span
@@ -115,13 +115,13 @@ export function DecisionCardView({
                   card.dueInMinutes <= 240 ? 'text-amber-700' : 'text-slate-500',
                 )}
               >
-                ⏰ {duration(card.dueInMinutes)} 内
+                {t('decision.dueWithin', { time: duration(card.dueInMinutes) })}
               </span>
             ) : (
               <span className="text-[11px] text-slate-400">{t('decision.noDeadline')}</span>
             )}
             <span className="text-[11px] text-slate-400">
-              已等 {duration(card.waitingMinutes)}
+              {t('decision.waited', { time: duration(card.waitingMinutes) })}
             </span>
           </div>
 
@@ -145,7 +145,7 @@ export function DecisionCardView({
                   to={`/runs/${card.runId}`}
                   className="underline-offset-2 hover:underline"
                 >
-                  执行记录
+                  {t('decision.runRecord')}
                 </Link>
               </>
             )}
@@ -159,7 +159,7 @@ export function DecisionCardView({
           )}
           {card.agentSelfReport && (
             <p className="mt-0.5 text-[11px] text-slate-500">
-              Agent 自述：{card.agentSelfReport}
+              {t('itemDrawer.agentSelfReport', { report: card.agentSelfReport })}
             </p>
           )}
 
@@ -177,7 +177,7 @@ export function DecisionCardView({
                     <span className="text-slate-800">{o.name}</span>
                     {o.isRecommended && (
                       <span className="ml-1 rounded bg-emerald-600 px-1 text-[10px] text-white">
-                        Agent 倾向
+                        {t('decision.agentPrefers')}
                       </span>
                     )}
                   </p>
@@ -188,7 +188,7 @@ export function DecisionCardView({
                   {/* ★ 不确定性和理由一样重要：只给理由的建议看起来永远是对的 */}
                   {o.uncertainties.length > 0 && (
                     <p className="text-[11px] text-amber-700">
-                      不确定：{o.uncertainties.join('；')}
+                      {t('decision.uncertainties', { list: o.uncertainties.join('；') })}
                     </p>
                   )}
                 </li>
@@ -199,7 +199,7 @@ export function DecisionCardView({
           {/* ── 就地处理 ── */}
           {approve.isSuccess || reject.isSuccess ? (
             <p className="mt-1 text-xs text-slate-500">
-              已{approve.isSuccess ? t('decision.approve') : t('decision.reject')}
+              {approve.isSuccess ? t('decision.approved') : t('decision.rejected')}
             </p>
           ) : !card.canAct ? (
             <p className="mt-1 text-[11px] text-amber-800">
@@ -212,11 +212,11 @@ export function DecisionCardView({
                 onClick={() => setMode('approve')}
                 className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700"
               >
-                批准
+                {t('decDrawer.approve')}
               </button>
               <Button variant="outline" size="sm"
                 onClick={() => setMode('reject')}>
-                驳回
+                {t('decDrawer.reject')}
               </Button>
             </div>
           ) : mode === 'approve' ? (
@@ -240,7 +240,7 @@ export function DecisionCardView({
                   onClick={() => setMode(null)}
                   className="text-xs text-slate-500 hover:text-slate-700"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
@@ -264,7 +264,7 @@ export function DecisionCardView({
                   onClick={() => setMode(null)}
                   className="text-xs text-slate-500 hover:text-slate-700"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>

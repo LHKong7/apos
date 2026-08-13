@@ -57,7 +57,7 @@ export function AccountsPage() {
             to={`/projects/${projectId}/settings/members`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 成员与角色
+            {t('accounts.backToMembers')}
           </Link>
           <div className="ml-auto">
             <GatedButton
@@ -69,12 +69,12 @@ export function AccountsPage() {
               }}
               className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
             >
-              开账号
+              {t('accounts.create')}
             </GatedButton>
           </div>
         </div>
         <p className="mt-0.5 text-[11px] text-slate-400">
-          本组织的全部账号。开完号还要到具体项目的「成员与角色」里指派项目角色，他才看得到那个项目
+          {t('accounts.hint')}
         </p>
       </div>
 
@@ -100,26 +100,26 @@ export function AccountsPage() {
             {created && (
               <section className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2">
                 <h2 className="text-xs font-medium text-emerald-900">
-                  已为 {created.name} 开号
+                  {t('accounts.created', { name: created.name })}
                 </h2>
                 <dl className="mt-1.5 space-y-0.5 text-[11px] text-emerald-900">
                   <div>
-                    邮箱 <code className="font-mono">{created.email}</code>
+                    {t('accounts.email')} <code className="font-mono">{created.email}</code>
                   </div>
                   <div>
-                    初始口令 <code className="font-mono">{created.password}</code>
+                    {t('accounts.initialPassword')}{' '}
+                    <code className="font-mono">{created.password}</code>
                   </div>
                 </dl>
                 <p className="mt-1.5 text-[11px] text-emerald-700">
-                  口令只显示这一次（库里存的是散列，读不回来）。请现在就转交给他，
-                  并让他登录后自行修改。
+                  {t('accounts.passwordOnce')}
                 </p>
                 <button
                   type="button"
                   className="mt-1 text-[11px] text-emerald-800 underline"
                   onClick={() => setCreated(null)}
                 >
-                  我已转交
+                  {t('accounts.handedOver')}
                 </button>
               </section>
             )}
@@ -174,7 +174,7 @@ export function AccountsPage() {
                     </Button>
                     <Button variant="outline" size="sm"
                       onClick={() => setOpen(false)}>
-                      取消
+                      {t('common.cancel')}
                     </Button>
                   </div>
                 </form>

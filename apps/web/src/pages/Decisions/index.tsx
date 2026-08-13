@@ -97,15 +97,17 @@ export function DecisionsPage() {
               to={`/projects/${projectId}`}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              ← 项目总览
+              {t('agents.backToOverview')}
             </Link>
           )}
           <div className="ml-auto flex gap-1">
             <Tab active={scope === 'mine'} onClick={() => setScope('mine')}>
-              待我处理{stats ? ` ${stats.mine}` : ''}
+              {t('decisions.tab.mine')}
+              {stats ? ` ${stats.mine}` : ''}
             </Tab>
             <Tab active={scope === 'all'} onClick={() => setScope('all')}>
-              全部{stats ? ` ${stats.total}` : ''}
+              {t('decisions.tab.all')}
+              {stats ? ` ${stats.total}` : ''}
             </Tab>
           </div>
         </div>
@@ -116,7 +118,7 @@ export function DecisionsPage() {
               <span className="font-medium text-red-700">{t('decisions.overdueCount', { count: stats.overdue })}</span>
             )}
             {stats.dueSoon > 0 && <span className="text-amber-700">{t('decisions.dueSoon', { count: stats.dueSoon })}</span>}
-            可处理 {stats.actionable} 条
+            {t('decisions.actionable', { count: stats.actionable })}
             {mustReadOne > 0 && (
               <span className="text-slate-400">{t('decisions.mustConfirmOne', { count: mustReadOne })}</span>
             )}
@@ -147,12 +149,12 @@ export function DecisionsPage() {
           {inbox.data && inbox.data.repeated.length > 0 && (
             <div className="rounded border border-slate-300 bg-white px-3 py-2">
               <p className="text-xs text-slate-700">
-                这些决策在反复出现，也许该变成规则而不是每次都问你：
+                {t('decisions.repeatedHint')}
               </p>
               <ul className="mt-0.5 space-y-0.5">
                 {inbox.data.repeated.map((r) => (
                   <li key={r.type} className="text-[11px] text-slate-600">
-                    · {r.label} —— 当前队列里 {r.count} 条
+                    {t('decisions.repeatedItem', { label: r.label, count: r.count })}
                   </li>
                 ))}
               </ul>
@@ -161,7 +163,7 @@ export function DecisionsPage() {
                   to={`/projects/${projectId}/settings/policies`}
                   className="mt-1 inline-block text-[11px] text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline"
                 >
-                  去 Policy 配置 →
+                  {t('decisions.toPolicies')}
                 </Link>
               )}
             </div>
@@ -183,7 +185,7 @@ export function DecisionsPage() {
                 onClick={() => setPicked(new Set())}
                 className="text-slate-300 hover:text-white"
               >
-                取消选择
+                {t('list.clearSelection')}
               </button>
               {/* ★ 没有「批量驳回」：驳回必须写原因，而每条的原因各不相同。
                   批量驳回要么逼用户写一句放之四海皆准的废话，要么干脆不写。 */}
@@ -199,7 +201,10 @@ export function DecisionsPage() {
           {batch.data && batch.data.failed.length > 0 && (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <p>
-                批准 {batch.data.approved} 条，{batch.data.failed.length} 条失败：
+                {t('decisions.bulkResult', {
+                  approved: batch.data.approved,
+                  failed: batch.data.failed.length,
+                })}
               </p>
               <ul className="mt-0.5 space-y-0.5">
                 {batch.data.failed.map((f) => (
@@ -217,7 +222,7 @@ export function DecisionsPage() {
                 checked={selected.length === batchable.length}
                 onCheckedChange={(v) => setPicked(v ? new Set(batchableIds) : new Set())}
               />
-              全选可批量的 {batchable.length} 条（低风险且可逆）
+              {t('decisions.selectAllBatchable', { count: batchable.length })}
             </label>
           )}
 

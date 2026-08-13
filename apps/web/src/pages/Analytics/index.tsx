@@ -163,7 +163,7 @@ export function AnalyticsPage() {
             to={`/projects/${projectId}/board`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 回到看板
+            {t('nav.backToBoard')}
           </Link>
 
           <select
@@ -186,12 +186,12 @@ export function AnalyticsPage() {
               checked={compare}
               onCheckedChange={(v) => setParam('compare', String(v))}
             />
-            对比上一周期
+            {t('analytics.comparePrevious')}
           </label>
 
           {data && (
             <span className="ml-auto text-[11px] text-slate-400">
-              数据实时计算 · {relativeTime(data.generatedAt)}
+              {t('analytics.computedLive', { time: relativeTime(data.generatedAt) })}
             </span>
           )}
         </div>
@@ -236,15 +236,17 @@ export function AnalyticsPage() {
             */}
             {data.confidence.level === 'low' && (
               <p className="rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-                数据积累中：近 {data.confidence.days} 天完成 {data.confidence.completed} 项，
-                还需约 {Math.max(0, data.confidence.needed - data.confidence.completed)} 项
-                才能产出可靠分析。以下数字仅供参考，不建议据此下强结论。
+                {t('analytics.lowConfidence', {
+                  days: data.confidence.days,
+                  completed: data.confidence.completed,
+                  needed: Math.max(0, data.confidence.needed - data.confidence.completed),
+                })}
               </p>
             )}
 
             {!compare && (
               <p className="text-[11px] text-slate-400">
-                已关闭环比。首个周期或数据不足时，绝对值参考价值有限
+                {t('analytics.compareOff')}
               </p>
             )}
 
@@ -283,7 +285,7 @@ export function AnalyticsPage() {
               onClick={() => setDrill(null)}
               className="text-xs text-slate-500 hover:text-slate-800"
             >
-              关闭
+              {t('common.close')}
             </button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -314,7 +316,7 @@ export function AnalyticsPage() {
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
           {toast}
           <button type="button" className="ml-2 underline" onClick={() => setToast(null)}>
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}
