@@ -58,10 +58,14 @@ export function ManualMoveDialog({
   return (
     <Modal onClose={onCancel} title={t('move.title')}>
       <h2 className="text-sm font-semibold text-slate-900">
-        将「{card.title}」从 {stageLabel(card.stage)} 移到 {stageLabel(toStage)}
+        {t('move.heading', {
+          title: card.title,
+          from: stageLabel(card.stage),
+          to: stageLabel(toStage),
+        })}
       </h2>
       <p className="mt-1 text-xs text-slate-500">
-        目标状态 {statusLabel(toStatus)} · 该操作会记入事件并标注「人类覆盖」
+        {t('move.targetStatus', { status: statusLabel(toStatus) })}
       </p>
 
       <fieldset className="mt-3 space-y-1.5">
@@ -95,7 +99,7 @@ export function ManualMoveDialog({
       {hasRunningRun && (
         <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
           <Checkbox tone="neutral" checked={terminateRun} onCheckedChange={setTerminateRun} />
-          同时终止正在运行的 Agent Run
+          {t('move.terminateRun')}
         </label>
       )}
 
@@ -106,7 +110,7 @@ export function ManualMoveDialog({
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="outline" size="sm"
           onClick={onCancel}>
-          取消
+          {t('common.cancel')}
         </Button>
         <Button variant="neutral" size="sm"
           disabled={!canSubmit}

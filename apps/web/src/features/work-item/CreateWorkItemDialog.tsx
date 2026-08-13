@@ -134,7 +134,7 @@ export function CreateWorkItemDialog({
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            描述
+            {t('createItem.description')}
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
           </span>
           <Textarea
@@ -151,10 +151,7 @@ export function CreateWorkItemDialog({
             去做任意事情 —— 两道 Human Gate 就都被绕开了。
         */}
         <p className="rounded bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800">
-          手工建的任务不经过「需求 → 计划 → 批准」那条链，所以会先落成
-          <strong>{t('createItem.draft')}</strong>{t('createItem.draftNote')}
-          需要有批准权限的人（tech_lead）放行一次 —— 门禁的粒度从
-          「批一份计划」变成「批一个任务」，而不是没有门禁。
+          {t('createItem.gateWarning', { status: t('createItem.draft') })}
         </p>
 
         {create.error instanceof ApiError && (
@@ -164,7 +161,7 @@ export function CreateWorkItemDialog({
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="neutral" size="sm"
             disabled={!title.trim() || create.isPending}

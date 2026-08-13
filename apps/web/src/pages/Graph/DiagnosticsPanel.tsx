@@ -35,7 +35,7 @@ export function DiagnosticsPanel({
   if (diagnostics.length === 0) {
     return (
       <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
-        💡 图中没有发现结构性问题
+        {t('diag.noneFound')}
       </div>
     );
   }
@@ -46,7 +46,7 @@ export function DiagnosticsPanel({
     <div className="max-h-48 shrink-0 overflow-y-auto border-t border-slate-200 bg-white px-4 py-2">
       <div className="mb-1 flex items-center gap-2">
         <h2 className="text-xs font-medium text-slate-700">
-          💡 图中发现的问题（{diagnostics.length}）
+          {t('diag.found', { count: diagnostics.length })}
         </h2>
         {diagnostics.length > COLLAPSED && (
           <button
@@ -83,7 +83,7 @@ export function DiagnosticsPanel({
                       onClick={() => onFocus(d.affectedNodes[0]!)}
                       className="text-[11px] text-slate-400 underline hover:text-slate-600"
                     >
-                      在图中定位（影响 {d.affectedNodes.length} 个节点）
+                      {t('diag.locate', { count: d.affectedNodes.length })}
                     </button>
                   )}
                 </div>

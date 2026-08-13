@@ -141,7 +141,7 @@ export function FlowTab({
         />
         {efficiency > 0 && (
           <p className="mt-2 border-t border-slate-100 pt-1.5 text-xs text-slate-700">
-            有效工作时间{' '}
+            {t('flow.activeTime')}{' '}
             <span className="font-semibold">{Math.round((flow.activeHours / efficiency) * 100)}%</span>
             {' · '}{t('flow.waitTime')}{' '}
             <span className="font-semibold text-orange-700">
@@ -156,7 +156,7 @@ export function FlowTab({
           <TrendChart points={flow.wipTrend} format={(v) => t('flow.wipUnit', { count: v })} />
         </Card>
         <Card title={t('flow.blockedTrend')} subtitle={t('flow.blockedSubtitle')}>
-          <TrendChart points={flow.blockedTrend} tone="waiting" format={formatHours} emptyHint="这段时间没有任务被阻塞" />
+          <TrendChart points={flow.blockedTrend} tone="waiting" format={formatHours} emptyHint={t('flow.noBlocked')} />
         </Card>
       </div>
     </div>

@@ -32,7 +32,7 @@ export function InsightsPanel({
   if (insights.length === 0) {
     return (
       <div className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-        💡 当前未发现明显异常
+        {t('insights.noneFound')}
       </div>
     );
   }
@@ -43,7 +43,7 @@ export function InsightsPanel({
         <h2 className="text-xs font-medium text-slate-700">{t('insights.title', { count: insights.length })}</h2>
         {lowConfidence && (
           <span className="text-[11px] text-slate-400">
-            样本较少，以下结论仅供参考
+            {t('insights.lowConfidence')}
           </span>
         )}
       </div>

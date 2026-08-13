@@ -143,20 +143,20 @@ export function StructuredEditor({
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-slate-600">{t('editor.acceptance')}</span>
           <span className="text-[11px] text-slate-400">
-            Review 阶段按它逐条核验，所以要可判定，不要写「体验更好」
+            {t('editor.acceptanceHint')}
           </span>
           <button
             type="button"
             onClick={() => setCriteria((l) => [...l, { text: '', verification: 'human' }])}
             className="ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
           >
-            + 加一条
+            {t('editor.addCriterion')}
           </button>
         </div>
         <div className="mt-1 space-y-1">
           {criteria.length === 0 && (
             <p className="text-[11px] text-amber-700">
-              ⚠ 一条都没有的话，Review 阶段没有任何可校验的依据
+              {t('editor.noCriteriaWarning')}
             </p>
           )}
           {criteria.map((c, i) => (
@@ -205,7 +205,7 @@ export function StructuredEditor({
 
       <div className="flex justify-end gap-2 border-t border-slate-100 pt-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
-          取消
+          {t('common.cancel')}
         </Button>
         <Button variant="neutral" size="sm" onClick={submit} disabled={saving}>
           {saving ? t('common.saving') : t('common.save')}

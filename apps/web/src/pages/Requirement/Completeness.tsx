@@ -59,7 +59,7 @@ export function Completeness({ scores }: { scores: Record<string, number> }) {
 
       {total < 60 && (
         <span className="text-[11px] text-amber-700">
-          完整度较低，Agent 可能产生较多返工 —— 但不阻止你确认
+          {t('completeness.lowWarning')}
         </span>
       )}
     </div>

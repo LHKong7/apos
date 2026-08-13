@@ -330,7 +330,7 @@ export function OverviewPage() {
                   👤 {m.name}
                   <span className="ml-2 text-slate-500">{m.role}</span>
                   <span className="ml-2 text-slate-500">
-                    {m.pendingDecisions} 项决策
+                    {t('overview.decisionCount', { count: m.pendingDecisions })}
                     {m.overdueDecisions > 0 && (
                       <span className="ml-1 text-red-700">{t('overview.overdueDecisions', { count: m.overdueDecisions })}</span>
                     )}
@@ -344,7 +344,7 @@ export function OverviewPage() {
             */}
             {d.decisions.unassigned > 0 && (
               <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
-                另有 {d.decisions.unassigned} 项决策没有指定责任人。没人认领的决策最容易烂在队列里
+                {t('overview.unassignedDecisions', { count: d.decisions.unassigned })}
               </p>
             )}
           </section>

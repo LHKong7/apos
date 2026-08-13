@@ -134,7 +134,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{t('project.new')}</h2>
         <p className="text-[11px] text-slate-500">
-          项目建在**当前组织**下，创建者自动成为 tech_lead。
+          {t('project.newHint')}
         </p>
 
         <label className="block">
@@ -148,7 +148,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            目标
+            {t('project.goal')}
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
           </span>
           <Textarea
@@ -178,13 +178,13 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
               一眼看见的设置。默认取中间那档，而不是最自主的那档。
           */}
           <p className="mt-1 text-[11px] text-slate-500">
-            建完之后可以在项目设置里改，改动会记审计。
+            {t('project.autonomyHint')}
           </p>
         </label>
 
         <label className="block">
           <span className="text-xs font-medium text-slate-700">
-            预算上限
+            {t('project.budgetCap')}
             <span className="ml-1 font-normal text-slate-400">{t('project.budgetHint')}</span>
           </span>
           <Input
@@ -202,7 +202,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}

@@ -45,7 +45,7 @@ export function ConnectionBanner() {
         <span className="absolute inset-0 rounded-full bg-gate animate-ping-soft" />
         <span className="relative h-1.5 w-1.5 rounded-full bg-gate" />
       </span>
-      实时更新已断开，正在重连…（卡片显示的是最后一次同步的状态）
+      {t('conn.reconnecting')}
     </div>
   );
 }

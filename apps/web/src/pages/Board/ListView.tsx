@@ -57,7 +57,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
           <Button variant="neutral"
             disabled={retriable.length === 0}
             onClick={() => onBulkRetry(retriable)}>
-            批量重试 {retriable.length} 个失败任务
+            {t('list.bulkRetry', { count: retriable.length })}
           </Button>
           {/* 批量操作前给出影响预估（页面文档 05 §5.8） */}
           {retriable.length > 0 && (
@@ -68,7 +68,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
             onClick={() => setSelected(new Set())}
             className="ml-auto text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
           >
-            取消选择
+            {t('list.clearSelection')}
           </button>
         </div>
       )}

@@ -74,7 +74,7 @@ export function RunControlDialog({
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="outline" size="sm"
           onClick={onCancel}>
-          取消
+          {t('common.cancel')}
         </Button>
         <button
           type="button"

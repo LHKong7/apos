@@ -58,11 +58,11 @@ export function AgentView({ projectId, columns, actions }: Props) {
           <header className="flex items-center gap-2.5 border-b border-slate-200/70 bg-slate-100/40 px-3 py-2.5">
             <AssigneeChip actor={{ type: 'human', ...lane.owner }} />
             <span className="text-xs tabular-nums text-slate-500">
-              {lane.cards.length} 项待处理
+              {t('agentView.pendingCount', { count: lane.cards.length })}
             </span>
             {lane.overdue > 0 && (
               <span className="rounded-full border border-red-300/50 bg-red-50 px-2 py-0.5 text-[11px] font-medium tabular-nums text-red-700">
-                ⏰ {lane.overdue} 项已超时
+                {t('agentView.overdueCount', { count: lane.overdue })}
               </span>
             )}
           </header>

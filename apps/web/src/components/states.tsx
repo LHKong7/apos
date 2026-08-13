@@ -73,7 +73,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
         )}
         {onRetry && (
           <Button variant="outline" size="sm" onClick={onRetry} className="mt-3 border-destructive/40 text-destructive hover:bg-destructive/10">
-            重试
+            {t('common.retry')}
           </Button>
         )}
       </AlertDescription>

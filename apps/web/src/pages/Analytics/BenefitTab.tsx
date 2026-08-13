@@ -75,7 +75,7 @@ export function BenefitTab({
               placeholder={t('benefit.notSet')}
               aria-label={t('benefit.hourlyCost')}
               className="w-24" />
-            / 小时
+            {t('benefit.perHour')}
           </label>
           <Button variant="neutral" size="xs"
             disabled={save.isPending}
@@ -91,7 +91,7 @@ export function BenefitTab({
               }}
               className="text-[11px] text-slate-500 hover:text-slate-700"
             >
-              清空（回到「不换算」）
+              {t('benefit.clearRate')}
             </button>
           )}
         </div>
@@ -114,13 +114,19 @@ export function BenefitTab({
       {b.hasBaseline && b.net !== null && (
         <Card title={t('benefit.formula')} subtitle={t('benefit.formulaHint')}>
           <p className="text-[11px] text-slate-600">
-            {b.agentHours} 小时 × {b.currency}
-            {b.laborHourlyCost}/h
+            {t('benefit.hoursTimesRate', {
+              hours: b.agentHours,
+              currency: b.currency,
+              rate: b.laborHourlyCost ?? '',
+            })}
             <span className="text-slate-400">{t('benefit.agentHours')}</span>
           </p>
           <p className="text-[11px] text-slate-600">
-            − {b.humanOverheadHours} 小时 × {b.currency}
-            {b.laborHourlyCost}/h
+            {t('benefit.minusHoursTimesRate', {
+              hours: b.humanOverheadHours,
+              currency: b.currency,
+              rate: b.laborHourlyCost ?? '',
+            })}
             <span className="text-slate-400">{t('benefit.overrideHours')}</span>
           </p>
           <p className="text-[11px] text-slate-600">

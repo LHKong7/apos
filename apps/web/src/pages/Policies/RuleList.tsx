@@ -85,7 +85,7 @@ export function RuleList({
                   p.hits30d === 0 ? 'text-slate-400' : 'text-slate-600 hover:text-slate-900',
                 )}
               >
-                近 30 天命中 {p.hits30d} 次
+                {t('ruleList.hits30d', { count: p.hits30d })}
               </button>
 
               {p.editable ? (
@@ -98,7 +98,7 @@ export function RuleList({
                       驳回文案会说清楚是因为放宽。
                   */}
                   <Action permission="policy.tighten" onClick={() => onEdit(p)}>
-                    编辑
+                    {t('common.edit')}
                   </Action>
                   {/* ★ 停用就是把治理拿掉，与放宽同档 */}
                   <Action
@@ -108,7 +108,7 @@ export function RuleList({
                     {p.enabled ? t('policy.disable') : t('policy.enable')}
                   </Action>
                   <Action permission="policy.loosen" onClick={() => onDelete(p)}>
-                    删除
+                    {t('common.delete')}
                   </Action>
                 </>
               ) : (
@@ -116,7 +116,7 @@ export function RuleList({
               )}
               {/* 变更历史是只读的 —— 谁都该看得到规则怎么变成今天这样 */}
               <Action permission="policy.view" onClick={() => onHistory(p)}>
-                变更历史
+                {t('ruleList.changeHistory')}
               </Action>
             </div>
           </li>

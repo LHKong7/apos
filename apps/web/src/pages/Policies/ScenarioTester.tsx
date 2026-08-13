@@ -53,7 +53,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
       <section className="rounded border border-slate-200 bg-white px-3 py-2">
         <h2 className="text-xs font-medium text-slate-700">{t('scenario.intro')}</h2>
         <p className="text-[11px] text-slate-400">
-          排查「为什么这个操作还要找我」最快的路径
+          {t('scenario.introHint')}
         </p>
 
         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -138,12 +138,12 @@ function Result({ result }: { result: ScenarioTestResponse }) {
         {result.requiresHuman ? t('scenario.needsHuman') : t('scenario.automatic')}
         {result.matchedPolicyName && (
           <span className="ml-2 font-normal text-slate-600">
-            命中规则「{result.matchedPolicyName}」
+            {t('scenario.matchedRule', { name: result.matchedPolicyName })}
           </span>
         )}
         {!result.matchedPolicyName && (
           <span className="ml-2 font-normal text-slate-600">
-            没有规则命中，走自治等级的默认策略
+            {t('scenario.noMatch')}
           </span>
         )}
       </p>
@@ -154,7 +154,7 @@ function Result({ result }: { result: ScenarioTestResponse }) {
       */}
       <div className="mt-2">
         <p className="text-[11px] text-slate-500">
-          匹配过程（按优先级从上到下，命中即停）
+          {t('scenario.matchProcess')}
           {skipped > 0 && <span className="ml-1">{t('scenario.skipped', { count: skipped })}</span>}
         </p>
         <ul className="mt-1 space-y-0.5">

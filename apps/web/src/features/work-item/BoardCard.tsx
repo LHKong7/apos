@@ -179,7 +179,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
               actions.onHandleGate(card);
             }}
             className="shrink-0 hover:brightness-110">
-            处理 →
+            {t('card.handle')}
           </Button>
         </div>
       </>
@@ -217,7 +217,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       <>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-red-700">
-            ❌ 失败 {card.consecutiveFailures}/3
+            {t('card.failedTimes', { count: card.consecutiveFailures })}
           </span>
           {chip}
         </div>

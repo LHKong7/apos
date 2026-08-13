@@ -108,14 +108,14 @@ export function HitsPanel({
               )}
               {q.data.overriddenAfterPass > 0 && (
                 <span className="text-amber-700">
-                  放行后被人工纠正 {q.data.overriddenAfterPass}
+                  {t('hits.overriddenAfterPass', { count: q.data.overriddenAfterPass })}
                 </span>
               )}
             </div>
 
             {q.data.hits.length === 0 ? (
               <p className="mt-2 rounded border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
-                近 30 天没有命中记录
+                {t('hits.none30d')}
               </p>
             ) : (
               <table className="mt-2 w-full text-[11px]">
@@ -185,7 +185,7 @@ export function HitsPanel({
                             )}
                             {h.decision.waitMinutes !== null && (
                               <span className="ml-1 text-slate-400">
-                                等 {duration(h.decision.waitMinutes)}
+                                {t('hits.waited', { time: duration(h.decision.waitMinutes) })}
                               </span>
                             )}
                           </span>
@@ -199,7 +199,7 @@ export function HitsPanel({
 
             {q.data.truncated && (
               <p className="mt-1 text-[11px] text-slate-400">
-                只显示最近 100 条 —— 更早的命中在事件流里，没有丢
+                {t('hits.truncated')}
               </p>
             )}
           </>
@@ -208,7 +208,7 @@ export function HitsPanel({
         <div className="mt-2">
           <Button variant="outline" size="sm"
             onClick={onClose}>
-            关闭
+            {t('common.close')}
           </Button>
         </div>
       </div>

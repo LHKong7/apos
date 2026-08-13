@@ -97,12 +97,12 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
                 </span>
                 <span className="shrink-0 text-slate-500">{a.agentName}</span>
                 <span className="shrink-0 tabular-nums font-medium text-orange-700">
-                  {money(String(a.cost))}（{a.times}×常态）
+                  {t('cost.timesNormal', { amount: money(String(a.cost)), times: a.times })}
                 </span>
                 <Button variant="outline" size="xs"
                   onClick={() => onOpenRun(a.runId)}
                   className="shrink-0">
-                  看执行记录 →
+                  {t('cost.viewRun')}
                 </Button>
               </li>
             ))}

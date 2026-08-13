@@ -240,8 +240,11 @@ export function TrendChart({
         <div className="flex items-center justify-between text-[11px] text-slate-500">
           <span>{points[0]!.day.slice(5)}</span>
           <span className="tabular-nums">
-            峰值 {format(points[peakIdx]!.value)}（{points[peakIdx]!.day.slice(5)}）· 最新{' '}
-            {format(points[lastIdx]!.value)}
+            {t('chart.peakAndLatest', {
+              peak: format(points[peakIdx]!.value),
+              peakDay: points[peakIdx]!.day.slice(5),
+              latest: format(points[lastIdx]!.value),
+            })}
           </span>
           <span>{points[lastIdx]!.day.slice(5)}</span>
         </div>

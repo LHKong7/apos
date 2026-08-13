@@ -106,7 +106,7 @@ export function TopBar({
             onClick={onNewWorkItem}
             className="rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1 text-xs font-medium text-white shadow-sm hover:brightness-110"
           >
-            + 新建任务
+            {t('board.newWorkItem')}
           </GatedButton>
 
           {/*
@@ -149,7 +149,7 @@ export function TopBar({
         {/* 超时与失败是对上面三个数字的补注，跟着它们走，不进右边的筛选组 */}
         {(summary?.overdueDecisions ?? 0) > 0 && (
           <span className="font-medium text-red-700">
-            其中 {summary?.overdueDecisions} 项已超时
+            {t('board.overdueOfWhich', { count: summary?.overdueDecisions ?? 0 })}
           </span>
         )}
         {(summary?.failed ?? 0) > 0 && (
@@ -190,7 +190,7 @@ export function TopBar({
             active={Boolean(filters.onlyMine)}
             onClick={() => onFilters({ onlyMine: !filters.onlyMine })}
           >
-            只看需我处理
+            {t('board.onlyMine')}
           </FilterToggle>
 
           {hasFilters && (
@@ -199,7 +199,7 @@ export function TopBar({
               onClick={onClearFilters}
               className="rounded-full px-2 py-1 text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
             >
-              清除筛选
+              {t('kanban.clearFilters')}
             </button>
           )}
         </div>
@@ -246,7 +246,7 @@ function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void
         <path d="M2.5 5h8M2.5 8h6M2.5 11h9" />
         {quiet && <path d="M13.5 3.5l-11 9" />}
       </svg>
-      安静模式
+      {t('board.quietMode')}
     </button>
   );
 }

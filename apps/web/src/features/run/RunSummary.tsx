@@ -29,7 +29,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
           <dd>{statusLabel(run.status)}</dd>
           <dt className="text-slate-400">{t('runSum.attempt')}</dt>
           <dd>
-            第 {run.attempt} 次
+            {t('runSum.attemptNo', { n: run.attempt })}
             {related.previousRun && (
               <span className="ml-1 text-slate-400">{t('runSum.previousStatus', { status: related.previousRun.status })}</span>
             )}
@@ -46,7 +46,11 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
             {run.timeoutAt && !run.endedAt && (
               <span className="text-slate-400">
                 {' '}
-                / 超时 {duration((new Date(run.timeoutAt).getTime() - new Date(run.startedAt).getTime()) / 60_000)}
+                {t('runSum.timeoutAfter', {
+                  duration: duration(
+                    (new Date(run.timeoutAt).getTime() - new Date(run.startedAt).getTime()) / 60_000,
+                  ),
+                })}
               </span>
             )}
           </dd>
@@ -64,7 +68,9 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
                 {money(estimated)}
                 {spent > estimated && estimated > 0 && (
                   <span className="ml-1">
-                    ⚠ 超出 {(((spent - estimated) / estimated) * 100).toFixed(0)}%
+                    {t('runSum.overBy', {
+                      percent: (((spent - estimated) / estimated) * 100).toFixed(0),
+                    })}
                   </span>
                 )}
               </dd>

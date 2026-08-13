@@ -82,7 +82,7 @@ export function DecisionView({
             <Button variant="gate" size="sm"
               onClick={() => actions.onHandleGate(card)}
               className="shrink-0 hover:brightness-95">
-              处理 →
+              {t('card.handle')}
             </Button>
           </article>
         );

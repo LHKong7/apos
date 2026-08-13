@@ -42,7 +42,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
           onClick={onJumpToFailure}
           className="mb-1 self-start text-[11px] text-red-700 underline"
         >
-          跳到失败点 ↓
+          {t('timeline.jumpToFailure')}
         </button>
       )}
 
@@ -67,7 +67,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
         {live && (
           <div className="flex items-center gap-2 py-2 pl-1 text-xs text-slate-500">
             <span className="inline-block h-1.5 w-1.5 animate-breathe rounded-full bg-emerald-500" />
-            执行中…
+            {t('timeline.running')}
           </div>
         )}
       </div>
@@ -79,7 +79,7 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
           onClick={scrollToBottom}
           className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-fade-in-up rounded-full border border-brand/40 px-3 py-1 text-[11px] font-medium text-brand shadow-lg glass-strong hover:border-brand"
         >
-          ↓ {unseen} 条新事件
+          {t('timeline.newEvents', { count: unseen })}
         </button>
       )}
     </div>

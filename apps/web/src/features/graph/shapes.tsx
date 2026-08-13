@@ -1,4 +1,4 @@
-import { t, type MessageKey } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { NodeKind } from '@apos/domain';
 import { NODE_H, NODE_W } from './geometry';
@@ -136,6 +136,7 @@ function hexagonPoints(): string {
 
 /** 图例。没有它，七种形状对第一次看图的人就是七种装饰 */
 export function Legend() {
+  const t = useT();
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
       {(Object.entries(KIND_META) as [NodeKind, { icon: string; labelKey: MessageKey }][]).map(
@@ -158,13 +159,13 @@ export function Legend() {
         <svg width={20} height={6} aria-hidden>
           <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge-critical)" strokeWidth={3} />
         </svg>
-        关键路径
+        {t('graph.criticalPath')}
       </span>
       <span className={clsx('inline-flex items-center gap-1')}>
         <svg width={20} height={6} aria-hidden>
           <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge)" strokeWidth={1.5} strokeDasharray="4 2" />
         </svg>
-        数据依赖
+        {t('graph.dataDependency')}
       </span>
     </div>
   );

@@ -161,7 +161,7 @@ export function SotPanel({
                 </td>
                 {m.customized && (
                   <td className="w-8 py-1 text-right text-[10px] text-amber-700" title={t('sot.deviated')}>
-                    改过
+                    {t('sot.customized')}
                   </td>
                 )}
               </tr>
@@ -244,7 +244,7 @@ export function SotPanel({
               onClick={() => setConfirming(false)}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </Modal>

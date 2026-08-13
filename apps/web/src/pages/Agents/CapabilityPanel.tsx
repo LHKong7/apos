@@ -39,10 +39,17 @@ export function CapabilityPanel({
         {/* 数据库里的运行时名和适配器自报的名字常常是同一个，重复印两遍只是噪音 */}
         <span className="text-[11px] text-slate-500">
           {runtimeName === report.runtime.name ? '' : `${runtimeName} · `}
-          {report.runtime.name} {report.runtime.version} · 协议 {report.protocolVersion}
+          {t('cap.runtimeProtocol', {
+            name: report.runtime.name,
+            version: report.runtime.version,
+            protocol: report.protocolVersion,
+          })}
         </span>
         <span className="ml-auto text-[11px] text-slate-500">
-          支持 {report.supported.length} / {report.supported.length + report.missing.length}
+          {t('cap.supportedOf', {
+            n: report.supported.length,
+            total: report.supported.length + report.missing.length,
+          })}
         </span>
       </div>
 
@@ -50,14 +57,14 @@ export function CapabilityPanel({
           终止不可靠、成本可能泄漏，这类运行时不该承接高风险任务。 */}
       {report.restricted && (
         <p className="border-b border-red-100 bg-red-50 px-3 py-1.5 text-[11px] text-red-800">
-          ⚠ 存在 critical 级缺失，不应把高风险任务派给这个运行时上的 Agent
+          {t('cap.restrictedWarning')}
         </p>
       )}
 
       {/* ── 做不到什么（先说这个） ── */}
       {missing.length === 0 ? (
         <p className="px-3 py-2 text-[11px] text-slate-500">
-          协议定义的 {report.supported.length} 项能力全部支持，没有降级
+          {t('cap.allSupported', { n: report.supported.length })}
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
@@ -104,7 +111,7 @@ export function CapabilityPanel({
           })}
         </span>
         <span>
-          心跳{' '}
+          {t('cap.heartbeat')}{' '}
           {report.transport.heartbeatIntervalSeconds === null
             ? t('cap.none')
             : `${report.transport.heartbeatIntervalSeconds}s`}
@@ -152,7 +159,7 @@ export function CapabilityPanel({
             </ul>
           )}
           <p className="mt-1 text-[11px] text-slate-400">
-            这是运行时声明能提供的工具；某个 Agent 实际能用哪些，由它自己的权限边界决定
+            {t('cap.toolsNote')}
           </p>
         </div>
       )}

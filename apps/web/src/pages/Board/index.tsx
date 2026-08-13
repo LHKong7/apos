@@ -184,7 +184,7 @@ export function BoardPage() {
       {/* 项目已暂停时给出全局提示（页面文档 05 §7） */}
       {project.data?.project.status === 'paused' && (
         <div className="bg-slate-200 px-4 py-1 text-center text-[11px] text-slate-700">
-          项目已暂停，卡片不会自动流动
+          {t('board.projectPaused')}
         </div>
       )}
 
@@ -251,7 +251,7 @@ export function BoardPage() {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

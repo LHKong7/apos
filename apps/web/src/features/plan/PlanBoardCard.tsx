@@ -105,7 +105,7 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
               onOpen(plan);
             }}
             className="shrink-0 hover:brightness-110">
-            处理 →
+            {t('card.handle')}
           </Button>
         </div>
       </div>

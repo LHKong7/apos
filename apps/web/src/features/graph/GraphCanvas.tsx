@@ -373,7 +373,7 @@ export function GraphCanvas({
           }}
           className="ml-1 text-slate-600 hover:text-slate-900"
         >
-          适应窗口
+          {t('graph.fitToWindow')}
         </button>
       </div>
     </div>

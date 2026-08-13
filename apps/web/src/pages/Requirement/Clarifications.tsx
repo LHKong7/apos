@@ -58,7 +58,7 @@ export function Clarifications({
   if (clarifications.length === 0) {
     return (
       <p className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400">
-        AI 没有提出澄清问题
+        {t('clarify.none')}
       </p>
     );
   }
@@ -74,7 +74,7 @@ export function Clarifications({
     <section className="rounded border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5">
         <h2 className="text-xs font-medium text-slate-700">
-          ❓ 需要澄清（{clarifications.length}）
+          {t('clarify.title', { count: clarifications.length })}
         </h2>
         {unanswered > 0 && (
           <span className="text-[11px] text-red-700">{t('clarify.unanswered', { count: unanswered })}</span>
@@ -157,7 +157,8 @@ function Question({
       {/* ★ Agent 倾向 + 依据。只提问不给建议，就是在考用户 */}
       {c.agentSuggestion && (
         <p className="mt-0.5 text-[11px] text-slate-600">
-          Agent 倾向：<span className="text-slate-800">{c.agentSuggestion}</span>
+          {t('clarify.agentLeans')}
+          <span className="text-slate-800">{c.agentSuggestion}</span>
           {c.suggestionBasis && <span className="text-slate-400">{t('clarify.basis', { basis: c.suggestionBasis })}</span>}
         </p>
       )}
@@ -200,7 +201,7 @@ function Question({
               onClick={() => onAnswer(c.id, custom.trim(), false)}
               className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700"
             >
-              提交
+              {t('clarify.submit')}
             </button>
           )}
         </div>

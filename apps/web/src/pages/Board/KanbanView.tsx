@@ -1,4 +1,4 @@
-import { t } from '../../lib/i18n';
+import { t, useT } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import { manualTargetForStage } from '@apos/domain';
@@ -107,6 +107,7 @@ function Column({
   onDragEnd: () => void;
   onDrop: (card: Card, toStage: Stage) => void;
 }) {
+  const t = useT();
   const [over, setOver] = useState(false);
 
   const drop = dragging ? evaluateDrop(dragging, column.key) : null;
@@ -187,9 +188,9 @@ function Column({
           <p className="px-1 py-3 text-center text-[11px] text-slate-400">
             {hasFilters ? (
               <>
-                无匹配{' '}
+                {t('kanban.noMatch')}{' '}
                 <button type="button" onClick={onClearFilters} className="underline">
-                  清除筛选
+                  {t('kanban.clearFilters')}
                 </button>
               </>
             ) : column.key === 'execution' ? (
@@ -211,7 +212,9 @@ function Column({
             onClick={onExpandDone}
             className="w-full border-dashed text-slate-500 hover:border-slate-400 hover:bg-white hover:text-slate-700">
             {/* count 含计划卡，折叠数只该算任务 */}
-            ⋯ 展开其余 {column.count - column.plans.length - column.items.length} 项
+            {t('kanban.expandRest', {
+              count: column.count - column.plans.length - column.items.length,
+            })}
           </Button>
         )}
       </div>
