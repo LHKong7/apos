@@ -1414,6 +1414,64 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   // ── 计划 ────────────────────────────────────────────────────────────
+  /**
+   * 确认需求并立刻生成计划 —— **一次调用**。
+   *
+   * ★★ 此前这是浏览器里的两次连续请求（approve 然后 plans）。
+   *
+   *   中间任何一处断掉 —— 网络抖动、用户关了标签页、生成阶段报错 ——
+   *   留下的都是「需求已确认，但没有计划」：状态已经变了，而用户看到的
+   *   是一句报错，会以为什么都没发生。再点一次确认还会撞上
+   *   「已确认的需求不能再确认」。
+   *
+   * ★ 不能把两步塞进一个数据库事务：生成计划要调 LLM，可能跑几分钟，
+   *   一个横跨它的事务会一直占着连接。所以保证的是**另一件事**：
+   *   确认这一步要么成功要么不发生，而计划有没有生成出来单独如实回报。
+   *   生成失败时需求仍是 approved（那一步确实成功了），调用方可以重试
+   *   POST /requirements/:id/plans —— 不需要也不能再确认一次。
+   */
+  app.post('/api/v1/requirements/:id/approve-and-plan', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const note = (req.body as { note?: string } | undefined)?.note;
+
+    const approved = await approveRequirement(db, {
+      requirementId: id,
+      approverId: userId,
+      correlationId: corr(req),
+      note,
+    });
+
+    if (!approved.ok) {
+      if (approved.code === 'EMPTY_REQUIREMENT') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
+        );
+      }
+      throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', approved.questions);
+    }
+
+    try {
+      const summary = await generatePlan(db, deps.provider, {
+        requirementId: id,
+        correlationId: corr(req),
+      });
+      return reply.status(201).send({ requirementId: id, plan: summary, planError: null });
+    } catch (err) {
+      /**
+       * ★ 生成失败不回滚确认 —— 确认是人做的判断，它真的发生了。
+       *   把它撤掉会让「我明明点了确认」和界面状态对不上。
+       *   如实回报，让调用方决定是重试生成还是先去看需求。
+       */
+      return reply.status(201).send({
+        requirementId: id,
+        plan: null,
+        planError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   app.post('/api/v1/requirements/:id/plans', async (req, reply) => {
     actorFrom(req);
     const { id } = req.params as { id: string };

@@ -391,6 +391,7 @@ export const zh: Record<keyof typeof en, string> = {
   'requirement.field.constraints': '约束',
   'requirement.field.risks': '潜在风险',
   'requirement.field.acceptanceCriteria': '验收标准',
+  'requirement.detail.approvedButPlanFailed': '需求已确认，但生成计划失败：{reason}。重试「生成计划」即可，不需要再确认一次。',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': '还没有登记任何代码仓库',
@@ -1613,6 +1614,7 @@ export const zh: Record<keyof typeof en, string> = {
   'plan.gateBreakdown': '需要你批准的 {approval} 项，需要人来执行的 {execution} 项：',
   'plan.causeApproval': '审批',
   'plan.causeExecution': '人工',
+  'plan.assignTask': '指派这项任务',
   'scenario.skipped': '· 后面 {count} 条根本没被评估',
   'scenario.introHint': '排查「为什么这个操作还要找我」最快的路径',
   'scenario.matchedRule': '命中规则「{name}」',

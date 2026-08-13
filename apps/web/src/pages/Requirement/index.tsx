@@ -112,11 +112,27 @@ export function RequirementPage() {
    * 而不是回到一个列表再自己找。
    */
   const approve = useMutation({
-    mutationFn: async () => {
-      await api.approveRequirement(reqId!);
-      return api.generatePlan(reqId!);
+    /**
+     * ★★ 一次调用，不再是前端连发两个请求。
+     *
+     *   以前中间断掉留下的是「需求已确认但没有计划」——
+     *   状态变了，而界面上是一句报错。
+     */
+    mutationFn: () => api.approveAndPlan(reqId!),
+    onSuccess: (result) => {
+      if (result.plan) {
+        navigate(`/projects/${projectId}/plans/${result.plan.planId}`);
+        return;
+      }
+      /**
+       * ★ 确认成功、生成失败：如实说出来，并留在需求页 ——
+       *   跳去一个不存在的计划页是最坏的处理。重试的是「生成计划」，
+       *   不是「再确认一次」。
+       */
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: qk.requirement(reqId!) });
+      setError(t('requirement.detail.approvedButPlanFailed', { reason: result.planError ?? '' }));
     },
-    onSuccess: (plan) => navigate(`/projects/${projectId}/plans/${plan.planId}`),
     onError: (e) => {
       setConfirming(false);
       if (e instanceof ApiError && e.code === 'UNANSWERED_MUST_CONFIRM') {

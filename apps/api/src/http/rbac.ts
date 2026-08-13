@@ -250,6 +250,11 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
   /** ★ 重新打开等于撤销一次确认，与确认同档 */
   'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
+  /** ★ 组合命令要两个权限都有 —— 它确实同时做了这两件事 */
+  'POST /api/v1/requirements/:id/approve-and-plan': () => [
+    'requirement.approve',
+    'plan.generate',
+  ],
   'POST /api/v1/requirements/:id/assumptions': 'requirement.edit',
   /**
    * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须

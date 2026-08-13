@@ -746,6 +746,23 @@ export const api = {
   approveRequirement: (id: string, note?: string) =>
     request<{ ok: true }>(`/requirements/${id}/approve`, { method: 'POST', json: { note } }),
 
+  /**
+   * 确认并生成计划 —— **一次调用**。
+   *
+   * ★★ 以前这是前端连着发的两个请求。中间断掉（网络抖动、关标签页、
+   *   生成报错）留下的是「需求已确认但没有计划」：状态已经变了，
+   *   而用户看到的是报错，会以为什么都没发生，再点一次还会撞上
+   *   「已确认的需求不能再确认」。
+   *
+   * ★ planError 不为空表示确认成功、生成失败 —— 这时该重试
+   *   generatePlan，而不是再确认一次。
+   */
+  approveAndPlan: (id: string, note?: string) =>
+    request<{ requirementId: string; plan: { planId: string } | null; planError: string | null }>(
+      `/requirements/${id}/approve-and-plan`,
+      { method: 'POST', json: { note } },
+    ),
+
   rejectRequirement: (id: string, reason: string) =>
     request<{ requirement: unknown }>(`/requirements/${id}/reject`, {
       method: 'POST',

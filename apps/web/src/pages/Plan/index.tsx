@@ -9,6 +9,7 @@ import { money, riskLabel, typeIcon } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
+import { TaskAssignee } from './TaskAssignee';
 import { VersionDiff } from './VersionDiff';
 import type { PlanDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -202,11 +203,17 @@ export function PlanPage() {
                 >
                   <span aria-hidden>{typeIcon(task.type)}</span>
                   <span className="min-w-0 flex-1 truncate text-slate-800">{task.title}</span>
-                  {/* 批准前执行主体还没绑定，只能说「会不会来找人」 */}
-                  <span className="text-slate-500">
-                    {task.requiresHuman ? t('plan.needsHuman') : '🤖 Agent'}
-                    {task.executorName && <span className="ml-1">{task.executorName}</span>}
-                  </span>
+                  {/*
+                    ★★ 批准之前就能逐条排人。
+                      在此之前这里只能显示「会不会来找人」—— 用户要么全交给
+                      调度器自动挑，要么批准之后再一张张打开卡片改。
+                      人工任务尤其不能等：批下去没人接就会停在那里不动。
+                  */}
+                  <TaskAssignee
+                    workItemId={task.id}
+                    planId={planId!}
+                    disabled={d.plan.status !== 'awaiting_approval'}
+                  />
                   <span className="w-12 text-right tabular-nums text-slate-500">
                     {task.estimatedHours ?? '—'}h
                   </span>

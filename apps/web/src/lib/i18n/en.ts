@@ -412,6 +412,7 @@ export const en = {
   'requirement.field.constraints': 'Constraints',
   'requirement.field.risks': 'Risks',
   'requirement.field.acceptanceCriteria': 'Acceptance criteria',
+  'requirement.detail.approvedButPlanFailed': 'The requirement was approved, but plan generation failed: {reason}. Retry generating the plan — do not approve again.',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': 'No repositories registered yet',
@@ -1636,6 +1637,7 @@ export const en = {
   'plan.gateBreakdown': '{approval} need your approval, {execution} need a person to do them:',
   'plan.causeApproval': 'approval',
   'plan.causeExecution': 'by a person',
+  'plan.assignTask': 'Assign this task',
   'scenario.skipped': '· the remaining {count} were never evaluated',
   'scenario.introHint': 'The fastest way to work out “why does this operation still need me?”',
   'scenario.matchedRule': 'Matched rule “{name}”',
