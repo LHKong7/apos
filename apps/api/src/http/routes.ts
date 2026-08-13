@@ -111,6 +111,8 @@ import {
   updateOrganization,
 } from './organizations';
 import { handleSse } from './sse';
+import { authorizeChannels } from './sse-channels';
+import { appendConstraints } from '../modules/work-item/json-merge';
 import { getBoard } from './board';
 import { getGraph } from './graph';
 import { getAnalytics, getAnalyticsItems } from './analytics';
@@ -1621,8 +1623,22 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *
    * 返回负载与当前承担的任务 —— 这是「按 Agent 分泳道」视图的全部数据来源，
    * 一次查完，避免前端逐个 Agent 拉任务。
+   *
+   * ★★ 路径是 `/agent-workload` 而不是 `/agents`：`/agents` 属于项目 Agent
+   *   绑定那对 GET/PUT（见下面「项目 Agent 绑定」一节）。两者一度都注册在
+   *   `/agents` 上，而 Fastify 拒绝重复注册 —— 后果不是某个接口失灵，
+   *   是 `buildApp()` 直接抛异常，**整个服务起不来**。
+   *
+   *   两件事本来就不该共用一个 URL：这里回的是「谁在干活、干得怎么样」，
+   *   那里回的是「哪个 Agent 担任规划 / 协调 / 评审」，响应结构毫无交集。
+   *
+   * The Agent swimlane view. It lives at `/agent-workload`, not `/agents`:
+   * the latter belongs to the project-agent *binding* pair below. Both were
+   * once registered on `/agents`, and Fastify rejects duplicate routes — so
+   * the symptom was not a broken endpoint but `buildApp()` throwing, i.e. the
+   * server never starting at all.
    */
-  app.get('/api/v1/projects/:id/agents', async (req) => {
+  app.get('/api/v1/projects/:id/agent-workload', async (req) => {
     const { id } = req.params as { id: string };
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     if (!project) throw notFound('项目');
@@ -3347,17 +3363,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     if (decision.workItemId) {
       // 人类附加的约束写入任务，Agent 执行时必须遵守
       if (body.constraints.length > 0) {
-        const [item] = await db
-          .select()
-          .from(workItems)
-          .where(eq(workItems.id, decision.workItemId));
+        /**
+         * ★ 追加而不是「读出来再整个写回」。两条决策同时批准时，
+         *   后写的那个会带着它读到的旧数组覆盖全列，
+         *   先加的那几条约束就凭空消失了 —— 而约束是人类附加给 Agent 的
+         *   执行限制，少一条没有任何迹象。见 work-item/json-merge.ts。
+         */
         await db
           .update(workItems)
           .set({
-            constraints: [
-              ...(item?.constraints ?? []),
-              ...body.constraints.map((c) => ({ ...c, decisionId: id })),
-            ] as never,
+            constraints: appendConstraints(
+              body.constraints.map((c) => ({ ...c, decisionId: id })),
+            ) as never,
           })
           .where(eq(workItems.id, decision.workItemId));
       }
@@ -3455,20 +3472,43 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   // ── SSE ─────────────────────────────────────────────────────────────
   app.get('/api/v1/stream', async (req, reply) => {
     /**
-     * ★★ 这条流此前**完全不鉴权**：任何人猜到频道名就能拿到那个项目
-     *   实时推送的全部事件 —— 状态流转、决策、Run 的产出。REST 那边
-     *   查同样的数据要过成员关系闸门，这里绕过去了。
+     * ★★ 身份**和**频道都要判。
+     *
+     *   只验令牌是不够的：频道名里带着项目 id，任何登录账号带上
+     *   `?channels=project:<别人的项目>:board` 就能拿到那个项目的
+     *   全部实时事件，而同一个人打 REST 的 `/projects/:id/board`
+     *   会拿到 404。多租户边界不能只建立在 REST 那一半上。
+     *   逐频道的判定在 authorizeChannels（sse-channels.ts）。
      *
      * ★ 令牌走 query 而不是 Authorization 头，是 EventSource 的限制：
      *   它不能带自定义头（同一页的 Last-Event-ID 也是因此走 query 的）。
      *   代价是令牌会进 access log，缓解靠短 TTL。
      */
-    actorFrom(req);
+    const { userId } = actorFrom(req);
 
     const q = req.query as { channels?: string };
-    const channels = (q.channels ?? '').split(',').filter(Boolean);
-    if (channels.length === 0) {
+    const requested = (q.channels ?? '').split(',').filter(Boolean);
+    if (requested.length === 0) {
       throw new ApiError('VALIDATION_FAILED', '必须指定至少一个频道');
+    }
+
+    const actor = await rbac.resolveActor(req, userId, null);
+    const { allowed, denied } = await authorizeChannels(
+      { db, projectAccess: rbac.projectAccess, projectOfResource },
+      req,
+      actor,
+      requested,
+    );
+
+    /**
+     * ★ 一条都没通过时拒掉整条连接，而不是开一条空流。
+     *   空流的表现是「连上了但永远不动」—— 比一个明确的错误难查得多。
+     *   与成员关系闸门同一个理由，回 404 不确认那些频道存不存在。
+     */
+    if (allowed.length === 0) {
+      throw new ApiError('NOT_FOUND', '指定的频道都不存在，或当前身份没有访问权限', {
+        channels: denied,
+      });
     }
 
     /**
@@ -3480,7 +3520,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const lastEventId = typeof header === 'string' ? header : fromQuery;
 
     return handleSse(req, reply, deps, {
-      channels,
+      channels: allowed,
+      denied,
       lastEventId: typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined,
     });
   });

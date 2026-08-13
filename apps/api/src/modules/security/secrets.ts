@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { isSecretEnvKey } from '@apos/contracts';
+import { isProtectedEnvKey, isSecretEnvKey } from '@apos/contracts';
 
 /**
  * 凭证引用（页面文档 14 §9 的纪律，扩展到 Agent 运行时与代码仓库）。
@@ -73,6 +73,21 @@ export function encodeSecret(input: string): string {
     const name = trimmed.slice(4).trim();
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) {
       throw new SecretConfigError(`环境变量名不合法：${name}`);
+    }
+    /**
+     * ★★ APOS 自己的密钥一律不许被引用。
+     *
+     *   `env:APOS_JWT_SECRET` 在语法上完全合法，落库之后派发时会被
+     *   如实解开、交给子进程 —— 而那个子进程的 prompt 由填这一栏的人写。
+     *   拿到签名密钥就能签出任意用户的令牌，整个身份体系当场作废。
+     *   门槛只是 `agent.update`（任何项目的 pm / tech_lead 都有），
+     *   所以这条必须是拒绝而不是提醒。
+     */
+    if (isProtectedEnvKey(name)) {
+      throw new SecretConfigError(
+        `${name} 是 APOS 自己的密钥，不能下发给 Agent。` +
+          `Agent 要用的凭证请填它自己的值，或引用另一个专门为它设的环境变量。`,
+      );
     }
     return `${ENV_PREFIX}${name}`;
   }
@@ -256,10 +271,21 @@ export function encodeEnvOverrides(
     }
 
     /**
-     * ★ 不接受手工填写的 secret:// 引用。
-     *   放行的话，任何能编辑 Agent 的人都可以粘一条 `secret://env/DATABASE_URL`
-     *   进来，把 APOS 自己进程环境里的任意变量读给 Agent —— 那正是
-     *   passthroughEnv 那份白名单要挡住的事。
+     * ★ 不接受手工填写的 secret:// 引用 —— 那是**存储形态**，由这个函数
+     *   自己生成，不是用户该写的输入。放行它等于让人跳过这里的全部校验
+     *   直接往库里塞一条引用。
+     *
+     * ★★ 注意：真正挡住「把 APOS 自己的密钥读给 Agent」的不是这一条。
+     *
+     *   这里以前写着「放行的话任何人都能粘 secret://env/DATABASE_URL 进来，
+     *   那正是 passthroughEnv 那份白名单要挡住的事」—— 两句都不成立：
+     *   下面那条 `env:变量名` 分支做的是同一件事而且是允许的，
+     *   而 passthroughEnv 根本不是白名单，它就是用户给什么就透传什么。
+     *   也就是说，那份「白名单」从来不存在，注释描述的是一层想象中的防线。
+     *
+     *   现在拦住它的是 isProtectedEnvKey（contracts 里那份点名清单），
+     *   两条路径都过它：上面的 `env:` 分支，以及运行时工厂里的
+     *   passthroughEnv 过滤。安全措施要么在代码里，要么就别写在注释里。
      */
     if (value.startsWith('secret://')) {
       throw new SecretConfigError(

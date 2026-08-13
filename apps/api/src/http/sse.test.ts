@@ -231,3 +231,103 @@ describe('★ 事务提交后才发布', () => {
     }
   });
 });
+
+/**
+ * ★★ 频道鉴权 —— 这条流最容易被忽略的一半。
+ *
+ *   REST 那边有成员关系闸门按 URL 形状统一拦截，而 SSE 的作用域写在
+ *   query 的频道名里，闸门看不见。此前这里只验令牌不验频道，于是
+ *   任何登录账号都能订阅别的组织的项目，拿到它的全部实时事件 ——
+ *   同一个人打 REST 会拿到 404。
+ *
+ *   这一组测的就是「REST 拦得住的，SSE 也拦得住」。
+ */
+describe('★ SSE 频道鉴权', () => {
+  const authorize = async (userId: string, channels: string[]) => {
+    const { authorizeChannels } = await import('./sse-channels');
+    const { createRbac } = await import('./rbac');
+    const rbac = createRbac({
+      db,
+      projectOfResource: async (kind, id) => {
+        if (kind !== 'work-items') return null;
+        const { workItems } = await import('@apos/db');
+        const { eq } = await import('drizzle-orm');
+        const [row] = await db
+          .select({ projectId: workItems.projectId })
+          .from(workItems)
+          .where(eq(workItems.id, id));
+        return row?.projectId ?? null;
+      },
+      requireUserId: () => userId,
+    });
+    const req = { headers: {} } as never;
+    const actor = await rbac.resolveActor(req, userId, null);
+    return authorizeChannels(
+      { db, projectAccess: rbac.projectAccess, projectOfResource: async () => null },
+      req,
+      actor,
+      channels,
+    );
+  };
+
+  it('成员可以订阅本项目的看板频道', async () => {
+    const { allowed, denied } = await authorize(fx.userId, [`project:${fx.projectId}:board`]);
+    expect(allowed).toEqual([`project:${fx.projectId}:board`]);
+    expect(denied).toEqual([]);
+  });
+
+  it('★ 外组织用户订阅本项目的频道被剔除', async () => {
+    const { createOutsider } = await import('../test/db');
+    const outsider = await createOutsider(db, fx);
+
+    const { allowed, denied } = await authorize(outsider.userId, [
+      `project:${fx.projectId}:board`,
+    ]);
+    expect(allowed).toEqual([]);
+    expect(denied).toEqual([`project:${fx.projectId}:board`]);
+  });
+
+  it('★ 同组织但不是项目成员的人也订不到', async () => {
+    const { createMember } = await import('../test/db');
+    const stranger = await createMember(db, fx, { projectRole: null });
+
+    const { allowed } = await authorize(stranger, [`project:${fx.projectId}:board`]);
+    expect(allowed).toEqual([]);
+  });
+
+  it('★ 只剔除越权的那些，其余频道照常订上', async () => {
+    const { createOutsider } = await import('../test/db');
+    const outsider = await createOutsider(db, fx);
+
+    const mine = `user:${outsider.userId}:decisions`;
+    const theirs = `project:${fx.projectId}:board`;
+    const { allowed, denied } = await authorize(outsider.userId, [mine, theirs]);
+
+    expect(allowed).toEqual([mine]);
+    expect(denied).toEqual([theirs]);
+  });
+
+  it('★ 别人的决策频道订不到 —— 作用域就是「派给我的」', async () => {
+    const { createMember } = await import('../test/db');
+    const other = await createMember(db, fx, { projectRole: 'pm' });
+
+    const { allowed } = await authorize(fx.userId, [`user:${other}:decisions`]);
+    expect(allowed).toEqual([]);
+  });
+
+  it('★ 认不出来的频道一律拒，不是默认放行', async () => {
+    const { allowed, denied } = await authorize(fx.userId, [
+      'project:not-a-uuid',
+      'whatever:1',
+      `project:${fx.projectId}:board:extra`,
+      '',
+    ]);
+    expect(allowed).toEqual([]);
+    expect(denied).toHaveLength(4);
+  });
+
+  it('★ 查不到所属项目的资源频道被拒，不能拿来探 id 存不存在', async () => {
+    const { allowed } = await authorize(fx.userId, [`work_item:${randomUUID()}`]);
+    expect(allowed).toEqual([]);
+  });
+});

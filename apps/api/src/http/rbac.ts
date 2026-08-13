@@ -629,6 +629,34 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
    *   多租户实例上越界就是数据泄露。
    */
   async function assertProjectAccess(req: FastifyRequest, projectId: string, userId: string) {
+    const actor = await projectAccess(req, projectId, userId);
+    if (actor) return actor;
+
+    throw new ApiError(
+      'NOT_FOUND',
+      '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
+      { projectId },
+    );
+  }
+
+  /**
+   * 同一条判定的**不抛版本**：有权限回 actor，没有回 null。
+   *
+   * ★ SSE 要逐频道判（一次连接可能带十个频道），没权限的那几个要剔掉
+   *   而不是让整条流失败 —— 那是个是非题，就让它回是非，
+   *   不必拿异常当分支用。判定逻辑只有这一份，两个入口共用，
+   *   否则迟早分叉成「REST 拦得住、SSE 拦不住」。
+   *
+   * The non-throwing form of the same check. SSE authorizes channel by
+   * channel and drops the ones that fail, so it needs a yes/no answer rather
+   * than an exception. Both entry points share this single implementation —
+   * two copies would eventually diverge into "REST blocks it, SSE does not".
+   */
+  async function projectAccess(
+    req: FastifyRequest,
+    projectId: string,
+    userId: string,
+  ): Promise<RequestActor | null> {
     const actor = await resolveActor(req, userId, projectId);
     if (actor.projectRole) return actor;
 
@@ -640,11 +668,7 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
       if (project && project.orgId === actor.orgId) return actor;
     }
 
-    throw new ApiError(
-      'NOT_FOUND',
-      '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
-      { projectId },
-    );
+    return null;
   }
 
   /**
@@ -744,6 +768,7 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
     guard,
     resolveActor,
     assertProjectAccess,
+    projectAccess,
     assertPermission,
     ownsAgent,
     subjectForAgent,

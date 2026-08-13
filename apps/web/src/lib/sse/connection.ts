@@ -132,6 +132,15 @@ export class SSEConnection {
       this.setStatus('open', readReason(e));
     });
 
+    /**
+     * ★ 降级会恢复：积压排空后服务端推 `recovered`，把那句降级提示撤掉。
+     *   不处理的话，一次网络抖动留下的「已降级」会一直挂在界面上，
+     *   而连接其实早就恢复正常了。
+     */
+    es.addEventListener('recovered', () => {
+      this.setStatus('open');
+    });
+
     es.addEventListener('resync', () => {
       // 离线期间事件太多，补发不划算：让订阅方全量刷新
       this.lastEventId = null;

@@ -10,7 +10,13 @@ const RESYNC_THRESHOLD = 500;
 const KEEPALIVE_MS = 25_000;
 
 export interface SseOptions {
+  /** 已经过鉴权的频道。鉴权在 sse-channels.ts，这里只负责推送 */
   channels: string[];
+  /**
+   * 被剔除的频道。原样回给客户端 —— 前端要能分辨「没订上」与
+   * 「订上了但暂时没事件」，否则它会对着一条永远不推数据的频道干等。
+   */
+  denied?: string[];
   lastEventId?: string;
 }
 
@@ -52,6 +58,24 @@ export async function handleSse(
     } else {
       reply.raw.once('drain', () => {
         pending--;
+        /**
+         * ★ 积压排空后**恢复**全量推送。
+         *
+         *   降级此前是单向的：一次网络抖动把连接推过阈值，它就一直
+         *   只收里程碑事件，直到用户自己刷新页面。而降级本来是应对
+         *   一时的拥塞，不是对这条连接的判决 —— 慢消费者会反复触发，
+         *   快消费者恢复后理应拿回细粒度事件。
+         */
+        if (degraded && pending === 0) {
+          degraded = false;
+          if (!closed) {
+            reply.raw.write(
+              `event: recovered\ndata: ${JSON.stringify({
+                reason: '积压已排空，恢复推送全部事件',
+              })}\n\n`,
+            );
+          }
+        }
       });
       if (pending > BACKLOG_LIMIT && !degraded) {
         degraded = true;
@@ -64,20 +88,42 @@ export async function handleSse(
     }
   };
 
-  // 断线续传
+  /**
+   * 断线续传。
+   *
+   * ★★ 整段包在 try 里，是因为响应头已经发出去了（上面的 writeHead）。
+   *
+   *   此后任何抛出都到不了 Fastify 的错误处理 —— 它只会尝试再写一次头，
+   *   拿到 ERR_HTTP_HEADERS_SENT，然后这条连接**永远挂着**：客户端等不到
+   *   任何字节，也等不到 FIN。最容易触发它的就是一个不是数字的
+   *   Last-Event-ID（`BigInt('abc')` 直接抛），而浏览器重连时带的
+   *   那个值是它上次收到的 id，库里被清过之后就可能是任何东西。
+   *
+   *   续传失败不该拖垮整条流：告诉客户端「补不上，请全量刷新」，
+   *   然后照常把实时推送接上。
+   */
   if (opts.lastEventId) {
-    const missed = await replayMissed(deps.db, opts.channels, opts.lastEventId);
-    if (missed === 'too_many') {
+    try {
+      const missed = await replayMissed(deps.db, opts.channels, opts.lastEventId);
+      if (missed === 'too_many') {
+        reply.raw.write(
+          `event: resync\ndata: ${JSON.stringify({ reason: '离线期间事件过多，请全量刷新' })}\n\n`,
+        );
+      } else {
+        for (const e of missed) write(e);
+      }
+    } catch {
       reply.raw.write(
-        `event: resync\ndata: ${JSON.stringify({ reason: '离线期间事件过多，请全量刷新' })}\n\n`,
+        `event: resync\ndata: ${JSON.stringify({ reason: '断点无法识别，请全量刷新' })}\n\n`,
       );
-    } else {
-      for (const e of missed) write(e);
     }
   }
 
   reply.raw.write(
-    `event: ready\ndata: ${JSON.stringify({ channels: opts.channels })}\n\n`,
+    `event: ready\ndata: ${JSON.stringify({
+      channels: opts.channels,
+      ...(opts.denied?.length ? { denied: opts.denied } : {}),
+    })}\n\n`,
   );
 
   const unsubscribe = deps.bus.subscribe(opts.channels, write);

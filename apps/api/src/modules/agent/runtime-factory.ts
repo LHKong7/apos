@@ -3,6 +3,7 @@ import {
   defaultRuntimeConfig,
   envOverridesOf,
   isKnownRuntimeKind,
+  isProtectedEnvKey,
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
 } from '@apos/contracts';
@@ -53,7 +54,34 @@ export function createAgentAdapter(
   const cfg = { ...defaultRuntimeConfig(agent.runtimeKind), ...agent.runtimeConfig };
   const str = (k: string) => (typeof cfg[k] === 'string' ? (cfg[k] as string) : undefined);
   const num = (k: string) => (typeof cfg[k] === 'number' ? (cfg[k] as number) : undefined);
-  const list = (k: string) => (Array.isArray(cfg[k]) ? (cfg[k] as string[]) : undefined);
+  const rawList = (k: string) => (Array.isArray(cfg[k]) ? (cfg[k] as string[]) : undefined);
+
+  /**
+   * ★★ passthroughEnv 里点名 APOS 自己的密钥一律剔掉。
+   *
+   *   这一栏的语义是「把 APOS 进程里已有的某个变量透传给子进程」，
+   *   它的门槛只是 `agent.update` —— 任何项目的 pm / tech_lead 都有。
+   *   不过滤的话，往这个列表里写一行 `APOS_JWT_SECRET`，
+   *   签名密钥就进了一个由填表人自己写 prompt 的子进程，
+   *   拿它可以签出任意用户的令牌。
+   *
+   *   与环境变量表里的 `env:变量名` 是同一条禁令（见 security/secrets.ts），
+   *   两条路径必须都过 —— 只堵一条等于没堵。
+   *
+   * ★ 剔掉要喊出来。悄悄少传一个变量的表现是「我配了却没生效」，
+   *   而这个仓库反复吃过那个亏。
+   */
+  const list = (k: string) => {
+    const raw = rawList(k);
+    if (k !== 'passthroughEnv' || !raw) return raw;
+    const blocked = raw.filter(isProtectedEnvKey);
+    if (blocked.length > 0) {
+      diagnose(
+        `${tag} 这些是 APOS 自己的密钥，不会透传给 Agent：${blocked.join('、')}`,
+      );
+    }
+    return raw.filter((name) => !isProtectedEnvKey(name));
+  };
 
   /**
    * 环境变量表：库里存的是引用，交给适配器的必须是明文。

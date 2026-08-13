@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   describeRef,
+  encodeEnvOverrides,
   encodeSecret,
   hasMasterKey,
   hintOf,
@@ -121,5 +122,43 @@ describe('凭证引用', () => {
     const ref = encodeSecret('sk-ant-real');
     const tampered = `${ref.slice(0, -4)}AAAA`;
     expect(resolveSecret(tampered)).toBeNull();
+  });
+});
+
+/**
+ * ★★ APOS 自己的密钥不能下发给 Agent。
+ *
+ *   两条路都能把进程环境里的值交给子进程：环境变量表里的 `env:变量名`，
+ *   和 passthroughEnv 那份名字列表。两条的门槛都只是 `agent.update`，
+ *   而那个权限任何项目的 pm / tech_lead 都有 —— 也就是说，
+ *   不拦的话一个项目负责人就能把签名密钥交给一个自己写 prompt 的子进程，
+ *   拿它签出任意用户的令牌。这是一条从项目角色直达整个实例的提权路径。
+ */
+describe('★ APOS 自己的密钥禁止外发', () => {
+  it('env: 引用签名密钥被拒，报错说清为什么', () => {
+    expect(() => encodeSecret('env:APOS_JWT_SECRET')).toThrow(/APOS 自己的密钥/);
+  });
+
+  it('凭证主密钥、数据库连接串同样被拒', () => {
+    expect(() => encodeSecret('env:APOS_SECRET_KEY')).toThrow(SecretConfigError);
+    expect(() => encodeSecret('env:DATABASE_URL')).toThrow(SecretConfigError);
+    expect(() => encodeSecret('env:DATABASE_DIRECT_URL')).toThrow(SecretConfigError);
+    expect(() => encodeSecret('env:APOS_SUPERADMIN_PASSWORD')).toThrow(SecretConfigError);
+  });
+
+  it('★ 大小写与空格绕不过去', () => {
+    expect(() => encodeSecret('env: apos_jwt_secret ')).toThrow(SecretConfigError);
+  });
+
+  it('★ 环境变量表这条路也走同一道判定', () => {
+    expect(() => encodeEnvOverrides({ ANTHROPIC_AUTH_TOKEN: 'env:APOS_JWT_SECRET' })).toThrow(
+      SecretConfigError,
+    );
+  });
+
+  it('Agent 自己的那些环境变量照常可以引用 —— 拦的是点名的那几个', () => {
+    expect(encodeSecret('env:ANTHROPIC_AUTH_TOKEN')).toBe('secret://env/ANTHROPIC_AUTH_TOKEN');
+    // 名字里带 APOS_ 但不在清单里的不受影响
+    expect(encodeSecret('env:APOS_WORKSPACE_ROOT')).toBe('secret://env/APOS_WORKSPACE_ROOT');
   });
 });

@@ -185,6 +185,53 @@ export function isSecretEnvKey(key: string): boolean {
   return SECRET_ENV_NAME.test(key);
 }
 
+/**
+ * APOS **自己**的那几个环境变量 —— 绝不下发给任何 Agent。
+ *
+ * ★★ 这是一条真正的禁令，不是提示。
+ *
+ *   Agent 配置里有两条路能把 APOS 进程环境里的值交给子进程：
+ *   `passthroughEnv`（给变量名）与环境变量表里的 `env:变量名`。
+ *   两条都以 `agent.update` 为门槛，而那个权限任何项目的 pm / tech_lead
+ *   和 Agent 的 owner 都有 —— 也就是说，一个项目负责人可以把
+ *   `APOS_JWT_SECRET` 交给一个由他自己写 prompt 的子进程，
+ *   然后拿它签出任意用户的令牌。那不是「配置得当不当」的问题，
+ *   是一条从项目角色直达整个实例的提权路径。
+ *
+ * ★ 这几个变量对 Agent 没有任何正当用途：签名密钥、凭证主密钥、
+ *   数据库连接串、超管口令 —— Agent 要用的凭证走它自己那一份配置。
+ *   所以这里不做「警告」而是直接拒绝：一条永远不该发生的事，
+ *   不该靠每个管理员都读过帮助文字来避免。
+ *
+ * ★ 前缀匹配 `APOS_` 之外还点名了 DATABASE_*：后者不带 APOS_ 前缀，
+ *   却是这份清单里最不能泄的一个。
+ *
+ * APOS's own environment variables — never handed to an Agent. Two config
+ * paths (`passthroughEnv` and `env:NAME`) can pass a process variable to the
+ * child, and both are gated on `agent.update`, which any project pm/tech_lead
+ * holds. Without this list, a project lead could hand `APOS_JWT_SECRET` to a
+ * subprocess whose prompt they control and mint tokens for any user. None of
+ * these has a legitimate use inside an Agent, so this refuses rather than warns.
+ */
+const PROTECTED_ENV_NAMES = new Set([
+  'APOS_JWT_SECRET',
+  'APOS_SECRET_KEY',
+  'APOS_SUPERADMIN_EMAIL',
+  'APOS_SUPERADMIN_PASSWORD',
+  'DATABASE_URL',
+  'DATABASE_DIRECT_URL',
+  'TEST_DATABASE_URL',
+]);
+
+export function isProtectedEnvKey(key: string): boolean {
+  return PROTECTED_ENV_NAMES.has(key.trim().toUpperCase());
+}
+
+/** 界面与报错里都要列出来，所以导出的是同一份 */
+export function protectedEnvNames(): string[] {
+  return [...PROTECTED_ENV_NAMES];
+}
+
 export interface RuntimeKindSpec {
   kind: string;
   label: string;

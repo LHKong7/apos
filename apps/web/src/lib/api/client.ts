@@ -338,7 +338,13 @@ export const api = {
   board: (projectId: string, filters: BoardFilters) =>
     request<BoardResponse>(`/projects/${projectId}/board${boardQueryString(filters)}`),
 
-  agents: (projectId: string) => request<{ agents: AgentSummary[] }>(`/projects/${projectId}/agents`),
+  /**
+   * ★ 泳道视图的负载数据。路径是 `/agent-workload` —— `/projects/:id/agents`
+   *   是下面 projectAgents / setProjectAgent 那对绑定接口的，两者形状不同。
+   * Swimlane load data; `/projects/:id/agents` is the binding pair below.
+   */
+  agents: (projectId: string) =>
+    request<{ agents: AgentSummary[] }>(`/projects/${projectId}/agent-workload`),
 
   graph: (projectId: string, layout: LayoutKind) =>
     request<GraphResponse>(`/projects/${projectId}/graph?layout=${layout}`),

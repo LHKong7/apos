@@ -1,4 +1,4 @@
-import { agents, type Database } from '@apos/db';
+import { agents, projectMembers, type Database } from '@apos/db';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import type { Fixture } from './db';
 
@@ -22,6 +22,19 @@ export async function seedAgent(
     costLimitPerRun?: string;
     stats?: Record<string, unknown>;
     applicableTypes?: ('task' | 'bug' | 'test' | 'research' | 'review' | 'release')[];
+    /**
+     * 把这个 Agent 登记成项目成员。默认 **true** —— 派发的硬性前置就是
+     * 项目成员关系（domain 的 matchExecutors 里那条 inProject），
+     * 不登记的 Agent 一条都派不出去。
+     *
+     * ★ 夹具默认要跟真实形态一致：真实路径上，Agent 是在「成员与角色」里
+     *   被加进项目的，seed 脚本也照做。夹具漏掉这一步，整套调度、恢复、
+     *   端到端测试就都在测一个现实中不存在的形态 —— 而它们的失败信息是
+     *   「无匹配 Agent」，看不出根因在夹具。
+     *
+     * ★ 传 false 用来测「没登记就派不出去」那条路径本身。
+     */
+    inProject?: boolean;
   } = {},
 ): Promise<AgentFixture> {
   const runtime = opts.runtime ?? new MockRuntime();
@@ -49,6 +62,25 @@ export async function seedAgent(
     .returning();
 
   registry.register(agent!.id, runtime);
+
+  if (opts.inProject ?? true) {
+    /**
+     * ★ 角色用 executor —— 内置角色里唯一一个 Agent 能担任的干活角色
+     *   （domain 的 assignableBy：带 humanOnly 权限的角色不给 Agent）。
+     *   写别的 key 会撞上 project_members → roles 的外键，
+     *   而报错是一句「违反外键」，看不出真正的原因是角色不存在。
+     */
+    await db
+      .insert(projectMembers)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        actorType: 'agent',
+        actorId: agent!.id,
+        role: 'executor',
+      })
+      .onConflictDoNothing();
+  }
 
   return { agentId: agent!.id, runtime, registry };
 }

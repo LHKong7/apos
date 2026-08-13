@@ -28,6 +28,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
+  /**
+   * ★ 删除顺序必须是外键的倒序：artifacts 指向 work_items，
+   *   先删 work_items 会直接撞上 artifacts_work_item_id_work_items_id_fk。
+   *   撞上的表现是**每个用例都在 afterEach 里失败** —— 断言其实全过了，
+   *   报错却出在收尾，很容易被当成被测代码的问题。
+   *   （建表数据本身由下一轮 beforeEach 的 resetDb 清掉，这里只清目录与本轮残留。）
+   */
+  await db.delete(artifacts).where(eq(artifacts.orgId, fx.orgId));
   await db.delete(agentRuns).where(eq(agentRuns.orgId, fx.orgId));
   await db.delete(workItems).where(eq(workItems.orgId, fx.orgId));
 });
