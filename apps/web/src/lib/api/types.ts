@@ -765,8 +765,10 @@ export interface AgentDetail {
   queue: { id: string; title: string; status: string; riskLevel: string }[];
   queueDoneCount: number;
   recentRuns: {
+    /** execution | planning —— 规划 Run 没有工作项 */
+    kind: string;
     id: string;
-    workItemId: string;
+    workItemId: string | null;
     workItemTitle: string;
     status: string;
     attempt: number;

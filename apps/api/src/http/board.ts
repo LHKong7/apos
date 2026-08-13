@@ -334,7 +334,11 @@ async function enrich(
     .where(inArray(agentRuns.workItemId, ids))
     .orderBy(desc(agentRuns.attempt));
   const latestRun = new Map<string, (typeof runs)[number]>();
-  for (const r of runs) if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+  for (const r of runs) {
+    // ★ 规划 Run 没有工作项，不进这张按工作项索引的表
+    if (!r.workItemId) continue;
+    if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+  }
 
   const agentRows = await db.select().from(agents);
   const agentName = new Map(agentRows.map((a) => [a.id, a.name]));

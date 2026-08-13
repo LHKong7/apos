@@ -1309,6 +1309,7 @@ export const en = {
   'agentDetail.stillGated': 'are still intercepted a second time by Policy and the safety floor',
   'agentDetail.pauseHint': 'Once paused it gets no new tasks; runs already in flight are unaffected. The reason is recorded as an event — three weeks from now nobody will remember why this agent has been stopped.',
   'agentDetail.confirmPause': 'Confirm pause',
+  'agentDetail.planningRun': 'Planning',
   'hitl.resolvedCount': '{count} handled',
   'hitl.medianMax': 'median · slowest {time}',
   'hitl.autoPassed': '{auto} of {total} evaluations passed automatically',

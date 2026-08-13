@@ -1441,7 +1441,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .where(eq(agentRuns.projectId, id))
       .orderBy(desc(agentRuns.attempt));
     const latestRun = new Map<string, (typeof runs)[number]>();
-    for (const r of runs) if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+    for (const r of runs) {
+      // ★ 这条按 projectId 查，规划 Run 会混进来 —— 它没有工作项，跳过
+      if (!r.workItemId) continue;
+      if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
+    }
 
     return {
       agents: rows.map((a) => {

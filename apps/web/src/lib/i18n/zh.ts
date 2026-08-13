@@ -1286,6 +1286,7 @@ export const zh: Record<keyof typeof en, string> = {
   'agentDetail.stillGated': '仍然会被 Policy 与安全底线二次拦截',
   'agentDetail.pauseHint': '暂停后不再给它派新任务，进行中的 Run 不受影响。原因会记入事件 —— 三周后没人记得「这个 Agent 为什么一直是停的」',
   'agentDetail.confirmPause': '确认暂停',
+  'agentDetail.planningRun': '规划',
   'hitl.resolvedCount': '{count} 项已处理',
   'hitl.medianMax': '中位数 · 最长 {time}',
   'hitl.autoPassed': '{auto} / {total} 次评估自动放行',

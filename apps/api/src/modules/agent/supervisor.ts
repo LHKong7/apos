@@ -58,6 +58,19 @@ export async function superviseRuns(
     .where(
       and(
         inArray(agentRuns.status, ['dispatching', 'running']),
+        /**
+         * ★★ 规划 Run 不归 supervisor 管。
+         *
+         *   它现在也是一条真的 agent_runs 记录（为了可审计），但它的超时由
+         *   AgentPlanningProvider 自己的 withTimeout 管着，而且它没有工作项 ——
+         *   supervisor 接管孤儿 Run 的那套动作（判失败、进恢复队列、按工作项
+         *   找替补）在它身上一条都不成立。
+         *
+         *   ★ 代价写在这里免得当成遗漏：进程重启后中断的规划 Run 会一直停在
+         *     running 上，没人收尾。要治得给规划单独一条收尾循环，
+         *     而不是把它塞进这一条。
+         */
+        eq(agentRuns.kind, 'execution'),
         or(
           and(isNotNull(agentRuns.timeoutAt), lt(agentRuns.timeoutAt, now)),
           /**
@@ -265,7 +278,10 @@ export async function reclaimOnBoot(
   const rows = await db
     .select()
     .from(agentRuns)
-    .where(inArray(agentRuns.status, ['dispatching', 'running']));
+    // ★ 同上：规划 Run 不走这条接管路径
+    .where(
+      and(inArray(agentRuns.status, ['dispatching', 'running']), eq(agentRuns.kind, 'execution')),
+    );
 
   let reclaimed = 0;
   for (const run of rows) {

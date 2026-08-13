@@ -106,11 +106,27 @@ export async function loadAnalyticsInput(
       | undefined,
   }));
 
+  /**
+   * ★★ 只统计执行 Run。
+   *
+   *   规划 Run 现在也在这张表里（为了可审计），但 Analytics 量的是**交付系统**：
+   *   流动效率、返工率、每个工作项花了多少 —— 这些指标全部以工作项为轴，
+   *   而规划 Run 没有工作项。把它混进来，分母会多出一批永远归不到任何
+   *   阶段的记录。
+   *
+   *   ★ 这也保持了行为不变：在规划 Run 进这张表之前，它本来就不在这些
+   *     数字里（它的成本记在 plans.generationCost 上）。规划成本要不要
+   *     单独成一档指标是另一件事，不该顺手混进现有口径。
+   */
   const runRows = (
-    await db.select().from(agentRuns).where(eq(agentRuns.projectId, projectId))
+    await db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.projectId, projectId), eq(agentRuns.kind, 'execution')))
   ).map((r) => ({
     id: r.id,
-    workItemId: r.workItemId,
+    // ★ kind='execution' 已经保证它非空，这里的断言是给类型看的
+    workItemId: r.workItemId!,
     agentId: r.agentId,
     attempt: r.attempt,
     status: r.status as string,

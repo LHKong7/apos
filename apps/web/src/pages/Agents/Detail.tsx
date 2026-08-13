@@ -304,6 +304,16 @@ export function AgentDetailPage() {
                       >
                         {r.status === 'completed' ? t('agentDetail.runOk') : r.status === 'failed' ? t('agentDetail.runFail') : r.status}
                       </span>
+                      {/*
+                        ★ 规划 Run 现在也出现在这张表里（它以前根本不落库）。
+                          标出来是必要的：一条没有工作项的执行记录混在里面，
+                          不加标签只会让人以为是数据错了。
+                      */}
+                      {r.kind === 'planning' && (
+                        <span className="shrink-0 rounded bg-sky-100 px-1 text-[10px] text-sky-800">
+                          {t('agentDetail.planningRun')}
+                        </span>
+                      )}
                       <span className="min-w-0 flex-1 truncate text-slate-800">
                         {r.workItemTitle}
                       </span>

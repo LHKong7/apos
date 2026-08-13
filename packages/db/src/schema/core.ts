@@ -886,8 +886,30 @@ export const agentRuns = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     orgId: uuid().notNull(),
     projectId: uuid().notNull(),
-    workItemId: uuid().notNull().references(() => workItems.id),
+    /**
+     * ★★ 可空，因为规划 Run 发生在工作项**存在之前**。
+     *
+     *   在此之前这一列是 NOT NULL，于是规划（需求结构化、生成计划）根本
+     *   进不了这张表 —— AgentPlanningProvider 只好自己开工作区、自己收事件、
+     *   自己管超时，代价写在那个类的文档里：不出现在 Run 详情页与 Agent 视图、
+     *   supervisor / recovery 管不着、成本不进统计。
+     *   也就是说，产品里最贵、最影响后续所有产出的那次 Agent 调用，
+     *   是唯一一次没有留痕的调用。
+     *
+     *   放开它不影响既有查询：那 8 处消费点全是
+     *   `where work_item_id = <某个真实 id>`，NULL 行永远不匹配 ——
+     *   规划 Run 因此不会串进看板、执行图与工作项的 Run 列表里。
+     */
+    workItemId: uuid().references(() => workItems.id),
     agentId: uuid().notNull().references(() => agents.id),
+    /**
+     * 这次 Run 是干什么的。
+     *
+     * ★ 显式一列，而不是靠「workItemId 为空就是规划」去推。
+     *   推断出来的分类在查询里读不出意图，加第三种用途（比如评审）时
+     *   还要再发明一条隐含规则。
+     */
+    kind: text().notNull().default('execution'),
     attempt: integer().notNull().default(1),
     previousRunId: uuid(),
 
@@ -1001,6 +1023,21 @@ export const agentRuns = pgTable(
     index('agent_runs_heartbeat_idx').on(t.status, t.lastHeartbeatAt),
     index('agent_runs_item_idx').on(t.workItemId, t.attempt),
     index('agent_runs_agent_idx').on(t.agentId, t.createdAt),
+    /** 规划 Run 列表按项目查（需求页的「历次分析」） */
+    index('agent_runs_kind_idx').on(t.kind, t.projectId, t.createdAt),
+    check('agent_runs_kind_check', sql`${t.kind} in ('execution', 'planning')`),
+    /**
+     * ★★ 执行 Run 必须有工作项，规划 Run 必须没有。
+     *
+     *   放开 NOT NULL 之后，「执行 Run 的 work_item_id 为空」会静默地
+     *   变成一种可能 —— 而那种行不会出现在任何按工作项查的界面上，
+     *   等于凭空消失。库里卡住比事后查为什么少了一条便宜得多。
+     */
+    check(
+      'agent_runs_shape_check',
+      sql`(${t.kind} = 'execution' and ${t.workItemId} is not null)
+          or (${t.kind} = 'planning' and ${t.workItemId} is null)`,
+    ),
   ],
 );
 
