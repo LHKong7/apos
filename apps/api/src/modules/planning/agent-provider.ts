@@ -235,6 +235,22 @@ export class AgentPlanningProvider implements PlanningProvider {
         seed: async (path) => {
           await writeFile(join(path, 'BRIEF.md'), input.brief, 'utf8');
         },
+        /**
+         * ★★ 把这个 Agent 被授权的项目资源**只读**挂进来。
+         *
+         *   在此之前规划 Run 只有一个空目录：写一份 BRIEF.md 进去、
+         *   读一份 apos-output.json 出来。也就是说「分析这个项目的需求」时，
+         *   Agent 手上没有这个项目的任何代码 —— 它只能照着需求原文编，
+         *   而产出上写着「基于项目上下文」。
+         *
+         * ★ 只读：规划不该改代码。产出仍写在可写的主挂载里，两者分开。
+         *   挂不上的资源不拖垮整次规划，但会在诊断里留痕（见 acquireLocal）。
+         */
+        readOnly: {
+          orgId: input.scope.orgId,
+          projectId: input.scope.projectId,
+          scopes: agent.resourceScopes,
+        },
       });
 
       const adapter = this.registry.get(agent.id);

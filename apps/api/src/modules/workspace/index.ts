@@ -438,6 +438,20 @@ export class WorkspaceService {
     runId: string;
     path: string;
     seed?: (path: string) => Promise<void>;
+    /**
+     * 额外挂进来的**只读**参考资源。
+     *
+     * ★★ 规划 Agent 靠它才能真的读到项目文件。
+     *
+     *   在此之前规划 Run 只有一个空目录：写一份 BRIEF.md 进去、读一份
+     *   apos-output.json 出来。也就是说「分析这个项目的需求」时，
+     *   Agent 手上**没有这个项目的任何代码** —— 它只能照着需求原文编，
+     *   而界面上写着「基于项目上下文分析」。
+     *
+     *   挂成只读是刻意的：规划不该改代码。产出仍然写在可写的主挂载
+     *   （planning workspace）里，两者分开。
+     */
+    readOnly?: { orgId: string; projectId: string; scopes: ResourceScope[] };
   }): Promise<{ workspace: Workspace; dispatch: RunWorkspace }> {
     const source = this.sources.get('empty')!;
     const mount = await source.materialize({
@@ -448,10 +462,63 @@ export class WorkspaceService {
       ...(input.seed ? { seed: input.seed } : {}),
     });
 
+    const mounts: Mount[] = [mount];
+    const additionalPaths: string[] = [];
+
+    const ro = input.readOnly;
+    if (ro && ro.scopes.length > 0) {
+      const repoScopes = ro.scopes.filter((s) => s.kind === 'repo' && s.access !== 'none');
+      const dataScopes = ro.scopes.filter((s) => s.kind === 'dataset' && s.access !== 'none');
+      const loadInput = {
+        runId: input.runId,
+        orgId: ro.orgId,
+        projectId: ro.projectId,
+        workItemId: '',
+        workItemTitle: '',
+        permissions: { allowedTools: [], deniedTools: [], resourceScopes: ro.scopes },
+      } satisfies AcquireInput;
+
+      const repos = await this.loadRepos(loadInput, repoScopes);
+      const stores = await this.loadStores(loadInput, dataScopes);
+      const runRoot = runDir(this.root, input.runId);
+
+      const candidates: Array<{ scope: ResourceScope; kind: 'repo' | 'dataset' }> = [
+        ...repoScopes.filter((s) => repos.has(s.ref)).map((s) => ({ scope: s, kind: 'repo' as const })),
+        ...dataScopes
+          .filter((s) => stores.has(s.ref))
+          .map((s) => ({ scope: s, kind: 'dataset' as const })),
+      ];
+
+      for (const candidate of candidates) {
+        try {
+          const extra = await this.mountFor(
+            candidate,
+            repos,
+            stores,
+            runRoot,
+            input.runId,
+            'reference',
+            // ★ 一律 false —— 即便这个 Agent 对该资源有写权限。
+            //   规划要的是「看得见」，不是「改得动」。
+            false,
+            null,
+          );
+          mounts.push(extra);
+          additionalPaths.push(extra.path);
+        } catch (err) {
+          /**
+           * ★ 参考资源挂不上不该让整次规划失败，但必须留痕 ——
+           *   否则表现是「Agent 又没看代码」，而没有任何地方说得出为什么。
+           */
+          this.diagnose(`规划参考资源 ${candidate.scope.ref} 准备失败`, err);
+        }
+      }
+    }
+
     return {
-      workspace: { id: input.id, runId: input.runId, root: input.path, mounts: [mount], writable: true },
+      workspace: { id: input.id, runId: input.runId, root: input.path, mounts, writable: true },
       // ★ vcs 为 null —— 这次执行真的不在版本控制下，prompt 会据此换一套说法
-      dispatch: { path: input.path, writable: true, additionalPaths: [], vcs: null },
+      dispatch: { path: input.path, writable: true, additionalPaths, vcs: null },
     };
   }
 

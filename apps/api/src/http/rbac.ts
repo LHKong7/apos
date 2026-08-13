@@ -526,7 +526,7 @@ async function highestRoleOverAgent(
 /** 从 URL 反查项目 id 用的形状，与成员关系闸门同源 */
 export const PROJECT_SCOPED_URL = new RegExp(`^/api/v1/projects/(${UUID})(?:/|$)`, 'i');
 export const RESOURCE_SCOPED_URL = new RegExp(
-  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts)/(${UUID})(?:/|$)`,
+  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts|artifacts)/(${UUID})(?:/|$)`,
   'i',
 );
 

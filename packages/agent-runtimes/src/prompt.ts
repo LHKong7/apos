@@ -55,6 +55,22 @@ export function buildGovernanceRules(
         : `工作区：${ws.path}。这是一个普通工作目录，不在版本控制下 —— ` +
             '你的产出就是留在这个目录里的文件，平台会在你结束后收集它们。',
     );
+
+    /**
+     * ★★ 挂了参考目录就必须说出来在哪。
+     *
+     *   附加目录是只读挂进来的项目代码与数据集。不写进 prompt 的话，
+     *   Agent 不知道它们存在 —— 表现是「挂了等于没挂」：规划 Agent
+     *   照样只凭需求原文编，而工作区里明明躺着整个仓库。
+     *   这正是规划 Run 此前的样子（它压根没有附加目录）。
+     */
+    if (ws.additionalPaths.length > 0) {
+      lines.push(
+        '',
+        '以下目录是**只读**挂载的参考资料，用 Read / Glob / Grep 直接看，不要修改：',
+        ...ws.additionalPaths.map((p) => `- ${p}`),
+      );
+    }
   }
 
   const other = opts.otherScopes ?? [];

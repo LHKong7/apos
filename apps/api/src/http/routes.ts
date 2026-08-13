@@ -147,6 +147,7 @@ import {
 } from './storage-targets';
 import { AssigneeInput, listCandidates, setAssignee } from './assignment';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
+import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
@@ -544,6 +545,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         return one(await db.select({ projectId: integrations.projectId }).from(integrations).where(eq(integrations.id, id)));
       case 'sync-conflicts':
         return one(await db.select({ projectId: syncConflicts.projectId }).from(syncConflicts).where(eq(syncConflicts.id, id)));
+      /**
+       * ★★ 产物必须登记在这里，否则文件网关就是**不设防**的。
+       *
+       *   `/api/v1/artifacts/:id/files` 不落在 PROJECT_SCOPED_URL 上，
+       *   闸门只有靠这张表才知道它属于哪个项目。漏登记的表现是
+       *   「任何登录用户都能读任意项目的产物文件」——
+       *   而那正是这个网关最不该有的性质。
+       */
+      case 'artifacts':
+        return one(await db.select({ projectId: artifacts.projectId }).from(artifacts).where(eq(artifacts.id, id)));
       case 'clarifications': {
         const rows = await db
           .select({ projectId: requirements.projectId })
@@ -1724,6 +1735,43 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId } = await callerOrg(req);
     const { id } = req.params as { id: string };
     return deleteStorageTarget(db, orgId, id);
+  });
+
+  // ── 产物文件 ────────────────────────────────────────────────────────
+  /**
+   * ★★ 项目成员关系由闸门统一判过 —— 前提是 `artifacts` 已经登记进
+   *   projectOfResource 与 RESOURCE_SCOPED_URL（见上面那段与 rbac.ts）。
+   *   少了那两处登记，这三条路由对任何登录用户都是敞开的。
+   *
+   * ★ 只读，且只服务本地归档那一类产物。git / 对象存储的产物有自己的
+   *   可点开地址，不从这里再走一遍。
+   */
+  app.get('/api/v1/artifacts/:id/files', async (req) => {
+    const { id } = req.params as { id: string };
+    return listArtifactFiles(db, id);
+  });
+
+  /**
+   * ★ 路径用通配符段接收：文件名里有 `/` 是常态（`src/app.ts`），
+   *   用查询参数会被各层中间件反复编解码，而通配符是 Fastify 原生支持的。
+   */
+  app.get('/api/v1/artifacts/:id/files/*', async (req) => {
+    const { id } = req.params as { id: string };
+    const rel = (req.params as Record<string, string>)['*'] ?? '';
+    return readArtifactFile(db, id, rel);
+  });
+
+  app.get('/api/v1/artifacts/:id/download/*', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rel = (req.params as Record<string, string>)['*'] ?? '';
+    const file = await openArtifactFile(db, id, rel);
+    return reply
+      .header('content-type', file.mime)
+      .header('content-length', String(file.size))
+      // ★ 一律 attachment：产物内容是 Agent 写的，浏览器里内联渲染
+      //   等于让它在本站域下执行 —— 一个 HTML 产物就能拿到同源权限
+      .header('content-disposition', `attachment; filename="${encodeURIComponent(file.name)}"`)
+      .send(file.stream);
   });
 
   // ── 项目 Agent 绑定 ─────────────────────────────────────────────────
