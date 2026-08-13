@@ -114,7 +114,8 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
               <li key={e.id} className="text-slate-700">
                 <AssigneeChip actor={{ type: 'human', id: e.actorId ?? '', name: e.actorName }} size="sm" />
                 <span className="ml-1 text-[11px] text-slate-500">
-                  {INTERVENTION_KEYS[e.type] ?? e.type}
+                  {/* ★ 认不出的类型回落到原始值，而不是渲染词条键本身 */}
+                  {INTERVENTION_KEYS[e.type] ? t(INTERVENTION_KEYS[e.type]!) : e.type}
                 </span>
                 {typeof e.payload['reason'] === 'string' && (
                   <p className="mt-0.5 text-[11px] text-slate-500">「{e.payload['reason']}」</p>

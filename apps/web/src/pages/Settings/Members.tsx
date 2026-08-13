@@ -13,7 +13,7 @@ import { useAuthStore } from '../../stores/auth';
 import type { AssignableRole } from '../../lib/api/types';
 
 /**
- * 项目{t('members.title')}（docs/tech/09-security.md §2.2）。
+ * 项目成员与角色（docs/tech/09-security.md §2.2）。
  *
  * ★★ 这一页是整套 RBAC 能不能落地的关键，而不是一个管理附属品。
  *

@@ -12,7 +12,7 @@ import { DecisionCardView } from './Card';
 import { Checkbox } from '@/components/ui/checkbox';
 
 /**
- * {t('decisions.title')}（页面文档 10）。
+ * 决策中心（页面文档 10）。
  *
  * ★ 这是整个产品最核心承诺的兑现处：
  *   *你不需要盯着 Agent，需要你的时候我会来找你。*

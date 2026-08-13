@@ -14,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 
 /**
- * {t('roles.title')}（docs/tech/09-security.md §2.2）。
+ * 角色定义（docs/tech/09-security.md §2.2）。
  *
  * ★★ 超管在这里造出「研发」「运营」「测试」。内置的六个覆盖
  *   「项目怎么运转」，覆盖不了「这个组织怎么分工」—— 每家的切法都不一样。

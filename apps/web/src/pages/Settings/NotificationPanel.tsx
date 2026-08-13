@@ -152,7 +152,11 @@ export function NotificationPanel({
         <ul className="mt-0.5 space-y-0.5">
           {config.escalation.map((e, i) => (
             <li key={i} className="text-[11px] text-slate-600">
-              · 等待 {e.afterHours} 小时 → {ESCALATE_KEYS[e.notify] ?? e.notify}
+              ·{' '}
+              {t('notify.escalateRule', {
+                hours: e.afterHours,
+                target: ESCALATE_KEYS[e.notify] ? t(ESCALATE_KEYS[e.notify]!) : e.notify,
+              })}
               {e.pauseCriticalPath && (
                 <span className="ml-1 text-amber-700">{t('notify.pauseCriticalPath')}</span>
               )}

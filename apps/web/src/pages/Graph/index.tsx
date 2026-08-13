@@ -15,7 +15,7 @@ import { GraphCanvas } from '../../features/graph/GraphCanvas';
 import { Legend } from '../../features/graph/shapes';
 import {
   HIGHLIGHT_MODES,
-  MODE_LABELS,
+  MODE_KEYS,
   computeHighlight,
   type HighlightMode,
 } from '../../features/graph/highlight';
@@ -126,7 +126,7 @@ export function GraphPage() {
           >
             {LAYOUTS.map((l) => (
               <option key={l} value={l}>
-                {LAYOUT_KEYS[l]}
+                {t(LAYOUT_KEYS[l])}
               </option>
             ))}
           </select>
@@ -140,7 +140,7 @@ export function GraphPage() {
                   checked={modes.includes(mode)}
                   onCheckedChange={() => toggleMode(mode)}
                 />
-                {MODE_LABELS[mode]}
+                {t(MODE_KEYS[mode])}
               </label>
             ))}
           </div>

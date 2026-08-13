@@ -920,6 +920,7 @@ export const zh: Record<keyof typeof en, string> = {
   'notify.actionableOnly': '默认只发「需要行动」的事',
   'notify.offByDefault': '← 默认关',
   'notify.escalate': '决策等太久时逐级找人',
+  'notify.escalateRule': '等待 {hours} 小时 → {target}',
   'notify.pauseCriticalPath': '并暂停关键路径',
   'notify.save': '保存通知配置',
   'notify.saveFailed': '保存失败',

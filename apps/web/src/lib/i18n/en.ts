@@ -942,6 +942,8 @@ export const en = {
   'notify.actionableOnly': 'By default only things that need action',
   'notify.offByDefault': '← off by default',
   'notify.escalate': 'Escalate step by step when a decision waits too long',
+  /** ★ 整句带占位符，不拼接：中英语序不同，「等待 N 小时 →」拼不出英文 */
+  'notify.escalateRule': 'After {hours}h → {target}',
   'notify.pauseCriticalPath': 'and pause the critical path',
   'notify.save': 'Save notification settings',
   'notify.saveFailed': 'Save failed',

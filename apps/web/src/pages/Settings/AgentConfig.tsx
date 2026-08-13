@@ -41,7 +41,7 @@ import { Textarea } from '@/components/ui/textarea';
  *
  * ★ 每种 CLI 能配什么由**平台**定义（contracts 的 RUNTIME_KIND_SPECS），
  *   这里把它渲染成 JSON 框旁边的**说明书**：能配什么键、取值范围、默认值、
- *   哪些{t('agentCfg.impact.cost')}或安全。JSON 框里没有标签，没有这张表用户只能猜键名。
+ *   哪些影响成本或安全。JSON 框里没有标签，没有这张表用户只能猜键名。
  *
  * ★ 凭证输入框只在**新建或轮换**时出现，且永远不回显原值 ——
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
@@ -1092,7 +1092,7 @@ function toJsonText(value: unknown): string {
  * JSON 框旁边的说明书：平台认识哪些键、能填什么、默认是什么。
  *
  * ★★ 取消逐项表单之后，这张表是这一页信息量的全部来源。
- *   JSON 文本框里只有键名，没有取值范围、没有「这一项{t('agentCfg.impact.cost')}」、
+ *   JSON 文本框里只有键名，没有取值范围、没有「这一项影响成本」、
  *   也没有各运行时「做不到什么」—— 那些正是用户在这一页要做的判断
  *   （哪个 Agent 干哪类活、调这个数字会不会烧钱）所依赖的东西。
  *   所以它不是可选的装饰，是从表单里搬过来的那部分内容。
@@ -1322,10 +1322,15 @@ function guessedAuthUsername(remoteUrl: string): string {
   return 'x-access-token';
 }
 
-const AUTH_SOURCE_LABEL: Record<string, string> = {
-  explicit: t('agentCfg.repo.authManual'),
-  host: t('agentCfg.repo.authGuessed'),
-  default: t('agentCfg.repo.authFallback'),
+/**
+ * 用户名来源 → 词条键 / Auth username source → message key.
+ *
+ * ★ 模块级常量取不到 hook，存译文的话切语言不重算 —— 存键，渲染处 t()。
+ */
+const AUTH_SOURCE_KEYS: Record<string, MessageKey> = {
+  explicit: 'agentCfg.repo.authManual',
+  host: 'agentCfg.repo.authGuessed',
+  default: 'agentCfg.repo.authFallback',
 };
 
 function RepositoryCard({
@@ -1396,7 +1401,10 @@ function RepositoryCard({
               {repo.authUsername}
             </span>
             <span className="ml-1 text-slate-400">
-              （{AUTH_SOURCE_LABEL[repo.authUsernameSource]}
+              （
+              {AUTH_SOURCE_KEYS[repo.authUsernameSource]
+                ? t(AUTH_SOURCE_KEYS[repo.authUsernameSource]!)
+                : repo.authUsernameSource}
               {repo.authProvider ? ` · ${repo.authProvider}` : ''}）
             </span>
           </Field>

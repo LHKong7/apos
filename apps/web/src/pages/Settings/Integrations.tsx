@@ -28,7 +28,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 const CATEGORY_ORDER = ['code', 'project_management', 'communication'];
 
 /**
- * 项目{t('integ.title')}（页面文档 14）。
+ * 项目集成设置（页面文档 14）。
  *
  * ★ 要回答四个问题：连了哪些系统、数据往哪个方向同步、通知发到哪里、
  *   连接授予了什么权限。前三个是功能，第四个是这一页存在的理由 ——

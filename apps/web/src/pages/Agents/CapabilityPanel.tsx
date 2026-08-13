@@ -73,7 +73,7 @@ export function CapabilityPanel({
                     SEVERITY_BADGE[m.severity] ?? 'bg-slate-100 text-slate-600',
                   )}
                 >
-                  {SEVERITY_KEYS[m.severity] ?? m.severity}
+                  {SEVERITY_KEYS[m.severity] ? t(SEVERITY_KEYS[m.severity]!) : m.severity}
                 </span>
               </p>
               {/* 降级后系统实际怎么做 → 用户会感受到什么 */}
@@ -136,12 +136,16 @@ export function CapabilityPanel({
             <ul className="mt-1 space-y-0.5">
               {[...report.tools]
                 .sort((a, b) => effectRank(b.sideEffects) - effectRank(a.sideEffects))
-                .map((t) => (
-                  <li key={t.name} className="text-[11px]">
-                    <span className="text-slate-700">{t.name}</span>
-                    <span className="ml-1 text-slate-500">{t.description}</span>
-                    <span className={clsx('ml-1', EFFECT_TONE[t.sideEffects] ?? 'text-slate-400')}>
-                      {EFFECT_KEYS[t.sideEffects] ?? t.sideEffects}
+                .map((tool) => (
+                  <li key={tool.name} className="text-[11px]">
+                    <span className="text-slate-700">{tool.name}</span>
+                    <span className="ml-1 text-slate-500">{tool.description}</span>
+                    <span
+                      className={clsx('ml-1', EFFECT_TONE[tool.sideEffects] ?? 'text-slate-400')}
+                    >
+                      {EFFECT_KEYS[tool.sideEffects]
+                        ? t(EFFECT_KEYS[tool.sideEffects]!)
+                        : tool.sideEffects}
                     </span>
                   </li>
                 ))}

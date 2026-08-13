@@ -80,7 +80,9 @@ export function ProjectListPage() {
                     {p.goal && <p className="mt-0.5 truncate text-xs text-slate-500">{p.goal}</p>}
                   </div>
                   <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100/70 px-2 py-0.5 text-[11px] text-slate-600">
-                    {AUTONOMY_KEYS[p.autonomyLevel] ?? p.autonomyLevel}
+                    {AUTONOMY_KEYS[p.autonomyLevel]
+                      ? t(AUTONOMY_KEYS[p.autonomyLevel]!)
+                      : p.autonomyLevel}
                   </span>
                   <span className="shrink-0 font-mono text-xs tabular-nums text-slate-500">
                     {money(p.costSpent)}

@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
@@ -254,7 +254,8 @@ export function ErrorTab({
         </p>
         <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-red-900">
           <dt className="text-red-500">{t('runTab.failureClass')}</dt>
-          <dd>{ERROR_LABELS[error.class] ?? error.class}</dd>
+          {/* ★ 认不出的分类回落到原始值，而不是渲染词条键本身 */}
+          <dd>{ERROR_LABELS[error.class] ? t(ERROR_LABELS[error.class]!) : error.class}</dd>
           <dt className="text-red-500">{t('runTab.failureStep')}</dt>
           <dd>
             {failedAt.step !== null
@@ -310,7 +311,13 @@ export function ErrorTab({
   );
 }
 
-const ERROR_LABELS: Record<string, string> = {
+/**
+ * 错误分类 → 词条键 / Error class → message key.
+ *
+ * ★ 存**键**不存译文：模块级常量取不到 hook，存译文的话切语言时不会重算，
+ *   界面会停在第一次渲染的那个语言。渲染处负责 t()。
+ */
+const ERROR_LABELS: Record<string, MessageKey> = {
   context_insufficient: 'errClass.context_insufficient',
   permission_denied: 'errClass.permission_denied',
   tool_failure: 'errClass.tool_failure',

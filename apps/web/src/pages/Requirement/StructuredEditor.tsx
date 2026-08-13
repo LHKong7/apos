@@ -180,7 +180,7 @@ export function StructuredEditor({
               >
                 {(['auto', 'agent', 'human'] as const).map((v) => (
                   <option key={v} value={v}>
-                    {VERIFICATION_KEYS[v]}
+                    {t(VERIFICATION_KEYS[v])}
                   </option>
                 ))}
               </select>

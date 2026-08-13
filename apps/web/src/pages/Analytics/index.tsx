@@ -8,6 +8,7 @@ import {
   ANALYTICS_TABS,
   type AnalyticsRange,
   type AnalyticsTab,
+  type Insight,
   type InsightAction,
 } from '@apos/domain';
 import { api } from '../../lib/api/client';
@@ -105,7 +106,11 @@ export function AnalyticsPage() {
     setParams(next, { replace: true });
   };
 
-  const handleAction = (action: InsightAction) => {
+  /**
+   * ★ `insight` 可选：HitlTab 那条「按建议建规则」的入口只发 create_policy，
+   *   手上没有 Insight。只有 view_items 会读它。
+   */
+  const handleAction = (action: InsightAction, insight?: Insight) => {
     switch (action.kind) {
       case 'view_tab':
         if (action.tab) setParam('tab', action.tab);
@@ -120,7 +125,17 @@ export function AnalyticsPage() {
         setParam('tab', 'hitl');
         break;
       case 'view_items':
-        setDrill(action.label.includes(t('analytics.rework')) ? 'rework' : 'wip');
+        /**
+         * ★★ 按 insight.type 分流，不能拿 label 去匹配文字。
+         *
+         *   label 是**服务端**生成的中文句子（「看返工的任务」），而这里能拿到的
+         *   只有译文 —— 英文（默认语言）下两边永远对不上，于是返工的下钻
+         *   会静默落到在制品那一栏。这类 bug 不报错，只是给错答案。
+         *
+         *   type 是枚举，跟语言无关。同一条纪律：跨语言的判定要落在结构上，
+         *   不落在句子上。
+         */
+        setDrill(insight?.type === 'rework_high' ? 'rework' : 'wip');
         break;
       case 'create_policy':
         // ★ 「分析 → 规则」是产品持续降低人类负担的飞轮。
@@ -159,7 +174,7 @@ export function AnalyticsPage() {
           >
             {ANALYTICS_RANGES.map((r) => (
               <option key={r} value={r}>
-                {RANGE_KEYS[r]}
+                {t(RANGE_KEYS[r])}
               </option>
             ))}
           </select>
@@ -262,7 +277,7 @@ export function AnalyticsPage() {
       {drill && (
         <aside className="fixed inset-y-0 right-0 z-40 flex w-[28rem] max-w-full flex-col border-l border-slate-200 bg-white shadow-xl">
           <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-            <h2 className="text-sm font-medium text-slate-800">{DRILL_KEYS[drill]}</h2>
+            <h2 className="text-sm font-medium text-slate-800">{t(DRILL_KEYS[drill])}</h2>
             <button
               type="button"
               onClick={() => setDrill(null)}
