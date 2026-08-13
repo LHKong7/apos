@@ -609,7 +609,13 @@ export interface PlanDetail {
     highRiskTasks: number;
   };
   autoActions: { description: string; policyName: string | null; reversible: boolean; externalVisible: boolean }[];
-  humanGates: { taskTitle: string; reason: string; assigneeHint: string }[];
+  humanGates: {
+    taskTitle: string;
+    /** execution = 这活得人干；approval = 干完要人批。两者判断完全不同 */
+    cause: 'execution' | 'approval';
+    reason: string;
+    assigneeHint: string;
+  }[];
   currentBoundary: { auto: string[]; human: string[]; depends: { label: string; when: string | null }[] };
   tasks: {
     id: string;

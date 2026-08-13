@@ -395,15 +395,35 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
 
       {d.humanGates.length > 0 && (
         <div className="mt-1.5 border-t border-amber-200 pt-1.5">
+          {/*
+            ★★ 分开数「要人干」与「要人批」。
+              合成一个数字的话，「仍需人确认的（5）」里可能一条审批都没有 ——
+              全是「这几件事得人做」，而用户是照着这个数字判断
+              「批准之后还有多少道闸」的。
+          */}
           <p className="text-[11px] text-amber-900">
-            {t('plan.stillNeedsHuman', { count: d.humanGates.length })}
-            {!expanded && d.humanGates.map((g) => g.taskTitle).join(' · ')}
+            {t('plan.gateBreakdown', {
+              approval: d.humanGates.filter((g) => g.cause === 'approval').length,
+              execution: d.humanGates.filter((g) => g.cause === 'execution').length,
+            })}
+            {!expanded && ' ' + d.humanGates.map((g) => g.taskTitle).join(' · ')}
           </p>
           {expanded && (
             <ul className="mt-0.5 space-y-0.5">
               {d.humanGates.map((g, i) => (
                 <li key={i} className="text-[11px] text-amber-900">
-                  · <span className="font-medium">{g.taskTitle}</span> —— {g.reason}
+                  ·{' '}
+                  <span
+                    className={clsx(
+                      'mr-1 rounded px-1 text-[10px]',
+                      g.cause === 'approval'
+                        ? 'bg-amber-200 text-amber-900'
+                        : 'bg-slate-200 text-slate-700',
+                    )}
+                  >
+                    {g.cause === 'approval' ? t('plan.causeApproval') : t('plan.causeExecution')}
+                  </span>
+                  <span className="font-medium">{g.taskTitle}</span> —— {g.reason}
                   <span className="ml-1 text-amber-700">（{g.assigneeHint}）</span>
                 </li>
               ))}

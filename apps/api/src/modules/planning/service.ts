@@ -31,6 +31,15 @@ export interface AutoAction {
 
 export interface HumanGateEntry {
   taskTitle: string;
+  /**
+   * 这道闸是**为什么**在的。
+   *
+   * ★★ `execution` = 这活得人干；`approval` = 干完要人批。
+   *   两者以前混在同一个列表里，而用户看到它时要做的判断完全不同：
+   *   前者是排人，后者是把关。分不开的话，计划页上「仍需人确认的（5）」
+   *   里可能一条审批都没有 —— 全是「这几件事得人做」。
+   */
+  cause: 'execution' | 'approval';
   reason: string;
   assigneeHint: string;
 }
@@ -185,6 +194,18 @@ export async function generatePlan(
           phase: task.phase,
           requiredSkills: task.requiredSkills,
           requiredTools: task.requiredTools,
+          /**
+           * ★★ executionMode 与 approvalGate 是两件事。
+           *
+           *   「这活只能人干」和「干完要不要人批」在产品上正交：一段需要人写的
+           *   文案不一定要审批，一次自动的生产发布几乎一定要。合成一个
+           *   requiresHuman 之后，「Agent 执行 + 人类审批」表达不了，
+           *   而计划页那一栏会显示成「🤖 Agent」，看不出后面还有一道闸。
+           *
+           * ★ requiresHuman 一并留着：老工作项只有它，读取处（executionModeOf）
+           *   两个都认。等历史数据都带上 executionMode 之后再删。
+           */
+          executionMode: task.requiresHuman ? 'human' : 'auto',
           requiresHuman: task.requiresHuman,
           ...(task.operationType ? { operationType: task.operationType } : {}),
           ...(task.environment ? { environment: task.environment } : {}),
@@ -316,10 +337,19 @@ function predictPolicyOutcomes(
 
     const verdict = evaluate(policyCtx, ctx.rules);
 
+    /**
+     * ★★ 「人来执行」不等于「要人批准」。
+     *
+     *   这一条以前和 Policy 判出来的审批闸混在同一个列表里，于是计划页上
+     *   「仍需人确认的」既包含「这活得人干」也包含「这活干完要人批」——
+     *   而用户看到它时要做的判断完全不同：前者是排人，后者是把关。
+     *   cause 把两者分开，文案也分开。
+     */
     if (task.requiresHuman) {
       humanGates.push({
         taskTitle: task.title,
-        reason: '该任务在计划中被标记为需要人类执行',
+        cause: 'execution',
+        reason: '该任务需要人来执行（不是审批闸）',
         assigneeHint: '项目成员',
       });
       continue;
@@ -328,6 +358,7 @@ function predictPolicyOutcomes(
     if (requiresHuman(verdict.action)) {
       humanGates.push({
         taskTitle: task.title,
+        cause: 'approval',
         reason: verdict.matchedPolicyName
           ? `Policy「${verdict.matchedPolicyName}」要求人工介入`
           : `项目自治等级下 ${task.riskLevel} 风险任务需人工确认`,
