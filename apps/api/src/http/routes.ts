@@ -146,7 +146,13 @@ import {
   updateStorageTarget,
 } from './storage-targets';
 import { AssigneeInput, listCandidates, setAssignee } from './assignment';
-import { reopenRequirement } from '../modules/requirement/service';
+import {
+  addAssumption,
+  confirmAssumption,
+  invalidateAssumption,
+  listAssumptions,
+  reopenRequirement,
+} from '../modules/requirement/service';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
 import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
@@ -556,6 +562,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
        */
       case 'artifacts':
         return one(await db.select({ projectId: artifacts.projectId }).from(artifacts).where(eq(artifacts.id, id)));
+      /** ★ 同 artifacts：URL 上看不出项目，不登记就等于不设防 */
+      case 'assumptions': {
+        const rows = await db
+          .select({ projectId: requirements.projectId })
+          .from(requirementAssumptions)
+          .innerJoin(requirements, eq(requirements.id, requirementAssumptions.requirementId))
+          .where(eq(requirementAssumptions.id, id));
+        return one(rows);
+      }
       case 'clarifications': {
         const rows = await db
           .select({ projectId: requirements.projectId })
@@ -1304,6 +1319,55 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *
    * ★ 原因必填：重新打开会让下游已生成的计划全部作废，三周后没人记得为什么。
    */
+  /**
+   * 需求假设 —— 登记、确认、证伪。
+   *
+   * ★★ 此前假设只能由 AI 分析产生，手写需求的那条路根本没有地方记它 ——
+   *   而假设现在会随需求一起传给规划 Agent，等于那条路永远少一块
+   *   最影响规划结果的输入。
+   */
+  app.get('/api/v1/requirements/:id/assumptions', async (req) => {
+    const { id } = req.params as { id: string };
+    return listAssumptions(db, id);
+  });
+
+  app.post('/api/v1/requirements/:id/assumptions', async (req, reply) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ statement: z.string().trim().min(1, '假设内容不能为空').max(2000) })
+      .parse(req.body);
+
+    const created = await addAssumption(db, {
+      requirementId: id,
+      statement: body.statement,
+      actorId: userId,
+      correlationId: corr(req),
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.post('/api/v1/assumptions/:id/confirm', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    return confirmAssumption(db, { assumptionId: id, actorId: userId });
+  });
+
+  /** ★ 证伪必须写原因：它会让已生成的计划失去一块前提 */
+  app.post('/api/v1/assumptions/:id/invalidate', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ reason: z.string().trim().min(1, '证伪必须写明原因').max(2000) })
+      .parse(req.body);
+    return invalidateAssumption(db, {
+      assumptionId: id,
+      reason: body.reason,
+      actorId: userId,
+      correlationId: corr(req),
+    });
+  });
+
   app.post('/api/v1/requirements/:id/reopen', async (req) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };

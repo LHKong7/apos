@@ -250,6 +250,15 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
   /** ★ 重新打开等于撤销一次确认，与确认同档 */
   'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
+  'POST /api/v1/requirements/:id/assumptions': 'requirement.edit',
+  /**
+   * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须
+   *   登记进 RESOURCE_SCOPED_URL 与 projectOfResource（见下面那条正则与
+   *   routes.ts），否则成员关系闸门够不着它，这两条路由对任何登录用户敞开。
+   *   与 artifacts 是同一条纪律。
+   */
+  'POST /api/v1/assumptions/:id/confirm': 'requirement.edit',
+  'POST /api/v1/assumptions/:id/invalidate': 'requirement.edit',
   'POST /api/v1/requirements/:id/reject': 'requirement.approve',
   /**
    * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
@@ -528,7 +537,7 @@ async function highestRoleOverAgent(
 /** 从 URL 反查项目 id 用的形状，与成员关系闸门同源 */
 export const PROJECT_SCOPED_URL = new RegExp(`^/api/v1/projects/(${UUID})(?:/|$)`, 'i');
 export const RESOURCE_SCOPED_URL = new RegExp(
-  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts|artifacts)/(${UUID})(?:/|$)`,
+  `^/api/v1/(work-items|runs|decisions|plans|requirements|clarifications|policies|integrations|sync-conflicts|artifacts|assumptions)/(${UUID})(?:/|$)`,
   'i',
 );
 

@@ -463,6 +463,117 @@ export async function reopenRequirement(
   return { ok: true, requirementId: req.id };
 }
 
+/**
+ * 人工登记 / 确认 / 证伪一条假设。
+ *
+ * ★★ 在此之前假设**只能由 AI 产生**（analyzeRequirement 里那段 insert）。
+ *
+ *   自己把需求写清楚的人根本没有地方记假设 —— 而假设现在会随需求一起
+ *   传给规划 Agent（见 planning/service.ts）。也就是说，手写需求的那条路
+ *   永远少一块最影响规划结果的输入。
+ *
+ * ★ origin 区分来源：human_stated 是人明确说的，agent_inferred 是 AI 猜的。
+ *   混成一栏的话，「这条是谁的判断」在事后追责时分不清 ——
+ *   而假设被证伪正是最需要回答这个问题的时刻。
+ */
+export async function addAssumption(
+  db: Database,
+  input: { requirementId: string; statement: string; actorId: string; correlationId: string },
+): Promise<{ id: string }> {
+  const [req] = await db
+    .select()
+    .from(requirements)
+    .where(eq(requirements.id, input.requirementId));
+  if (!req) throw new Error(`需求不存在: ${input.requirementId}`);
+
+  const [row] = await db
+    .insert(requirementAssumptions)
+    .values({
+      requirementId: req.id,
+      statement: input.statement,
+      origin: 'human_stated',
+      // ★ 人自己写下的假设天然就是「已确认」—— 再要求他确认一遍是多此一举
+      confirmedBy: input.actorId,
+    })
+    .returning({ id: requirementAssumptions.id });
+
+  return { id: row!.id };
+}
+
+/** 人类确认一条 AI 推断的假设 —— 把「AI 猜的」变成「人认了的」 */
+export async function confirmAssumption(
+  db: Database,
+  input: { assumptionId: string; actorId: string },
+): Promise<{ ok: true }> {
+  await db
+    .update(requirementAssumptions)
+    .set({ confirmedBy: input.actorId })
+    .where(eq(requirementAssumptions.id, input.assumptionId));
+  return { ok: true };
+}
+
+/**
+ * 证伪一条假设。
+ *
+ * ★ 已经证伪的假设不再传给规划器（planning/service.ts 按 invalidatedAt 过滤）——
+ *   带过去会把规划引向一个已知错误的方向。
+ */
+export async function invalidateAssumption(
+  db: Database,
+  input: { assumptionId: string; reason: string; actorId: string; correlationId: string },
+): Promise<{ ok: true }> {
+  const [row] = await db
+    .select()
+    .from(requirementAssumptions)
+    .where(eq(requirementAssumptions.id, input.assumptionId));
+  if (!row) throw new Error(`假设不存在: ${input.assumptionId}`);
+
+  await db
+    .update(requirementAssumptions)
+    .set({ invalidatedAt: new Date(), invalidatedReason: input.reason })
+    .where(eq(requirementAssumptions.id, input.assumptionId));
+
+  const [req] = await db
+    .select({ orgId: requirements.orgId, projectId: requirements.projectId })
+    .from(requirements)
+    .where(eq(requirements.id, row.requirementId));
+
+  if (req) {
+    await emitAndPublish(db, {
+      type: 'requirement.assumption_invalidated',
+      orgId: req.orgId,
+      projectId: req.projectId,
+      actor: humanActor(input.actorId),
+      subjectType: 'requirement',
+      subjectId: row.requirementId,
+      payload: { assumptionId: row.id, statement: row.statement, reason: input.reason },
+      correlationId: input.correlationId,
+    });
+  }
+
+  return { ok: true };
+}
+
+/** 需求页要展示的假设清单 */
+export async function listAssumptions(db: Database, requirementId: string) {
+  const rows = await db
+    .select()
+    .from(requirementAssumptions)
+    .where(eq(requirementAssumptions.requirementId, requirementId));
+
+  return {
+    assumptions: rows.map((a) => ({
+      id: a.id,
+      statement: a.statement,
+      origin: a.origin,
+      /** ★ 「谁认的」要显示出来：AI 猜的和人认的，可信度完全不同 */
+      confirmed: a.confirmedBy !== null,
+      invalidated: a.invalidatedAt !== null,
+      invalidatedReason: a.invalidatedReason,
+    })),
+  };
+}
+
 export async function approveRequirement(
   db: Database,
   input: { requirementId: string; approverId: string; correlationId: string; note?: string },
