@@ -26,7 +26,7 @@ export function InputTab({ detail }: { detail: RunDetail }) {
       <Section title={t('runTab.contextList', { count: input.context.length })}>
         {input.context.length === 0 ? (
           <p className="rounded bg-amber-50 px-2 py-1.5 text-amber-800">
-            没有携带任何上下文。如果这次 Run 因为「找不到信息」失败，这里就是原因。
+            {t('runTab.noContextWarning')}
           </p>
         ) : (
           <ul className="space-y-1">
@@ -45,7 +45,7 @@ export function InputTab({ detail }: { detail: RunDetail }) {
                   {/* 不可信来源要标出来 —— 提示注入的入口就在这里 */}
                   {c.trusted === false && (
                     <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-700">
-                      来源不可信
+                      {t('runTab.untrustedSource')}
                     </span>
                   )}
                   <span className="font-mono text-[10px] text-slate-400">
@@ -115,7 +115,7 @@ export function ArtifactsTab({ detail }: { detail: RunDetail }) {
     <div className="space-y-2 text-xs">
       {incomplete && (
         <p className="rounded bg-amber-50 px-2 py-1.5 text-amber-800">
-          以下产物来自未完成的 Run，使用前请人工确认
+          {t('runTab.incompleteArtifacts')}
         </p>
       )}
       {detail.artifacts.map((a) => (
@@ -180,7 +180,7 @@ export function CostTab({ detail }: { detail: RunDetail }) {
             {tokens.cacheRead.toLocaleString()}
             {/* 缓存命中率直接决定成本，单独标出来 */}
             <span className="ml-2 text-slate-400">
-              命中率 {(tokens.cacheHitRate * 100).toFixed(0)}%
+              {t('runTab.cacheHitRate', { percent: (tokens.cacheHitRate * 100).toFixed(0) })}
             </span>
           </dd>
           <dt className="text-slate-400">{t('runTab.total')}</dt>
@@ -190,7 +190,11 @@ export function CostTab({ detail }: { detail: RunDetail }) {
 
       {overrun !== null && overrun > 0.05 && (
         <p className="rounded bg-amber-50 px-2 py-1.5 text-amber-800">
-          实际成本 {money(spent)} 超出预估 {money(estimated!)} 的 {(overrun * 100).toFixed(0)}%
+          {t('runTab.costOverrun', {
+            spent: money(spent),
+            estimated: money(estimated!),
+            percent: (overrun * 100).toFixed(0),
+          })}
         </p>
       )}
 
@@ -250,7 +254,7 @@ export function ErrorTab({
     <div className="space-y-4 text-xs">
       <div className="rounded border border-red-200 bg-red-50 p-2">
         <p className="font-medium text-red-800">
-          ❌ Run 失败 · 第 {detail.run.attempt} 次尝试
+          {t('runTab.runFailed', { n: detail.run.attempt })}
         </p>
         <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-red-900">
           <dt className="text-red-500">{t('runTab.failureClass')}</dt>
@@ -300,11 +304,11 @@ export function ErrorTab({
       <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
         <Button variant="neutral"
           onClick={onRetry}>
-          补充上下文重试
+          {t('runTab.retryWithContext')}
         </Button>
         <Button variant="outline"
           onClick={onTakeover}>
-          我来接管
+          {t('runTab.takeOver')}
         </Button>
       </div>
     </div>

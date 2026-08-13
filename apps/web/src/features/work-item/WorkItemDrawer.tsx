@@ -78,7 +78,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                     if (pending) onOpenDecision(String(pending.payload['decisionId'] ?? pending.id));
                   }}
                   className="mt-2 w-full">
-                  该任务正在等待人工决策 →
+                  {t('itemDrawer.awaitingDecision')}
                 </Button>
               )}
             </header>
@@ -121,7 +121,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                 {item.acceptanceCriteria.length > 0 && (
                   <section>
                     <h4 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                      验收标准
+                      {t('itemDrawer.acceptanceCriteria')}
                     </h4>
                     <ul className="space-y-1">
                       {item.acceptanceCriteria.map((c) => (
@@ -140,7 +140,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                 {item.constraints.length > 0 && (
                   <section>
                     <h4 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                      执行约束
+                      {t('itemDrawer.constraints')}
                     </h4>
                     <ul className="space-y-1 text-xs text-slate-700">
                       {item.constraints.map((c, i) => (
@@ -165,7 +165,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                 {artifacts.length > 0 && (
                   <section>
                     <h4 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                      产物
+                      {t('itemDrawer.artifacts')}
                     </h4>
                     <ul className="space-y-1 text-xs">
                       {artifacts.map((a) => (
@@ -272,7 +272,7 @@ function RunsTab({
         <article key={run.id} className="rounded border border-slate-200 p-2 text-xs">
           <div className="flex items-center gap-2">
             <Link to={`/runs/${run.id}`} className="font-medium hover:underline">
-              第 {run.attempt} 次
+              {t('runSum.attemptNo', { n: run.attempt })}
             </Link>
             <span
               className={clsx(
@@ -296,7 +296,7 @@ function RunsTab({
           )}
           {run.agentSelfReport && (
             <p className="mt-1 rounded bg-amber-50 p-1.5 text-amber-800">
-              Agent 自述：{run.agentSelfReport}
+              {t('itemDrawer.agentSelfReport', { report: run.agentSelfReport })}
             </p>
           )}
         </article>
@@ -310,7 +310,7 @@ function RunsTab({
         </h4>
         {conflict && (
           <p className="mb-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            该任务已被 Agent 更新，你输入的内容仍然保留。
+            {t('itemDrawer.updatedConflict')}
           </p>
         )}
         <Textarea

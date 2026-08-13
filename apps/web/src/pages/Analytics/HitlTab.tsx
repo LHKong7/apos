@@ -81,7 +81,7 @@ export function HitlTab({
       >
         {hitl.repeated.length === 0 ? (
           <p className="py-3 text-center text-xs text-slate-400">
-            这段时间没有出现三次以上的同类决策
+            {t('hitl.noRepeated')}
           </p>
         ) : (
           <ul className="space-y-1">
@@ -95,23 +95,26 @@ export function HitlTab({
                   <span className="min-w-0 flex-1 truncate text-slate-800">{r.label}</span>
                   <span className="tabular-nums text-slate-600">{t('hitl.timesCount', { count: r.count })}</span>
                   <span className="tabular-nums text-slate-500">
-                    {r.approvedCount} 批准 · 一致性 {Math.round(r.consistency * 100)}%
+                    {t('hitl.approvedConsistency', {
+                      approved: r.approvedCount,
+                      consistency: Math.round(r.consistency * 100),
+                    })}
                   </span>
                   <span className="tabular-nums text-slate-500">
-                    平均等 {formatHours(r.avgWaitHours)}
+                    {t('hitl.avgWait', { time: formatHours(r.avgWaitHours) })}
                   </span>
                   <span className={clsx('w-20 shrink-0', meta.className)}>
                     {t('hitl.potential', { icon: meta.icon, level: t(meta.labelKey) })}
                   </span>
                   {r.potential === 'low' ? (
                     <span className="w-24 shrink-0 text-right text-[11px] text-slate-400">
-                      结果有分歧
+                      {t('hitl.inconsistent')}
                     </span>
                   ) : (
                     <Button variant="outline" size="xs"
                       onClick={() => onCreatePolicy(r)}
                       className="w-24 shrink-0">
-                      创建规则 →
+                      {t('hitl.createRule')}
                     </Button>
                   )}
                 </li>
@@ -172,8 +175,7 @@ export function HitlTab({
       </Card>
 
       <p className="text-[11px] text-slate-400">
-        决策响应时间等个人绩效相关数据默认聚合展示，本页不提供个人明细
-        —— 避免这一页被当成监控工具用（页面文档 §8）。
+        {t('hitl.privacyNote')}
       </p>
     </div>
   );

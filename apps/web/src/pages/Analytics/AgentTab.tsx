@@ -20,7 +20,7 @@ export function AgentTab({ data }: { data: Analytics }) {
   if (agent.agents.length === 0) {
     return (
       <p className="rounded border border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-400">
-        这段时间没有 Agent 执行记录
+        {t('agentTab.noRuns')}
       </p>
     );
   }
@@ -59,10 +59,10 @@ export function AgentTab({ data }: { data: Analytics }) {
                 <th className="py-1 px-2 text-right font-medium">{t('agentTab.runs')}</th>
                 <th className="py-1 px-2 text-right font-medium">{t('agentTab.successRate')}</th>
                 <th className="py-1 px-2 text-right font-medium" title={t('agentTab.firstTryOnly')}>
-                  首次成功
+                  {t('agents.col.firstTry')}
                 </th>
                 <th className="py-1 px-2 text-right font-medium" title={t('agentTab.overrideHelp')}>
-                  人工覆盖
+                  {t('agents.col.override')}
                 </th>
                 <th className="py-1 px-2 text-right font-medium">{t('agentTab.avgCostShort')}</th>
                 <th className="py-1 pl-2 text-right font-medium">{t('agentTab.avgDuration')}</th>
@@ -100,9 +100,10 @@ export function AgentTab({ data }: { data: Analytics }) {
 
         {agent.dominance && (
           <p className="mt-2 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-900">
-            💡 {agent.dominance.betterName} 在成功率、成本、耗时上全面优于{' '}
-            {agent.dominance.worseName} —— 建议调整调度权重，或对比两者的配置差异。
-            只赢一两项不会出现在这里，那属于权衡而非结论。
+            {t('agentTab.dominance', {
+              better: agent.dominance.betterName,
+              worse: agent.dominance.worseName,
+            })}
           </p>
         )}
       </Card>

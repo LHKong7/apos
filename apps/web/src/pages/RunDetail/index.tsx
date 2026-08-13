@@ -126,7 +126,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             </Link>
           )}
           <h1 className="text-sm font-semibold text-slate-900">
-            Run · 第 {detail.run.attempt} 次
+            {t('runDetail.heading', { n: detail.run.attempt })}
           </h1>
           <StatusPill status={detail.run.status} />
 
@@ -134,7 +134,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             {/* ★ 本页最重要的开关：两类用户，两种深度（页面文档 09 §2） */}
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
               <Checkbox tone="neutral" checked={detailed} onCheckedChange={setDetailed} />
-              详细模式
+              {t('runDetail.detailedMode')}
             </label>
           </div>
         </div>
@@ -162,7 +162,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
               <>
                 <HeaderButton onClick={() => setDialog('add_constraint')}>{t('runDetail.addConstraint')}</HeaderButton>
                 <HeaderButton onClick={() => setDialog('terminate')} tone="danger">
-                  终止
+                  {t('runDetail.terminate')}
                 </HeaderButton>
               </>
             )}
@@ -184,7 +184,10 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
               />
             </span>
             <span className="shrink-0 text-[11px] tabular-nums text-slate-500">
-              步骤 {detail.run.stepCurrent}/{detail.run.stepTotal}
+              {t('runDetail.step', {
+                current: detail.run.stepCurrent ?? 0,
+                total: detail.run.stepTotal ?? 0,
+              })}
               {detail.run.stepDescription && ` · ${detail.run.stepDescription}`}
             </span>
           </div>
@@ -193,7 +196,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
         {/* 事件流中断的提示（页面文档 09 §11） */}
         {live && isStale(detail) && (
           <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            事件流已 {duration(staleMinutes(detail))} 没有更新，运行时可能已经断开
+            {t('runDetail.staleStream', { time: duration(staleMinutes(detail)) })}
           </p>
         )}
       </header>
@@ -281,7 +284,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
             className="pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
-            知道了
+            {t('common.gotIt')}
           </button>
         </div>
       )}

@@ -144,7 +144,11 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                           <span className="font-medium text-slate-800">{o.name}</span>
                           {o.isRecommended && (
                             <span className="rounded bg-emerald-600 px-1 text-[10px] text-white">
-                              Agent 倾向 {o.confidence ? `${Math.round(Number(o.confidence) * 100)}%` : ''}
+                              {t('decision.agentLeans', {
+                                confidence: o.confidence
+                                  ? `${Math.round(Number(o.confidence) * 100)}%`
+                                  : '',
+                              })}
                             </span>
                           )}
                         </div>
@@ -153,7 +157,9 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                         )}
                         {typeof o.attributes['consequence'] === 'string' && (
                           <p className="mt-0.5 text-xs text-slate-500">
-                            后果：{o.attributes['consequence']}
+                            {t('decision.consequence', {
+                              consequence: String(o.attributes['consequence']),
+                            })}
                           </p>
                         )}
                         {o.rationale && (
@@ -167,20 +173,20 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
 
               {resolved ? (
                 <p className="rounded bg-slate-100 px-3 py-2 text-xs text-slate-600">
-                  该决策已被处理（{decision.status}）
+                  {t('decDrawer.alreadyResolved', { status: decision.status })}
                 </p>
               ) : notMine ? (
                 <p className="rounded bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  该决策的责任人不是你。决策责任不可代行 —— 如需变更责任人，请使用改派。
+                  {t('decDrawer.notYours')}
                 </p>
               ) : (
                 <div className="space-y-3 border-t border-slate-200 pt-3">
                   <div className="flex gap-1">
                     <TabButton active={mode === 'approve'} onClick={() => setMode('approve')}>
-                      批准
+                      {t('decDrawer.approve')}
                     </TabButton>
                     <TabButton active={mode === 'reject'} onClick={() => setMode('reject')}>
-                      驳回
+                      {t('decDrawer.reject')}
                     </TabButton>
                   </div>
 
@@ -200,7 +206,7 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                           onChange={(e) => setConstraint(e.target.value)}
                           placeholder={t('decDrawer.constraintPlaceholder')} />
                         <p className="mt-0.5 text-[11px] text-slate-400">
-                          约束会写入任务并下发给 Agent，执行时必须遵守
+                          {t('decDrawer.constraintNote')}
                         </p>
                       </Field>
                       <button
