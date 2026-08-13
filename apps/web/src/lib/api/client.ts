@@ -38,6 +38,8 @@ import type {
   StorageTargetProbe,
   StorageTargetsResponse,
   ConventionsResponse,
+  ArtifactFileContent,
+  ArtifactFileList,
   ExecutionModeValue,
   ExecutorCandidates,
   ProjectAgentBindings,
@@ -474,6 +476,15 @@ export const api = {
       method: 'POST',
       json: body,
     }),
+
+  /** 产物里的文件清单。★ 只有本地归档那一类有，git / 对象存储走它们自己的链接 */
+  artifactFiles: (artifactId: string) =>
+    request<ArtifactFileList>(`/artifacts/${artifactId}/files`),
+
+  artifactFile: (artifactId: string, path: string) =>
+    request<ArtifactFileContent>(
+      `/artifacts/${artifactId}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+    ),
 
   projectAgents: (projectId: string) =>
     request<ProjectAgentBindings>(`/projects/${projectId}/agents`),

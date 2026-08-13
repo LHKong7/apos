@@ -1420,3 +1420,24 @@ export interface ProjectAgentBindings {
     skills: string[];
   }[];
 }
+
+export interface ArtifactFileList {
+  artifactId: string;
+  projectId: string;
+  /** ★ 目录可能已随工作区回收 —— 与「这次没产出」是两回事，所以带原因 */
+  available: boolean;
+  reason: string | null;
+  files: { path: string; size: number; isDirectory: boolean }[];
+  truncated: boolean;
+}
+
+export interface ArtifactFileContent {
+  artifactId: string;
+  projectId: string;
+  path: string;
+  size: number;
+  mime: string;
+  /** 二进制或超大文件为 null，此时 reason 说明为什么 */
+  preview: string | null;
+  reason: string | null;
+}

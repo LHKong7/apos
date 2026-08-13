@@ -66,6 +66,9 @@ export const qk = {
   workItem: (id: string) => ['workItem', id] as const,
   workItemCandidates: (id: string) => ['workItem', id, 'candidates'] as const,
   projectAgents: (projectId: string) => ['project', projectId, 'agents'] as const,
+  artifactFiles: (artifactId: string) => ['artifact', artifactId, 'files'] as const,
+  artifactFile: (artifactId: string, path: string) =>
+    ['artifact', artifactId, 'file', path] as const,
   decisions: (scope: string) => ['decisions', scope] as const,
   decisionsAll: () => ['decisions'] as const,
   decision: (id: string) => ['decision', id] as const,

@@ -1940,6 +1940,9 @@ export const en = {
   'binding.reviewer': 'Reviewer',
   'binding.reviewerHint': 'Reviews deliverables.',
   'binding.plannerNeedsRequirement': '⚠ {name} does not have requirement in its applicable types, so it cannot plan — tick it in the agent configuration.',
+  'artifact.fileCount': '{count} files',
+  'artifact.truncated': 'Only the first entries are listed',
+  'artifact.download': 'Download',
 } as const;
 
 export type MessageKey = keyof typeof en;

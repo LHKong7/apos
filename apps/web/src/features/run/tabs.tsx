@@ -6,6 +6,7 @@ import { qk } from '../../lib/query/keys';
 import { money, relativeTime } from '../../lib/format';
 import type { RunDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { ArtifactFiles } from './ArtifactFiles';
 
 /**
  * 输入 Tab（页面文档 09 §5.4）。
@@ -140,6 +141,12 @@ export function ArtifactsTab({ detail }: { detail: RunDetail }) {
               {a.content}
             </pre>
           )}
+          {/*
+            ★ 本地归档的产物在这里才第一次能被打开。此前页面只拿得到
+              「改了 N 个文件」和文件名，内容要看只能上服务器。
+              不是本地归档的（git / 对象存储）这个组件自己不渲染。
+          */}
+          <ArtifactFiles artifactId={a.id} />
         </article>
       ))}
     </div>
