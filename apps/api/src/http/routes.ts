@@ -1331,6 +1331,40 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listAssumptions(db, id);
   });
 
+  /**
+   * 这条需求的历次分析 / 规划 Run。
+   *
+   * ★★ 规划 Run 落库之后，「这次分析到底做了什么」终于查得到 —— 但前提是
+   *   需求页上有入口指向它。没有这条路由的话，那些记录躺在 agent_runs 里
+   *   而没有任何界面能找到它们，可审计只做了一半。
+   */
+  app.get('/api/v1/requirements/:id/runs', async (req) => {
+    const { id } = req.params as { id: string };
+    const rows = await db
+      .select({
+        id: agentRuns.id,
+        status: agentRuns.status,
+        goal: agentRuns.goal,
+        cost: agentRuns.cost,
+        model: agentRuns.model,
+        errorMessage: agentRuns.errorMessage,
+        startedAt: agentRuns.startedAt,
+        endedAt: agentRuns.endedAt,
+      })
+      .from(agentRuns)
+      .where(eq(agentRuns.requirementId, id))
+      .orderBy(desc(agentRuns.createdAt));
+
+    return {
+      runs: rows.map((r) => ({
+        ...r,
+        cost: Number(r.cost),
+        startedAt: r.startedAt?.toISOString() ?? null,
+        endedAt: r.endedAt?.toISOString() ?? null,
+      })),
+    };
+  });
+
   app.post('/api/v1/requirements/:id/assumptions', async (req, reply) => {
     const { userId } = actorFrom(req);
     const { id } = req.params as { id: string };

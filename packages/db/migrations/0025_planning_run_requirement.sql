@@ -1,0 +1,3 @@
+ALTER TABLE "agent_runs" ADD COLUMN "requirement_id" uuid;--> statement-breakpoint
+ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_requirement_id_requirements_id_fk" FOREIGN KEY ("requirement_id") REFERENCES "public"."requirements"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "agent_runs_requirement_idx" ON "agent_runs" USING btree ("requirement_id","created_at");

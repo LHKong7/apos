@@ -3,7 +3,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { agentRuns, agents, projectAgentBindings, projectMembers, type Database } from '@apos/db';
+import {
+  agentRuns,
+  agents,
+  projectAgentBindings,
+  projectMembers,
+  runEvents,
+  type Database,
+} from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
 import { WorkspaceService } from '../workspace';
@@ -29,6 +36,29 @@ export interface AgentPlanningOptions {
    */
   workspaces?: WorkspaceService;
   onDiagnostic?: (message: string, detail?: unknown) => void;
+}
+
+/**
+ * 一行摘要 —— run_events.summary 是 NOT NULL，而 Run 详情页的简明模式只读它。
+ *
+ * ★ 不复用 ingest 里那个 summarize：那个是给执行 Run 写的，措辞围绕
+ *   工作项与交付展开，用在规划上会说出「已提交到分支」这类根本没发生的事。
+ */
+function planningEventSummary(e: RunEvent): string {
+  switch (e.type) {
+    case 'run_started':
+      return '规划开始';
+    case 'run_ended':
+      return `规划结束：${e.outcome}`;
+    case 'cost':
+      return `累计成本 $${e.totalUsd}`;
+    case 'error':
+      return `报错：${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`;
+    case 'progress':
+      return e.totalSteps ? `${e.description}（${e.step}/${e.totalSteps}）` : e.description;
+    default:
+      return e.type;
+  }
 }
 
 /** 规划 Agent 的判据：能处理 `requirement` 类型的工作项 */
@@ -221,7 +251,7 @@ export class AgentPlanningProvider implements PlanningProvider {
      *   现在它是 kind='planning' 的一行，work_item_id 为空（工作项这会儿
      *   还不存在 —— 那正是这一列被放开的原因）。
      */
-    await this.openRun(runId, agent, input.scope, input.kind);
+    await this.openRun(runId, agent, input.scope, input.kind, input.scope.requirementId ?? null);
 
     /** 每一条失败路径都要落到那一行上，否则它会永远停在 dispatching */
     const failRun = async (reason: string): Promise<Attempt<T>> => {
@@ -455,6 +485,7 @@ export class AgentPlanningProvider implements PlanningProvider {
     agent: typeof agents.$inferSelect,
     scope: PlanningScope,
     kind: 'structure' | 'plan',
+    requirementId: string | null,
   ): Promise<void> {
     await this.db.insert(agentRuns).values({
       id: runId,
@@ -463,6 +494,8 @@ export class AgentPlanningProvider implements PlanningProvider {
       // ★ 工作项这会儿还不存在 —— 这正是 work_item_id 被放开成可空的原因
       workItemId: null,
       kind: 'planning',
+      // ★ 没有它，这条 Run 查得到却找不回来 —— 需求页上没有任何入口指向它
+      requirementId,
       agentId: agent.id,
       status: 'dispatching',
       idempotencyKey: runId,
@@ -561,6 +594,38 @@ export class AgentPlanningProvider implements PlanningProvider {
     );
 
     const unsubscribe = await adapter.subscribe(runId, async (e: RunEvent) => {
+      /**
+       * ★★ 事件要落库，不能只在内存里过一遍。
+       *
+       *   规划 Run 现在是一条真的 agent_runs 记录，Run 详情页照着 run_events
+       *   渲染时间线与成本明细。事件不落库的话，那一页对规划 Run 是空的 ——
+       *   「这次分析到底做了什么」还是查不到，可审计只做了一半。
+       *
+       * ★ 落库失败不影响这次规划：进度是附加信息，为它中断一次已经跑起来的
+       *   分析不划算。
+       */
+      await this.db
+        .insert(runEvents)
+        .values({
+          runId,
+          seq: e.seq,
+          ts: new Date(e.ts),
+          type: e.type,
+          level: 'detail',
+          summary: planningEventSummary(e),
+          payload: e as unknown as Record<string, unknown>,
+          costDelta: e.type === 'cost' ? String(e.deltaUsd) : null,
+        })
+        .onConflictDoNothing()
+        .catch(() => undefined);
+
+      // ★ 心跳跟着走，Run 详情页才能显示「还活着」
+      await this.db
+        .update(agentRuns)
+        .set({ lastHeartbeatAt: new Date(), ...(e.type === 'cost' ? { cost: String(e.totalUsd) } : {}) })
+        .where(eq(agentRuns.id, runId))
+        .catch(() => undefined);
+
       if (e.type === 'cost') costUsd = e.totalUsd;
       if (e.type === 'error') this.diag(`[planning] ${runId} 报错`, e.error);
       if (e.type === 'run_ended') {

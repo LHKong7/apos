@@ -160,7 +160,8 @@ export async function generatePlan(
     structured,
     project?.type ?? 'development',
     input.feedback,
-    { orgId: req.orgId, projectId: req.projectId },
+    // ★ 带上 requirementId：规划 Run 靠它才能从需求页找回来
+    { orgId: req.orgId, projectId: req.projectId, requirementId: req.id },
   );
 
   const [prev] = await db

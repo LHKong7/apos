@@ -22,6 +22,13 @@ import type { AcceptanceCriterion, DependencyType, WorkItemType } from '@apos/co
 export interface PlanningScope {
   orgId: string;
   projectId: string;
+  /**
+   * 这次分析 / 规划是给哪条需求做的。
+   *
+   * ★ 落到 agent_runs.requirement_id 上。没有它，规划 Run 是一批查得到却
+   *   找不回来的记录：需求页上没有任何入口指向它。
+   */
+  requirementId?: string;
 }
 
 export interface StructureInput {

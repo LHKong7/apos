@@ -9,6 +9,7 @@ import { GatedButton } from '../../components/Gated';
 import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
+import { AnalysisRuns } from './AnalysisRuns';
 import { Clarifications } from './Clarifications';
 import { StructuredEditor, type RequirementPatch } from './StructuredEditor';
 import { Button } from '@/components/ui/button';
@@ -242,6 +243,12 @@ export function RequirementPage() {
               {t('requirement.detail.rejectedWith', { reason: r.rejectReason })}
             </p>
           )}
+
+          {/*
+            ★ 历次分析 / 规划执行。规划 Run 落库之后这一块才有内容 ——
+              在此之前那些调用只活在内存里，事后什么都查不到。
+          */}
+          <AnalysisRuns requirementId={reqId!} />
 
           <div className="grid gap-3 md:grid-cols-2">
             {/* ── 原始输入：永不覆盖 ── */}

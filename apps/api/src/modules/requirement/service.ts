@@ -135,7 +135,7 @@ export async function analyzeRequirement(
     projectType: 'development',
     context: [],
     // 走真实 Agent 的 provider 靠它挑执行者（组织内 applicableTypes 含 requirement 的 Agent）
-    scope: { orgId: req.orgId, projectId: req.projectId },
+    scope: { orgId: req.orgId, projectId: req.projectId, requirementId: req.id },
   });
 
   // 清掉上一轮的澄清问题，避免重复分析时堆积

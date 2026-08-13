@@ -176,6 +176,13 @@
       "when": 1786608930042,
       "tag": "0024_agent_binding_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786609621843,
+      "tag": "0025_planning_run_requirement",
+      "breakpoints": true
     }
   ]
 }

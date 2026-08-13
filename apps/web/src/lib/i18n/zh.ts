@@ -392,6 +392,8 @@ export const zh: Record<keyof typeof en, string> = {
   'requirement.field.risks': '潜在风险',
   'requirement.field.acceptanceCriteria': '验收标准',
   'requirement.detail.approvedButPlanFailed': '需求已确认，但生成计划失败：{reason}。重试「生成计划」即可，不需要再确认一次。',
+  'requirement.runs.title': '历次分析（{count}）',
+  'requirement.runs.detail': '详情',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': '还没有登记任何代码仓库',

@@ -757,6 +757,21 @@ export const api = {
    * ★ planError 不为空表示确认成功、生成失败 —— 这时该重试
    *   generatePlan，而不是再确认一次。
    */
+  /** 这条需求的历次分析 / 规划 Run —— 「刚才那次分析做了什么」的入口 */
+  requirementRuns: (id: string) =>
+    request<{
+      runs: {
+        id: string;
+        status: string;
+        goal: string;
+        cost: number;
+        model: string | null;
+        errorMessage: string | null;
+        startedAt: string | null;
+        endedAt: string | null;
+      }[];
+    }>(`/requirements/${id}/runs`),
+
   approveAndPlan: (id: string, note?: string) =>
     request<{ requirementId: string; plan: { planId: string } | null; planError: string | null }>(
       `/requirements/${id}/approve-and-plan`,

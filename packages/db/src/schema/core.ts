@@ -931,6 +931,18 @@ export const agentRuns = pgTable(
      *   还要再发明一条隐含规则。
      */
     kind: text().notNull().default('execution'),
+    /**
+     * 规划 Run 是给哪条需求做的。
+     *
+     * ★★ 没有它，规划 Run 就是一批查得到却**找不回来**的记录：
+     *   agent_runs 里躺着一条 kind='planning'，而需求页上没有任何入口
+     *   指向它 —— 用户想看「刚才那次分析到底做了什么」无从下手。
+     *
+     * ★ 执行 Run 不用它（它们靠 work_item_id 找回去）；只在 kind='planning'
+     *   时有值。不加 check 约束是因为历史规划 Run（这一列出现之前的）
+     *   本来就没有，卡死会让它们变成不合法的行。
+     */
+    requirementId: uuid().references(() => requirements.id),
     attempt: integer().notNull().default(1),
     previousRunId: uuid(),
 
@@ -1046,6 +1058,8 @@ export const agentRuns = pgTable(
     index('agent_runs_agent_idx').on(t.agentId, t.createdAt),
     /** 规划 Run 列表按项目查（需求页的「历次分析」） */
     index('agent_runs_kind_idx').on(t.kind, t.projectId, t.createdAt),
+    /** 需求页的「历次分析」按这个查 */
+    index('agent_runs_requirement_idx').on(t.requirementId, t.createdAt),
     check('agent_runs_kind_check', sql`${t.kind} in ('execution', 'planning')`),
     /**
      * ★★ 执行 Run 必须有工作项，规划 Run 必须没有。

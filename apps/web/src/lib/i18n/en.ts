@@ -413,6 +413,8 @@ export const en = {
   'requirement.field.risks': 'Risks',
   'requirement.field.acceptanceCriteria': 'Acceptance criteria',
   'requirement.detail.approvedButPlanFailed': 'The requirement was approved, but plan generation failed: {reason}. Retry generating the plan — do not approve again.',
+  'requirement.runs.title': 'Analysis runs ({count})',
+  'requirement.runs.detail': 'Details',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': 'No repositories registered yet',
