@@ -139,6 +139,14 @@ export const DOMAIN_EVENT_TYPES = [
   'requirement.approved',
   'requirement.rejected',
   /**
+   * 重新打开一条已确认 / 已驳回的需求。
+   *
+   * ★ 与 created 分开：重新打开会让下游已生成的计划全部作废，
+   *   而它在界面上只是一个按钮 —— 查不到「谁什么时候为什么打开的」，
+   *   计划突然全部失效就无从追溯。所以它也进审计视图。
+   */
+  'requirement.reopened',
+  /**
    * ★ 实体已经不在了，这条事件是它存在过的唯一痕迹 ——
    *   payload 因此要带标题与原文摘要，只留 subjectId 等于什么都没留。
    *
@@ -247,6 +255,8 @@ export const REASON_REQUIRED_EVENTS: readonly DomainEventType[] = [
   'project.paused',
   'agent.paused',
   'agent_run.terminated',
+  /** ★ 重新打开会让下游已生成的计划全部作废，必须留下为什么 */
+  'requirement.reopened',
 ] as const;
 
 /** 除 level=milestone 外，这些事件也必须进审计视图 */
@@ -271,6 +281,7 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'project.member_role_changed',
   'project.member_removed',
   'project.agent_bound',
+  'requirement.reopened',
   'user.created',
   'user.password_changed',
   'user.org_role_changed',

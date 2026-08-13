@@ -248,6 +248,8 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/requirements/:id': 'requirement.edit',
   'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
+  /** ★ 重新打开等于撤销一次确认，与确认同档 */
+  'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
   'POST /api/v1/requirements/:id/reject': 'requirement.approve',
   /**
    * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），

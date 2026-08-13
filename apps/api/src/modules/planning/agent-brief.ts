@@ -194,6 +194,14 @@ ${JSON.stringify(
       verification: c.verification,
     })),
     assumptions: req.assumptions,
+    /**
+     * ★★ 已回答的澄清是**最硬的输入**：它是人明确表过态的地方。
+     *   不带进来的话，Agent 会把已经问清楚的东西重新假设一遍，
+     *   而用户上一步逐条回答的工作等于白做。
+     */
+    answeredClarifications: req.clarifications
+      .filter((c) => c.answer)
+      .map((c) => ({ question: c.question, answer: c.answer })),
   },
   null,
   2,

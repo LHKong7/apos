@@ -146,6 +146,7 @@ import {
   updateStorageTarget,
 } from './storage-targets';
 import { AssigneeInput, listCandidates, setAssignee } from './assignment';
+import { reopenRequirement } from '../modules/requirement/service';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
 import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
@@ -958,17 +959,36 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   app.post('/api/v1/projects/:id/requirements', async (req, reply) => {
-    actorFrom(req);
     const { id } = req.params as { id: string };
     const body = CreateRequirement.parse(req.body);
 
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     if (!project) throw notFound('项目');
 
+    const { userId } = actorFrom(req);
     const [requirement] = await db
       .insert(requirements)
       .values({ orgId: project.orgId, projectId: id, ...body })
       .returning();
+
+    /**
+     * ★★ requirement.created 此前**从没被发出来过** —— 事件类型目录里
+     *   声明了它，而创建路由只是 insert 完就返回。
+     *
+     *   后果是需求的生命周期从中间开始：审计里第一条是 analyzed 或 approved，
+     *   「谁在什么时候提的这条需求」查不到。而需求是整条链的起点，
+     *   缺了起点的时间线读起来像是凭空冒出来一条已确认的需求。
+     */
+    await emitAndPublish(db, {
+      type: 'requirement.created',
+      orgId: project.orgId,
+      projectId: id,
+      actor: humanActor(userId),
+      subjectType: 'requirement',
+      subjectId: requirement!.id,
+      payload: { title: requirement!.title ?? null, source: body.rawInput ? 'raw_input' : 'manual' },
+      correlationId: corr(req),
+    });
 
     return reply.status(201).send({ requirement });
   });
@@ -1274,6 +1294,29 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       correlationId: corr(req),
     });
     return { clarification: row };
+  });
+
+  /**
+   * 重新打开一条已确认 / 已驳回的需求。
+   *
+   * ★★ 缺了它，需求确认是一道**单向门**：批错了、或者业务变了，
+   *   唯一的出路是新建一条 —— 而那会让已有的计划、任务、讨论全部与原需求脱钩。
+   *
+   * ★ 原因必填：重新打开会让下游已生成的计划全部作废，三周后没人记得为什么。
+   */
+  app.post('/api/v1/requirements/:id/reopen', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ reason: z.string().min(1, '重新打开必须写明原因').max(2000) })
+      .parse(req.body ?? {});
+
+    return reopenRequirement(db, {
+      requirementId: id,
+      actorId: userId,
+      reason: body.reason,
+      correlationId: corr(req),
+    });
   });
 
   app.post('/api/v1/requirements/:id/approve', async (req) => {

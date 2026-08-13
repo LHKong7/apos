@@ -47,6 +47,13 @@ export interface Clarification {
   agentSuggestion: string | null;
   suggestionBasis: string | null;
   options: string[];
+  /**
+   * 人给出的答案。
+   *
+   * ★★ 规划要用的就是这个。以前这个类型里根本没有它 —— 于是即便把澄清
+   *   传下去，Agent 拿到的也只是一串问题，用户逐条回答的内容全丢了。
+   */
+  answer?: string | null;
 }
 
 export interface StructuredRequirement {

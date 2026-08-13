@@ -1,8 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
   plans,
   policies,
   projects,
+  requirementAssumptions,
+  requirementClarifications,
   requirements,
   workItemDependencies,
   workItems,
@@ -96,6 +98,33 @@ export async function generatePlan(
 
   const [project] = await db.select().from(projects).where(eq(projects.id, req.projectId));
 
+  /**
+   * ★★ 假设与澄清必须一起传给规划器。
+   *
+   *   这两栏以前是硬编码的空数组，于是 buildPlanBrief 里那句
+   *   `assumptions: req.assumptions` 永远拿到空 —— 规划 Agent 看不到
+   *   「上一步 AI 假设了什么」「人回答了哪些澄清问题」，只能凭结构化字段
+   *   重新猜一遍。用户在需求页上逐条回答的东西，到计划这一步全丢了。
+   *
+   * ★ 只带**已回答**的澄清与**未被证伪**的假设：没答的问题带过去是噪声，
+   *   已经被证伪的假设带过去会把规划引向已知错误的方向。
+   */
+  const [clarificationRows, assumptionRows] = await Promise.all([
+    db
+      .select()
+      .from(requirementClarifications)
+      .where(eq(requirementClarifications.requirementId, req.id)),
+    db
+      .select()
+      .from(requirementAssumptions)
+      .where(
+        and(
+          eq(requirementAssumptions.requirementId, req.id),
+          isNull(requirementAssumptions.invalidatedAt),
+        ),
+      ),
+  ]);
+
   const structured: StructuredRequirement = {
     title: req.title ?? '',
     businessContext: req.businessContext ?? '',
@@ -108,8 +137,19 @@ export async function generatePlan(
     constraints: req.constraints as string[],
     risks: req.risks as string[],
     acceptanceCriteria: req.acceptanceCriteria,
-    clarifications: [],
-    assumptions: [],
+    clarifications: clarificationRows
+      .filter((c) => c.answer !== null)
+      .map((c) => ({
+        question: c.question,
+        level: c.level,
+        impact: c.impact ?? '',
+        agentSuggestion: c.agentSuggestion,
+        suggestionBasis: c.suggestionBasis,
+        options: (c.options as string[]) ?? [],
+        /** ★ 答案本身才是规划要用的东西 —— 只带问题等于没传 */
+        answer: c.answer,
+      })),
+    assumptions: assumptionRows.map((a) => a.statement),
     provenance: {},
     cost: 0,
     model: '',
@@ -144,7 +184,19 @@ export async function generatePlan(
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
   const estimatedCost = generated.tasks.reduce((s, t) => s + (t.estimatedCost ?? 0), 0);
 
-  const [plan] = await db
+  /**
+   * ★★ 计划、任务、依赖边必须在**同一个事务**里落地。
+   *
+   *   在此之前它们是三段独立的写：先 insert plans，再循环 insert workItems，
+   *   最后 insert 依赖边。中途进程挂掉（或某条任务违反约束）留下的是一份
+   *   「已生成」的计划，底下却只有前几个任务 —— 而计划页看起来完全正常，
+   *   用户批准之后才发现少了一半的活。半份计划比没有计划危险得多。
+   *
+   * ★ 编号分配也放进来：它自己会推进项目的序号计数器，事务回滚时
+   *   那几个号就该跟着还回去，否则任务编号会莫名其妙地跳段。
+   */
+  const plan = await db.transaction(async (tx) => {
+  const [plan] = await tx
     .insert(plans)
     .values({
       projectId: req.projectId,
@@ -170,10 +222,10 @@ export async function generatePlan(
    *   循环分配会让别人的号插进中间，同一份计划出来的任务编号不连续 ——
    *   读起来像是丢了几条。
    */
-  const numbers = await allocateNumbers(db, req.projectId, generated.tasks.length);
+  const numbers = await allocateNumbers(tx, req.projectId, generated.tasks.length);
   const refToId = new Map<string, string>();
   for (const [index, task] of generated.tasks.entries()) {
-    const [row] = await db
+    const [row] = await tx
       .insert(workItems)
       .values({
         orgId: req.orgId,
@@ -220,7 +272,7 @@ export async function generatePlan(
       const fromId = refToId.get(dep.ref);
       const toId = refToId.get(task.ref);
       if (!fromId || !toId) continue;
-      await db.insert(workItemDependencies).values({
+      await tx.insert(workItemDependencies).values({
         projectId: req.projectId,
         fromId,
         toId,
@@ -230,13 +282,21 @@ export async function generatePlan(
     }
   }
 
+    return plan!;
+  });
+
+  /**
+   * ★ 事件在事务**提交之后**发（modules/event/bus.ts 的纪律）。
+   *   事务内发布会把「计划已生成」推给浏览器而事务随后回滚 ——
+   *   用户点进去看到一个不存在的计划。
+   */
   await emitAndPublish(db, {
     type: 'plan.generated',
     orgId: req.orgId,
     projectId: req.projectId,
     actor: SYSTEM_ACTOR,
     subjectType: 'plan',
-    subjectId: plan!.id,
+    subjectId: plan.id,
     payload: {
       version,
       taskCount: generated.tasks.length,
@@ -251,7 +311,7 @@ export async function generatePlan(
   const humanTaskCount = generated.tasks.filter((t) => t.requiresHuman).length;
 
   return {
-    planId: plan!.id,
+    planId: plan.id,
     version,
     taskCount: generated.tasks.length,
     agentTaskCount: generated.tasks.length - humanTaskCount,

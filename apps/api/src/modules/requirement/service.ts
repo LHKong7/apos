@@ -375,6 +375,94 @@ export type ApproveResult =
  *   两道都不问「这份内容是 AI 出的还是人写的」—— 规划器读的是库里那几个
  *   结构化字段，它不关心字段是怎么来的，闸门也不该关心。
  */
+/**
+ * 需求状态流转的**服务端**判据。
+ *
+ * ★★ 在此之前完全没有这一层：approve 不看当前状态，于是一条已经 approved
+ *   的需求可以被再批一次（覆盖 approvedBy 与 approvedAt），一条 rejected 的
+ *   也能被直接批准。界面上按钮是灰的，而接口是敞开的 —— 而「界面挡住了」
+ *   从来不是一道防线。
+ *
+ * ★ 只列**允许**的迁移，不列禁止的：新增一个状态时，忘了往这里加
+ *   会表现为「什么都做不了」，而不是「什么都能做」。前者会被立刻发现。
+ */
+const REQUIREMENT_TRANSITIONS: Record<string, readonly string[]> = {
+  draft: ['analyzing', 'awaiting_approval', 'approved', 'rejected', 'on_hold'],
+  analyzing: ['clarifying', 'awaiting_approval', 'draft', 'on_hold'],
+  clarifying: ['analyzing', 'awaiting_approval', 'approved', 'rejected', 'on_hold'],
+  awaiting_approval: ['approved', 'rejected', 'clarifying', 'analyzing', 'on_hold'],
+  /**
+   * ★ approved 只能回到 draft（重新打开）。不能直接再 approve ——
+   *   那会静默覆盖第一次批准的人与时间，而那两个字段是问责链条的一环。
+   */
+  approved: ['draft'],
+  rejected: ['draft'],
+  on_hold: ['draft', 'analyzing', 'clarifying', 'awaiting_approval'],
+};
+
+export class RequirementStateError extends Error {
+  constructor(
+    readonly from: string,
+    readonly to: string,
+  ) {
+    super(`需求当前状态是 ${from}，不能变成 ${to}`);
+  }
+}
+
+export function assertRequirementTransition(from: string, to: string): void {
+  if (from === to) return;
+  const allowed = REQUIREMENT_TRANSITIONS[from] ?? [];
+  if (!allowed.includes(to)) throw new RequirementStateError(from, to);
+}
+
+/**
+ * 重新打开一条已确认 / 已驳回的需求。
+ *
+ * ★★ 缺了它，需求确认就是**单向门**：批错了、或者业务变了，
+ *   唯一的出路是新建一条需求 —— 而那会让计划、任务、讨论全部与原需求脱钩。
+ *
+ * ★ 清掉 approvedBy / approvedAt：留着的话，页面上会显示「已由张三确认」
+ *   而它此刻明明是草稿状态。已有的计划不动 —— 它们是历史，
+ *   重新规划会生成新版本（plans.version），旧版留着对照。
+ */
+export async function reopenRequirement(
+  db: Database,
+  input: { requirementId: string; actorId: string; reason: string; correlationId: string },
+): Promise<{ ok: true; requirementId: string }> {
+  const [req] = await db
+    .select()
+    .from(requirements)
+    .where(eq(requirements.id, input.requirementId));
+  if (!req) throw new Error(`需求不存在: ${input.requirementId}`);
+
+  assertRequirementTransition(req.status, 'draft');
+
+  await db
+    .update(requirements)
+    .set({
+      status: 'draft',
+      approvedBy: null,
+      approvedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(requirements.id, req.id));
+
+  await emitAndPublish(db, {
+    type: 'requirement.reopened',
+    orgId: req.orgId,
+    projectId: req.projectId,
+    actor: humanActor(input.actorId),
+    subjectType: 'requirement',
+    subjectId: req.id,
+    // ★ 原因必填：重新打开一条已确认的需求会让下游的计划全部作废，
+    //   三周后没人记得为什么
+    payload: { from: req.status, reason: input.reason },
+    correlationId: input.correlationId,
+  });
+
+  return { ok: true, requirementId: req.id };
+}
+
 export async function approveRequirement(
   db: Database,
   input: { requirementId: string; approverId: string; correlationId: string; note?: string },
@@ -390,6 +478,9 @@ export async function approveRequirement(
    *   放过去的话，规划器拿着一份空需求照样能生成一份计划 ——
    *   那份计划里的任务全是它自己编的，而页面上它看起来和正常的计划没区别。
    */
+  // ★ 状态校验在内容校验之前：一条已经批过的需求，报「内容为空」是答非所问
+  assertRequirementTransition(req.status, 'approved');
+
   if (!hasStructuredContent(req)) {
     return { ok: false, code: 'EMPTY_REQUIREMENT' };
   }
