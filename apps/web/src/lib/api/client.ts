@@ -38,6 +38,9 @@ import type {
   StorageTargetProbe,
   StorageTargetsResponse,
   ConventionsResponse,
+  ExecutionModeValue,
+  ExecutorCandidates,
+  ProjectAgentBindings,
   RequirementDetail,
   RequirementSummary,
   RunControlAction,
@@ -439,6 +442,42 @@ export const api = {
   assignWorkItem: (id: string, body: { agentId?: string; userId?: string; note?: string }) =>
     request<{ ok: true; runId?: string }>(`/work-items/${id}/assign`, {
       method: 'POST',
+      json: body,
+    }),
+
+  /** 候选执行者：可选的与**不可选的**（带原因）一起回 */
+  workItemCandidates: (id: string) =>
+    request<ExecutorCandidates>(`/work-items/${id}/candidates`),
+
+  /**
+   * 只设置执行者，不开始执行。
+   *
+   * ★ 与 assignWorkItem 的区别是这一条**没有副作用**：不派 Run、不动状态、
+   *   不花钱。界面上的执行者下拉框走这个，「开始执行」是另一个按钮。
+   */
+  setWorkItemAssignee: (
+    id: string,
+    body: { agentId?: string | null; userId?: string | null; executionMode?: ExecutionModeValue },
+  ) =>
+    request<{
+      ok: true;
+      executorType: 'agent' | 'human' | null;
+      executorId: string | null;
+      executionMode: ExecutionModeValue;
+    }>(`/work-items/${id}/assignee`, { method: 'PATCH', json: body }),
+
+  startWorkItem: (id: string, body: { agentId?: string; note?: string } = {}) =>
+    request<{ ok: true; runId?: string; attempt?: number }>(`/work-items/${id}/start`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  projectAgents: (projectId: string) =>
+    request<ProjectAgentBindings>(`/projects/${projectId}/agents`),
+
+  setProjectAgent: (projectId: string, body: { role: string; agentId: string | null }) =>
+    request<{ ok: true; role: string; agentId: string | null }>(`/projects/${projectId}/agents`, {
+      method: 'PUT',
       json: body,
     }),
 

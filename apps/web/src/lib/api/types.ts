@@ -248,6 +248,7 @@ export interface DecisionDetail {
 export interface WorkItemDetail {
   item: {
     id: string;
+    projectId: string;
     /** 人类可读编号（`ORD-19`）*/
     ref: string;
     title: string;
@@ -1358,4 +1359,56 @@ export interface OrganizationMemberRow {
 export interface OrganizationMembersResponse {
   members: OrganizationMemberRow[];
   assignableOrgRoles: { role: string; label: string }[];
+}
+
+/** 执行方式 —— 与「要不要人批」是两件事，后者是 approvalGate */
+export type ExecutionModeValue = 'auto' | 'agent' | 'human';
+
+export interface CandidateAgent {
+  agentId: string;
+  name: string;
+  runtimeKind: string | null;
+  status: string | null;
+  registered: boolean;
+  maxConcurrency: number | null;
+}
+
+export interface EligibleAgent extends CandidateAgent {
+  score: number;
+  /** 面向用户的匹配依据，直接展示 */
+  reasons: string[];
+}
+
+export interface IneligibleAgent extends CandidateAgent {
+  /** ★ 不可选的必须带原因：空下拉框回答不了「为什么选不了」 */
+  reason: string;
+}
+
+export interface ExecutorCandidates {
+  executionMode: ExecutionModeValue;
+  current: { executorType: 'agent' | 'human' | null; executorId: string | null };
+  agents: { eligible: EligibleAgent[]; ineligible: IneligibleAgent[] };
+  humans: { userId: string; name: string; email: string | null; role: string }[];
+}
+
+export interface ProjectAgentBindings {
+  bindings: {
+    id: string;
+    role: string;
+    agentId: string;
+    agentName: string;
+    runtimeKind: string;
+    status: string;
+    applicableTypes: string[];
+    updatedAt: string;
+  }[];
+  /** ★ 只列本项目成员里的 Agent —— 列全组织的话会选到保存时才被拒的那些 */
+  available: {
+    agentId: string;
+    name: string;
+    runtimeKind: string;
+    status: string;
+    applicableTypes: string[];
+    skills: string[];
+  }[];
 }

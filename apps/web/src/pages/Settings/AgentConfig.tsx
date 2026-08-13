@@ -6,7 +6,7 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { relativeTime } from '../../lib/format';
-import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
+import { CardSkeleton, EmptyState, ErrorState, QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
 import type {
@@ -47,7 +47,7 @@ import { Textarea } from '@/components/ui/textarea';
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
  */
 
-type Tab = 'agents' | 'repositories' | 'storage' | 'conventions';
+type Tab = 'agents' | 'binding' | 'repositories' | 'storage' | 'conventions';
 
 /**
  * ★ 存词条键、不存译文：模块级常量取不到 hook，而且切语言时不会重算 ——
@@ -58,6 +58,15 @@ type Tab = 'agents' | 'repositories' | 'storage' | 'conventions';
  */
 const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
   { key: 'agents', labelKey: 'agentCfg.tab.agentsLabel', hintKey: 'agentCfg.tab.agents' },
+  /**
+   * ★ 与「Agent 配置」分成两页，不是一页两段。
+   *
+   *   上一页回答「这个 Agent 是什么」（运行时、凭证、模型、工具与资源权限），
+   *   这一页回答「这个项目的哪个角色交给哪个已配置的 Agent」。
+   *   混在一起正是之前的问题：用户在项目设置里被问「用哪个 CLI」，
+   *   而那个选择的后果根本不在这一页上显示。
+   */
+  { key: 'binding', labelKey: 'agentCfg.tab.binding', hintKey: 'agentCfg.tab.bindingDesc' },
   { key: 'repositories', labelKey: 'agentCfg.tab.repos', hintKey: 'agentCfg.tab.reposDesc' },
   /**
    * ★ 与「代码仓库」并列而不是塞进那一页：两者是工作区的**同一头**
@@ -107,6 +116,7 @@ export function AgentConfigPage() {
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {tab === 'agents' && <AgentsSection />}
+        {tab === 'binding' && <ProjectAgentSection projectId={projectId} />}
         {tab === 'repositories' && <RepositoriesSection projectId={projectId} />}
         {tab === 'storage' && <StorageTargetsSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
@@ -2527,5 +2537,105 @@ function Notice({ tone, children }: { tone: 'info' | 'warning' | 'error'; childr
     >
       {children}
     </div>
+  );
+}
+
+/** 项目 Agent 角色绑定 —— planner / coordinator / reviewer 各交给哪个已配置的 Agent */
+const BINDING_ROLES: { role: string; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { role: 'planner', labelKey: 'binding.planner', hintKey: 'binding.plannerHint' },
+  { role: 'coordinator', labelKey: 'binding.coordinator', hintKey: 'binding.coordinatorHint' },
+  { role: 'reviewer', labelKey: 'binding.reviewer', hintKey: 'binding.reviewerHint' },
+];
+
+/**
+ * 项目 Agent 绑定。
+ *
+ * ★★ 在这一页出现之前，「Project Agent」是现算的：从组织里找第一个
+ *   status=active 且适用类型含 requirement 的 Agent，按创建时间取第一个。
+ *   用户指定不了，想换只能去改另一个 Agent 的配置或建号顺序 ——
+ *   而这个 Agent 决定了此后所有需求分析与计划的产出。
+ *
+ * ★ 可选项只列**本项目成员**里的 Agent。列全组织的话，用户会选到一个
+ *   保存时才被拒的 Agent，而那条报错出现在提交之后、不在选择的时候。
+ */
+function ProjectAgentSection({ projectId }: { projectId: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: qk.projectAgents(projectId),
+    queryFn: () => api.projectAgents(projectId),
+  });
+
+  const save = useMutation({
+    mutationFn: (body: { role: string; agentId: string | null }) =>
+      api.setProjectAgent(projectId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.projectAgents(projectId) });
+    },
+  });
+
+  return (
+    <QueryBoundary query={q}>
+      {(data) => (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">{t('binding.intro')}</p>
+
+          {data.available.length === 0 && (
+            <Notice tone="warning">{t('binding.noMembers')}</Notice>
+          )}
+
+          <div className="space-y-2">
+            {BINDING_ROLES.map(({ role, labelKey, hintKey }) => {
+              const bound = data.bindings.find((b) => b.role === role);
+              return (
+                <div key={role} className="rounded border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-slate-800">{t(labelKey)}</span>
+                    {bound && (
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                        {bound.runtimeKind}
+                      </span>
+                    )}
+                    <select
+                      value={bound?.agentId ?? ''}
+                      disabled={save.isPending}
+                      onChange={(e) => save.mutate({ role, agentId: e.target.value || null })}
+                      className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
+                      aria-label={t(labelKey)}
+                    >
+                      {/* ★ 解绑不是「没配」，是显式回到「按项目成员自动挑」 */}
+                      <option value="">{t('binding.unbound')}</option>
+                      {data.available.map((a) => (
+                        <option key={a.agentId} value={a.agentId}>
+                          {a.name} · {a.runtimeKind}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-slate-400">{t(hintKey)}</p>
+                  {/*
+                    ★ planner 必须能处理 requirement。在这里就说出来，
+                      而不是等第一次分析失败 —— 那时用户已经在等结果了。
+                  */}
+                  {role === 'planner' &&
+                    bound &&
+                    !bound.applicableTypes.includes('requirement') && (
+                      <p className="mt-1 text-[11px] text-amber-700">
+                        {t('binding.plannerNeedsRequirement', { name: bound.agentName })}
+                      </p>
+                    )}
+                </div>
+              );
+            })}
+          </div>
+
+          {save.error instanceof ApiError && (
+            <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">
+              {save.error.message}
+            </p>
+          )}
+        </div>
+      )}
+    </QueryBoundary>
   );
 }

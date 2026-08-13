@@ -9,6 +9,7 @@ import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib
 import { QueryBoundary } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Drawer } from '../../components/Drawer';
+import { ExecutorPicker } from './ExecutorPicker';
 import { useBoardStore } from '../../stores/board';
 import { useEditingStore } from '../../stores/editing';
 import { Button } from '@/components/ui/button';
@@ -108,6 +109,17 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
 
             {tab === 'overview' && (
               <div className="space-y-3">
+                {/*
+                  ★ 执行者选择放在概览最上面：这是打开一张卡最常做的动作，
+                    而在它出现之前看板上根本没有这个入口 —— 唯一的指派路径
+                    是「派发」按钮，而那个按钮会立刻开始执行。
+                */}
+                <ExecutorPicker
+                  workItemId={workItemId}
+                  projectId={item.projectId}
+                  status={item.status}
+                />
+
                 {item.description && (
                   <p className="whitespace-pre-wrap text-xs text-slate-600">{item.description}</p>
                 )}
