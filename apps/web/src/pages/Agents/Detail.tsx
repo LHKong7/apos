@@ -84,7 +84,7 @@ export function AgentDetailPage() {
             to={projectId ? `/projects/${projectId}/agents` : '/agents'}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← Agent 团队
+            {t('agentDetail.backToTeam')}
           </Link>
           <Button variant="outline" size="sm"
             onClick={() => (paused ? pause.mutate({ paused: false }) : setPausing(true))}
@@ -95,7 +95,7 @@ export function AgentDetailPage() {
         {a.description && <p className="mt-0.5 text-xs text-slate-500">{a.description}</p>}
         {paused && a.pausedReason && (
           <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
-            已暂停：{a.pausedReason}
+            {t('agentDetail.pausedReason', { reason: a.pausedReason })}
           </p>
         )}
       </div>
@@ -106,7 +106,7 @@ export function AgentDetailPage() {
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
               <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
-                知道了
+                {t('common.gotIt')}
               </button>
             </p>
           )}
@@ -143,16 +143,16 @@ export function AgentDetailPage() {
                 会显示「队列 200」，而它其实闲着。 */}
           <section className="rounded border border-slate-200 bg-white">
             <h2 className="flex flex-wrap items-baseline gap-2 border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-              任务队列（{d.queue.length}）
+              {t('agentDetail.queue', { count: d.queue.length })}
               {d.queueDoneCount > 0 && (
                 <span className="text-[11px] font-normal text-slate-400">
-                  另有 {d.queueDoneCount} 个已完成，见下方执行记录
+                  {t('agentDetail.queueDoneNote', { count: d.queueDoneCount })}
                 </span>
               )}
             </h2>
             {d.queue.length === 0 ? (
               <p className="px-3 py-3 text-center text-xs text-slate-400">
-                当前没有在办的任务
+                {t('agentDetail.queueEmpty')}
                 {d.queueDoneCount > 0 && t('agentDetail.queueDone', { count: d.queueDoneCount })}
               </p>
             ) : (
@@ -185,7 +185,7 @@ export function AgentDetailPage() {
           <section className="rounded border border-slate-200 bg-white px-3 py-2">
             <h2 className="text-xs font-medium text-slate-700">{t('agentDetail.permissions')}</h2>
             <p className="text-[11px] text-slate-400">
-              独立配置，不继承任何人类用户的权限。Agent 自己改不了这里
+              {t('agentDetail.permissionsHint')}
             </p>
 
             <div className="mt-1.5 grid gap-2 md:grid-cols-2">
@@ -199,7 +199,7 @@ export function AgentDetailPage() {
               </div>
               <div>
                 <p className="text-[11px] text-slate-500">
-                  禁止的工具（{d.permissions.deniedTools.length}）
+                  {t('agentDetail.deniedTools', { count: d.permissions.deniedTools.length })}
                   <span className="ml-1 text-slate-400">{t('agentDetail.denyWins')}</span>
                 </p>
                 <p className="text-xs text-red-700">
@@ -235,7 +235,7 @@ export function AgentDetailPage() {
               <span>{t('agentDetail.maxConcurrency', { n: a.maxConcurrency })}</span>
               <span>{t('agentDetail.timeoutMinutes', { n: Math.round(a.timeoutSeconds / 60) })}</span>
               <span>
-                单次成本上限{' '}
+                {t('agentDetail.costLimitPerRun')}{' '}
                 {a.costLimitPerRun === null ? t('agentDetail.unset') : money(String(a.costLimitPerRun))}
               </span>
               <span>{t('agentDetail.ownerName', { name: a.ownerName })}</span>
@@ -271,8 +271,7 @@ export function AgentDetailPage() {
             <section className="rounded border border-dashed border-slate-300 bg-white px-3 py-2">
               <h2 className="text-xs font-medium text-slate-700">{t('agentDetail.capabilities')}</h2>
               <p className="mt-0.5 text-[11px] text-slate-500">
-                这个运行时的适配器没有在当前进程注册，拿不到能力清单 ——
-                也就意味着现在派不出任务给它
+                {t('agentDetail.adapterUnregistered')}
               </p>
             </section>
           )}
@@ -280,7 +279,7 @@ export function AgentDetailPage() {
           {/* ── 最近执行 ── */}
           <section className="rounded border border-slate-200 bg-white">
             <h2 className="border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
-              最近执行（{d.recentRuns.length}）
+              {t('agentDetail.recentRuns', { count: d.recentRuns.length })}
             </h2>
             {d.recentRuns.length === 0 ? (
               <p className="px-3 py-3 text-center text-xs text-slate-400">{t('agentDetail.noRuns')}</p>
@@ -326,10 +325,10 @@ export function AgentDetailPage() {
           </section>
 
           <p className="text-[11px] text-slate-400">
-            工具的副作用等级见运行时能力清单；
+            {t('agentDetail.sideEffectNote')}
             <span className={SEVERITY_TONE.destructive}>{t('agentDetail.destructive')}</span>{' '}{t('agentDetail.andJoin')}{' '}
             <span className={SEVERITY_TONE.external}>{t('agentDetail.external')}</span>{t('agentDetail.effectNote')}
-            仍然会被 Policy 与安全底线二次拦截
+            {t('agentDetail.stillGated')}
           </p>
         </div>
       </div>
@@ -391,8 +390,7 @@ function PauseDialog({
     <Modal onClose={onCancel} title={t('agentDetail.pauseTitle')}>
       <h2 className="text-sm font-semibold text-slate-900">{t('agentDetail.pauseTitleName', { name })}</h2>
       <p className="mt-1 text-xs text-slate-500">
-        暂停后不再给它派新任务，进行中的 Run 不受影响。
-        原因会记入事件 —— 三周后没人记得「这个 Agent 为什么一直是停的」
+        {t('agentDetail.pauseHint')}
       </p>
       <Textarea
         value={reason}
@@ -403,12 +401,12 @@ function PauseDialog({
       />
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          取消
+          {t('common.cancel')}
         </button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
           disabled={!reason.trim() || pending}>
-          确认暂停
+          {t('agentDetail.confirmPause')}
         </Button>
       </div>
     </Modal>

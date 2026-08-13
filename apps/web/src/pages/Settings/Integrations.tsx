@@ -65,14 +65,16 @@ export function IntegrationsPage() {
             to={`/projects/${projectId}`}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
-            ← 项目总览
+            {t('agents.backToOverview')}
           </Link>
           {data && (
             <span className="ml-auto text-[11px] text-slate-500">
-              已连接 {data.integrations.length}{' '}
+              {t('integ.connectedCount', { count: data.integrations.length })}{' '}
               {data.integrations.some((i) => i.status !== 'active') && (
                 <span className="ml-1 text-amber-700">
-                  · ⚠ 异常 {data.integrations.filter((i) => i.status !== 'active').length}
+                  {t('integ.unhealthyCount', {
+                    count: data.integrations.filter((i) => i.status !== 'active').length,
+                  })}
                 </span>
               )}
               {data.conflictBacklog > 0 && (
@@ -131,7 +133,7 @@ export function IntegrationsPage() {
             <h2 className="text-xs font-medium text-slate-600">{t('integ.agentsSection')}</h2>
             {runtimes.data?.runtimes.length === 0 && (
               <p className="rounded border border-dashed border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500">
-                还没有配置 Agent 运行时
+                {t('integ.noRuntimes')}
               </p>
             )}
             {runtimes.data?.runtimes.map((rt) => (
@@ -154,7 +156,7 @@ export function IntegrationsPage() {
                       to={`/projects/${projectId}/agents`}
                       className="ml-auto text-[11px] text-slate-500 underline-offset-2 hover:underline"
                     >
-                      管理 Agent →
+                      {t('integ.manageAgents')}
                     </Link>
                   </div>
                   <p className="mt-0.5 text-[11px] text-slate-500">
@@ -164,7 +166,7 @@ export function IntegrationsPage() {
                   </p>
                   {!rt.registered && (
                     <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-                      当前进程没有注册这个运行时的适配器 —— 派给它的任务不会开始执行
+                      {t('integ.adapterUnregistered')}
                     </p>
                   )}
                 </div>
@@ -181,13 +183,11 @@ export function IntegrationsPage() {
             <h2 className="text-xs font-medium text-slate-600">{t('integ.dataSection')}</h2>
             <div className="rounded border border-dashed border-slate-300 bg-white px-3 py-2">
               <p className="text-[11px] text-slate-500">
-                数据库、数据仓库、CRM 等要通过受控连接器接入，而连接器必须由组织管理员
-                在组织级配置、项目只能使用已授权的那些（产品文档 10.3）。
-                组织级配置页还没有做，所以这里现在什么也连不了
+                {t('integ.dataConnectorsNote')}
               </p>
               {perms && !perms.configure_data_connector && (
                 <p className="mt-1 text-[11px] text-slate-400">
-                  即便做好了，这一档也需要组织管理员权限
+                  {t('integ.dataConnectorsNeedAdmin')}
                 </p>
               )}
             </div>
@@ -262,7 +262,7 @@ function IntegrationCard({
           {perms.disconnect && (
             <Button variant="outline" size="xs"
               onClick={() => setDisconnecting(true)}>
-              断开
+              {t('integ.disconnect')}
             </Button>
           )}
         </div>
@@ -281,7 +281,7 @@ function IntegrationCard({
        */}
       {!row.transportReady && (
         <p className="mx-3 mb-2 rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600">
-          {row.providerLabel} 的传输层还没有实现，配置保留但同步不会真的发生
+          {t('integ.transportNotReady', { provider: row.providerLabel })}
         </p>
       )}
 
@@ -303,13 +303,12 @@ function IntegrationCard({
         {/* ★ 「不知道」和「确实没有」不能长得一模一样 */}
         {row.scopes.probed === false && (
           <p className="mt-0.5 text-[11px] text-amber-700">
-            上次没能探测到实际权限（可能被限流或服务不可达），这里暂按只读显示 ——
-            不代表写权限真的没给
+            {t('integ.scopesUnprobed')}
           </p>
         )}
         {/* 措辞跟着类别走 —— 在 Slack 卡片下写「合并代码」只会让人以为文案是抄的 */}
         <p className="mt-0.5 text-[11px] text-slate-400">
-          禁止项由集成层写死，不是「这次没勾」——
+          {t('integ.denyHardcoded')}
           {row.category === 'code'
             ? t('integ.denyMerge')
             : row.category === 'project_management'
@@ -337,9 +336,14 @@ function IntegrationCard({
 
       {sync.data && (
         <p className="mx-3 mb-2 rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
-          同步 {sync.data.objects} 个对象：接受 {sync.data.accepted} · 回写{' '}
-          {sync.data.writtenBack} · 冲突 {sync.data.conflicts} · 自动处理{' '}
-          {sync.data.autoResolved} · 阻止循环 {sync.data.echoesBlocked}
+          {t('integ.syncSummary', {
+            objects: sync.data.objects,
+            accepted: sync.data.accepted,
+            writtenBack: sync.data.writtenBack,
+            conflicts: sync.data.conflicts,
+            autoResolved: sync.data.autoResolved,
+            echoesBlocked: sync.data.echoesBlocked,
+          })}
           {sync.data.notes.map((n) => (
             <span key={n} className="mt-0.5 block text-amber-800">
               {n}
@@ -435,7 +439,7 @@ function DisconnectDialog({
           {cut.isPending ? t('integ.disconnecting') : t('integ.confirmDisconnect')}
         </Button>
         <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700">
-          取消
+          {t('common.cancel')}
         </button>
       </div>
     </Modal>
@@ -497,7 +501,9 @@ function AddRow({
       {open && (
         <Modal onClose={() => setOpen(null)} title={t('integ.connect')}>
           <h2 className="mb-1.5 text-sm font-semibold text-slate-900">
-            连接 {options.find((o) => o.provider === open)?.label}
+            {t('integ.connectTo', {
+              provider: options.find((o) => o.provider === open)?.label ?? '',
+            })}
           </h2>
           <label className="block">
             <span className="mb-0.5 block text-[11px] text-slate-500">{t('integ.target')}</span>
@@ -510,7 +516,7 @@ function AddRow({
 
           <label className="mt-1.5 block">
             <span className="mb-0.5 block text-[11px] text-slate-500">
-              访问凭证（可选）
+              {t('integ.credentialOptional')}
             </span>
             <Input
               type="password"
@@ -518,16 +524,16 @@ function AddRow({
               onChange={(e) => setCredential(e.target.value)} />
             {/* ★ 明说它去哪了。用户交出凭证时有权知道系统怎么保管 */}
             <span className="mt-0.5 block text-[11px] text-slate-400">
-              明文不入库，只保留后四位用于辨认。保存后无法再读出
+              {t('integ.credentialStorage')}
             </span>
           </label>
 
           <label className="mt-1.5 flex items-start gap-1.5 text-[11px] text-slate-600">
             <Checkbox checked={grantWrite} onCheckedChange={setGrantWrite} className="mt-0.5" />
             <span>
-              授予写权限
+              {t('integ.grantWrite')}
               <span className="ml-1 text-slate-400">
-                让它能创建分支 / PR、修改外部工单。这是比「连上」高一个量级的授权，需要 tech_lead
+                {t('integ.grantWriteHint')}
               </span>
             </span>
           </label>
@@ -549,7 +555,7 @@ function AddRow({
               onClick={() => setOpen(null)}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </Modal>
