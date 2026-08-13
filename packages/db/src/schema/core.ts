@@ -827,6 +827,48 @@ export const agents = pgTable(
   (t) => [index('agents_org_status_idx').on(t.orgId, t.status)],
 );
 
+/**
+ * 项目 Agent 绑定 —— 「这个项目的规划 / 协调 / 评审交给哪个 Agent」。
+ *
+ * ★★ 这张表补的是「Project Agent 到底是谁」这个一直没有答案的问题。
+ *
+ *   在它出现之前，规划 Agent 是**现算出来的**：从组织里找第一个
+ *   `status='active'` 且 applicableTypes 含 requirement 的 Agent
+ *   （见 modules/planning/agent-provider.ts 的 pickAgent）。三个后果：
+ *   用户指定不了；换一个 Agent 的唯一办法是改另一个 Agent 的配置或
+ *   建号顺序；而且它压根不看项目成员关系 —— 组织里任何一个 Agent
+ *   都可能被拉来读这个项目的需求。
+ *
+ * ★ 绑的是**已配置好的 Agent**，不是运行时。选 Claude Code 还是 Codex
+ *   是 AgentDefinition 那一层的事，到这一层只剩「哪个 Agent 干这个角色」。
+ *   这条分层是这次拆分的要点：配置身份与分派角色不该在同一个下拉框里。
+ *
+ * ★ (project_id, role) 唯一：一个角色同一时刻只有一个主 Agent。
+ *   fallback / 多 Agent 优先级是后话（P2），先把「是谁」定下来。
+ */
+export const projectAgentBindings = pgTable(
+  'project_agent_bindings',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    projectId: uuid().notNull().references(() => projects.id),
+    /** planner / coordinator / reviewer */
+    role: text().notNull(),
+    agentId: uuid().notNull().references(() => agents.id),
+    createdBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex('project_agent_bindings_project_role_idx').on(t.projectId, t.role),
+    index('project_agent_bindings_agent_idx').on(t.agentId),
+    check(
+      'project_agent_bindings_role_check',
+      sql`${t.role} in ('planner', 'coordinator', 'reviewer')`,
+    ),
+  ],
+);
+
 export const agentPermissionChanges = pgTable('agent_permission_changes', {
   id: uuid().primaryKey().defaultRandom(),
   agentId: uuid().notNull().references(() => agents.id),

@@ -24,6 +24,44 @@ export const WorkItemType = z.enum([
 export type WorkItemType = z.infer<typeof WorkItemType>;
 
 /**
+ * 谁来执行这一项。
+ *
+ * ★★ 与 `approvalGate` 是**两件事**，此前被一个 `requiresHuman` 合并了。
+ *
+ *   「这活只能人来干」（executionMode）与「干完要不要人批」（approvalGate）
+ *   在产品上正交：一个需要人写的文案不一定要审批，一次自动的生产发布
+ *   几乎一定要审批。合成一个布尔之后，想表达「Agent 执行 + 人类审批」
+ *   只能靠 Policy 绕，而计划页上那一栏会显示成「🤖 Agent」——
+ *   看不出后面还有一道闸。
+ *
+ *   `auto` 表示不指定，交给调度器按能力匹配。
+ *
+ * Who executes this item — deliberately separate from whether the result
+ * needs approval. Collapsing both into one boolean made "agent executes,
+ * human approves" inexpressible.
+ */
+export const ExecutionMode = z.enum(['auto', 'agent', 'human']);
+export type ExecutionMode = z.infer<typeof ExecutionMode>;
+
+/**
+ * 交付物要不要人批准，以及由谁批。
+ *
+ * ★ `none` 不等于「不安全」：安全底线与 Policy 仍然照跑，
+ *   这一栏只表达计划**额外**要求的那道闸。
+ */
+export const ApprovalGate = z.enum(['none', 'reviewer', 'owner', 'tech_lead']);
+export type ApprovalGate = z.infer<typeof ApprovalGate>;
+
+/**
+ * 项目 Agent 的角色绑定。
+ *
+ * ★ 绑的是已配置好的 Agent，不是运行时 —— 选 Claude Code 还是 Codex
+ *   属于 Agent 配置那一层，到这里只回答「哪个 Agent 干这个角色」。
+ */
+export const ProjectAgentRole = z.enum(['planner', 'coordinator', 'reviewer']);
+export type ProjectAgentRole = z.infer<typeof ProjectAgentRole>;
+
+/**
  * 六阶段（产品文档五、8.4.1）。
  * The six stages (product doc part five, 8.4.1).
  */

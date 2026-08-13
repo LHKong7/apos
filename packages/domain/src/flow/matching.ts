@@ -24,6 +24,23 @@ export interface AgentCandidate {
   /** 该 Agent 是否在本项目做过同模块的任务 */
   contextAffinity: number;
   status: string;
+  /**
+   * 这个 Agent 是不是**本项目**的成员。
+   *
+   * ★★ 此前根本没有这一栏：调度器把整个组织的 Agent 都当候选
+   *   （modules/agent/matching.ts 里 `eq(agents.orgId, …)`），
+   *   于是一个只被加进 A 项目的 Agent 会被派去做 B 项目的任务 ——
+   *   而项目是权限与上下文的边界，越过它等于把 B 的代码交给没被授权的执行体。
+   *   人类那边这条线一直是有的（project_members），Agent 这边漏了。
+   */
+  inProject: boolean;
+  /** 运行时适配器有没有在当前进程注册。没注册的话派下去也不会开始 */
+  registered: boolean;
+  /** 该 Agent 被授权的资源（repo / dataset 的 ref），用于比对任务所需资源 */
+  resourceRefs: string[];
+  /** 今日已花费，用于日预算闸 */
+  spentToday: number | null;
+  costLimitDaily: number | null;
 }
 
 export interface MatchTarget {
@@ -32,8 +49,17 @@ export interface MatchTarget {
   requiredTools: string[];
   estimatedCost: number | null;
   riskLevel: RiskLevel;
-  /** 计划阶段标记为需要人类经验的任务不参与 Agent 匹配 */
-  requiresHuman: boolean;
+  /**
+   * 谁来执行。
+   *
+   * ★★ 取代原来的 `requiresHuman` 布尔。它把「只能人干」和「干完要人批」
+   *   合成了一栏，于是「Agent 执行 + 人类审批」这种最常见的组合表达不了。
+   *   审批那一半现在是工作项自己的 `approvalGate`，与匹配无关 ——
+   *   匹配只回答「这活派给谁」。
+   */
+  executionMode: 'auto' | 'agent' | 'human';
+  /** 任务要动的资源（仓库 / 数据集的 ref）。候选必须被授权过这些资源 */
+  requiredResources: string[];
 }
 
 export interface MatchScore {
@@ -92,13 +118,13 @@ export function matchExecutors(
   const scores: MatchScore[] = [];
   const rejected: MatchRejection[] = [];
 
-  if (target.requiresHuman) {
+  if (target.executionMode === 'human') {
     return {
       candidates: [],
       rejected: candidates.map((c) => ({
         agentId: c.id,
         agentName: c.name,
-        reason: '该任务在计划中被标记为需要人类经验',
+        reason: '该任务被指定为人工执行',
       })),
     };
   }
@@ -109,8 +135,32 @@ export function matchExecutors(
 
   for (const agent of candidates) {
     // ── 硬性条件：不满足直接淘汰，并给出原因 ──
+    /**
+     * ★★ 项目成员关系排在最前面 —— 它是**授权**问题，不是匹配偏好。
+     *
+     *   排在能力判定后面的话，一个不属于本项目的 Agent 会先被算分、
+     *   再以「技能不匹配」被拒，而真正的原因是它根本不该出现在这份名单里。
+     *   拒绝理由要指向真实原因，否则用户会去给它加技能。
+     */
+    if (!agent.inProject) {
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: '不是本项目成员 —— 先在「成员与角色」里把它加进这个项目',
+      });
+      continue;
+    }
     if (agent.status !== 'active') {
       rejected.push({ agentId: agent.id, agentName: agent.name, reason: `Agent 状态为 ${agent.status}` });
+      continue;
+    }
+    /** ★ 没注册的运行时派下去不会开始执行，表现是任务卡在 executing 直到超时 */
+    if (!agent.registered) {
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: '运行时适配器没有在当前进程注册，派下去不会开始执行',
+      });
       continue;
     }
     if (!agent.applicableTypes.includes(target.type)) {
@@ -138,6 +188,39 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `缺少所需工具权限：${missingTools.join('、')}`,
+      });
+      continue;
+    }
+
+    /**
+     * ★★ 资源范围要在**派发前**判，不能等运行时报错。
+     *
+     *   没授权就派下去，Agent 会在准备工作区那一步失败，而那条报错说的是
+     *   「挂载失败」——它不指向「这个 Agent 没被授权这个仓库」，
+     *   于是排查方向直接跑偏到工作区配置上去了。
+     */
+    const missingResources = target.requiredResources.filter(
+      (r) => !agent.resourceRefs.includes(r),
+    );
+    if (missingResources.length > 0) {
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: `资源范围里没有：${missingResources.join('、')}`,
+      });
+      continue;
+    }
+
+    /** ★ 日预算是硬闸：跑到一半被扣停留下的是半成品，不如一开始就不派 */
+    if (
+      agent.costLimitDaily !== null &&
+      agent.spentToday !== null &&
+      agent.spentToday >= agent.costLimitDaily
+    ) {
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: `今日预算已用尽（${agent.spentToday.toFixed(2)}/${agent.costLimitDaily.toFixed(2)}）`,
       });
       continue;
     }

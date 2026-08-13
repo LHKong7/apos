@@ -281,6 +281,16 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
    */
   'POST /api/v1/projects/:id/work-items': 'work_item.create',
   'POST /api/v1/work-items/:id/assign': 'work_item.execute',
+  /**
+   * ★ 只设执行者要的权限比「开始执行」低一档。
+   *
+   *   把卡片挂到某人名下是排活，不是动预算；要求 work_item.execute
+   *   会让排活这件事只有能派发的人做得了，而排活恰恰是 PM 的日常。
+   *   真正花钱的那一步在 /start，那里仍然是 work_item.execute。
+   */
+  'PUT /api/v1/projects/:id/agents': 'project.settings.update',
+  'PATCH /api/v1/work-items/:id/assignee': 'work_item.assign',
+  'POST /api/v1/work-items/:id/start': 'work_item.execute',
   'POST /api/v1/work-items/:id/retry': 'work_item.execute',
   'POST /api/v1/work-items/:id/takeover': 'work_item.takeover',
 

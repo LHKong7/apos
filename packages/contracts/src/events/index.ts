@@ -123,6 +123,14 @@ export const DOMAIN_EVENT_TYPES = [
   'project.member_added',
   'project.member_role_changed',
   'project.member_removed',
+  /**
+   * 项目 Agent 角色绑定变更。
+   *
+   * ★ 与成员变更同档记审计：换掉规划 Agent 会改变此后**所有**计划的产出，
+   *   而它在界面上只是一个下拉框 —— 查不到「谁什么时候换的」，
+   *   计划质量突然变差就无从追溯。
+   */
+  'project.agent_bound',
   // requirement
   'requirement.created',
   'requirement.analyzed',
@@ -150,6 +158,12 @@ export const DOMAIN_EVENT_TYPES = [
   'work_item.created',
   'work_item.status_changed',
   'work_item.assigned',
+  /**
+   * ★ 与 assigned 分开：这一条表示「换了执行者」，不表示「开始执行」。
+   *   合成一条的话，审计里分不清「PM 把卡挂到某人名下」和「Agent 开跑了」——
+   *   而后者才是花钱和改文件的那一刻。
+   */
+  'work_item.assignee_changed',
   'work_item.blocked',
   'work_item.unblocked',
   'work_item.taken_over',
@@ -256,6 +270,7 @@ export const AUDIT_EVENTS: readonly DomainEventType[] = [
   'project.member_added',
   'project.member_role_changed',
   'project.member_removed',
+  'project.agent_bound',
   'user.created',
   'user.password_changed',
   'user.org_role_changed',

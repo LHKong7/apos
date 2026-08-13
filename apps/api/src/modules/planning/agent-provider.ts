@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { agents, type Database } from '@apos/db';
+import { agents, projectAgentBindings, projectMembers, type Database } from '@apos/db';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
 import { WorkspaceService } from '../workspace';
@@ -196,10 +196,9 @@ export class AgentPlanningProvider implements PlanningProvider {
   }): Promise<Attempt<T>> {
     if (!input.scope) return fail('调用方没有给出 orgId/projectId，无法挑选规划 Agent');
 
-    const agent = await this.pickAgent(input.scope.orgId);
-    if (!agent) {
-      return fail(`组织内没有可用的规划 Agent（需要 applicableTypes 含 ${PLANNING_TYPE}）`);
-    }
+    const picked = await this.pickAgent(input.scope);
+    if (!picked.agent) return fail(picked.reason);
+    const agent = picked.agent;
     if (!this.registry.has(agent.id)) {
       return fail(`Agent「${agent.name}」未在本进程注册（凭证缺失或运行时不可用）`);
     }
@@ -293,26 +292,88 @@ export class AgentPlanningProvider implements PlanningProvider {
   }
 
   /**
-   * 挑规划 Agent。
+   * 挑规划 Agent —— 先看项目**显式绑定**的那个。
    *
-   * ★ 复用 applicableTypes 而不是新加一个「是不是规划 Agent」的字段：
-   *   `requirement` 本来就是工作项类型之一，界面上配 Agent 时勾它即可，
-   *   不用为规划再发明一套配置概念。
+   * ★★ 在 project_agent_bindings 出现之前，这里是「组织里第一个
+   *   status=active 且 applicableTypes 含 requirement 的 Agent」，按 createdAt 排序。
+   *   三个后果：用户指定不了；想换只能去改另一个 Agent 的配置或建号顺序；
+   *   而且它**完全不看项目成员关系** —— 组织里任何一个 Agent 都可能被拉来
+   *   读这个项目的需求，而项目正是权限与上下文的边界。
+   *
+   * ★ 绑定优先，没绑定才回退到旧的「组织内自动挑」，并且**在回退时说出来**
+   *   （reason 会一路进到 model 字段里，见类文档那条纪律）。直接报错的话，
+   *   所有还没来得及配绑定的既有项目会在下一次分析时全部失败。
+   *
+   * ★ 回退挑出来的也必须是本项目成员 —— 这一条比绑定与否更靠前：
+   *   它是授权，不是偏好。
    */
-  private async pickAgent(orgId: string) {
+  private async pickAgent(
+    scope: PlanningScope,
+  ): Promise<{ agent: typeof agents.$inferSelect | null; reason: string }> {
+    const [bound] = await this.db
+      .select({ agent: agents })
+      .from(projectAgentBindings)
+      .innerJoin(agents, eq(agents.id, projectAgentBindings.agentId))
+      .where(
+        and(
+          eq(projectAgentBindings.projectId, scope.projectId),
+          eq(projectAgentBindings.role, 'planner'),
+        ),
+      );
+
+    if (bound) {
+      if (bound.agent.status !== 'active') {
+        return {
+          agent: null,
+          reason: `项目绑定的规划 Agent「${bound.agent.name}」当前状态是 ${bound.agent.status}`,
+        };
+      }
+      if (!bound.agent.applicableTypes.includes(PLANNING_TYPE)) {
+        return {
+          agent: null,
+          reason: `项目绑定的规划 Agent「${bound.agent.name}」的适用类型里没有 ${PLANNING_TYPE}`,
+        };
+      }
+      return { agent: bound.agent, reason: '' };
+    }
+
+    const members = await this.db
+      .select({ actorId: projectMembers.actorId })
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, scope.projectId),
+          eq(projectMembers.actorType, 'agent'),
+        ),
+      );
+    if (members.length === 0) {
+      return {
+        agent: null,
+        reason: '这个项目还没有绑定规划 Agent，项目成员里也没有任何 Agent',
+      };
+    }
+
     const [row] = await this.db
       .select()
       .from(agents)
       .where(
         and(
-          eq(agents.orgId, orgId),
+          eq(agents.orgId, scope.orgId),
           eq(agents.status, 'active'),
+          inArray(agents.id, members.map((m) => m.actorId)),
           sql`${agents.applicableTypes} @> ARRAY[${PLANNING_TYPE}]::work_item_type[]`,
         ),
       )
       .orderBy(agents.createdAt)
       .limit(1);
-    return row ?? null;
+
+    if (!row) {
+      return {
+        agent: null,
+        reason: `这个项目还没有绑定规划 Agent，成员里也没有适用于 ${PLANNING_TYPE} 的可用 Agent`,
+      };
+    }
+    return { agent: row, reason: '' };
   }
 
   private buildDispatch(

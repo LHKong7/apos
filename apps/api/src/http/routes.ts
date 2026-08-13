@@ -145,6 +145,8 @@ import {
   StorageTargetInput,
   updateStorageTarget,
 } from './storage-targets';
+import { AssigneeInput, listCandidates, setAssignee } from './assignment';
+import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
@@ -1724,6 +1726,36 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return deleteStorageTarget(db, orgId, id);
   });
 
+  // ── 项目 Agent 绑定 ─────────────────────────────────────────────────
+  /**
+   * ★ 这一层只回答「哪个已配置的 Agent 干这个角色」。
+   *   选运行时是 Agent 配置页的事，到这里已经定好了。
+   */
+  app.get('/api/v1/projects/:id/agents', async (req) => {
+    const { id } = req.params as { id: string };
+    return listProjectAgents(db, id);
+  });
+
+  app.put('/api/v1/projects/:id/agents', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { id } = req.params as { id: string };
+    const body = BindingInput.parse(req.body);
+    const result = await setProjectAgent(db, { orgId, projectId: id, userId }, body);
+
+    await emitAndPublish(db, {
+      orgId,
+      projectId: id,
+      type: 'project.agent_bound',
+      actor: humanActor(userId),
+      subjectType: 'project',
+      subjectId: id,
+      payload: { role: result.role, agentId: result.agentId },
+      correlationId: corr(req),
+    });
+
+    return result;
+  });
+
   // ── 项目工程约定 ────────────────────────────────────────────────────
   // 成员关系与 convention.manage 权限都由 preHandler 统一判过（见闸门那一节）
   app.get('/api/v1/projects/:id/conventions', async (req) => {
@@ -2508,63 +2540,40 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   于是在 draft / reviewing 状态的卡片上点派发会得到一个
    *   看不懂的流转错误。
    */
-  app.post('/api/v1/work-items/:id/assign', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        agentId: z.string().uuid().optional(),
-        /** 指派给人时用 */
-        userId: z.string().uuid().optional(),
-        /** 派发时附加的说明，进 must_read 上下文 */
-        note: z.string().max(4000).optional(),
-      })
-      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
-        message: '必须且只能指定 agentId 或 userId 其中之一',
-      })
-      .parse(req.body ?? {});
-
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
-
-    // ★ 先说清楚「现在不能开始」，而不是让它掉进流转错误里
+  /**
+   * 「现在能不能开始」要先说清楚，而不是让它掉进流转错误里。
+   *
+   * ★ /assign 与 /start 共用同一条判据 —— 两处各写一份的话，
+   *   同一张卡在两个入口上会得到两种说法。
+   */
+  function assertStartable(status: string) {
     const STARTABLE = ['ready', 'blocked', 'changes_requested'];
-    if (!STARTABLE.includes(item.status)) {
+    if (!STARTABLE.includes(status)) {
       throw new ApiError(
         'INVALID_TRANSITION',
-        `任务当前状态是 ${item.status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
-        { status: item.status, startable: STARTABLE },
+        `任务当前状态是 ${status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
+        { status, startable: STARTABLE },
       );
     }
+  }
 
-    if (body.userId) {
-      const moved = await transition(db, {
-        workItemId: id,
-        trigger: 'assigned_to_human',
-        actor,
-        reason: body.note ?? '人工指派',
-        correlationId: corr(req),
-      });
-      if (!moved.ok) return mapTransitionError(moved);
-
-      await db
-        .update(workItems)
-        .set({ executorType: 'human', executorId: body.userId })
-        .where(eq(workItems.id, id));
-
-      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
-    }
-
+  /** 真正派 Run 的那一段。/assign 与 /start 共用 */
+  async function startRun(
+    req: FastifyRequest,
+    item: typeof workItems.$inferSelect,
+    agentId: string,
+    note: string | undefined,
+    actor: ReturnType<typeof actorFrom>['actor'],
+    userId: string,
+  ) {
     const result = await dispatchRun(
       db,
       deps.registry,
       {
-        workItemId: id,
-        agentId: body.agentId!,
+        workItemId: item.id,
+        agentId,
         correlationId: corr(req),
-        additionalContext: body.note
-          ? [{ title: '派发人的补充说明', content: body.note }]
-          : undefined,
+        additionalContext: note ? [{ title: '派发人的补充说明', content: note }] : undefined,
       },
       { workspaces: deps.workspaces },
     );
@@ -2586,8 +2595,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       type: 'work_item.assigned',
       actor,
       subjectType: 'work_item',
-      subjectId: id,
-      payload: { executorType: 'agent', executorId: body.agentId, byUserId: userId, manual: true },
+      subjectId: item.id,
+      payload: { executorType: 'agent', executorId: agentId, byUserId: userId, manual: true },
       correlationId: corr(req),
     });
 
@@ -2598,6 +2607,127 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       attempt: result.attempt,
       reused: result.reused,
     };
+  }
+
+  /**
+   * 候选执行者 —— 能选谁、以及为什么不能选谁。
+   *
+   * ★ 不可选的也返回。只回可选项的话，界面上是个空下拉框，
+   *   而「没配 Agent / 没加进项目 / 满载 / 运行时没注册」这四种原因
+   *   的下一步动作完全不同。
+   */
+  app.get('/api/v1/work-items/:id/candidates', async (req) => {
+    const { id } = req.params as { id: string };
+    return listCandidates(db, deps.registry, id);
+  });
+
+  /**
+   * 只设置执行者，不开始执行。
+   *
+   * ★★ 这是从 /assign 里拆出来的那一半。选执行者是一个「选择」，
+   *   不该有副作用 —— 而在拆开之前，它会立刻派 Run、改文件、烧预算。
+   */
+  app.patch('/api/v1/work-items/:id/assignee', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = AssigneeInput.parse(req.body ?? {});
+
+    const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!before) throw notFound('任务');
+
+    const result = await setAssignee(db, id, body);
+
+    await emitAndPublish(db, {
+      orgId: before.orgId,
+      projectId: before.projectId,
+      type: 'work_item.assignee_changed',
+      actor,
+      subjectType: 'work_item',
+      subjectId: id,
+      payload: {
+        from: { executorType: before.executorType, executorId: before.executorId },
+        to: { executorType: result.executorType, executorId: result.executorId },
+        executionMode: result.executionMode,
+        byUserId: userId,
+      },
+      correlationId: corr(req),
+    });
+
+    return result;
+  });
+
+  /**
+   * 开始执行 —— 真正派 Run 的那一步。
+   *
+   * ★ 不带执行者时用卡片上已经设好的那个。这样「先排活、回头再开跑」
+   *   是两次独立的动作，而不是必须在一次调用里同时决定。
+   */
+  app.post('/api/v1/work-items/:id/start', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ agentId: z.string().uuid().optional(), note: z.string().max(4000).optional() })
+      .parse(req.body ?? {});
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!item) throw notFound('任务');
+
+    assertStartable(item.status);
+
+    const agentId = body.agentId ?? (item.executorType === 'agent' ? item.executorId : null);
+    if (!agentId) {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        item.executorType === 'human'
+          ? '这张卡的执行者是人，不能派给 Agent 执行'
+          : '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
+        { executorType: item.executorType },
+      );
+    }
+
+    return startRun(req, item, agentId, body.note, actor, userId);
+  });
+
+  app.post('/api/v1/work-items/:id/assign', async (req) => {
+    const { actor, userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        agentId: z.string().uuid().optional(),
+        /** 指派给人时用 */
+        userId: z.string().uuid().optional(),
+        /** 派发时附加的说明，进 must_read 上下文 */
+        note: z.string().max(4000).optional(),
+      })
+      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
+        message: '必须且只能指定 agentId 或 userId 其中之一',
+      })
+      .parse(req.body ?? {});
+
+    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+    if (!item) throw notFound('任务');
+
+    assertStartable(item.status);
+
+    if (body.userId) {
+      const moved = await transition(db, {
+        workItemId: id,
+        trigger: 'assigned_to_human',
+        actor,
+        reason: body.note ?? '人工指派',
+        correlationId: corr(req),
+      });
+      if (!moved.ok) return mapTransitionError(moved);
+
+      await db
+        .update(workItems)
+        .set({ executorType: 'human', executorId: body.userId })
+        .where(eq(workItems.id, id));
+
+      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
+    }
+
+    return startRun(req, item, body.agentId!, body.note, actor, userId);
   });
 
   app.post('/api/v1/work-items/:id/retry', async (req) => {

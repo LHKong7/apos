@@ -48,6 +48,7 @@ export const PERMISSIONS = [
 
   // ── 任务 ──────────────────────────────────────────────────────────
   'work_item.create',
+  'work_item.assign',
   'work_item.execute',
   'work_item.takeover',
   'work_item.force_pass',
@@ -284,6 +285,19 @@ export const PERMISSION_SPECS: Record<Permission, PermissionSpec> = {
     label: '创建任务',
     projectRoles: EXECUTING,
     requires: '需要项目成员权限（只读角色不能建任务）',
+  },
+  /**
+   * ★ 与 work_item.execute 分开：排活与花钱是两件事。
+   *
+   *   「把这张卡挂到某人名下」不动文件、不动预算，是 PM 的日常动作；
+   *   「开始执行」会让 Agent 改代码并消耗预算。合成一个权限的话，
+   *   要么排活的人拿到了派发权，要么 PM 连排活都做不了 —— 两边都不对。
+   */
+  'work_item.assign': {
+    scope: 'project',
+    label: '分配任务执行者',
+    projectRoles: EXECUTING,
+    requires: '需要项目成员权限（只读角色不能改动任务）',
   },
   'work_item.execute': {
     scope: 'project',
