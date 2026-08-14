@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -470,11 +470,16 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(plan.humanGates.length).toBeGreaterThan(0);
 
     // 批准计划
+    /**
+     * ★ acknowledgedUnassigned：计划里的人工任务还没排人，approvePlan 会
+     *   为此先拦一次（UNASSIGNED_HUMAN_TASKS）。这里代表用户确认「先让它们
+     *   进待认领队列」—— 这条用例验的是全链路走得通，排人在计划页单独测。
+     */
     const activated = await app.inject({
       method: 'POST',
       url: `/api/v1/plans/${plan.planId}/approve`,
       headers: auth(),
-      payload: {},
+      payload: { acknowledgedUnassigned: true },
     });
     expect(activated.statusCode).toBe(200);
     expect(activated.json().activatedTasks).toBe(plan.taskCount);
@@ -835,7 +840,21 @@ describe('★ 需求：AI 与人工两条路并行', () => {
       const id = await createRequirement('删了也要留痕的需求');
       await del(id, auth());
 
-      const [ev] = await db.select().from(events).where(eq(events.subjectId, id));
+      /**
+       * ★ 必须按 id 倒序取最后一条。
+       *
+       *   这条需求身上不止一个事件（created 在前、deleted 在后），
+       *   而不带 ORDER BY 的 SELECT 里行的顺序是**没有保证**的 ——
+       *   拿 `[ev]` 当「最新那条」在这里恰好取到了 created，
+       *   于是断言失败；换个执行计划它又可能碰巧通过。
+       *   测试里的顺序假设要写出来，不能靠运气。
+       */
+      const [ev] = await db
+        .select()
+        .from(events)
+        .where(eq(events.subjectId, id))
+        .orderBy(desc(events.id))
+        .limit(1);
       expect(ev?.type).toBe('requirement.deleted');
       expect((ev?.payload as { rawInput?: string })?.rawInput).toContain('删了也要留痕');
     });

@@ -21,6 +21,7 @@ import { emit } from '../event/emitter';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import type { ReleaseResult, WorkspaceService } from '../workspace';
+import { mergeTypeDataNested } from '../work-item/json-merge';
 import { findAlternativeAgent } from './matching';
 
 export interface IngestDeps {
@@ -155,25 +156,24 @@ async function settleWorkspace(
    *   而那份数据除了 CI 集成之外没有任何来源，于是默认全部为「通过」。
    */
   if (result.check.ran) {
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
-    if (item) {
-      await db
-        .update(workItems)
-        .set({
-          typeData: {
-            ...item.typeData,
-            qualityGate: {
-              ...((item.typeData['qualityGate'] as Record<string, unknown>) ?? {}),
-              testsPassed: result.check.passed,
-              testCommand: result.check.command,
-              testDurationMs: result.check.durationMs,
-              testCheckedAt: new Date().toISOString(),
-              testSource: 'workspace_check',
-            },
-          },
-        })
-        .where(eq(workItems.id, run.workItemId));
-    }
+    /**
+     * ★ 合并在一条 UPDATE 里做，不再「读出来 → 展开 → 写回去」。
+     *   qualityGate 的另一个写入者是 CI 回灌（integrations.ts），
+     *   两边撞上时后写的那个会带着旧值覆盖整列 —— 丢掉的正是
+     *   qualityGatePassed 这道门禁要读的证据。见 work-item/json-merge.ts。
+     */
+    await db
+      .update(workItems)
+      .set({
+        typeData: mergeTypeDataNested('qualityGate', {
+          testsPassed: result.check.passed,
+          testCommand: result.check.command,
+          testDurationMs: result.check.durationMs,
+          testCheckedAt: new Date().toISOString(),
+          testSource: 'workspace_check',
+        }),
+      })
+      .where(eq(workItems.id, run.workItemId));
 
     await db
       .insert(runEvents)

@@ -4,6 +4,7 @@ import { agentRuns, agents, projectMembers, users, workItems, type Database } fr
 import { ACTIVE_RUN_STATUSES, ExecutionMode } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { executionModeOf, resolveExecutor } from '../modules/agent/matching';
+import { mergeTypeData } from '../modules/work-item/json-merge';
 import { ApiError, notFound } from './errors';
 
 /**
@@ -145,8 +146,13 @@ export async function setAssignee(
     .set({
       executorType,
       executorId,
-      // ★ executionMode 存在 typeData 里，与 requiredSkills / requiredTools 同处
-      typeData: { ...item.typeData, executionMode: mode },
+      /**
+       * ★ executionMode 存在 typeData 里，与 requiredSkills / requiredTools 同处。
+       *   只合并这一个键，不把读到的整份 typeData 写回去 —— 从上面那次 SELECT
+       *   到这里之间，qualityGate 可能已经被 CI 或 Agent 收尾改过了，
+       *   整列覆盖会把它抹掉。见 work-item/json-merge.ts。
+       */
+      typeData: mergeTypeData({ executionMode: mode }),
       updatedAt: new Date(),
     })
     .where(eq(workItems.id, workItemId));

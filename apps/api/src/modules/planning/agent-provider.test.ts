@@ -2,7 +2,7 @@ import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agents } from '@apos/db';
+import { agents, projectMembers } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, type AgentRuntimeAdapter } from '@apos/agent-runtimes';
 import type {
   CapabilityManifest,
@@ -112,6 +112,20 @@ async function seedPlanningAgent(registry: RuntimeRegistry, runtime: AgentRuntim
     })
     .returning();
   registry.register(agent!.id, runtime);
+
+  /**
+   * ★ 加进项目成员 —— pickAgent 没有 planner 绑定时就退到「项目成员里的
+   *   Agent」，两条路都以成员关系为前提。少了这一步，provider 会如实地
+   *   回一句「这个项目还没有绑定规划 Agent」并退到规则占位，
+   *   于是下面几条验的就不是真 Agent 那条链路了。
+   */
+  await db.insert(projectMembers).values({
+    orgId: fx.orgId,
+    projectId: fx.projectId,
+    actorType: 'agent',
+    actorId: agent!.id,
+    role: 'executor',
+  });
   return agent!;
 }
 

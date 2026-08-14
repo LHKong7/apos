@@ -215,6 +215,29 @@ describe('WIP 与预算护栏', () => {
 });
 
 describe('执行主体匹配', () => {
+  /**
+   * ★★ 项目成员关系是派发的硬性前置，不是匹配偏好。
+   *
+   *   这条走的是 seedAgent 的 `inProject: false` —— 夹具默认会把 Agent
+   *   登记进项目（真实路径就是这样），这里显式不登记，验的是那道闸门
+   *   本身还在。它同时钉住了拒绝理由：指向「没加进项目」，
+   *   而不是让人跑去给 Agent 加技能。
+   */
+  it('★ 没被加进项目的 Agent 一律不派发', async () => {
+    const registry = new RuntimeRegistry();
+    await seedAgent(db, fx, { registry, inProject: false });
+
+    await createWorkItem(db, fx, { executorType: null, executorId: null });
+
+    const report = await scheduleRound(db, registry, {
+      projectId: fx.projectId,
+      correlationId: corr(),
+    });
+
+    expect(report.outcomes[0]?.action).toBe('skipped');
+    expect(report.outcomes[0]?.reason).toContain('不是本项目成员');
+  });
+
   it('★ 无匹配 Agent 时任务被阻塞并给出具体原因', async () => {
     const registry = new RuntimeRegistry();
     await seedAgent(db, fx, { registry, allowedTools: ['read_file'] });
@@ -253,7 +276,13 @@ describe('执行主体匹配', () => {
     });
 
     expect(report.outcomes[0]?.action).toBe('skipped');
-    expect(report.outcomes[0]?.reason).toContain('需要人类经验');
+    /**
+     * ★ 措辞是「被指定为人工执行」而不是「需要人类经验」：`requiresHuman`
+     *   这个布尔已经拆成 executionMode + approvalGate 两栏（见 domain 的
+     *   matching.ts），旧数据由 executionModeOf 归一到 executionMode='human'。
+     *   这里断言的是归一之后的那句 —— 拒绝理由要指向真实原因。
+     */
+    expect(report.outcomes[0]?.reason).toContain('人工执行');
   });
 
   it('已指派人类的任务不派发 Agent', async () => {

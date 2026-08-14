@@ -41,6 +41,7 @@ import {
   type IntegrationRegistry,
   type SyncContext,
 } from '@apos/integrations';
+import { mergeTypeDataNested } from '../modules/work-item/json-merge';
 import { ApiError, notFound } from './errors';
 
 /**
@@ -1077,22 +1078,27 @@ export async function ingestCiResults(
       continue;
     }
 
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, link.workItemId));
-    if (!item) continue;
-
-    const gate = {
-      ...(item.typeData['qualityGate'] as Record<string, unknown> | undefined),
-      testsPassed: ci.passed,
-      ...(ci.coverage === null ? {} : { coverage: ci.coverage }),
-      ciSha: ci.sha,
-      ciFailedChecks: ci.failedChecks,
-      ciCheckedAt: new Date().toISOString(),
-    };
-
-    await db
+    /**
+     * ★ 一条 UPDATE 里合并，不再读出来再整列写回。
+     *   另一个写入者是 Agent 收尾时的工作区核验（agent/ingest.ts），
+     *   两边写的是 qualityGate 里不同的几个字段：整列覆盖会把对方那半抹掉，
+     *   而丢掉的是 qualityGatePassed 这道门禁的判据。
+     */
+    const merged = await db
       .update(workItems)
-      .set({ typeData: { ...item.typeData, qualityGate: gate }, updatedAt: new Date() })
-      .where(eq(workItems.id, link.workItemId));
+      .set({
+        typeData: mergeTypeDataNested('qualityGate', {
+          testsPassed: ci.passed,
+          ...(ci.coverage === null ? {} : { coverage: ci.coverage }),
+          ciSha: ci.sha,
+          ciFailedChecks: ci.failedChecks,
+          ciCheckedAt: new Date().toISOString(),
+        }),
+        updatedAt: new Date(),
+      })
+      .where(eq(workItems.id, link.workItemId))
+      .returning({ id: workItems.id });
+    if (merged.length === 0) continue;
     updated += 1;
   }
 

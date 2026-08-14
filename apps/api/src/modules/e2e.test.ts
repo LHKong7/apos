@@ -147,10 +147,17 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     expect(idleRound.scanned).toBe(0);
 
     // ── 7. 人类批准计划 ─────────────────────────────────────────────
+    /**
+     * ★ acknowledgedUnassigned：计划里的人工任务这会儿还没指定负责人，
+     *   而 approvePlan 会为此先拦一次（见 planning/service.ts 的
+     *   UNASSIGNED_HUMAN_TASKS）。这里代表用户确认「让它们进待认领队列」——
+     *   这条用例验的是自动流转，不是排人，那一步在 Plan 页上单独测。
+     */
     const activation = await approvePlan(db, {
       planId: plan.planId,
       approverId: fx.userId,
       correlationId: c,
+      acknowledgedUnassigned: true,
     });
     expect(activation.ok).toBe(true);
     if (!activation.ok) return;
@@ -264,12 +271,19 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.planId));
     expect(tasks.every((t) => t.status === 'draft')).toBe(true);
 
-    // 显式知晓超支后可以放行
+    /**
+     * 显式知晓超支后可以放行。
+     *
+     * ★ 两个确认要分别给：超支与「人工任务没人认领」是两次独立的拦截，
+     *   各用各的错误码，acknowledgedOverrun 不顺带把另一条也放过去。
+     *   合成一个的话，用户点「确认超支」会连带默许了一件他没被问过的事。
+     */
     const forced = await approvePlan(db, {
       planId: plan.planId,
       approverId: fx.userId,
       correlationId: c,
       acknowledgedOverrun: true,
+      acknowledgedUnassigned: true,
     });
     expect(forced.ok).toBe(true);
   });
@@ -293,7 +307,13 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     }
     await approveRequirement(db, { requirementId: req.id, approverId: fx.userId, correlationId: c });
     const plan = await generatePlan(db, provider, { requirementId: req.id, correlationId: c });
-    await approvePlan(db, { planId: plan.planId, approverId: fx.userId, correlationId: c });
+    await approvePlan(db, {
+      planId: plan.planId,
+      approverId: fx.userId,
+      correlationId: c,
+      /** 人工任务先进待认领队列 —— 这条用例验的不是排人 */
+      acknowledgedUnassigned: true,
+    });
 
     const [approvedEvent] = await db
       .select()
@@ -326,7 +346,13 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     }
     await approveRequirement(db, { requirementId: req.id, approverId: fx.userId, correlationId: c });
     const plan = await generatePlan(db, provider, { requirementId: req.id, correlationId: c });
-    await approvePlan(db, { planId: plan.planId, approverId: fx.userId, correlationId: c });
+    await approvePlan(db, {
+      planId: plan.planId,
+      approverId: fx.userId,
+      correlationId: c,
+      /** 人工任务先进待认领队列 —— 这条用例验的不是排人 */
+      acknowledgedUnassigned: true,
+    });
 
     // 第一轮：只有 research 无依赖
     const round1 = await scheduleRound(db, agent.registry, {
