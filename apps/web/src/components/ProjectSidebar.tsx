@@ -234,6 +234,12 @@ function navGroups(id: string): { titleKey: MessageKey; items: NavItem[] }[] {
         { to: `${p}/settings/policies`, labelKey: 'nav.policies', icon: <Icon.Policy /> },
         { to: `${p}/settings/integrations`, labelKey: 'nav.integrations', icon: <Icon.Integration /> },
         { to: `${p}/settings/agents`, labelKey: 'nav.agentConfig', icon: <Icon.AgentConfig /> },
+        /**
+         * ★ 存储目标是一格独立的导航，不是 Agent 配置里的第四个标签页。
+         *   它是与代码仓库同级的项目资源登记，不属于任何一个 Agent ——
+         *   而藏在别的页面里的设置，对没读过文档的人等于不存在。
+         */
+        { to: `${p}/settings/storage`, labelKey: 'nav.storage', icon: <Icon.Storage /> },
         { to: `${p}/settings/members`, labelKey: 'nav.members', icon: <Icon.Members /> },
         { to: `${p}/settings/roles`, labelKey: 'nav.roles', icon: <Icon.Roles /> },
       ],
@@ -334,6 +340,14 @@ const Icon = {
       <path d="M2.5 5h3.2M9.3 5h4.2M2.5 11h2.2M8.3 11h5.2" />
       <circle cx="7.5" cy="5" r="1.7" />
       <circle cx="6.5" cy="11" r="1.7" />
+    </Glyph>
+  ),
+  /** 叠起来的盘片 —— 桶与目录共用的那个形状 */
+  Storage: () => (
+    <Glyph>
+      <ellipse cx="8" cy="4" rx="5.5" ry="2" />
+      <path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4" />
+      <path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" />
     </Glyph>
   ),
   Members: () => (

@@ -22,10 +22,13 @@ export async function seedAgent(
     costLimitPerRun?: string;
     stats?: Record<string, unknown>;
     /**
-     * ★ 含 `requirement`：规划 / PRD 编写 Agent 靠这个类型被挑中
+     * ★ 含 `requirement`：自动挑规划 / PRD 编写 Agent 时它排在前面
      *   （pickAgent 的 PLANNING_TYPE）。此前这个联合漏了它，于是想造一个
-     *   「能写 PRD 的 Agent」只能绕开夹具直接插表 —— 而绕开夹具的测试
-     *   造出来的形态迟早与真实路径分家。
+     *   「优先被挑去写 PRD 的 Agent」只能绕开夹具直接插表 —— 而绕开夹具的
+     *   测试造出来的形态迟早与真实路径分家。
+     *
+     * ★ 它**不是**能不能写 PRD 的门槛：那条判据只有「是不是项目成员」。
+     *   所以默认值里没有它，也照样能被指定为 PRD 编写者。
      */
     applicableTypes?: (
       | 'task'

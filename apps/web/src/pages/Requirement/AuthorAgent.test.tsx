@@ -107,7 +107,14 @@ function renderPicker(over: {
 }
 
 describe('PRD 编写 Agent 选择', () => {
-  it('只列能写 PRD 的项目 Agent —— 适用类型不含 requirement 的不出现在选项里', async () => {
+  /**
+   * ★★ 项目 Agent 成员**全都**列出来，不按适用类型筛。
+   *
+   *   适用类型管的是派工作项时的执行者匹配，而写 PRD 不派工作项。
+   *   照着它筛的后果是项目里配了一整队 Agent、下拉框却是空的 ——
+   *   而空下拉框不会解释「去勾一个你不知道有什么用的复选框」。
+   */
+  it('列出项目里全部 Agent 成员 —— 适用类型不含 requirement 的照样能选', async () => {
     vi.spyOn(api, 'projectAgents').mockResolvedValue(
       agentList([
         { agentId: 'a1', name: 'prd-writer', applicableTypes: ['requirement'] },
@@ -118,11 +125,27 @@ describe('PRD 编写 Agent 选择', () => {
     renderPicker();
 
     await screen.findByRole('option', { name: /prd-writer/ });
-    /**
-     * ★ 与服务端同一条判据。列出来的话，用户会选到一个保存时才被拒的 Agent ——
-     *   而那条报错出现在提交之后，不在选择的时候。
-     */
-    expect(screen.queryByRole('option', { name: /coder/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /coder/ })).toBeTruthy();
+  });
+
+  /** ★ 停用的也列出来 —— 它选得上，后果由下面那行黄字说清 */
+  it('停用的 Agent 仍在选项里，选中它传的是它的 id', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([
+        { agentId: 'a1', name: 'prd-writer' },
+        { agentId: 'a2', name: 'paused-one', status: 'paused' },
+      ]),
+    );
+    const save = vi
+      .spyOn(api, 'setRequirementAuthorAgent')
+      .mockResolvedValue({ ok: true, agentId: 'a2', agentName: 'paused-one' });
+
+    renderPicker();
+    await screen.findByRole('option', { name: /paused-one/ });
+
+    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), 'a2');
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith('r1', 'a2'));
   });
 
   it('选中之后立刻保存，传的是 agentId', async () => {
@@ -159,8 +182,8 @@ describe('PRD 编写 Agent 选择', () => {
   });
 
   /**
-   * ★★ 已选、但如今不在候选里的那个（被移出项目 / 类型被取消勾选）
-   *   必须仍然显示出来并说清后果 —— 显示成「未指定」是最坏的处理。
+   * ★★ 已选、但如今不在候选里的那个（被移出项目）必须仍然显示出来
+   *   并说清后果 —— 显示成「未指定」是最坏的处理。
    */
   it('选中的 Agent 已不在项目里时照旧显示，并说明下次分析会失败', async () => {
     vi.spyOn(api, 'projectAgents').mockResolvedValue(
@@ -193,12 +216,12 @@ describe('PRD 编写 Agent 选择', () => {
   });
 
   /** ★ 一个可选项都没有时说清怎么才能有，而不是给一个空下拉框 */
-  it('没有任何能写 PRD 的 Agent 时给出两条出路', async () => {
+  it('项目里一个 Agent 成员都没有时，指向「成员与角色」', async () => {
     vi.spyOn(api, 'projectAgents').mockResolvedValue(agentList([]));
 
     renderPicker();
 
-    expect(await screen.findByText(/适用类型要含 requirement/)).toBeTruthy();
+    expect(await screen.findByText(/还没有 Agent 成员/)).toBeTruthy();
   });
 
   /**

@@ -360,10 +360,18 @@ git 仓库时踩过的坑（§1）。
 `ResourceScope` 里用 `kind: 'dataset'` 引用它，与仓库的 `kind: 'repo'` 分开 ——
 「授权了什么」在权限快照里因此是自解释的。
 
-登记入口在**设置 → Agent 配置 → 存储目标**，与「代码仓库」并列的一页
-（`POST/PATCH/DELETE /api/v1/admin/storage-targets`，权限 `storage_target.manage`）。
+登记入口在**设置 → 存储目标**（导航里独立的一格，
+`/projects/:projectId/settings/storage`；`POST/PATCH/DELETE /api/v1/admin/storage-targets`，
+权限 `storage_target.manage`）。
 与 `repository.manage` 分开是因为风险面不同：登记一个仓库最坏是让 Agent 往一个
 仓库里写代码，而登记一个 `local` 目标是把宿主机上的一个目录交给 Agent。
+
+它曾经是「Agent 配置」下面的第四个标签页，而那个位置说错了归属：存储目标不是某个
+Agent 的属性，是与代码仓库同级的**项目（或组织）级资源登记** —— 一个 bucket 被三个
+Agent 引用是常态，删它要看的是「有没有 Agent 授权指向它」，不是某一个 Agent 的配置。
+藏在别的页面里还有一个更实际的代价：想挂一个数据目录的人脑子里没有 Agent，
+不会去点「Agent 配置」的第四个标签。**授权**仍然在 Agent 配置里（`resourceScopes`
+的 `kind: 'dataset'`），所以存储目标那一页显式指回去。
 
 那一页上有两件在别处看不到的事，都是「不说就要等第一次派发才炸」的：
 

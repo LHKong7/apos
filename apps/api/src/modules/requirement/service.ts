@@ -658,13 +658,28 @@ export type SetAuthorAgentResult =
   | { ok: true; agentId: string | null; agentName: string | null }
   | { ok: false; code: 'REQUIREMENT_SETTLED'; status: string }
   | { ok: false; code: 'AGENT_NOT_FOUND' }
-  | { ok: false; code: 'NOT_PROJECT_MEMBER'; agentName: string }
-  | { ok: false; code: 'CANNOT_AUTHOR'; agentName: string; applicableTypes: string[] };
+  | { ok: false; code: 'NOT_PROJECT_MEMBER'; agentName: string };
 
 /**
  * 指定 / 取消指定这条需求的 PRD 编写 Agent。
  *
- * ★★ 三道校验放在**保存这一刻**，不是等到分析的时候。
+ * ★★ 候选是**项目的 Agent 成员**，全体 —— 不再要求「适用类型含 requirement」。
+ *
+ *   那条判据是从派工作项那边借来的（domain/flow/matching.ts 按
+ *   `applicableTypes.includes(target.type)` 匹配执行者），可写 PRD 这件事
+ *   压根不经过派工：这会儿工作项还不存在。借过来的后果是一个项目配了
+ *   一整队 Agent，需求页上的下拉框却是空的 —— 而空下拉框不会说明
+ *   「去 Agent 配置里勾一个你不知道有什么用的类型」。
+ *
+ *   任何一个被拉进这个项目的 Agent 都写得了 PRD；写得好不好是人看产出
+ *   之后换一个的事，不该由一个建号时随手勾的复选框提前替他决定。
+ *
+ *   Any agent on the project's team can author. The old
+ *   `applicableTypes ∋ requirement` gate came from work-item dispatch
+ *   matching, which PRD authoring never goes through — it only left projects
+ *   with a staffed agent team and an empty dropdown.
+ *
+ * ★★ 两道校验放在**保存这一刻**，不是等到分析的时候。
  *
  *   等到分析才发现「它不是本项目成员」，代价是一次白跑的分析加一次等待 ——
  *   而那时用户已经在等结果了。这与项目 Agent 绑定那边
@@ -730,18 +745,13 @@ export async function setRequirementAuthorAgent(
     if (!member) return { ok: false, code: 'NOT_PROJECT_MEMBER', agentName: agent.name };
 
     /**
-     * ★ 写 PRD 就是处理 `requirement` 这个类型 —— 与项目绑定 planner 那边
-     *   同一条判据。适用类型里没有它的 Agent，选上去也只会在分析时失败。
+     * ★ 这里**不校验 status**：停用的 Agent 仍然选得上，界面上把后果说清楚
+     *   （AuthorAgent.tsx 的那行黄字）。停用多半是临时的，而这个选择要活到
+     *   下一次分析 —— 在保存这一刻拒掉，等于逼人先去启用再回来选。
+     *
+     *   Status is intentionally not checked: pausing is usually temporary and
+     *   this choice outlives it; the page states the consequence instead.
      */
-    if (!agent.applicableTypes.includes('requirement')) {
-      return {
-        ok: false,
-        code: 'CANNOT_AUTHOR',
-        agentName: agent.name,
-        applicableTypes: agent.applicableTypes,
-      };
-    }
-
     agentName = agent.name;
   }
 

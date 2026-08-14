@@ -15,19 +15,22 @@ import type { RequirementDetail } from '../../lib/api/types';
  *   否则「选了 Agent 由它来写」就只是「这一次碰巧用了它」，
  *   下一次又悄悄换回项目绑定的那个，而界面上没有任何迹象。
  *
- * ★ 候选只列**本项目的 Agent 成员**，且只列适用类型含 requirement 的 ——
- *   与项目 Agent 绑定页同一条判据（http/project-agents.ts）。列出选了必然
- *   被服务端拒掉的那些，等于把校验推迟到提交之后。
+ * ★★ 候选是**本项目的 Agent 成员**，全体 —— 与服务端同一条判据
+ *   （modules/requirement/service.ts）。这里曾经还筛一道「适用类型含
+ *   requirement」，现在没有了：那条判据管的是派工作项时的执行者匹配，
+ *   而写 PRD 不派工作项。它留下来的表现是项目里配了一整队 Agent，
+ *   这个下拉框却是空的。
  *
- * ★ 已经选中、但如今不在候选里的那个（被移出项目 / 停用 / 类型被取消勾选）
- *   必须仍然显示出来并说清后果。让它显示成「未指定」是最坏的处理：
- *   库里明明指着它，下一次分析也会照着它失败。
+ * ★ 已经选中、但如今不在候选里的那个（被移出项目）必须仍然显示出来
+ *   并说清后果。让它显示成「未指定」是最坏的处理：库里明明指着它，
+ *   下一次分析也会照着它失败。
  *
  * Requirement-level pick of the agent that authors this PRD. The choice lives
  * on the requirement so it survives reloads and re-analysis; candidates are the
- * project's own agent members that can handle `requirement`; an already-picked
- * agent that no longer qualifies is still shown, with the consequence spelled
- * out, instead of silently rendering as "unset".
+ * project's agent members — all of them, since PRD authoring dispatches no work
+ * item and so never consults `applicableTypes`; an already-picked agent that is
+ * no longer a member is still shown, with the consequence spelled out, instead
+ * of silently rendering as "unset".
  */
 export function AuthorAgent({
   projectId,
@@ -85,21 +88,27 @@ export function AuthorAgent({
   });
 
   /**
-   * ★ 与服务端同一条判据：能写 PRD = 适用类型含 requirement。
-   *   这里放宽一点点的话，用户会选到一个保存时才被拒的 Agent，
-   *   而那条报错出现在提交之后，不在选择的时候。
+   * ★ 与服务端同一条判据：能写 PRD = 是这个项目的 Agent 成员。
+   *   两边只要有一边多筛一道，用户就会遇到「列出来的选不了」或者
+   *   「选得了的没列出来」——后者更糟，因为界面上没有任何线索。
+   *
+   * ★ 停用的也列出来：它选得上（服务端不拦），选中之后下面那行黄字
+   *   会说清「下一次分析会失败」。列表里直接抹掉的话，用户会以为它
+   *   被删了，跑去 Agent 配置页找一个其实还在的东西。
    */
-  const eligible = (agents.data?.available ?? []).filter((a) =>
-    a.applicableTypes.includes('requirement'),
-  );
+  const candidates = agents.data?.available ?? [];
 
   const selectedId = r.authorAgentId;
   /** 选中的那个还在候选里吗 */
-  const known = eligible.some((a) => a.agentId === selectedId);
+  const known = candidates.some((a) => a.agentId === selectedId);
   /**
-   * 选中的那个已经不在候选里 —— 被移出项目，或适用类型被取消勾选。
+   * 选中的那个已经不在候选里 —— 也就是被移出了项目。
    *
-   * ★ 必须等候选**加载完**才敢这么说。列表还没回来时 eligible 是空的，
+   * ★ 候选放宽成「项目 Agent 成员全体」之后，这只剩一个成因，
+   *   底下那句报错因此可以说得很确定（以前它还可能是「类型被取消勾选」，
+   *   而那两条的出路完全不同）。
+   *
+   * ★ 必须等候选**加载完**才敢这么说。列表还没回来时 candidates 是空的，
    *   不加这道判断的话，每次进页面都会先闪一句「已不是这个项目的成员」，
    *   而它多半是假的。
    */
@@ -128,7 +137,7 @@ export function AuthorAgent({
         >
           {/* ★ 「未指定」是显式的一档，不是空白：它表示回到按项目绑定挑 */}
           <option value="">{t('requirement.author.auto')}</option>
-          {eligible.map((a) => (
+          {candidates.map((a) => (
             <option key={a.agentId} value={a.agentId}>
               {a.name} · {a.runtimeKind}
               {a.status === 'active' ? '' : ` · ${a.status}`}
@@ -160,7 +169,7 @@ export function AuthorAgent({
         </p>
       )}
       {/* ★ 一个可选项都没有时说清怎么才能有，而不是给一个空下拉框 */}
-      {agents.data && eligible.length === 0 && !orphaned && (
+      {agents.data && candidates.length === 0 && !orphaned && (
         <p className="mt-0.5 text-[11px] text-amber-700">
           {t('requirement.author.noneEligible')}
         </p>

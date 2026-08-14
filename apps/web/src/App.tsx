@@ -23,6 +23,7 @@ import { AgentDetailPage } from './pages/Agents/Detail';
 import { DecisionsPage } from './pages/Decisions';
 import { IntegrationsPage } from './pages/Settings/Integrations';
 import { AgentConfigPage } from './pages/Settings/AgentConfig';
+import { StorageTargetsPage } from './pages/Settings/StorageTargets';
 import { MembersPage } from './pages/Settings/Members';
 import { AccountsPage } from './pages/Settings/Accounts';
 import { RolesPage } from './pages/Settings/Roles';
@@ -162,6 +163,12 @@ export function App() {
           <Route path="/projects/:projectId/settings/policies" element={<PoliciesPage />} />
           <Route path="/projects/:projectId/settings/integrations" element={<IntegrationsPage />} />
           <Route path="/projects/:projectId/settings/agents" element={<AgentConfigPage />} />
+          {/*
+            ★ 存储目标曾经是 Agent 配置里的一个标签页，没有自己的 URL ——
+              所以这里不需要旧链接转发：那个标签是 useState，从来没有人
+              能收藏或分享它。
+          */}
+          <Route path="/projects/:projectId/settings/storage" element={<StorageTargetsPage />} />
           <Route path="/projects/:projectId/settings/members" element={<MembersPage />} />
           <Route path="/projects/:projectId/settings/accounts" element={<AccountsPage />} />
           <Route path="/projects/:projectId/settings/roles" element={<RolesPage />} />

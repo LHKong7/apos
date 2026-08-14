@@ -195,7 +195,10 @@ Agent 的环境变量表（多数中转站认 `ANTHROPIC_AUTH_TOKEN` 而不是 `
 | `qwen_code` | `APOS_AGENT_QWEN_API_KEY` | `OPENAI_API_KEY` |
 
 需求结构化与计划生成走的是同一套 —— 平台自己不调任何模型 API，
-它挑组织里 `applicableTypes` 含 `requirement` 的那个 Agent，用它的凭证。
+它挑**这个项目的 Agent 成员**里的一个，用那个 Agent 的凭证。挑选顺序：需求上点名的
+（需求页的「PRD 编写」下拉框）→ 项目绑定的规划 Agent（含备选）→ 项目 Agent 成员里
+自动挑一个，其中 `applicableTypes` 含 `requirement` 的排在前面。适用类型是偏好不是门槛：
+它管的是派工作项时的执行者匹配，而规划不派工作项。
 
 ---
 
