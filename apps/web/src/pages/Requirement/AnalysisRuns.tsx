@@ -60,6 +60,20 @@ export function AnalysisRuns({ requirementId }: { requirementId: string }) {
               {r.status}
             </span>
             <span className="min-w-0 flex-1 truncate text-slate-700">{r.goal}</span>
+            {/*
+              ★★ 「由谁跑的」要摆在模型旁边。编写 Agent 可以由人指定之后，
+                这一列才是这张表最该回答的问题 —— 只有 `claude-code:sonnet`
+                的话，换了 Agent 前后两行看起来一模一样，那个选择等于没有反馈。
+              ★ agentId 还在、名字取不到 = Agent 已被删除，如实说出来，
+                不要留一片空白让人以为这次 Run 没有执行者。
+            */}
+            <span className="shrink-0 text-slate-500">
+              {r.agentName
+                ? t('requirement.runs.by', { name: r.agentName })
+                : r.agentId
+                  ? t('requirement.runs.agentGone')
+                  : ''}
+            </span>
             {r.model && <span className="shrink-0 font-mono text-slate-400">{r.model}</span>}
             <span className="shrink-0 tabular-nums text-slate-500">{money(String(r.cost))}</span>
             <span className="shrink-0 text-slate-400">

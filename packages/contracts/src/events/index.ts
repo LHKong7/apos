@@ -139,6 +139,19 @@ export const DOMAIN_EVENT_TYPES = [
   'requirement.approved',
   'requirement.rejected',
   /**
+   * 换掉这条需求的 PRD 编写 Agent。
+   *
+   * ★ 与 project.agent_bound 同一档，只是范围小一级：那一条改的是此后
+   *   所有需求，这一条改的是这一条需求。两条都只是界面上一个下拉框，
+   *   而它们决定了产出由谁写 —— 查不到「谁什么时候换的」，
+   *   同一条需求两次分析结果判若两人就无从追溯。
+   *
+   * ★ Requirement-scoped sibling of project.agent_bound: same kind of change,
+   *   one level narrower. Both are a single dropdown in the UI and both decide
+   *   who authors the output, so both have to leave a trace.
+   */
+  'requirement.author_agent_set',
+  /**
    * 重新打开一条已确认 / 已驳回的需求。
    *
    * ★ 与 created 分开：重新打开会让下游已生成的计划全部作废，

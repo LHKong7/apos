@@ -909,6 +909,216 @@ describe('★ 需求：AI 与人工两条路并行', () => {
   });
 });
 
+/**
+ * ★ 需求级指定「这条需求的 PRD 由谁写」（页面文档 03 §5.4）。
+ *
+ * ★★ 选择记在需求上，所以它必须像需求的其它字段一样：落库、留痕、
+ *   受同一道成员闸门约束。只在一次分析里临时生效的话，
+ *   用户下次进来会发现自己的选择不见了，而界面上没有任何解释。
+ */
+describe('★ 需求：指定 PRD 编写 Agent', () => {
+  async function createRequirement(rawInput = '订单查询太慢，想支持按手机号和时间段搜索') {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${fx.projectId}/requirements`,
+      headers: auth(),
+      payload: { rawInput },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().requirement.id as string;
+  }
+
+  const setAuthor = (id: string, agentId: string | null, headers = auth()) =>
+    app.inject({
+      method: 'PUT',
+      url: `/api/v1/requirements/${id}/author-agent`,
+      headers,
+      payload: { agentId },
+    });
+
+  /** 能写 PRD 的 Agent = 适用类型含 requirement，且是本项目成员 */
+  const seedAuthor = (name: string, inProject = true) =>
+    seedAgent(db, fx, {
+      registry,
+      name,
+      applicableTypes: ['requirement'],
+      inProject,
+    });
+
+  const lastEvent = async (subjectId: string) => {
+    /**
+     * ★ 按 id 倒序取最后一条：这条需求身上不止一个事件（created 在前），
+     *   不带 ORDER BY 的 SELECT 行序没有保证。
+     */
+    const [ev] = await db
+      .select()
+      .from(events)
+      .where(eq(events.subjectId, subjectId))
+      .orderBy(desc(events.id))
+      .limit(1);
+    return ev;
+  };
+
+  it('指定之后落库，详情里带回名字，事件记下前后两个值', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+
+    const res = await setAuthor(id, a.agentId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agentName).toBe('prd-writer');
+
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBe(a.agentId);
+
+    /**
+     * ★ 详情要带名字，不能只有 id：前端的下拉框只装得下当前的项目成员，
+     *   光有 id 的话，一个被移出项目的 Agent 会显示成「未指定」。
+     */
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+    });
+    expect(detail.json().authorAgent.name).toBe('prd-writer');
+    expect(detail.json().requirement.authorAgentId).toBe(a.agentId);
+
+    const ev = await lastEvent(id);
+    expect(ev?.type).toBe('requirement.author_agent_set');
+    expect((ev?.payload as { agentId?: string }).agentId).toBe(a.agentId);
+    expect((ev?.payload as { previousAgentId?: string | null }).previousAgentId).toBeNull();
+  });
+
+  it('取消指定回到「自动挑」，同样留痕并记下原来是谁', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+    await setAuthor(id, a.agentId);
+
+    const res = await setAuthor(id, null);
+    expect(res.statusCode).toBe(200);
+
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBeNull();
+
+    const ev = await lastEvent(id);
+    expect(ev?.type).toBe('requirement.author_agent_set');
+    expect((ev?.payload as { agentId?: string | null }).agentId).toBeNull();
+    // ★ 「本来是谁」是回溯两次产出为何不同时要的那一半
+    expect((ev?.payload as { previousAgentId?: string }).previousAgentId).toBe(a.agentId);
+  });
+
+  /**
+   * ★★ 成员校验是授权，不是体验：规划 Run 会把项目资源只读挂进工作区。
+   */
+  it('非本项目成员的 Agent 被拒，报错指向「成员与角色」', async () => {
+    const id = await createRequirement();
+    const outsider = await seedAuthor('outsider', false);
+
+    const res = await setAuthor(id, outsider.agentId);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+    expect(res.json().error.message).toContain('成员');
+
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBeNull();
+  });
+
+  /**
+   * ★ 适用类型里没有 requirement 的 Agent 选上去也跑不动 ——
+   *   在保存这一刻挡住，而不是等到分析白跑一次。
+   */
+  it('适用类型不含 requirement 的 Agent 被拒，报错指向 Agent 配置', async () => {
+    const id = await createRequirement();
+    const coder = await seedAgent(db, fx, { registry, name: 'coder', applicableTypes: ['task'] });
+
+    const res = await setAuthor(id, coder.agentId);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('requirement');
+  });
+
+  it('不存在的 Agent 返回 404', async () => {
+    const id = await createRequirement();
+    const res = await setAuthor(id, randomUUID());
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('已确认的需求不能再换编写者，返回 409', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/requirements/${id}`,
+      headers: auth(),
+      payload: { title: '订单查询优化', businessGoal: 'P95 降到 500ms' },
+    });
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/api/v1/requirements/${id}/approve`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(approved.statusCode).toBe(200);
+
+    const res = await setAuthor(id, a.agentId);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('INVALID_TRANSITION');
+  });
+
+  /**
+   * ★ 用 createMember 造明确角色 —— 夹具身份是组织管理员 + tech_lead，
+   *   拿它测「谁不能改」永远是绿的。
+   */
+  it('viewer 不能换编写 Agent', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+
+    const userId = await createMember(db, fx, { projectRole: 'viewer' });
+    const res = await setAuthor(id, a.agentId, authFor(userId));
+    expect(res.statusCode).toBe(403);
+
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBeNull();
+  });
+
+  /** ★ 外组织的人拿到的是 404 而不是 403 —— 403 等于确认这条需求存在 */
+  it('外组织的人拿不到这条路由', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+
+    const outsider = await createOutsider(db, fx, { orgRole: 'org_admin' });
+    const res = await setAuthor(id, a.agentId, authFor(outsider.userId));
+    expect(res.statusCode).toBe(404);
+  });
+
+  /**
+   * ★★ 历次分析要看得出是谁跑的。只显示模型的话，换了编写 Agent 之后
+   *   前后两行看起来一模一样 —— 那个选择等于没有反馈。
+   */
+  it('历次分析列表带上执行 Agent 的名字', async () => {
+    const id = await createRequirement();
+    const a = await seedAuthor('prd-writer');
+    await db.insert(agentRuns).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      workItemId: null,
+      kind: 'planning',
+      requirementId: id,
+      agentId: a.agentId,
+      status: 'completed',
+      idempotencyKey: randomUUID(),
+      goal: '需求结构化',
+      model: 'mock:claude-opus-5',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/requirements/${id}/runs`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().runs[0].agentName).toBe('prd-writer');
+  });
+});
+
 describe('看板', () => {
   it('卡片带执行主体名称、依赖数与成本，前端不用二次请求', async () => {
     const agent = await seedAgent(db, fx, { registry, name: 'code-agent-1' });

@@ -190,6 +190,13 @@
       "when": 1786609622843,
       "tag": "0026_backfill_agent_project_members",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786687563172,
+      "tag": "0027_requirement_author_agent",
+      "breakpoints": true
     }
   ]
 }

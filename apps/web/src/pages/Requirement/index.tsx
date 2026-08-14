@@ -10,6 +10,7 @@ import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
 import { AnalysisRuns } from './AnalysisRuns';
+import { AuthorAgent } from './AuthorAgent';
 import { Clarifications } from './Clarifications';
 import { StructuredEditor, type RequirementPatch } from './StructuredEditor';
 import { Button } from '@/components/ui/button';
@@ -182,7 +183,7 @@ export function RequirementPage() {
     );
   }
 
-  const { requirement: r, clarifications } = detail.data!;
+  const { requirement: r, clarifications, authorAgent } = detail.data!;
   /**
    * ★★ 闸门看**有没有内容**，不看**是不是 AI 分析出来的**。
    *   按后者设闸门，等于把人工填写这条路堵死在最后一步：
@@ -296,6 +297,23 @@ export function RequirementPage() {
                   </div>
                 )}
               </div>
+
+              {/*
+                ★★ 选人放在「分析 / 重新分析」这两个按钮的正下方。
+                  它决定的正是按下那两个按钮之后由谁来写 —— 放进设置页
+                  或者折叠起来的话，用户会在按下按钮之后才想起来还能选，
+                  而那时分析已经派给别人了。
+                ★ 编辑态里不显示：那会儿在填的是需求内容，不是决定谁来写。
+              */}
+              {!editing && (
+                <AuthorAgent
+                  projectId={projectId}
+                  requirementId={reqId}
+                  requirement={r}
+                  authorAgent={authorAgent}
+                  readOnly={readOnly}
+                />
+              )}
 
               {keptFields.length > 0 && !editing && (
                 <p className="mt-1 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-800">

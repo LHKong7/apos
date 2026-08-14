@@ -353,6 +353,24 @@ export const requirements = pgTable(
      */
     analysisModel: text(),
 
+    /**
+     * 这条需求的 PRD 由哪个 Agent 编写（null = 按项目绑定的规划 Agent 挑）。
+     *
+     * ★★ 记在**需求**上而不是只作为一次分析的参数：用户选完之后离开页面、
+     *   或者过两天回来点「重新分析」，那个选择还得在 —— 否则「选了 Agent
+     *   由它来写」就只是「这一次碰巧用了它」，下一次又悄悄换回项目绑定的
+     *   那个，而界面上没有任何迹象。
+     *
+     *   Which agent authors this requirement's PRD (null = fall back to the
+     *   project's planner binding). Stored on the requirement, not passed per
+     *   call: the choice has to survive a page reload and a later re-analysis,
+     *   otherwise it silently reverts to the project binding.
+     *
+     * ★ 不设外键级联删除：Agent 被删掉时这一列留着悬空比静默清空好 ——
+     *   分析时会明说「指定的 Agent 不存在」，而不是若无其事地换一个来写。
+     */
+    authorAgentId: uuid().references(() => agents.id),
+
     priority: text().notNull().default('medium'),
     dueAt: timestamp({ withTimezone: true }),
 

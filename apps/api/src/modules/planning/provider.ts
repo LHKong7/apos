@@ -29,6 +29,20 @@ export interface PlanningScope {
    *   找不回来的记录：需求页上没有任何入口指向它。
    */
   requirementId?: string;
+  /**
+   * 调用方**点名**的 Agent（需求页上选定的 PRD 编写者）。
+   *
+   * ★★ 给了它就必须用它，不再走项目绑定，也**不许悄悄换一个** ——
+   *   点名的那个不可用时如实失败并说出原因（照旧回退到规则占位，
+   *   原因写进 model 字段）。换一个来跑，用户看到的产出署着他没选的
+   *   Agent，而界面上一切正常：规划质量突然变了却查不到原因。
+   *
+   *   An agent named explicitly by the caller (the PRD author picked on the
+   *   requirement page). When set it wins over the project binding and is
+   *   never silently substituted — if it is unusable the attempt fails with a
+   *   stated reason rather than quietly running someone else.
+   */
+  agentId?: string;
 }
 
 export interface StructureInput {

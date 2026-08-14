@@ -1,5 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
+  agents,
+  projectMembers,
   requirementAssumptions,
   requirementClarifications,
   requirements,
@@ -134,8 +136,20 @@ export async function analyzeRequirement(
     rawInput: req.rawInput,
     projectType: 'development',
     context: [],
-    // 走真实 Agent 的 provider 靠它挑执行者（组织内 applicableTypes 含 requirement 的 Agent）
-    scope: { orgId: req.orgId, projectId: req.projectId, requirementId: req.id },
+    /**
+     * 走真实 Agent 的 provider 靠它挑执行者。
+     *
+     * ★★ authorAgentId 是用户在需求页上点的名，给出去就压过项目绑定。
+     *   没选时**不要**传一个空字符串或占位值 —— provider 那边是按
+     *   「有没有 agentId」分岔的，传个假值会让所有没选的需求都走进
+     *   点名分支，然后一律以「指定的 Agent 已不存在」失败。
+     */
+    scope: {
+      orgId: req.orgId,
+      projectId: req.projectId,
+      requirementId: req.id,
+      ...(req.authorAgentId ? { agentId: req.authorAgentId } : {}),
+    },
   });
 
   // 清掉上一轮的澄清问题，避免重复分析时堆积
@@ -638,4 +652,123 @@ export async function approveRequirement(
   });
 
   return { ok: true, requirementId: req.id };
+}
+
+export type SetAuthorAgentResult =
+  | { ok: true; agentId: string | null; agentName: string | null }
+  | { ok: false; code: 'REQUIREMENT_SETTLED'; status: string }
+  | { ok: false; code: 'AGENT_NOT_FOUND' }
+  | { ok: false; code: 'NOT_PROJECT_MEMBER'; agentName: string }
+  | { ok: false; code: 'CANNOT_AUTHOR'; agentName: string; applicableTypes: string[] };
+
+/**
+ * 指定 / 取消指定这条需求的 PRD 编写 Agent。
+ *
+ * ★★ 三道校验放在**保存这一刻**，不是等到分析的时候。
+ *
+ *   等到分析才发现「它不是本项目成员」，代价是一次白跑的分析加一次等待 ——
+ *   而那时用户已经在等结果了。这与项目 Agent 绑定那边
+ *   （http/project-agents.ts）是同一个判断，判据也保持一致。
+ *
+ * ★★ 成员校验是**授权**，不是体验。
+ *
+ *   项目是权限与上下文的边界，而这个 agentId 直接来自 HTTP 请求。
+ *   规划 Agent 会把这个项目的资源只读挂进它的工作区 —— 放一个非成员进来，
+ *   等于用一个下拉框把项目资源交给了没被授权的身份。
+ *
+ *   Membership is authorisation, not ergonomics: the planning agent gets this
+ *   project's resources mounted read-only into its workspace, so letting a
+ *   non-member through would hand project data to an unauthorised identity via
+ *   a dropdown.
+ *
+ * ★ null 是合法输入，表示回到「按项目绑定自动挑」。「取消指定」和「从没指定过」
+ *   必须落在同一个终点，否则这个选择只进不出。
+ */
+export async function setRequirementAuthorAgent(
+  db: Database,
+  input: {
+    requirementId: string;
+    agentId: string | null;
+    actorId: string;
+    correlationId: string;
+  },
+): Promise<SetAuthorAgentResult> {
+  const [req] = await db
+    .select()
+    .from(requirements)
+    .where(eq(requirements.id, input.requirementId));
+  if (!req) throw new Error(`需求不存在: ${input.requirementId}`);
+
+  /**
+   * ★ 已确认 / 已驳回的需求不再换编写者：那两个状态下分析入口本就关着，
+   *   换了也不会有下一次分析。留一个能改的下拉框只会让人以为
+   *   「改完再点重新分析就行」。要改先走重新打开，那是一个显式动作。
+   */
+  if (req.status === 'approved' || req.status === 'rejected') {
+    return { ok: false, code: 'REQUIREMENT_SETTLED', status: req.status };
+  }
+
+  let agentName: string | null = null;
+
+  if (input.agentId !== null) {
+    const [agent] = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, input.agentId), eq(agents.orgId, req.orgId)));
+    if (!agent) return { ok: false, code: 'AGENT_NOT_FOUND' };
+
+    const [member] = await db
+      .select({ actorId: projectMembers.actorId })
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, req.projectId),
+          eq(projectMembers.actorType, 'agent'),
+          eq(projectMembers.actorId, agent.id),
+        ),
+      );
+    if (!member) return { ok: false, code: 'NOT_PROJECT_MEMBER', agentName: agent.name };
+
+    /**
+     * ★ 写 PRD 就是处理 `requirement` 这个类型 —— 与项目绑定 planner 那边
+     *   同一条判据。适用类型里没有它的 Agent，选上去也只会在分析时失败。
+     */
+    if (!agent.applicableTypes.includes('requirement')) {
+      return {
+        ok: false,
+        code: 'CANNOT_AUTHOR',
+        agentName: agent.name,
+        applicableTypes: agent.applicableTypes,
+      };
+    }
+
+    agentName = agent.name;
+  }
+
+  await db
+    .update(requirements)
+    .set({ authorAgentId: input.agentId, updatedAt: new Date() })
+    .where(eq(requirements.id, req.id));
+
+  await emitAndPublish(db, {
+    type: 'requirement.author_agent_set',
+    orgId: req.orgId,
+    projectId: req.projectId,
+    actor: humanActor(input.actorId),
+    subjectType: 'requirement',
+    subjectId: req.id,
+    /**
+     * ★ 前后两个都记。只记新值的话，审计里看得到「换成了 B」，
+     *   看不到「本来是 A」—— 而「本来是谁」正是回溯两次产出为何判若两人时
+     *   要的那一半。
+     */
+    payload: {
+      agentId: input.agentId,
+      agentName,
+      previousAgentId: req.authorAgentId,
+    },
+    correlationId: input.correlationId,
+  });
+
+  return { ok: true, agentId: input.agentId, agentName };
 }
