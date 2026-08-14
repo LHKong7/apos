@@ -16,12 +16,18 @@ import type {
   CredentialUsageRow,
   RepositoryRow,
   RuntimeKindSpec,
-  StorageTargetRow,
 } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Field, Labeled, Notice, StatusDot } from './primitives';
+/**
+ * ★ 交货目标选择器住在「存储目标」那一页 —— 它讲的是存储目标（候选、
+ *   可写性、寻址），只是恰好也被下面的仓库表单用到。反过来 import
+ *   （存储页 import 这一页）会把两页之间不存在的从属关系写进代码。
+ */
+import { DeliveryTargetPicker } from './StorageTargets';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
@@ -47,7 +53,7 @@ import { Textarea } from '@/components/ui/textarea';
  *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
  */
 
-type Tab = 'agents' | 'binding' | 'repositories' | 'storage' | 'conventions';
+type Tab = 'agents' | 'binding' | 'repositories' | 'conventions';
 
 /**
  * ★ 存词条键、不存译文：模块级常量取不到 hook，而且切语言时不会重算 ——
@@ -69,11 +75,17 @@ const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
   { key: 'binding', labelKey: 'agentCfg.tab.binding', hintKey: 'agentCfg.tab.bindingDesc' },
   { key: 'repositories', labelKey: 'agentCfg.tab.repos', hintKey: 'agentCfg.tab.reposDesc' },
   /**
-   * ★ 与「代码仓库」并列而不是塞进那一页：两者是工作区的**同一头**
-   *   （铺料）的两类来源，但字段完全不重叠 —— 一个 S3 bucket 没有
-   *   「默认分支」，一个 git 仓库没有「寻址风格」。
+   * ★★ 「存储目标」曾经是这里的第四格，现在是导航里独立的一页
+   *   （pages/Settings/StorageTargets.tsx）。
+   *
+   *   理由写在那个文件顶部，一句话版本：它不是某个 Agent 的属性，
+   *   而是与代码仓库同级的项目资源登记 —— 一个 bucket 被三个 Agent 引用
+   *   是常态。挂在这一页底下既说错了归属，也让它找不到。
+   *
+   *   代码仓库暂时留在这里：它与 Agent 的仓库授权咬得更紧（分支前缀、
+   *   检查命令都是执行时的参数）。要不要一起拆出去是另一个问题，
+   *   不在这次改动里顺手决定。
    */
-  { key: 'storage', labelKey: 'agentCfg.tab.storage', hintKey: 'agentCfg.tab.storageDesc' },
   { key: 'conventions', labelKey: 'agentCfg.tab.conventions', hintKey: 'agentCfg.tab.conventionsDesc' },
 ];
 
@@ -118,7 +130,6 @@ export function AgentConfigPage() {
         {tab === 'agents' && <AgentsSection />}
         {tab === 'binding' && <ProjectAgentSection projectId={projectId} />}
         {tab === 'repositories' && <RepositoriesSection projectId={projectId} />}
-        {tab === 'storage' && <StorageTargetsSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
       </div>
     </div>
@@ -1185,29 +1196,6 @@ function describeAccepts(f: ConfigField): string {
   }
 }
 
-function Labeled({
-  label,
-  help,
-  badge,
-  children,
-}: {
-  label: string;
-  help?: string;
-  badge?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="mt-2 block first:mt-0">
-      <span className="flex items-center gap-1 text-xs font-medium text-slate-700">
-        {label}
-        {badge}
-      </span>
-      <div className="mt-1">{children}</div>
-      {help && <p className="mt-1 text-[11px] text-slate-500">{help}</p>}
-    </label>
-  );
-}
-
 function splitList(v: string): string[] {
   return v
     .split(/[,，]/)
@@ -1760,543 +1748,6 @@ function RepositoryForm({
   );
 }
 
-/**
- * 「产出交货到哪」选择器 —— 代码仓库与存储目标两张表单共用。
- *
- * ★★ 只列**可写**的存储目标。只读的目标在收尾时会被原样跳过，
- *   摆在这里可选就是在邀请用户配一个不会生效的值 —— 而那种失败
- *   （任务成功、产物页有记录、目标里什么都没有）极难自己想到。
- */
-function DeliveryTargetPicker({
-  value,
-  onChange,
-  targets,
-  selfId,
-  defaultLabel,
-}: {
-  value: string | null;
-  onChange: (v: string | null) => void;
-  targets: StorageTargetRow[];
-  /** 编辑存储目标自身时传，用来把自己从候选里去掉 */
-  selfId?: string;
-  /** 不选时的默认行为说明 */
-  defaultLabel: string;
-}) {
-  const options = targets.filter((t) => t.writable && t.status === 'active' && t.id !== selfId);
-  const chosen = options.find((t) => t.id === value);
-
-  return (
-    <Labeled
-      label={t('agentCfg.delivery.label')}
-      help={
-        chosen
-          ? t('agentCfg.delivery.help', {
-              where:
-                chosen.kind === 'object_storage'
-                  ? `${chosen.bucket}/${chosen.prefix}`
-                  : (chosen.rootPath ?? ''),
-            })
-          : defaultLabel
-      }
-    >
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-      >
-        <option value="">{t('agentCfg.delivery.default', { label: defaultLabel })}</option>
-        {options.map((target) => (
-          <option key={target.id} value={target.id}>
-            {target.ref} · {t(TARGET_KIND_KEYS[target.kind])}
-          </option>
-        ))}
-      </select>
-      {options.length === 0 && (
-        <p className="mt-1 text-[11px] text-slate-500">
-          {t('agentCfg.noWritableTargets')}
-        </p>
-      )}
-    </Labeled>
-  );
-}
-
-// ── 存储目标 ──────────────────────────────────────────────────────────
-
-/**
- * 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
- *
- * ★ 与代码仓库并列的一页，而不是那一页里的一个下拉。两类的字段完全不重叠
- *   （bucket / 寻址风格 vs 默认分支 / 分支前缀），混在一张表单里，
- *   不适用的那半边只能显示成灰掉的占位符 —— 而占位符会被当成真实配置。
- */
-function StorageTargetsSection({ projectId }: { projectId: string }) {
-  const qc = useQueryClient();
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<StorageTargetRow | null>(null);
-
-  const q = useQuery({
-    queryKey: qk.storageTargets(projectId),
-    queryFn: () => api.storageTargets(projectId),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteStorageTarget(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) }),
-  });
-
-  if (q.isLoading) return <CardSkeleton />;
-  if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  const data = q.data!;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <p className="text-xs text-slate-500">
-          {t('agentCfg.target.intro')}
-        </p>
-        <Button variant="neutral" size="sm" onClick={() => setCreating(true)} className="ml-auto">
-          {t('agentCfg.target.register')}
-        </Button>
-      </div>
-
-      {/*
-        ★★ 白名单必须在这一页显示出来。
-          它是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员在界面上
-          改不动也看不到，而一条 local 登记过不过闸完全由它决定 ——
-          不显示的话，被闸掉的登记在页面上和正常的一模一样，
-          直到第一次派发才报「不在允许挂载的范围内」。
-      */}
-      <Notice tone={data.localMountRestricted ? 'info' : 'warning'}>
-        {data.localMountRestricted ? (
-          <>
-            {t('agentCfg.target.mountRoots')}
-            {data.localMountRoots.map((r) => (
-              <code key={r} className="mx-1 rounded bg-white px-1 py-0.5">
-                {r}
-              </code>
-            ))}
-            {t('agentCfg.target.mountRootsNote')}
-          </>
-        ) : (
-          <>
-            {t('agentCfg.target.noMountRoots')}
-          </>
-        )}
-      </Notice>
-
-      {data.storageTargets.length === 0 ? (
-        <EmptyState
-          icon="🗄️"
-          message={t('agentCfg.target.emptyMessage')}
-          hint={t('agentCfg.target.emptyHint')}
-          action={{ label: t('agentCfg.target.registerShort'), onClick: () => setCreating(true) }}
-        />
-      ) : (
-        <div className="space-y-2">
-          {data.storageTargets.map((t) => (
-            <StorageTargetCard
-              key={t.id}
-              target={t}
-              onDelete={() => remove.mutate(t.id)}
-              onEdit={() => setEditing(t)}
-              error={remove.error}
-            />
-          ))}
-        </div>
-      )}
-
-      {(creating || editing) && (
-        <StorageTargetForm
-          projectId={projectId}
-          existing={editing}
-          targets={data.storageTargets}
-          encryptsInline={data.encryptsInlineSecrets}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-          onDone={() => {
-            setCreating(false);
-            setEditing(null);
-            void qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) });
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/** 存储目标类型 → 词条键 / Storage target kind → message key（模块级只存键） */
-const TARGET_KIND_KEYS: Record<StorageTargetRow['kind'], MessageKey> = {
-  object_storage: 'agentCfg.target.objectStorage',
-  local: 'agentCfg.target.localDir',
-};
-
-function StorageTargetCard({
-  target,
-  onDelete,
-  onEdit,
-  error,
-}: {
-  target: StorageTargetRow;
-  onDelete: () => void;
-  onEdit: () => void;
-  error: unknown;
-}) {
-  const probe = useMutation({ mutationFn: () => api.probeStorageTarget(target.id) });
-  const result = probe.data;
-
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-800">
-          {target.ref}
-        </code>
-        <span className="text-sm text-slate-900">{target.name}</span>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-          {t(TARGET_KIND_KEYS[target.kind])}
-        </span>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-          {target.scope === 'project' ? t('agentCfg.target.scopeProject') : t('agentCfg.target.scopeOrg')}
-        </span>
-        {/*
-          ★ 可写与否要在卡片上一眼看到：只读挂载在交货阶段会被原样跳过，
-            而「登记成只读却指望它接收产物」的表现是「任务成功但里面什么都没有」。
-        */}
-        <StatusDot
-          tone={target.writable ? 'ok' : 'warning'}
-          label={target.writable ? t('agentCfg.writable') : t('agentCfg.readOnly')}
-        />
-        <div className="ml-auto flex gap-1.5">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={probe.isPending}
-            onClick={() => probe.mutate()}
-          >
-            {probe.isPending ? t('agentCfg.target.probing') : t('agentCfg.target.probe')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onEdit}>
-            {t('common.edit')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onDelete}>
-            {t('common.delete')}
-          </Button>
-        </div>
-      </div>
-
-      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
-        {target.kind === 'object_storage' ? (
-          <>
-            <Field label={t('agentCfg.target.endpoint')}>{target.endpoint ?? '—'}</Field>
-            <Field label={t('agentCfg.target.bucketPrefix')}>
-              {`${target.bucket ?? '—'}/${target.prefix}`}
-            </Field>
-            <Field label={t('agentCfg.target.region')}>{target.region}</Field>
-            <Field label={t('agentCfg.target.addressing')}>
-              {target.forcePathStyle ? t('agentCfg.target.pathStyle') : 'virtual-host'}
-            </Field>
-            <Field label={t('agentCfg.target.credential')}>
-              {target.credentialHint ?? t('agentCfg.target.unset')}
-            </Field>
-          </>
-        ) : (
-          <>
-            <Field label={t('agentCfg.target.rootPath')}>{target.rootPath ?? '—'}</Field>
-            <Field label={t('agentCfg.target.status')}>{target.status}</Field>
-          </>
-        )}
-      </dl>
-
-      {target.credentialProblem && <p className="mt-1 text-[11px] text-rose-600">{target.credentialProblem}</p>}
-
-      {target.warnings.map((w) => (
-        <p key={w} className="mt-1 text-[11px] text-amber-700">
-          ⚠ {w}
-        </p>
-      ))}
-
-      {error instanceof ApiError && <p className="mt-1 text-[11px] text-rose-600">{error.message}</p>}
-
-      {result && (
-        <div
-          className={clsx(
-            'mt-2 rounded border px-2 py-1.5 text-[11px] whitespace-pre-wrap',
-            result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700',
-          )}
-        >
-          {result.message}
-          {result.samples.length > 0 && (
-            <p className="mt-1 text-slate-500">
-              {t('agentCfg.target.samples', { samples: result.samples.slice(0, 5).join('、') })}
-            </p>
-          )}
-        </div>
-      )}
-      {probe.error instanceof ApiError && (
-        <p className="mt-1 text-[11px] text-rose-600">{probe.error.message}</p>
-      )}
-    </div>
-  );
-}
-
-function StorageTargetForm({
-  projectId,
-  existing,
-  targets,
-  encryptsInline,
-  onClose,
-  onDone,
-}: {
-  projectId: string;
-  /** 传了就是编辑；标识与类型不可改 */
-  existing?: StorageTargetRow | null;
-  /** 交货目标的候选 */
-  targets: StorageTargetRow[];
-  encryptsInline: boolean;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const isEdit = Boolean(existing);
-  const [form, setForm] = useState({
-    ref: existing?.ref ?? '',
-    name: existing?.name ?? '',
-    kind: existing?.kind ?? ('object_storage' as StorageTargetRow['kind']),
-    endpoint: existing?.endpoint ?? '',
-    region: existing?.region ?? 'us-east-1',
-    bucket: existing?.bucket ?? '',
-    prefix: existing?.prefix ?? '',
-    forcePathStyle: existing?.forcePathStyle ?? true,
-    rootPath: existing?.rootPath ?? '',
-    writable: existing?.writable ?? false,
-    credential: '',
-    orgWide: existing ? existing.scope === 'organization' : false,
-  });
-  const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
-
-  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
-  const isObject = form.kind === 'object_storage';
-
-  const save = useMutation({
-    mutationFn: () =>
-      isEdit
-        ? api.updateStorageTarget(existing!.id, {
-            name: form.name,
-            writable: form.writable,
-            deliveryTargetId,
-            ...(isObject
-              ? {
-                  endpoint: form.endpoint.trim(),
-                  region: form.region.trim() || 'us-east-1',
-                  bucket: form.bucket.trim(),
-                  prefix: form.prefix.trim(),
-                  forcePathStyle: form.forcePathStyle,
-                }
-              : { rootPath: form.rootPath.trim() }),
-            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
-            ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
-          })
-        : api.createStorageTarget({
-            ref: form.ref.trim(),
-            name: form.name,
-            kind: form.kind,
-            writable: form.writable,
-            deliveryTargetId,
-            ...(isObject
-              ? {
-                  endpoint: form.endpoint.trim(),
-                  region: form.region.trim() || 'us-east-1',
-                  bucket: form.bucket.trim(),
-                  prefix: form.prefix.trim(),
-                  forcePathStyle: form.forcePathStyle,
-                  credential: form.credential.trim() || null,
-                }
-              : { rootPath: form.rootPath.trim() }),
-            projectId: form.orgWide ? null : projectId,
-          }),
-    onSuccess: onDone,
-  });
-
-  const incomplete = isObject
-    ? !form.endpoint.trim() || !form.bucket.trim()
-    : !form.rootPath.trim();
-
-  return (
-    <Modal
-      onClose={onClose}
-      title={t('agentCfg.target.dialogTitle')}
-      width="lg"
-      footer={
-        <div className="space-y-2">
-          {save.error instanceof ApiError && <p className="text-xs text-rose-600">{save.error.message}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={onClose}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="neutral"
-              size="sm"
-              disabled={(!isEdit && !form.ref.trim()) || !form.name.trim() || incomplete || save.isPending}
-              onClick={() => save.mutate()}
-            >
-              {save.isPending
-                ? t('common.saving')
-                : isEdit
-                  ? t('common.save')
-                  : t('agentCfg.target.registerAction')}
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">
-          {isEdit
-            ? t('agentCfg.target.editNamed', { name: existing!.name })
-            : t('agentCfg.target.registerShort')}
-        </h2>
-
-        <Labeled label={t('agentCfg.target.ref')} help={t('agentCfg.target.refHelp')}>
-          <Input
-            value={form.ref}
-            disabled={isEdit}
-            onChange={(e) => set('ref', e.target.value)}
-            placeholder="training-set"
-            className="disabled:bg-slate-50 disabled:text-slate-500"
-          />
-        </Labeled>
-
-        <Labeled label={t('agentCfg.target.displayName')}>
-          <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
-        </Labeled>
-
-        {/*
-          ★ 类型登记后不可改：两类的必填列完全不重叠，改一半会被库约束
-            整个拒掉，而报错指向的是约束名不是字段。要换就删了重建 ——
-            那条路上还有「有没有 Agent 授权指向它」这道检查。
-        */}
-        <Labeled
-          label={t('agentCfg.target.kind')}
-          {...(isEdit ? { help: t('agentCfg.target.kindLocked') } : {})}
-        >
-          <div className="flex gap-1.5">
-            {(['object_storage', 'local'] as const).map((k) => (
-              <Button
-                key={k}
-                variant={form.kind === k ? 'neutral' : 'outline'}
-                size="sm"
-                disabled={isEdit}
-                onClick={() => set('kind', k)}
-              >
-                {t(TARGET_KIND_KEYS[k])}
-              </Button>
-            ))}
-          </div>
-        </Labeled>
-
-        {isObject ? (
-          <>
-            <Labeled label={t('agentCfg.target.endpointField')} help={t('agentCfg.target.endpointHelp')}>
-              <Input
-                value={form.endpoint}
-                onChange={(e) => set('endpoint', e.target.value)}
-                placeholder="https://s3.us-east-1.amazonaws.com"
-              />
-            </Labeled>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Labeled label="Bucket">
-                <Input value={form.bucket} onChange={(e) => set('bucket', e.target.value)} />
-              </Labeled>
-              <Labeled label={t('agentCfg.target.region')}>
-                <Input value={form.region} onChange={(e) => set('region', e.target.value)} />
-              </Labeled>
-            </div>
-
-            <Labeled label={t('agentCfg.target.prefix')} help={t('agentCfg.target.prefixHelp')}>
-              <Input
-                value={form.prefix}
-                onChange={(e) => set('prefix', e.target.value)}
-                placeholder="datasets/train/"
-              />
-            </Labeled>
-
-            {/*
-              ★★ 寻址风格选反了的表现是 DNS 解析失败，而那条报错里没有任何
-                东西指向「寻址风格」。所以默认打开路径风格，并在这里说清楚
-                什么时候该关掉。
-            */}
-            <label className="flex items-start gap-2 text-xs text-slate-700">
-              <Checkbox
-                checked={form.forcePathStyle}
-                onCheckedChange={(v) => set('forcePathStyle', v)}
-              />
-              <span>
-                {t('agentCfg.target.pathStyleLabel')}
-                <span className="mt-0.5 block text-[11px] text-slate-500">
-                  {t('agentCfg.target.pathStyleHint')}
-                </span>
-              </span>
-            </label>
-
-            <Labeled
-              label={isEdit ? t('agentCfg.target.rotateCredential') : t('agentCfg.target.credential')}
-              help={
-                (encryptsInline
-                  ? t('agentCfg.target.credentialEncrypted')
-                  : t('agentCfg.target.credentialPlaintext')) +
-                t('agentCfg.target.credentialEnv')
-              }
-            >
-              <Input
-                type="password"
-                value={form.credential}
-                onChange={(e) => set('credential', e.target.value)}
-                placeholder="AKIA…:wJalrXUt…"
-              />
-            </Labeled>
-          </>
-        ) : (
-          <Labeled
-            label={t('agentCfg.target.rootPathField')}
-            help={t('agentCfg.target.rootPathHelp')}
-          >
-            <Input
-              value={form.rootPath}
-              onChange={(e) => set('rootPath', e.target.value)}
-              placeholder="/srv/data/training-set"
-            />
-          </Labeled>
-        )}
-
-        <label className="flex items-start gap-2 text-xs text-slate-700">
-          <Checkbox checked={form.writable} onCheckedChange={(v) => set('writable', v)} />
-          <span>
-            {t('agentCfg.writable')}
-            <span className="mt-0.5 block text-[11px] text-slate-500">
-              {t('agentCfg.target.writableHint')}
-            </span>
-          </span>
-        </label>
-
-        <DeliveryTargetPicker
-          value={deliveryTargetId}
-          onChange={setDeliveryTargetId}
-          targets={targets}
-          {...(existing ? { selfId: existing.id } : {})}
-          defaultLabel={t('agentCfg.target.defaultDelivery')}
-        />
-
-        {!isEdit && (
-          <label className="flex items-center gap-2 text-xs text-slate-700">
-            <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
-            {t('agentCfg.orgWide')}
-          </label>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
 // ── 工程约定 ──────────────────────────────────────────────────────────
 
 function ConventionsSection({ projectId }: { projectId: string }) {
@@ -2489,54 +1940,6 @@ function ConventionForm({
         </label>
       </div>
     </Modal>
-  );
-}
-
-// ── 小组件 ────────────────────────────────────────────────────────────
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="truncate text-slate-700" title={typeof children === 'string' ? children : undefined}>
-        {children}
-      </dd>
-    </div>
-  );
-}
-
-function StatusDot({ tone, label }: { tone: 'ok' | 'warning' | 'error'; label: string }) {
-  return (
-    <span
-      className={clsx(
-        'rounded px-1.5 py-0.5 text-[11px]',
-        tone === 'ok'
-          ? 'bg-emerald-50 text-emerald-700'
-          : tone === 'warning'
-            ? 'bg-amber-50 text-amber-800'
-            : 'bg-rose-50 text-rose-700',
-      )}
-      title={label}
-    >
-      ● {label}
-    </span>
-  );
-}
-
-function Notice({ tone, children }: { tone: 'info' | 'warning' | 'error'; children: React.ReactNode }) {
-  return (
-    <div
-      className={clsx(
-        'rounded border px-3 py-2 text-[11px]',
-        tone === 'info'
-          ? 'border-slate-200 bg-slate-50 text-slate-600'
-          : tone === 'warning'
-            ? 'border-amber-200 bg-amber-50 text-amber-800'
-            : 'border-rose-200 bg-rose-50 text-rose-700',
-      )}
-    >
-      {children}
-    </div>
   );
 }
 
