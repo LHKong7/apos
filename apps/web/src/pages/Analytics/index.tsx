@@ -41,7 +41,7 @@ const TAB_LITERALS: Partial<Record<AnalyticsTab, string>> = {
 };
 
 const TAB_KEYS: Partial<Record<AnalyticsTab, MessageKey>> = {
-  cost: 'analytics.tab.cost',
+  cost: 'analytics.tab.tokens',
   quality: 'analytics.tab.quality',
   benefit: 'analytics.tab.costBenefit',
 };

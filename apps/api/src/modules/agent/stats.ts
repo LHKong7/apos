@@ -61,16 +61,17 @@ export async function refreshAgentStats(
           runs,
         ),
         overrideRate: weighted(seen.overrideRate, seen.runs, perf.overrideRate, perf.runs, runs),
-        totalCost: round(seen.totalCost + perf.totalCost, 4),
-        avgCost: round((seen.totalCost + perf.totalCost) / runs, 4),
+        totalTokens: Math.round(seen.totalTokens + perf.totalTokens),
+        avgTokens: Math.round((seen.totalTokens + perf.totalTokens) / runs),
         tokens: {
           input: seen.tokens.input + perf.tokens.input,
           output: seen.tokens.output + perf.tokens.output,
           cacheRead: seen.tokens.cacheRead + perf.tokens.cacheRead,
+          cacheWrite: seen.tokens.cacheWrite + perf.tokens.cacheWrite,
           total: seen.tokens.total + perf.tokens.total,
         },
         cacheHitRate: mergeRate(seen, perf),
-        costPerSuccess: null, // 合并后重算意义不大，页面按项目看
+        tokensPerSuccess: null, // 合并后重算意义不大，页面按项目看
       });
     }
   }
@@ -88,8 +89,8 @@ export async function refreshAgentStats(
           successRate: perf.successRate,
           firstTrySuccessRate: perf.firstTrySuccessRate,
           overrideRate: perf.overrideRate,
-          avgCost: perf.avgCost,
-          totalCost: perf.totalCost,
+          avgTokens: perf.avgTokens,
+          totalTokens: perf.totalTokens,
           avgMinutes: perf.avgMinutes,
           sampleSize: perf.runs,
           tokens: perf.tokens,

@@ -142,7 +142,7 @@ ${feedback}
                                             // review|test|incident|decision|approval|release|knowledge
       "phase": "Research",                  // 自定义阶段名，用于分组
       "estimatedHours": 4,
-      "estimatedCost": 1.5,                 // 美元，估不出来填 null
+      "estimatedTokens": 1.5,                 // 美元，估不出来填 null
       "riskLevel": "low",                   // low|medium|high|critical
       "requiredSkills": ["需求分析"],
       "requiredTools": ["read_file"],

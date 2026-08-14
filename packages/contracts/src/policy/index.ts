@@ -45,9 +45,9 @@ export const PolicyContext = z.object({
   consecutiveFailures: z.number().int().min(0),
 
   // 成本 / Cost
-  runCost: z.number().min(0),
-  projectCostSpent: z.number().min(0),
-  projectBudget: z.number().min(0).nullable(),
+  runTokens: z.number().min(0),
+  projectTokensSpent: z.number().min(0),
+  projectTokenBudget: z.number().min(0).nullable(),
   /**
    * 派生 fact：由上下文构建器计算，规则编写者不用自己算。
    * A derived fact, computed by the context builder so rule authors do not

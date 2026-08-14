@@ -59,11 +59,12 @@ export function computeAgents(input: AnalyticsInput): AgentMetrics {
     const overridden = [...handled].filter((id) => overriddenItems.has(id)).length;
 
     const timed = list.filter((r) => r.startedAt !== null && r.endedAt !== null);
-    const totalCost = list.reduce((sum, r) => sum + r.cost, 0);
+    const totalTokens = list.reduce((sum, r) => sum + r.tokens, 0);
 
     const tokensInput = list.reduce((s, r) => s + r.tokensInput, 0);
     const tokensOutput = list.reduce((s, r) => s + r.tokensOutput, 0);
     const tokensCacheRead = list.reduce((s, r) => s + r.tokensCacheRead, 0);
+    const tokensCacheWrite = list.reduce((s, r) => s + r.tokensCacheWrite, 0);
     const cacheBase = tokensInput + tokensCacheRead;
 
     perf.push({
@@ -74,18 +75,19 @@ export function computeAgents(input: AnalyticsInput): AgentMetrics {
       successRate: ratio(succeeded.length, list.length) ?? 0,
       firstTrySuccessRate: ratio(firstTryOk.length, firstTry.length) ?? 0,
       overrideRate: ratio(overridden, handled.size) ?? 0,
-      avgCost: round(totalCost / list.length, 4),
-      totalCost: round(totalCost, 4),
+      avgTokens: Math.round(totalTokens / list.length),
+      totalTokens: Math.round(totalTokens),
       tokens: {
         input: tokensInput,
         output: tokensOutput,
         cacheRead: tokensCacheRead,
-        total: tokensInput + tokensOutput + tokensCacheRead,
+        cacheWrite: tokensCacheWrite,
+        total: tokensInput + tokensOutput + tokensCacheRead + tokensCacheWrite,
       },
       // 没有任何 token 记录时给 null 而不是 0 —— 「没接上报」和「命中率为 0」
       // 是两件事，混在一起会让人去优化一个根本没有数据的指标
       cacheHitRate: cacheBase > 0 ? round(tokensCacheRead / cacheBase, 4) : null,
-      costPerSuccess: succeeded.length > 0 ? round(totalCost / succeeded.length, 4) : null,
+      tokensPerSuccess: succeeded.length > 0 ? Math.round(totalTokens / succeeded.length) : null,
       avgMinutes:
         timed.length > 0
           ? round(
@@ -120,8 +122,8 @@ export function computeAgents(input: AnalyticsInput): AgentMetrics {
 /**
  * 找「全面优于」的一对。
  *
- * 三项全赢才算 —— 成功率高、成本低、耗时短。
- * 只赢一两项的对比不该给建议：便宜但成功率低的 Agent 未必更差，
+ * 三项全赢才算 —— 成功率高、token 少、耗时短。
+ * 只赢一两项的对比不该给建议：省 token 但成功率低的 Agent 未必更差，
  * 那是权衡不是结论，替用户下判断反而有害。
  */
 function findDominance(perf: AgentPerf[]): AgentMetrics['dominance'] {
@@ -134,7 +136,7 @@ function findDominance(perf: AgentPerf[]): AgentMetrics['dominance'] {
       if (better.agentId === worse.agentId) continue;
       const wins =
         better.successRate > worse.successRate &&
-        better.avgCost < worse.avgCost &&
+        better.avgTokens < worse.avgTokens &&
         better.avgMinutes! < worse.avgMinutes!;
       if (wins) {
         return {

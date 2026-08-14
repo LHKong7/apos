@@ -42,8 +42,8 @@ export interface HealthInput {
   doneTasks: number;
   blockedTasks: number;
   overdueDecisions: number;
-  costSpent: number;
-  budget: number | null;
+  tokensSpent: number;
+  tokenBudget: number | null;
 }
 
 /**
@@ -111,10 +111,10 @@ export function computeHealth(input: HealthInput): Health {
   }
 
   // 预算
-  if (input.budget !== null && input.budget > 0) {
-    const used = input.costSpent / input.budget;
+  if (input.tokenBudget !== null && input.tokenBudget > 0) {
+    const used = input.tokensSpent / input.tokenBudget;
     const doneRatio = input.totalTasks > 0 ? input.doneTasks / input.totalTasks : 0;
-    // 钱花得比活干得快才扣分 —— 单纯「花了很多」不是问题
+    // 配额用得比活干得快才扣分 —— 单纯「用了很多」不是问题
     if (used > doneRatio + 0.2) {
       c.push({
         key: 'budget_pace',

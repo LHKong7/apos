@@ -81,7 +81,26 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
       .reduce((s, r) => s + (r.endedAt! - r.startedAt!) / 3600_000, 0),
   );
 
-  const agentSpend = round(runs.reduce((s, r) => s + r.cost, 0));
+  /**
+   * ★★ 全站只有这一处仍以货币计量，而且必须如此。
+   *
+   *   ROI 是「人力折算 − Agent 开销」这个减法，两边得同一个单位。
+   *   人力那一侧的单位由用户填的时薪决定，只能是钱 ——
+   *   token 减小时数不是一个量。所以这里读 costUsd 而不是 tokens。
+   *
+   *   代价是这个数会随官方调价漂移，正是记账口径换成 token 要躲开的那件事。
+   *   页面因此把它标成「按运行时结算的美元估算」，与其余 token 口径的
+   *   指标区分开：漂移是可以接受的，把漂移说成精确不行。
+   *
+   * This is the only place left that measures in currency, necessarily so.
+   * ROI subtracts agent spend from labour value, and both sides must share a
+   * unit. The labour side is denominated by the user's hourly rate, so money
+   * is the only option — tokens minus hours is not a quantity. The cost is
+   * that this figure drifts with vendor repricing, which is exactly what
+   * token accounting avoids elsewhere; the page therefore labels it as a USD
+   * estimate rather than passing the drift off as precision.
+   */
+  const agentSpend = round(runs.reduce((s, r) => s + r.costUsd, 0));
 
   /**
    * 人的额外投入。

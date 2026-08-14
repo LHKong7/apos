@@ -223,7 +223,18 @@ export class CodexEventTranslator {
 
     this.totalUsd = round(this.totalUsd + deltaUsd, 6);
     return [
-      { type: 'cost', deltaUsd, totalUsd: this.totalUsd, tokens: { input, output, cacheRead } },
+      /**
+       * ★ cacheWrite 填 0 而不是省略：Codex 的 usage 里没有这一项。
+       *   0 在这里的含义是「这个运行时不区分缓存写入」，
+       *   与 Claude 那边报上来的真实 0 不可区分 —— 但两者的账都不会因此错，
+       *   因为 Codex 的输入 token 本来就把缓存写入算在里面了。
+       */
+      {
+        type: 'cost',
+        deltaUsd,
+        totalUsd: this.totalUsd,
+        tokens: { input, output, cacheRead, cacheWrite: 0 },
+      },
     ];
   }
 

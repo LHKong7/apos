@@ -82,9 +82,17 @@ export function buildGovernanceRules(
     );
   }
 
+  /**
+   * ★ 告诉 Agent 的是 token 上限，不是美元 —— 美元那条线是给运行时用的保险丝，
+   *   Agent 自己无从感知，写进提示词只会让它对着一个观察不到的量做取舍。
+   */
+  const budget =
+    task.limits.maxTokens === null
+      ? '本次没有设定 token 上限'
+      : `token 上限 ${task.limits.maxTokens.toLocaleString('en-US')}`;
   lines.push(
     '',
-    `预算上限 $${task.limits.maxCostUsd}，时限 ${Math.round(task.limits.maxDurationSeconds / 60)} 分钟。` +
+    `${budget}，时限 ${Math.round(task.limits.maxDurationSeconds / 60)} 分钟。` +
       '接近上限时优先保证已完成部分可交付，而不是开新工作。',
   );
 

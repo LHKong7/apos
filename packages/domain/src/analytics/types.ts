@@ -41,7 +41,7 @@ export interface ItemRow {
   actualEnd: number | null;
   /** null 表示计划里没排期 —— 按时交付率要显示「未接入」而不是 0 */
   plannedEnd: number | null;
-  actualCost: number;
+  actualTokens: number;
   /**
    * 「被阻塞」的标记位。与 `blocked` 状态是两回事：
    * 一张 ready 的卡片也可以挂着阻塞标记（在等外部依赖），看板正是按它显示「⛔ N 项阻塞」。
@@ -72,7 +72,24 @@ export interface RunRow {
   agentId: string;
   attempt: number;
   status: string;
-  cost: number;
+  /**
+   * 记账单位：四类 token 相加。所有上限、预算、成本指标都读这一个。
+   *
+   * The unit of account: the four token classes summed. Every limit, budget,
+   * and cost metric reads this one field.
+   */
+  tokens: number;
+  /**
+   * 运行时结算的美元值，**只有 ROI 会用**。
+   *
+   * ★ ROI 要拿 Agent 开销和人力成本相减，而人力成本只有货币这一种单位 ——
+   *   token 减小时数是没有意义的。除这一处之外，任何判定都不该读它。
+   *
+   * The runtime's settled USD figure, used **only by ROI**: ROI subtracts
+   * agent spend from labour cost, and labour has no denomination other than
+   * money — tokens minus hours is not a quantity. Nothing else may read it.
+   */
+  costUsd: number;
   startedAt: number | null;
   endedAt: number | null;
   createdAt: number;
@@ -81,6 +98,7 @@ export interface RunRow {
   tokensInput: number;
   tokensOutput: number;
   tokensCacheRead: number;
+  tokensCacheWrite: number;
 }
 
 export interface DecisionRow {
@@ -135,9 +153,9 @@ export interface AnalyticsInput {
   agents: AgentRow[];
   overrides: OverrideRow[];
   policyEvals: PolicyEvalRow[];
-  /** 项目预算，用于成本燃尽预测；null = 没设预算 */
-  budget: number | null;
-  costSpentTotal: number;
+  /** 项目 token 预算，用于燃尽预测；null = 没设预算 */
+  tokenBudget: number | null;
+  tokensSpentTotal: number;
 }
 
 // ── 输出 ─────────────────────────────────────────────────────────────────
@@ -220,28 +238,42 @@ export interface AgentPerf {
   /** 第一次尝试就成功的比例 —— 重试掩盖的问题只有这个指标能看见 */
   firstTrySuccessRate: number;
   overrideRate: number;
-  avgCost: number;
-  totalCost: number;
+  avgTokens: number;
+  totalTokens: number;
   /** 分钟；null = 没有一次跑完带时间戳的 Run */
   avgMinutes: number | null;
 
   /**
-   * Token 用量。
+   * Token 用量明细。
    *
-   * ★ 刻意不把总量放到一级指标位：项目负责人看到「本月 1.2 亿 token」
-   *   没有决策含义，看到「$486」才有。总量是诊断量，下面两个派生值才是决策量。
+   * ★ 总量升为一级指标了 —— 它现在就是记账单位，不再是「诊断量」。
+   *   但明细必须一起给：四类 token 的真实单价差到 50 倍，
+   *   一个 cacheRead 占九成的总量和一个 output 占九成的总量，
+   *   数字一样、账单差一个数量级。只报总量会把这件事藏起来。
+   *
+   * The breakdown ships alongside the total, which is now the unit of
+   * account rather than a diagnostic. The four classes differ by up to 50×
+   * in real unit price, so two runs with the same total — one dominated by
+   * cacheRead, one by output — differ by an order of magnitude on the bill.
+   * Reporting only the total would hide exactly that.
    */
-  tokens: { input: number; output: number; cacheRead: number; total: number };
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
   /**
    * 缓存命中率 = cacheRead / (input + cacheRead)。
    * 偏低说明每次派发都在重传大块上下文，是可以工程优化的。
    */
   cacheHitRate: number | null;
   /**
-   * 每**成功**任务成本。单看 avgCost 会奖励「快速失败」的 Agent ——
+   * 每**成功**任务的 token。单看 avgTokens 会奖励「快速失败」的 Agent ——
    * 它每次都便宜，只是从来没做成过。
    */
-  costPerSuccess: number | null;
+  tokensPerSuccess: number | null;
 }
 
 export interface AgentMetrics {
@@ -279,20 +311,39 @@ export interface HitlMetrics {
   overrideReasons: { category: string; label: string; count: number; percent: number }[];
 }
 
+/** 全部字段的单位都是 token / Every field here is denominated in tokens */
 export interface CostMetrics {
   total: number;
-  /** 每完成一个 Work Item 的平均成本；null = 窗口内没有完成项 */
+  /** 每完成一个 Work Item 的平均 token；null = 窗口内没有完成项 */
   perDelivered: number | null;
   delivered: number;
   trend: Point[];
-  byAgent: { id: string; label: string; cost: number; percent: number }[];
-  byType: { id: string; label: string; cost: number; percent: number }[];
+  byAgent: { id: string; label: string; tokens: number; percent: number }[];
+  byType: { id: string; label: string; tokens: number; percent: number }[];
   /** 单次 Run 超过阈值的异常，阈值随样本走 */
-  anomalies: { runId: string; workItemId: string; title: string; agentName: string; cost: number; times: number }[];
+  anomalies: {
+    runId: string;
+    workItemId: string;
+    title: string;
+    agentName: string;
+    tokens: number;
+    times: number;
+  }[];
   budget: number | null;
   budgetSpent: number;
   /** 按当前速率预计耗尽的天数；null = 无预算或速率为 0 */
   budgetRunwayDays: number | null;
+  /**
+   * 无法计量的 Run 数（运行时不上报 token）。
+   *
+   * ★ 单独报出来，不并进 total。并进去等于用 0 冒充「不知道」，
+   *   而 0 会被当成「真的没花」—— 这正是界面上「未接入」而不是「0」的同一条理由。
+   *
+   * Runs whose runtime does not report tokens are counted separately and
+   * never folded into `total`: folding them in would pass 0 off as "unknown",
+   * and 0 reads as "genuinely free".
+   */
+  unmeasuredRuns: number;
 }
 
 export const INSIGHT_TYPES = [
@@ -329,7 +380,7 @@ export interface Deltas {
   throughput: number | null;
   flowEfficiency: number | null;
   decisionWaitHours: number | null;
-  costPerDelivered: number | null;
+  tokensPerDelivered: number | null;
   agentSuccessRate: number | null;
 }
 

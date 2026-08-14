@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { relativeTime } from '../../lib/format';
+import { relativeTime, tokens } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState, QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
@@ -415,8 +415,8 @@ function AgentCard({
             minutes: Math.round(agent.timeoutSeconds / 60),
           })}
         </Field>
-        <Field label={t('agentCfg.field.costLimit')}>
-          {agent.costLimitPerRun === null ? '—' : `$${agent.costLimitPerRun}`}
+        <Field label={t('agentCfg.field.tokenLimit')}>
+          {agent.tokenLimitPerRun === null ? '—' : tokens(agent.tokenLimitPerRun)}
         </Field>
         <Field label={t('agentCfg.field.lastProbe')}>{agent.lastCheckAt ? relativeTime(agent.lastCheckAt) : '—'}</Field>
       </dl>

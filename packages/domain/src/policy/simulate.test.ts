@@ -18,9 +18,9 @@ function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
     agentConfidence: 0.9,
     agentSuccessRate: 0.92,
     consecutiveFailures: 0,
-    runCost: 2,
-    projectCostSpent: 50,
-    projectBudget: 500,
+    runTokens: 2,
+    projectTokensSpent: 50,
+    projectTokenBudget: 500,
     budgetUsedPct: 10,
     testsResult: 'passed',
     testCoverage: 84,
@@ -66,13 +66,13 @@ describe('requiredFacts', () => {
         { fact: 'riskLevel', op: 'eq', value: 'low' },
         {
           any: [
-            { fact: 'runCost', op: 'lt', value: 10 },
+            { fact: 'runTokens', op: 'lt', value: 10 },
             { not: { fact: 'environment', op: 'eq', value: 'production' } },
           ],
         },
       ],
     });
-    expect(new Set(facts)).toEqual(new Set(['riskLevel', 'runCost', 'environment']));
+    expect(new Set(facts)).toEqual(new Set(['riskLevel', 'runTokens', 'environment']));
   });
 });
 

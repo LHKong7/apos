@@ -87,9 +87,9 @@ export async function getPlanDetail(db: Database, planId: string) {
   const userRows = await db.select({ id: users.id, name: users.name }).from(users);
   const userName = new Map(userRows.map((u) => [u.id, u.name]));
 
-  const estimatedCost = Number(plan.estimatedCost ?? 0);
-  const budget = project.budgetAmount === null ? null : Number(project.budgetAmount);
-  const spent = Number(project.costSpent);
+  const estimatedTokens = plan.estimatedTokens ?? 0;
+  const budget = project.tokenBudget;
+  const spent = project.tokensSpent;
 
   // 当前规则下的边界，用来和快照对照
   const policies = await loadProjectPolicies(db, project.orgId, plan.projectId);
@@ -119,7 +119,7 @@ export async function getPlanDetail(db: Database, planId: string) {
       generationCost: Number(plan.generationCost ?? 0),
       generationMs: plan.generationMs,
       estimatedHours: Number(plan.estimatedHours ?? 0),
-      estimatedCost,
+      estimatedTokens,
       createdAt: plan.createdAt.toISOString(),
       approvedAt: plan.approvedAt?.toISOString() ?? null,
       approvedBy: plan.approvedBy.map((id) => userName.get(id) ?? id),
@@ -132,11 +132,11 @@ export async function getPlanDetail(db: Database, planId: string) {
       agentTasks,
       humanTasks,
       estimatedHours: Number(plan.estimatedHours ?? 0),
-      estimatedCost,
+      estimatedTokens,
       budget,
       spent,
       /** ★ 超预算要阻断批准，所以这个判断放服务端算，不让前端各算各的 */
-      overBudget: budget !== null && spent + estimatedCost > budget,
+      overBudget: budget !== null && spent + estimatedTokens > budget,
       humanGateCount: (plan.humanGates as unknown[]).length,
       highRiskTasks: tasks.filter((t) => t.riskLevel === 'high' || t.riskLevel === 'critical').length,
     },
@@ -157,7 +157,7 @@ export async function getPlanDetail(db: Database, planId: string) {
       stage: t.stage,
       riskLevel: t.riskLevel,
       estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
-      estimatedCost: t.estimatedCost === null ? null : Number(t.estimatedCost),
+      estimatedTokens: t.estimatedTokens,
       executorType: t.executorType,
       executorName:
         t.executorType === 'human' && t.executorId ? (userName.get(t.executorId) ?? '未知') : null,
@@ -262,7 +262,7 @@ async function planSide(db: Database, row: typeof plans.$inferSelect): Promise<P
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     estimatedHours: Number(row.estimatedHours ?? 0),
-    estimatedCost: Number(row.estimatedCost ?? 0),
+    estimatedTokens: row.estimatedTokens ?? 0,
     autoActions: (row.autoActions as { title: string; detail?: string }[]) ?? [],
     humanGates: gates,
     risks: (row.risks as { title?: string; description?: string }[]) ?? [],
@@ -271,7 +271,7 @@ async function planSide(db: Database, row: typeof plans.$inferSelect): Promise<P
       type: t.type,
       riskLevel: t.riskLevel,
       estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
-      estimatedCost: t.estimatedCost === null ? null : Number(t.estimatedCost),
+      estimatedTokens: t.estimatedTokens,
       requiresHuman: gated.has(t.title),
     })),
   };

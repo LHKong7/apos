@@ -20,10 +20,10 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
   applicableTypes: ['task'],
   successRate: 0.9,
   sampleSize: 10,
-  avgCost: 1,
+  avgTokens: 1,
   currentLoad: 0,
   maxConcurrency: 3,
-  costLimitPerRun: null,
+  tokenLimitPerRun: null,
   allowedTools: ['Read', 'Edit'],
   deniedTools: [],
   contextAffinity: 0.5,
@@ -31,8 +31,8 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
   inProject: true,
   registered: true,
   resourceRefs: ['order-service'],
-  spentToday: 0,
-  costLimitDaily: null,
+  tokensToday: 0,
+  tokenLimitDaily: null,
   ...over,
 });
 
@@ -40,7 +40,7 @@ const target = (over: Partial<MatchTarget> = {}): MatchTarget => ({
   type: 'task',
   requiredSkills: [],
   requiredTools: [],
-  estimatedCost: null,
+  estimatedTokens: null,
   riskLevel: 'low',
   executionMode: 'auto',
   requiredResources: [],
@@ -113,19 +113,50 @@ describe('执行主体匹配', () => {
     expect(result.candidates).toHaveLength(1);
   });
 
-  it('★ 日预算用尽的 Agent 不进候选 —— 跑到一半被扣停留下的是半成品', () => {
+  it('★ 日 token 额度用尽的 Agent 不进候选 —— 跑到一半被扣停留下的是半成品', () => {
     const result = matchExecutors(
       target(),
-      [agent({ spentToday: 12, costLimitDaily: 10 })],
+      [agent({ tokensToday: 120_000, tokenLimitDaily: 100_000 })],
     );
     expect(result.candidates).toHaveLength(0);
-    expect(reasonFor(result)).toContain('今日预算已用尽');
+    expect(reasonFor(result)).toContain('今日 token 额度已用尽');
   });
 
-  it('日预算没设时不因为花费被拒', () => {
+  it('日额度没设时不因为用量被拒', () => {
     const result = matchExecutors(
       target(),
-      [agent({ spentToday: 999, costLimitDaily: null })],
+      [agent({ tokensToday: 9_999_999, tokenLimitDaily: null })],
+    );
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it('预估 token 超出单次上限的 Agent 不进候选，理由里带上两个数', () => {
+    const result = matchExecutors(
+      target({ estimatedTokens: 500_000 }),
+      [agent({ tokenLimitPerRun: 200_000 })],
+    );
+    expect(result.candidates).toHaveLength(0);
+    expect(reasonFor(result)).toContain('500k');
+    expect(reasonFor(result)).toContain('200k');
+  });
+
+  it('预估 token 在单次上限之内时正常进候选', () => {
+    const result = matchExecutors(
+      target({ estimatedTokens: 150_000 }),
+      [agent({ tokenLimitPerRun: 200_000 })],
+    );
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  /**
+   * ★ 迁移把所有用户配过的上限都清空了（migrations/0028），
+   *   所以「上限为 null」是升级后的**普遍**状态，不是边缘情况。
+   *   这条要是错了，升级当天全组织的派发都会停。
+   */
+  it('单次上限为 null 时不拦 —— 迁移后所有 Agent 都是这个状态', () => {
+    const result = matchExecutors(
+      target({ estimatedTokens: 9_999_999 }),
+      [agent({ tokenLimitPerRun: null })],
     );
     expect(result.candidates).toHaveLength(1);
   });

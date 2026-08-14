@@ -91,7 +91,7 @@ export const AgentPlanOutput = z.object({
         type: WorkItemType,
         phase: z.string().default('Execution'),
         estimatedHours: z.number().nonnegative(),
-        estimatedCost: z.number().nonnegative().nullable().default(null),
+        estimatedTokens: z.number().int().nonnegative().nullable().default(null),
         riskLevel: RiskLevel,
         requiredSkills: z.array(z.string()).default([]),
         requiredTools: z.array(z.string()).default([]),

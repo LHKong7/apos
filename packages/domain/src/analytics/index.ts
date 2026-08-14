@@ -124,7 +124,7 @@ function computeDeltas(
     throughput: rel(now.flow.throughputPerWeek, before.flow.throughputPerWeek),
     flowEfficiency: rel(now.flow.flowEfficiency, before.flow.flowEfficiency),
     decisionWaitHours: rel(now.flow.decisionWaitHours, before.flow.decisionWaitHours),
-    costPerDelivered: rel(now.cost.perDelivered, before.cost.perDelivered),
+    tokensPerDelivered: rel(now.cost.perDelivered, before.cost.perDelivered),
     agentSuccessRate: rel(avgSuccess(now.agent), avgSuccess(before.agent)),
   };
 }

@@ -35,7 +35,7 @@ export interface GraphNode {
   /** 是否用了默认工期 —— 前端要能说明「这个数字是估的」 */
   durationEstimated: boolean;
   progressPct: number | null;
-  cost: string;
+  tokens: number;
   runId: string | null;
   humanGateRef: string | null;
   decisionDueInMinutes: number | null;

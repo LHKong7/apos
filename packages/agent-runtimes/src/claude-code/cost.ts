@@ -55,3 +55,34 @@ function lookupPrice(model: string | null) {
 export function hasPricing(model: string | null): boolean {
   return lookupPrice(model) !== null;
 }
+
+/**
+ * 把 token 上限换算成一个**给运行时用的美元硬停线**。
+ *
+ * ★★ 这不是账目，是保险丝。
+ *
+ *   记账单位已经换成 token，但 Claude 运行时能自己中途刹车的旋钮
+ *   只有 `maxBudgetUsd`（错误码 error_max_budget_usd）。放弃它就等于
+ *   放弃了唯一的执行中硬停 —— 平台这边的 token 上限只在派发前拦一次，
+ *   拦不住一个已经跑起来、正在烧配额的 Run。
+ *
+ *   所以这里按**输出价**（四类里最贵的那一类）整体折算：
+ *   真实用量不可能全是 output token，于是这条线一定**晚于** token 上限触发。
+ *   宁可让它偶尔不触发，也不能让它比真正的上限先触发 ——
+ *   一个比配置值更早掐断的保险丝，现场看起来就是「我明明设了 50 万，
+ *   30 万就被停了」，而错误信息里没有任何东西指向这个换算。
+ *
+ * Converts a token cap into a USD hard-stop for the runtime. This is a fuse,
+ * not an accounting figure: the only in-flight brake the Claude runtime
+ * exposes is `maxBudgetUsd`, and dropping it would leave the token cap as a
+ * pre-dispatch filter with nothing stopping a run already burning quota.
+ * The conversion uses the output-token price — the most expensive of the four
+ * classes — so the fuse always blows *after* the token cap rather than
+ * before it. A fuse that trips early is indistinguishable, from the user's
+ * side, from a limit that does not mean what it says.
+ */
+export function usdCeilingForTokens(model: string | null, maxTokens: number | null): number | null {
+  const price = lookupPrice(model);
+  if (price === null || maxTokens === null || maxTokens <= 0) return null;
+  return (maxTokens * price.output) / 1_000_000;
+}

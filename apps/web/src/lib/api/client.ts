@@ -267,7 +267,7 @@ export const api = {
     name: string;
     goal?: string;
     autonomyLevel?: string;
-    budgetAmount?: string;
+    tokenBudget?: number;
   }) => request<{ project: Project }>('/projects', { method: 'POST', json: body }),
 
   project: (id: string) =>
@@ -782,7 +782,7 @@ export const api = {
         id: string;
         status: string;
         goal: string;
-        cost: number;
+        tokens: number;
         model: string | null;
         /** ★ 是谁跑的。换过编写 Agent 之后，这一列才让两次分析分得开 */
         agentId: string | null;

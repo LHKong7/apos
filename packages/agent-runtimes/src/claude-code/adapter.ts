@@ -502,8 +502,9 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       },
 
       maxTurns: this.maxTurns(),
-      // 运行时侧的硬预算：超了它自己停，不用等我们的成本事件追上
-      maxBudgetUsd: task.limits.maxCostUsd,
+      // 运行时侧的硬预算：超了它自己停，不用等我们的用量事件追上。
+      // ★ null 时整个键不下发 —— 传 undefined 与传 0 是两回事，后者会立刻停。
+      ...(task.limits.maxCostUsd === null ? {} : { maxBudgetUsd: task.limits.maxCostUsd }),
 
       abortController: state.abort,
       env: this.childEnv(),

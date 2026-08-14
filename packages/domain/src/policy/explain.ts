@@ -1,4 +1,5 @@
 import type { Action, Condition, FactKey, Operator, Recipient } from '@apos/contracts';
+import { formatTokens } from '../format/tokens';
 
 /**
  * 自然语言解释 —— 页面文档 13 §5.6
@@ -23,9 +24,9 @@ export const FACT_LABELS: Record<FactKey, string> = {
   agentConfidence: 'Agent 置信度',
   agentSuccessRate: 'Agent 历史成功率',
   consecutiveFailures: '连续失败次数',
-  runCost: '本次执行成本',
-  projectCostSpent: '项目累计成本',
-  projectBudget: '项目预算',
+  runTokens: '本次执行 token 用量',
+  projectTokensSpent: '项目累计 token 用量',
+  projectTokenBudget: '项目 token 预算',
   budgetUsedPct: '预算使用比例',
   testsResult: '自动测试结果',
   testCoverage: '测试覆盖率',
@@ -82,13 +83,15 @@ const ROLE_LABELS: Record<string, string> = {
   org_admin: '组织管理员',
 };
 
-/** 成本类 fact 用货币格式 */
-const CURRENCY_FACTS: readonly FactKey[] = ['runCost', 'projectCostSpent', 'projectBudget'];
+/** 用量类 fact 用 token 缩写格式（1.2M），不用货币 */
+const TOKEN_FACTS: readonly FactKey[] = ['runTokens', 'projectTokensSpent', 'projectTokenBudget'];
 const PERCENT_FACTS: readonly FactKey[] = ['budgetUsedPct', 'testCoverage'];
 
 function formatValue(fact: FactKey, value: unknown): string {
   if (Array.isArray(value)) return value.map((v) => formatValue(fact, v)).join('、');
-  if (CURRENCY_FACTS.includes(fact) && typeof value === 'number') return `$${value}`;
+  if (TOKEN_FACTS.includes(fact) && typeof value === 'number') {
+    return `${formatTokens(value)} token`;
+  }
   if (PERCENT_FACTS.includes(fact) && typeof value === 'number') return `${value}%`;
   if (fact === 'agentConfidence' || fact === 'agentSuccessRate') {
     if (typeof value === 'number') return `${Math.round(value * 100)}%`;

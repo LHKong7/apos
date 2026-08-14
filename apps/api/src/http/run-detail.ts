@@ -68,13 +68,29 @@ export async function getRunDetail(db: Database, runId: string) {
           id: agentRuns.id,
           attempt: agentRuns.attempt,
           status: agentRuns.status,
-          cost: agentRuns.cost,
+          tokensInput: agentRuns.tokensInput,
+          tokensOutput: agentRuns.tokensOutput,
+          tokensCacheRead: agentRuns.tokensCacheRead,
+          tokensCacheWrite: agentRuns.tokensCacheWrite,
           errorClass: agentRuns.errorClass,
         })
         .from(agentRuns)
         .where(eq(agentRuns.workItemId, run.workItemId))
         .orderBy(asc(agentRuns.attempt))
     : [];
+
+  /**
+   * ★ 四类 token 在服务端就加好。丢四列给前端再加一遍，
+   *   等于把「记账单位怎么定义」复制到了第二个地方 ——
+   *   将来加一类 token，两处里必然有一处忘了改。
+   */
+  const attempts = siblings.map((s) => ({
+    id: s.id,
+    attempt: s.attempt,
+    status: s.status,
+    tokens: s.tokensInput + s.tokensOutput + s.tokensCacheRead + s.tokensCacheWrite,
+    errorClass: s.errorClass,
+  }));
 
   const interventions = await loadInterventions(db, run);
   const policyHits = await loadPolicyHits(db, run);
@@ -105,11 +121,11 @@ export async function getRunDetail(db: Database, runId: string) {
           type: agent.type,
           model: run.model ?? agent.model,
           runtimeKind: agent.runtimeKind,
-          costLimitPerRun: agent.costLimitPerRun,
+          tokenLimitPerRun: agent.tokenLimitPerRun,
         }
       : null,
     workItem: item
-      ? { id: item.id, title: item.title, status: item.status, estimatedCost: item.estimatedCost }
+      ? { id: item.id, title: item.title, status: item.status, estimatedTokens: item.estimatedTokens }
       : null,
     project: project ? { id: project.id, name: project.name } : null,
 
@@ -134,16 +150,19 @@ export async function getRunDetail(db: Database, runId: string) {
         input: run.tokensInput,
         output: run.tokensOutput,
         cacheRead: run.tokensCacheRead,
-        total: run.tokensInput + run.tokensOutput + run.tokensCacheRead,
-        // 缓存命中率直接决定成本，值得单独暴露
+        cacheWrite: run.tokensCacheWrite,
+        total:
+          run.tokensInput + run.tokensOutput + run.tokensCacheRead + run.tokensCacheWrite,
+        // 缓存命中率直接决定用量，值得单独暴露
         cacheHitRate:
           run.tokensInput + run.tokensCacheRead > 0
             ? run.tokensCacheRead / (run.tokensInput + run.tokensCacheRead)
             : 0,
       },
-      cost: run.cost,
-      estimatedCost: item?.estimatedCost ?? null,
-      costLimit: agent?.costLimitPerRun ?? null,
+      /** 运行时结算的美元值，界面标为参考值 —— 不参与任何判定 */
+      costUsd: run.cost,
+      estimatedTokens: item?.estimatedTokens ?? null,
+      tokenLimit: agent?.tokenLimitPerRun ?? null,
       durationMs: (endedAt ?? new Date()).getTime() - startedAt.getTime(),
       toolCalls,
       eventCount: runEventRows.length,
@@ -173,8 +192,8 @@ export async function getRunDetail(db: Database, runId: string) {
       : null,
 
     related: {
-      previousRun: siblings.find((s) => s.id === run.previousRunId) ?? null,
-      attempts: siblings,
+      previousRun: attempts.find((s) => s.id === run.previousRunId) ?? null,
+      attempts,
       decisions: decisionRows.map((d) => ({
         id: d.id,
         title: d.title,
@@ -194,7 +213,7 @@ export interface EventPage {
     level: string;
     summary: string;
     payload: Record<string, unknown> | null;
-    costDelta: string | null;
+    tokensDelta: number | null;
   }[];
   level: EventLevel;
   nextCursor: number | null;
@@ -236,7 +255,8 @@ export async function getRunEvents(
       summary: r.summary,
       // 简明模式不回 payload：体积的大头在这里，隐藏它也正是页面文档的要求
       payload: level === 'detailed' ? r.payload : null,
-      costDelta: r.costDelta,
+      /** ★ 迁移之前的行是 NULL —— 那时没记，不是记了 0 */
+      tokensDelta: r.tokensDelta,
     })),
     level,
     nextCursor: page.at(-1)?.seq ?? null,
@@ -247,15 +267,19 @@ export async function getRunEvents(
 export interface CostStep {
   step: number | null;
   description: string;
-  costUsd: number;
+  tokens: number;
   eventCount: number;
 }
 
 /**
- * 按步骤的成本分布（页面文档 09 §5.6）。
+ * 按步骤的 token 分布（页面文档 09 §5.6）。
  *
- * 回答的是「哪一步烧钱」。没有这个视图，成本超支只能看到一个总数，
+ * 回答的是「哪一步烧配额」。没有这个视图，超支只能看到一个总数，
  * 而超支最常见的原因（上下文太大、某个工具反复重试）恰好都是分步骤才看得出来的。
+ *
+ * ★ 历史行的 tokens_delta 是 NULL（迁移之前没有这一列），按 0 计。
+ *   这会让换单位之前的 Run 在这个视图上显示为全 0 —— 如实反映
+ *   「那时候没记」，而不是拿美元换算出一个看起来有数的假分布。
  */
 export async function getCostBreakdown(db: Database, runId: string): Promise<CostStep[]> {
   const rows = await db
@@ -277,13 +301,13 @@ export async function getCostBreakdown(db: Database, runId: string): Promise<Cos
     }
 
     const key = `${current.step ?? 'pre'}`;
-    const entry = steps.get(key) ?? { ...current, costUsd: 0, eventCount: 0 };
-    entry.costUsd += Number(row.costDelta ?? 0);
+    const entry = steps.get(key) ?? { ...current, tokens: 0, eventCount: 0 };
+    entry.tokens += row.tokensDelta ?? 0;
     entry.eventCount += 1;
     steps.set(key, entry);
   }
 
-  return [...steps.values()].map((s) => ({ ...s, costUsd: Math.round(s.costUsd * 1e6) / 1e6 }));
+  return [...steps.values()];
 }
 
 // ── 内部 ──────────────────────────────────────────────────────────────

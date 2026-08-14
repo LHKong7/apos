@@ -1125,12 +1125,12 @@ describe('★ 需求：指定 PRD 编写 Agent', () => {
 });
 
 describe('看板', () => {
-  it('卡片带执行主体名称、依赖数与成本，前端不用二次请求', async () => {
+  it('卡片带执行主体名称、依赖数与 token 用量，前端不用二次请求', async () => {
     const agent = await seedAgent(db, fx, { registry, name: 'code-agent-1' });
     const item = await createWorkItem(db, fx, {
       executorType: 'agent',
       executorId: agent.agentId,
-      actualCost: '3.2000',
+      actualTokens: 160_000,
     });
 
     const res = await app.inject({
@@ -1144,7 +1144,7 @@ describe('看板', () => {
 
     expect(card.id).toBe(item.id);
     expect(card.executor).toEqual({ type: 'agent', id: agent.agentId, name: 'code-agent-1' });
-    expect(card.cost).toBe('3.2000');
+    expect(card.tokens).toBe(160_000);
     expect(card.unmetDependencies).toBe(0);
   });
 
@@ -1861,7 +1861,7 @@ describe('Run 详情（页面文档 09）', () => {
   });
 
   /** 成本超支最常见的原因分步骤才看得出来，总数只能告诉你「超了」 */
-  it('成本按步骤拆分，能定位哪一步烧钱', async () => {
+  it('token 按步骤拆分，能定位哪一步烧配额', async () => {
     const { run } = await completedRun();
 
     const res = await app.inject({
@@ -1870,10 +1870,17 @@ describe('Run 详情（页面文档 09）', () => {
       headers: auth(),
     });
 
-    const steps = res.json().steps as { step: number | null; costUsd: number }[];
+    const steps = res.json().steps as { step: number | null; tokens: number }[];
     expect(steps.length).toBeGreaterThan(1);
-    const total = steps.reduce((sum, s) => sum + s.costUsd, 0);
-    expect(total).toBeCloseTo(Number(run.cost), 4);
+    /**
+     * ★ 分步之和必须等于 Run 上的累计值。两处各自累加同一批事件，
+     *   一旦有一类 token 只被其中一处算进去，这条就会红 ——
+     *   而那种偏差在界面上只表现为「分步加起来对不上总数」，没人会去查。
+     */
+    const total = steps.reduce((sum, s) => sum + s.tokens, 0);
+    const runTotal =
+      run.tokensInput + run.tokensOutput + run.tokensCacheRead + run.tokensCacheWrite;
+    expect(total).toBe(runTotal);
   });
 
   it('失败的 Run 给出失败分类、Agent 自述与失败步骤', async () => {

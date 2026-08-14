@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { eventIcon, groupEvents, isNoise, type TimelineEntry } from './group-events';
 import { useFollowTail } from './useFollowTail';
-import { money } from '../../lib/format';
+import { tokens } from '../../lib/format';
 import type { RunEventRow } from '../../lib/api/types';
 
 interface Props {
@@ -128,9 +128,9 @@ function Entry({
           >
             {entry.summary}
           </p>
-          {entry.costDelta && Number(entry.costDelta) !== 0 && (
+          {entry.tokensDelta !== null && entry.tokensDelta !== 0 && (
             <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-400">
-              {money(entry.costDelta)}
+              {tokens(entry.tokensDelta)}
             </span>
           )}
           {expandable && (

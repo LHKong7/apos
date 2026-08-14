@@ -6,7 +6,7 @@ import { HumanGateBadge } from '../../components/badges';
 import { QueryBoundary } from '../../components/states';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, statusLabel } from '../../lib/format';
+import { statusLabel, tokens } from '../../lib/format';
 import type { AgentSummary, BoardColumn } from '../../lib/api/types';
 import type { CardActions } from '../../features/work-item/BoardCard';
 
@@ -140,7 +140,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
         <span className="ml-auto flex items-center gap-1 text-xs">
           <span className="text-slate-400">{t('agentView.cumulative')}</span>
           <span className="font-mono tabular-nums text-slate-700">
-            {money(agent.todaySpentUsd)}
+            {tokens(agent.todayTokens)}
           </span>
         </span>
       </header>

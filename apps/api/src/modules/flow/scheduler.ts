@@ -1,7 +1,7 @@
 import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { projects, workItemDependencies, workItems, type Database } from '@apos/db';
 import { SYSTEM_ACTOR } from '@apos/contracts';
-import { isDependencyMet } from '@apos/domain';
+import { formatTokens, isDependencyMet } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { loadDependencies } from './context';
@@ -211,19 +211,22 @@ async function checkBudget(
   item: WorkItemRow,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const [project] = await db.select().from(projects).where(eq(projects.id, item.projectId));
-  if (!project?.budgetAmount) return { ok: true };
+  if (!project?.tokenBudget) return { ok: true };
 
-  const spent = Number(project.costSpent);
-  const budget = Number(project.budgetAmount);
-  const estimated = Number(item.estimatedCost ?? 0);
+  const spent = project.tokensSpent;
+  const budget = project.tokenBudget;
+  const estimated = item.estimatedTokens ?? 0;
 
   if (spent >= budget) {
-    return { ok: false, reason: `项目成本 $${spent} 已达预算 $${budget}，停止调度新任务` };
+    return {
+      ok: false,
+      reason: `项目已用 ${formatTokens(spent)} token，达到预算 ${formatTokens(budget)}，停止调度新任务`,
+    };
   }
   if (spent + estimated > budget) {
     return {
       ok: false,
-      reason: `预估成本 $${estimated} 将使项目超出预算（已用 $${spent} / $${budget}）`,
+      reason: `预估 ${formatTokens(estimated)} token 将使项目超出预算（已用 ${formatTokens(spent)} / ${formatTokens(budget)}）`,
     };
   }
   return { ok: true };

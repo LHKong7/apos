@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib/format';
+import { relativeTime, riskLabel, statusLabel, tokens, typeIcon } from '../../lib/format';
 import { QueryBoundary } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Drawer } from '../../components/Drawer';
@@ -67,8 +67,10 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                   {statusLabel(item.status)}
                 </span>
                 <span>{riskLabel(item.riskLevel)}</span>
-                <span>{t('itemDrawer.cost', { amount: money(item.actualCost) })}</span>
-                {item.estimatedCost && <span>{t('itemDrawer.estimated', { amount: money(item.estimatedCost) })}</span>}
+                <span>{t('itemDrawer.tokens', { amount: tokens(item.actualTokens) })}</span>
+                {item.estimatedTokens !== null && (
+                  <span>{t('itemDrawer.estimated', { amount: tokens(item.estimatedTokens) })}</span>
+                )}
                 <span>{t('itemDrawer.updatedAt', { time: relativeTime(item.updatedAt) })}</span>
               </div>
               {item.humanGate && (
@@ -260,7 +262,7 @@ function RunsTab({
     id: string;
     attempt: number;
     status: string;
-    cost: string;
+    tokens: number;
     stepCurrent: number | null;
     stepTotal: number | null;
     progressNote: string | null;
@@ -298,7 +300,7 @@ function RunsTab({
             >
               {run.status}
             </span>
-            <span className="ml-auto tabular-nums text-slate-500">{money(run.cost)}</span>
+            <span className="ml-auto tabular-nums text-slate-500">{tokens(run.tokens)}</span>
           </div>
           {run.progressNote && <p className="mt-1 text-slate-600">{run.progressNote}</p>}
           {run.errorMessage && (

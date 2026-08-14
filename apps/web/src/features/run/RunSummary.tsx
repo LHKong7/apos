@@ -2,7 +2,7 @@ import { useT, type MessageKey } from '../../lib/i18n';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
-import { duration, money, relativeTime, statusLabel } from '../../lib/format';
+import { duration, relativeTime, statusLabel, tokens } from '../../lib/format';
 import { Section } from './tabs';
 import type { RunDetail } from '../../lib/api/types';
 
@@ -17,9 +17,9 @@ import type { RunDetail } from '../../lib/api/types';
 export function RunSummary({ detail }: { detail: RunDetail }) {
   const t = useT();
   const { run, metrics, related } = detail;
-  const spent = Number(metrics.cost);
-  const limit = metrics.costLimit ? Number(metrics.costLimit) : null;
-  const estimated = metrics.estimatedCost ? Number(metrics.estimatedCost) : null;
+  const spent = metrics.tokens.total;
+  const limit = metrics.tokenLimit;
+  const estimated = metrics.estimatedTokens;
 
   return (
     <aside className="w-64 shrink-0 space-y-4 overflow-y-auto border-l border-slate-200 p-3 text-xs">
@@ -57,15 +57,15 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
         </dl>
       </Section>
 
-      <Section title={t('runSum.cost')}>
+      <Section title={t('runSum.tokens')}>
         <dl className="grid grid-cols-[3.5rem_1fr] gap-y-1 tabular-nums text-slate-700">
           <dt className="text-slate-400">{t('runSum.current')}</dt>
-          <dd>{money(spent)}</dd>
+          <dd>{tokens(spent)}</dd>
           {estimated !== null && (
             <>
               <dt className="text-slate-400">{t('runSum.estimated')}</dt>
               <dd className={spent > estimated ? 'text-amber-700' : undefined}>
-                {money(estimated)}
+                {tokens(estimated)}
                 {spent > estimated && estimated > 0 && (
                   <span className="ml-1">
                     {t('runSum.overBy', {
@@ -145,7 +145,7 @@ export function RunSummary({ detail }: { detail: RunDetail }) {
                   )}
                 >
                   <span>{t('runSum.attemptStatus', { n: a.attempt, status: statusLabel(a.status) })}</span>
-                  <span className="tabular-nums text-slate-500">{money(a.cost)}</span>
+                  <span className="tabular-nums text-slate-500">{tokens(a.tokens)}</span>
                 </Link>
               </li>
             ))}

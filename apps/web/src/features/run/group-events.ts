@@ -8,7 +8,7 @@ export interface TimelineEntry {
   type: string;
   summary: string;
   payload: Record<string, unknown> | null;
-  costDelta: string | null;
+  tokensDelta: number | null;
   /** 被折叠进来的事件（含首条）。长度 > 1 时显示 `xN` */
   members: RunEventRow[];
 }
@@ -50,7 +50,7 @@ export function groupEvents(events: RunEventRow[], merge: boolean): TimelineEntr
       type: event.type,
       summary: event.summary,
       payload: event.payload,
-      costDelta: event.costDelta,
+      tokensDelta: event.tokensDelta,
       members: [event],
     });
   }

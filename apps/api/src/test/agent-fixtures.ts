@@ -19,7 +19,7 @@ export async function seedAgent(
     allowedTools?: string[];
     deniedTools?: string[];
     maxConcurrency?: number;
-    costLimitPerRun?: string;
+    tokenLimitPerRun?: number;
     stats?: Record<string, unknown>;
     /**
      * ★ 含 `requirement`：自动挑规划 / PRD 编写 Agent 时它排在前面
@@ -72,9 +72,9 @@ export async function seedAgent(
       allowedTools: opts.allowedTools ?? ['read_file', 'write_file', 'run_tests', 'create_pr'],
       deniedTools: opts.deniedTools ?? ['merge_pr'],
       maxConcurrency: opts.maxConcurrency ?? 3,
-      costLimitPerRun: opts.costLimitPerRun ?? '15.0000',
+      tokenLimitPerRun: opts.tokenLimitPerRun ?? 500_000,
       ownerId: fx.userId,
-      stats: opts.stats ?? { successRate: 0.92, sampleSize: 25, avgCost: 5.2 },
+      stats: opts.stats ?? { successRate: 0.92, sampleSize: 25, avgTokens: 5.2 },
     })
     .returning();
 

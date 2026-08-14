@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, relativeTime } from '../../lib/format';
+import { relativeTime, tokens } from '../../lib/format';
 import type { RunDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { ArtifactFiles } from './ArtifactFiles';
@@ -166,40 +166,40 @@ export function CostTab({ detail }: { detail: RunDetail }) {
     queryFn: () => api.runCostBreakdown(detail.run.id),
   });
 
-  const { tokens } = detail.metrics;
-  const spent = Number(detail.metrics.cost);
-  const estimated = detail.metrics.estimatedCost ? Number(detail.metrics.estimatedCost) : null;
+  const usage = detail.metrics.tokens;
+  const spent = detail.metrics.tokens.total;
+  const estimated = detail.metrics.estimatedTokens;
   const overrun = estimated && estimated > 0 ? (spent - estimated) / estimated : null;
 
   const steps = breakdown.data?.steps ?? [];
-  const maxCost = Math.max(...steps.map((s) => s.costUsd), 0.0001);
+  const maxCost = Math.max(...steps.map((s) => s.tokens), 1);
 
   return (
     <div className="space-y-4 text-xs">
       <Section title={t('runTab.tokenBreakdown')}>
         <dl className="grid grid-cols-[6rem_1fr] gap-y-1 tabular-nums text-slate-700">
           <dt className="text-slate-400">{t('runTab.input')}</dt>
-          <dd>{tokens.input.toLocaleString()}</dd>
+          <dd>{usage.input.toLocaleString()}</dd>
           <dt className="text-slate-400">{t('runTab.output')}</dt>
-          <dd>{tokens.output.toLocaleString()}</dd>
+          <dd>{usage.output.toLocaleString()}</dd>
           <dt className="text-slate-400">{t('runTab.cacheHit')}</dt>
           <dd>
-            {tokens.cacheRead.toLocaleString()}
+            {usage.cacheRead.toLocaleString()}
             {/* 缓存命中率直接决定成本，单独标出来 */}
             <span className="ml-2 text-slate-400">
-              {t('runTab.cacheHitRate', { percent: (tokens.cacheHitRate * 100).toFixed(0) })}
+              {t('runTab.cacheHitRate', { percent: (usage.cacheHitRate * 100).toFixed(0) })}
             </span>
           </dd>
           <dt className="text-slate-400">{t('runTab.total')}</dt>
-          <dd className="font-medium">{tokens.total.toLocaleString()}</dd>
+          <dd className="font-medium">{usage.total.toLocaleString()}</dd>
         </dl>
       </Section>
 
       {overrun !== null && overrun > 0.05 && (
         <p className="rounded bg-amber-50 px-2 py-1.5 text-amber-800">
           {t('runTab.costOverrun', {
-            spent: money(spent),
-            estimated: money(estimated!),
+            spent: tokens(spent),
+            estimated: tokens(estimated!),
             percent: (overrun * 100).toFixed(0),
           })}
         </p>
@@ -219,11 +219,11 @@ export function CostTab({ detail }: { detail: RunDetail }) {
                 <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-slate-200">
                   <span
                     className="block h-full bg-agent"
-                    style={{ width: `${(s.costUsd / maxCost) * 100}%` }}
+                    style={{ width: `${(s.tokens / maxCost) * 100}%` }}
                   />
                 </span>
                 <span className="w-16 shrink-0 text-right font-mono tabular-nums text-slate-600">
-                  {money(s.costUsd)}
+                  {tokens(s.tokens)}
                 </span>
               </li>
             ))}

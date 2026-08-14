@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, money, statusLabel } from '../../lib/format';
+import { duration, statusLabel, tokens } from '../../lib/format';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
 import { QueryBoundary } from '../../components/states';
 import { EventTimeline } from '../../features/run/EventTimeline';
@@ -106,7 +106,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
     },
     { key: 'input', label: t('runDetail.tab.input') },
     { key: 'artifacts', label: t('runDetail.tab.artifacts', { count: detail.artifacts.length }) },
-    { key: 'cost', label: t('runDetail.tab.cost') },
+    { key: 'cost', label: t('runDetail.tab.tokens') },
     // 错误 Tab 只在真的失败时出现，不给一个永远空着的入口
     // The error tab appears only on a real failure — no permanently empty entry
     { key: 'error', label: t('runDetail.tab.error'), hidden: !detail.error },
@@ -149,7 +149,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           )}
           <span className="font-mono text-[11px]">{detail.agent?.model ?? '—'}</span>
           <span className="tabular-nums">{duration(detail.metrics.durationMs / 60_000)}</span>
-          <span className="tabular-nums">{money(detail.metrics.cost)}</span>
+          <span className="tabular-nums">{tokens(detail.metrics.tokens.total)}</span>
           <span className="tabular-nums text-slate-500">
             {(detail.metrics.tokens.total / 1000).toFixed(1)}k tok
             {detail.metrics.tokens.cacheHitRate > 0 && (

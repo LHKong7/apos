@@ -653,8 +653,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         executing: items.filter((i) => i.status === 'executing').length,
         pendingDecisions: pending.length,
         overdueDecisions: pending.filter((d) => d.dueAt && d.dueAt < new Date()).length,
-        costSpent: project.costSpent,
-        budget: project.budgetAmount,
+        tokensSpent: project.tokensSpent,
+        tokenBudget: project.tokenBudget,
       },
     };
   });
@@ -757,7 +757,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     autonomyLevel: z
       .enum(['human_led', 'agent_led_approval', 'agent_autonomous'])
       .default('agent_led_approval'),
-    budgetAmount: z.string().optional(),
+    tokenBudget: z.number().int().positive().optional(),
     /**
      * 工作项编号的前缀（`ORD` → `ORD-19`）。不传则从项目名推。
      * 组织内唯一 —— 撞车时自动加序号。
@@ -1436,7 +1436,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         id: agentRuns.id,
         status: agentRuns.status,
         goal: agentRuns.goal,
-        cost: agentRuns.cost,
+        tokensInput: agentRuns.tokensInput,
+        tokensOutput: agentRuns.tokensOutput,
+        tokensCacheRead: agentRuns.tokensCacheRead,
+        tokensCacheWrite: agentRuns.tokensCacheWrite,
         model: agentRuns.model,
         agentId: agentRuns.agentId,
         agentName: agents.name,
@@ -1452,7 +1455,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return {
       runs: rows.map((r) => ({
         ...r,
-        cost: Number(r.cost),
+        tokens: r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite,
         startedAt: r.startedAt?.toISOString() ?? null,
         endedAt: r.endedAt?.toISOString() ?? null,
       })),
@@ -1744,7 +1747,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         model: agents.model,
         skills: agents.skills,
         maxConcurrency: agents.maxConcurrency,
-        costLimitPerRun: agents.costLimitPerRun,
+        tokenLimitPerRun: agents.tokenLimitPerRun,
         stats: agents.stats,
       })
       .from(agents)
@@ -1779,9 +1782,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         return {
           ...a,
           load: mine.filter((i) => i.status === 'executing').length,
-          todaySpentUsd: runs
+          todayTokens: runs
             .filter((r) => r.agentId === a.id)
-            .reduce((sum, r) => sum + Number(r.cost ?? 0), 0),
+            .reduce(
+              (sum, r) =>
+                sum + r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite,
+              0,
+            ),
           items: mine.map((i) => {
             const run = latestRun.get(i.id);
             return {

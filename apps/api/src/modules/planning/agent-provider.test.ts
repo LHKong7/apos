@@ -121,7 +121,7 @@ async function seedPlanningAgent(
       allowedTools: ['read_file', 'write_file'],
       deniedTools: [],
       maxConcurrency: 1,
-      costLimitPerRun: '5.0000',
+      tokenLimitPerRun: 250_000,
       ownerId: fx.userId,
       stats: {},
     })

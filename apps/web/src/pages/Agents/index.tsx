@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money } from '../../lib/format';
+import { tokens } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 
 /**
@@ -40,7 +40,7 @@ export function AgentListPage() {
         {list.data && list.data.agents.length > 0 && (
           <p className="mt-1 text-[11px] text-slate-500">
             {t('agents.totals30d', {
-              cost: money(String(list.data.totals.cost)),
+              tokens: tokens(list.data.totals.tokens),
               runs: list.data.totals.runs,
             })}{' '}
             {list.data.totals.successRate === null
@@ -75,7 +75,7 @@ export function AgentListPage() {
                     <th className="px-2 py-1.5 text-right font-medium" title={t('agentTab.overrideHelp')}>
                       {t('agents.col.override')}
                     </th>
-                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.cost')}</th>
+                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.tokens')}</th>
                     <th className="px-3 py-1.5 font-medium">{t('agents.col.owner')}</th>
                   </tr>
                 </thead>
@@ -114,7 +114,7 @@ export function AgentListPage() {
                       <Cell value={a.firstTrySuccessRate} warnBelow={0.6} />
                       <Cell value={a.overrideRate} warnAbove={0.15} />
                       <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
-                        {money(String(a.cost))}
+                        {tokens(a.tokens)}
                       </td>
                       <td className="px-3 py-1.5 text-slate-500">{a.ownerName}</td>
                     </tr>

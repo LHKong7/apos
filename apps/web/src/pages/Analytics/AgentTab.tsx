@@ -2,7 +2,7 @@ import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { Analytics, AgentPerf } from '@apos/domain';
 import { BarChart, StatTile } from '../../features/analytics/charts';
-import { money } from '../../lib/format';
+import { tokens } from '../../lib/format';
 import { Card } from './Card';
 
 /**
@@ -44,9 +44,9 @@ export function AgentTab({ data }: { data: Analytics }) {
           hint={t('agentTab.avgFirstTryHelp')}
         />
         <StatTile
-          label={t('agentTab.avgCost')}
-          value={money(String(weighted(agent.agents, (a) => a.avgCost)))}
-          hint={t('agentTab.avgCostHelp')}
+          label={t('agentTab.avgTokens')}
+          value={tokens(weighted(agent.agents, (a) => a.avgTokens))}
+          hint={t('agentTab.avgTokensHelp')}
         />
       </div>
 
@@ -64,7 +64,7 @@ export function AgentTab({ data }: { data: Analytics }) {
                 <th className="py-1 px-2 text-right font-medium" title={t('agentTab.overrideHelp')}>
                   {t('agents.col.override')}
                 </th>
-                <th className="py-1 px-2 text-right font-medium">{t('agentTab.avgCostShort')}</th>
+                <th className="py-1 px-2 text-right font-medium">{t('agentTab.avgTokensShort')}</th>
                 <th className="py-1 pl-2 text-right font-medium">{t('agentTab.avgDuration')}</th>
               </tr>
             </thead>
@@ -87,7 +87,7 @@ export function AgentTab({ data }: { data: Analytics }) {
                     best={best.overrideRate.has(a.agentId)}
                     warn={a.overrideRate > 0.15}
                   />
-                  <Cell value={money(String(a.avgCost))} best={best.avgCost.has(a.agentId)} />
+                  <Cell value={tokens(a.avgTokens)} best={best.avgTokens.has(a.agentId)} />
                   <Cell
                     value={a.avgMinutes === null ? '—' : `${a.avgMinutes}m`}
                     best={best.avgMinutes.has(a.agentId)}
@@ -157,7 +157,7 @@ function pickBest(agents: AgentPerf[]) {
     successRate: by('successRate', false),
     firstTrySuccessRate: by('firstTrySuccessRate', false),
     overrideRate: by('overrideRate', true),
-    avgCost: by('avgCost', true),
+    avgTokens: by('avgTokens', true),
     avgMinutes: by('avgMinutes', true),
   };
 }

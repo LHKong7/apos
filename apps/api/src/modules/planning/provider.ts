@@ -105,7 +105,7 @@ export interface PlanTaskDraft {
   type: WorkItemType;
   phase: string;
   estimatedHours: number;
-  estimatedCost: number | null;
+  estimatedTokens: number | null;
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   requiredSkills: string[];
   requiredTools: string[];

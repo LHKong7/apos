@@ -29,8 +29,8 @@ function input(o: Partial<AnalyticsInput> = {}): AnalyticsInput {
     agents: [],
     overrides: [],
     policyEvals: [],
-    budget: null,
-    costSpentTotal: 0,
+    tokenBudget: null,
+    tokensSpentTotal: 0,
     ...o,
   };
 }
@@ -58,7 +58,8 @@ function run(id: string, o: Partial<RunRow> = {}): RunRow {
     agentId: 'agent-1',
     attempt: 1,
     status: 'completed',
-    cost: 1,
+    tokens: 1,
+    costUsd: 1,
     startedAt: T0 + D,
     endedAt: T0 + D + 10 * 60_000,
     createdAt: T0 + D,
@@ -67,6 +68,7 @@ function run(id: string, o: Partial<RunRow> = {}): RunRow {
     tokensInput: 0,
     tokensOutput: 0,
     tokensCacheRead: 0,
+    tokensCacheWrite: 0,
     ...o,
   };
 }
@@ -189,12 +191,13 @@ describe('Agent 对比', () => {
     // a2 更便宜更快，但成功率更低 —— 这是权衡
     const runs = [
       ...Array.from({ length: 5 }, (_, n) =>
-        run(`x${n}`, { agentId: 'a1', cost: 5, status: 'completed', endedAt: T0 + D + 20 * 60_000 }),
+        run(`x${n}`, { agentId: 'a1', tokens: 5, status: 'completed', endedAt: T0 + D + 20 * 60_000 }),
       ),
       ...Array.from({ length: 5 }, (_, n) =>
         run(`y${n}`, {
           agentId: 'a2',
-          cost: 1,
+          tokens: 1,
+          costUsd: 1,
           status: n === 0 ? 'completed' : 'failed',
           endedAt: T0 + D + 5 * 60_000,
         }),
@@ -213,13 +216,14 @@ describe('Agent 对比', () => {
       ...Array.from({ length: 5 }, (_, n) =>
         run(`x${n}`, {
           agentId: 'a1',
-          cost: 5,
+          tokens: 5,
+          costUsd: 5,
           status: n < 3 ? 'completed' : 'failed',
           endedAt: T0 + D + 20 * 60_000,
         }),
       ),
       ...Array.from({ length: 5 }, (_, n) =>
-        run(`y${n}`, { agentId: 'a2', cost: 1, status: 'completed', endedAt: T0 + D + 5 * 60_000 }),
+        run(`y${n}`, { agentId: 'a2', tokens: 1, status: 'completed', endedAt: T0 + D + 5 * 60_000 }),
       ),
     ];
 
@@ -237,8 +241,8 @@ describe('成本异常', () => {
    */
   it('★ 阈值是中位数的倍数，不是写死的金额', () => {
     const runs = [
-      ...Array.from({ length: 6 }, (_, n) => run(`n${n}`, { cost: 0.1 })),
-      run('spike', { cost: 1.2 }),
+      ...Array.from({ length: 6 }, (_, n) => run(`n${n}`, { tokens: 100 })),
+      run('spike', { tokens: 1200 }),
     ];
     const i = input({
       runs,
@@ -253,7 +257,7 @@ describe('成本异常', () => {
           actualStart: null,
           actualEnd: null,
           plannedEnd: null,
-          actualCost: 1.2,
+          actualTokens: 1.2,
           blockedSince: null,
           ownerId: null,
           executorType: null,
@@ -269,7 +273,7 @@ describe('成本异常', () => {
   });
 
   it('样本太少时不报异常 —— 中位数还不稳', () => {
-    const runs = [run('a', { cost: 0.1 }), run('b', { cost: 5 })];
+    const runs = [run('a', { tokens: 100 }), run('b', { tokens: 5000 })];
     expect(computeCost(input({ runs }), NOW).anomalies).toHaveLength(0);
   });
 
@@ -330,6 +334,7 @@ const costStub: CostMetrics = {
   budget: null,
   budgetSpent: 0,
   budgetRunwayDays: null,
+  unmeasuredRuns: 0,
 };
 
 const base = { agent: agentStub, hitl: hitlStub, cost: costStub, previous: null, rangeLabel: '近 30 天' };

@@ -143,7 +143,7 @@ export class MockRuntime implements AgentRuntimeAdapter {
             type: 'cost',
             deltaUsd: costPerStep,
             totalUsd: total,
-            tokens: { input: 1000, output: 200, cacheRead: 500 },
+            tokens: { input: 1000, output: 200, cacheRead: 500, cacheWrite: 300 },
           });
         }
 

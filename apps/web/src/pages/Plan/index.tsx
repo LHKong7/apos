@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, riskLabel, typeIcon } from '../../lib/format';
+import { money, riskLabel, tokens, typeIcon } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -155,12 +155,12 @@ export function PlanPage() {
             />
             <Metric label={t('plan.metric.duration')} value={`${d.metrics.estimatedHours} h`} sub={t('plan.metric.estimateTotal')} />
             <Metric
-              label={t('plan.metric.cost')}
-              value={money(String(d.metrics.estimatedCost))}
+              label={t('plan.metric.tokens')}
+              value={tokens(d.metrics.estimatedTokens)}
               sub={
                 d.metrics.budget === null
                   ? t('plan.noBudget')
-                  : t('plan.budgetOf', { amount: money(String(d.metrics.budget)) })
+                  : t('plan.budgetOf', { amount: tokens(d.metrics.budget) })
               }
               tone={d.metrics.overBudget ? 'danger' : 'normal'}
             />
@@ -180,9 +180,9 @@ export function PlanPage() {
           {d.metrics.overBudget && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {t('plan.overBudget', {
-                spent: money(String(d.metrics.spent)),
-                estimated: money(String(d.metrics.estimatedCost)),
-                budget: money(String(d.metrics.budget ?? 0)),
+                spent: tokens(d.metrics.spent),
+                estimated: tokens(d.metrics.estimatedTokens),
+                budget: tokens(d.metrics.budget ?? 0),
               })}
             </p>
           )}
@@ -218,7 +218,7 @@ export function PlanPage() {
                     {task.estimatedHours ?? '—'}h
                   </span>
                   <span className="w-14 text-right tabular-nums text-slate-500">
-                    {task.estimatedCost === null ? '—' : money(String(task.estimatedCost))}
+                    {task.estimatedTokens === null ? '—' : tokens(task.estimatedTokens)}
                   </span>
                   {(task.riskLevel === 'high' || task.riskLevel === 'critical') && (
                     <span className="w-20 shrink-0 text-right text-[11px] text-red-700">
@@ -514,7 +514,7 @@ function ApproveDialog({
           <p>
             {t('plan.confirmAgentTasks', {
               count: d.metrics.agentTasks,
-              cost: money(String(d.metrics.estimatedCost)),
+              cost: tokens(d.metrics.estimatedTokens),
             })}
           </p>
           <p>{t('plan.confirmHumanGates', { count: d.metrics.humanGateCount })}</p>

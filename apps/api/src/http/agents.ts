@@ -57,7 +57,7 @@ export async function listAgents(db: Database, projectId: string | null, orgId: 
       successRate: p?.successRate ?? null,
       firstTrySuccessRate: p?.firstTrySuccessRate ?? null,
       overrideRate: p?.overrideRate ?? null,
-      cost: p?.totalCost ?? 0,
+      tokens: p?.totalTokens ?? 0,
       ownerName: userName.get(a.ownerId) ?? '未知',
     };
   });
@@ -66,7 +66,7 @@ export async function listAgents(db: Database, projectId: string | null, orgId: 
   return {
     agents: list,
     totals: {
-      cost: round4(list.reduce((s, a) => s + a.cost, 0)),
+      tokens: Math.round(list.reduce((s, a) => s + a.tokens, 0)),
       runs: totalRuns,
       successRate:
         totalRuns === 0
@@ -158,8 +158,8 @@ export async function getAgent(
       applicableTypes: agent.applicableTypes,
       maxConcurrency: agent.maxConcurrency,
       timeoutSeconds: agent.timeoutSeconds,
-      costLimitPerRun: agent.costLimitPerRun === null ? null : Number(agent.costLimitPerRun),
-      costLimitDaily: agent.costLimitDaily === null ? null : Number(agent.costLimitDaily),
+      tokenLimitPerRun: agent.tokenLimitPerRun,
+      tokenLimitDaily: agent.tokenLimitDaily,
       ownerName: userName.get(agent.ownerId) ?? '未知',
       /** 运行时是 Agent 自己的属性，不再指向一个共享的「接入」对象 */
       runtime: {
@@ -187,8 +187,8 @@ export async function getAgent(
           successRate: p.successRate,
           firstTrySuccessRate: p.firstTrySuccessRate,
           overrideRate: p.overrideRate,
-          avgCost: p.avgCost,
-          totalCost: p.totalCost,
+          avgTokens: p.avgTokens,
+          totalTokens: p.totalTokens,
           avgMinutes: p.avgMinutes,
         }
       : null,
@@ -372,8 +372,8 @@ async function performanceByAgent(
         successRate: weighted(seen, a, (x) => x.successRate, runs),
         firstTrySuccessRate: weighted(seen, a, (x) => x.firstTrySuccessRate, runs),
         overrideRate: weighted(seen, a, (x) => x.overrideRate, runs),
-        totalCost: round4(seen.totalCost + a.totalCost),
-        avgCost: round4((seen.totalCost + a.totalCost) / runs),
+        totalTokens: Math.round(seen.totalTokens + a.totalTokens),
+        avgTokens: Math.round((seen.totalTokens + a.totalTokens) / runs),
         avgMinutes:
           seen.avgMinutes === null
             ? a.avgMinutes

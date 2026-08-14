@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
 import { HumanGateBadge } from '../../components/badges';
-import { money, relativeTime, riskLabel, statusLabel, typeIcon } from '../../lib/format';
+import { relativeTime, riskLabel, statusLabel, tokens, typeIcon } from '../../lib/format';
 import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard, BoardColumn } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -38,7 +38,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
   const selectedCards = rows.filter((r) => selected.has(r.id));
   const retriable = selectedCards.filter((c) => c.status === 'failed');
   const estimatedRetryCost = retriable.reduce(
-    (sum, c) => sum + Number(c.estimatedCost ?? 2),
+    (sum, c) => sum + (c.estimatedTokens ?? 100_000),
     0,
   );
 
@@ -61,7 +61,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
           </Button>
           {/* 批量操作前给出影响预估（页面文档 05 §5.8） */}
           {retriable.length > 0 && (
-            <span className="text-slate-500">{t('list.estimatedSpend', { amount: money(estimatedRetryCost) })}</span>
+            <span className="text-slate-500">{t('list.estimatedSpend', { amount: tokens(estimatedRetryCost) })}</span>
           )}
           <button
             type="button"
@@ -94,7 +94,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
             <SortHeader label={t('list.col.status')} sortKey="status" sort={sort} onSort={setSort} />
             <th className="px-3 py-2 font-medium">{t('list.col.executor')}</th>
             <SortHeader label={t('list.col.risk')} sortKey="risk" sort={sort} onSort={setSort} />
-            <SortHeader label={t('list.col.cost')} sortKey="cost" sort={sort} onSort={setSort} align="right" />
+            <SortHeader label={t('list.col.tokens')} sortKey="cost" sort={sort} onSort={setSort} align="right" />
             <SortHeader label={t('list.col.updated')} sortKey="updatedAt" sort={sort} onSort={setSort} />
           </tr>
         </thead>
@@ -152,7 +152,7 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                 {riskLabel(card.riskLevel)}
               </td>
               <td className="whitespace-nowrap px-3 py-2.5 text-right align-middle font-mono tabular-nums text-slate-600">
-                {money(card.cost)}
+                {tokens(card.tokens)}
               </td>
               <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-500">
                 {relativeTime(card.updatedAt)}
@@ -215,7 +215,7 @@ function sortRows(rows: BoardCard[], sort: { key: SortKey; desc: boolean }): Boa
       case 'risk':
         return ((RISK_ORDER[a.riskLevel] ?? 0) - (RISK_ORDER[b.riskLevel] ?? 0)) * dir;
       case 'cost':
-        return (Number(a.cost) - Number(b.cost)) * dir;
+        return (a.tokens - b.tokens) * dir;
       case 'updatedAt':
         return (new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime()) * dir;
     }

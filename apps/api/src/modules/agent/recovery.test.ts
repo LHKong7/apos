@@ -27,7 +27,7 @@ async function runFailing(error: { class: string; message: string; selfReport?: 
   const registry = new RuntimeRegistry();
   const runtime = new MockRuntime({}, { outcome: 'failed', error, steps: ['尝试'] });
   const agent = await seedAgent(db, fx, { registry, runtime });
-  const item = await createWorkItem(db, fx, { estimatedCost: '2.0000' });
+  const item = await createWorkItem(db, fx, { estimatedTokens: 100_000 });
 
   await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
   const run = await waitForRunEnd(db, item.id);

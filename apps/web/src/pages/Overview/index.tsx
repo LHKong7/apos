@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import type { Contribution } from '@apos/domain';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, eventLabel, money, relativeTime, riskLabel } from '../../lib/format';
+import { duration, eventLabel, relativeTime, riskLabel, tokens } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
@@ -65,7 +65,7 @@ export function OverviewPage() {
   }
 
   const d = overview.data!;
-  const budgetPct = d.cost.budget ? Math.round((d.cost.spent / d.cost.budget) * 100) : null;
+  const budgetPct = d.tokens.budget ? Math.round((d.tokens.spent / d.tokens.budget) * 100) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -141,13 +141,13 @@ export function OverviewPage() {
               onClick={() => navigate(`/projects/${projectId}/decisions`)}
             />
             <MetricCard
-              label={t('overview.metric.cost')}
-              value={money(String(d.cost.spent))}
+              label={t('overview.metric.tokens')}
+              value={tokens(d.tokens.spent)}
               sub={
-                d.cost.budget === null
-                  ? t('overview.cost.noBudget')
-                  : t('overview.cost.ofBudget', {
-                      budget: money(String(d.cost.budget)),
+                d.tokens.budget === null
+                  ? t('overview.tokens.noBudget')
+                  : t('overview.tokens.ofBudget', {
+                      budget: tokens(d.tokens.budget),
                       pct: budgetPct ?? 0,
                     })
               }
@@ -311,7 +311,7 @@ export function OverviewPage() {
                           {t('overview.agent.runs', { count: a.runs })}
                           {a.successRate !== null && t('overview.agentSuccess', { percent: Math.round(a.successRate * 100) })}
                           {' · '}
-                          {money(String(a.cost))}
+                          {tokens(a.tokens)}
                         </span>
                       </Link>
                     </li>

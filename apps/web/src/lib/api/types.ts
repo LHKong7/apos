@@ -36,8 +36,8 @@ export interface BoardCard {
   blockedReason: string | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
-  cost: string;
-  estimatedCost: string | null;
+  tokens: number;
+  estimatedTokens: number | null;
   runId: string | null;
   runStatus: string | null;
   consecutiveFailures: number;
@@ -61,7 +61,7 @@ export interface PlanCard {
   taskCount: number;
   approver: { id: string; name: string } | null;
   estimatedHours: string | null;
-  estimatedCost: string | null;
+  estimatedTokens: number | null;
   /** 已等待多久。★ 不是倒计时 —— 计划没有截止时间字段 */
   waitingMinutes: number;
   createdAt: string;
@@ -185,8 +185,8 @@ export interface Project {
   goal: string | null;
   status: string;
   autonomyLevel: string;
-  budgetAmount: string | null;
-  costSpent: string;
+  tokenBudget: number | null;
+  tokensSpent: number;
   wipLimits: Record<string, number> | null;
   updatedAt: string;
 }
@@ -199,10 +199,10 @@ export interface AgentSummary {
   model: string | null;
   skills: string[];
   maxConcurrency: number;
-  costLimitPerRun: string | null;
+  tokenLimitPerRun: number | null;
   stats: Record<string, unknown>;
   load: number;
-  todaySpentUsd: number;
+  todayTokens: number;
   items: {
     id: string;
     title: string;
@@ -260,8 +260,8 @@ export interface WorkItemDetail {
     priority: number;
     humanGate: HumanGate | null;
     blockedReason: string | null;
-    actualCost: string;
-    estimatedCost: string | null;
+    actualTokens: number;
+    estimatedTokens: number | null;
     consecutiveFailures: number;
     acceptanceCriteria: { id: string; text: string; status: string; verification: string }[];
     constraints: { type: string; description: string; enforcement: string }[];
@@ -271,7 +271,7 @@ export interface WorkItemDetail {
     id: string;
     attempt: number;
     status: string;
-    cost: string;
+    tokens: number;
     stepCurrent: number | null;
     stepTotal: number | null;
     progressNote: string | null;
@@ -324,7 +324,8 @@ export interface RunEventRow {
   level: string;
   summary: string;
   payload: Record<string, unknown> | null;
-  costDelta: string | null;
+  /** 迁移之前的行是 null —— 那时没记，不是记了 0 */
+  tokensDelta: number | null;
 }
 
 export interface RunEventPage {
@@ -355,9 +356,9 @@ export interface RunDetail {
     type: string;
     model: string | null;
     runtimeRef: string;
-    costLimitPerRun: string | null;
+    tokenLimitPerRun: number | null;
   } | null;
-  workItem: { id: string; title: string; status: string; estimatedCost: string | null } | null;
+  workItem: { id: string; title: string; status: string; estimatedTokens: number | null } | null;
   project: { id: string; name: string } | null;
   input: {
     goal: string;
@@ -386,9 +387,10 @@ export interface RunDetail {
       total: number;
       cacheHitRate: number;
     };
-    cost: string;
-    estimatedCost: string | null;
-    costLimit: string | null;
+    /** 运行时结算的美元值，界面标为参考值 */
+    costUsd: string;
+    estimatedTokens: number | null;
+    tokenLimit: number | null;
     durationMs: number;
     toolCalls: { total: number; byTool: Record<string, number> };
     eventCount: number;
@@ -413,7 +415,7 @@ export interface RunDetail {
   } | null;
   related: {
     previousRun: { id: string; attempt: number; status: string } | null;
-    attempts: { id: string; attempt: number; status: string; cost: string; errorClass: string | null }[];
+    attempts: { id: string; attempt: number; status: string; tokens: number; errorClass: string | null }[];
     decisions: { id: string; title: string; status: string; type: string }[];
     policies: {
       eventId: string;
@@ -428,7 +430,7 @@ export interface RunDetail {
 export interface CostStep {
   step: number | null;
   description: string;
-  costUsd: number;
+  tokens: number;
   eventCount: number;
 }
 
@@ -598,7 +600,7 @@ export interface PlanDetail {
     generationCost: number;
     generationMs: number | null;
     estimatedHours: number;
-    estimatedCost: number;
+    estimatedTokens: number;
     createdAt: string;
     approvedAt: string | null;
     approvedBy: string[];
@@ -611,7 +613,7 @@ export interface PlanDetail {
     agentTasks: number;
     humanTasks: number;
     estimatedHours: number;
-    estimatedCost: number;
+    estimatedTokens: number;
     budget: number | null;
     spent: number;
     overBudget: boolean;
@@ -635,7 +637,7 @@ export interface PlanDetail {
     stage: Stage;
     riskLevel: RiskLevel;
     estimatedHours: number | null;
-    estimatedCost: number | null;
+    estimatedTokens: number | null;
     executorType: string | null;
     executorName: string | null;
     ownerName: string | null;
@@ -665,7 +667,7 @@ export interface OverviewResponse {
     estimatedSlipDays: number | null;
     contributions: Contribution[];
   };
-  cost: { spent: number; budget: number | null };
+  tokens: { spent: number; budget: number | null };
   decisions: { pending: number; overdue: number; unassigned: number };
   actionItems: {
     kind: 'plan' | 'decision';
@@ -692,7 +694,7 @@ export interface OverviewResponse {
     currentRunId: string | null;
     successRate: number | null;
     runs: number;
-    cost: number;
+    tokens: number;
   }[];
   members: {
     id: string;
@@ -718,10 +720,10 @@ export interface AgentListResponse {
     successRate: number | null;
     firstTrySuccessRate: number | null;
     overrideRate: number | null;
-    cost: number;
+    tokens: number;
     ownerName: string;
   }[];
-  totals: { cost: number; runs: number; successRate: number | null };
+  totals: { tokens: number; runs: number; successRate: number | null };
 }
 
 export interface CapabilityReport {
@@ -758,8 +760,8 @@ export interface AgentDetail {
     applicableTypes: string[];
     maxConcurrency: number;
     timeoutSeconds: number;
-    costLimitPerRun: number | null;
-    costLimitDaily: number | null;
+    tokenLimitPerRun: number | null;
+    tokenLimitDaily: number | null;
     ownerName: string;
     runtime: { name: string; kind: string; status: string } | null;
   };
@@ -773,8 +775,8 @@ export interface AgentDetail {
     successRate: number;
     firstTrySuccessRate: number;
     overrideRate: number;
-    avgCost: number;
-    totalCost: number;
+    avgTokens: number;
+    totalTokens: number;
     avgMinutes: number | null;
   } | null;
   /** 只含未完成的任务 —— 已完成的数量在 queueDoneCount */
@@ -788,7 +790,7 @@ export interface AgentDetail {
     workItemTitle: string;
     status: string;
     attempt: number;
-    cost: number;
+    tokens: number;
     errorClass: string | null;
     startedAt: string | null;
     endedAt: string | null;
@@ -1166,8 +1168,8 @@ export interface AgentAdminRow {
   };
   maxConcurrency: number;
   timeoutSeconds: number;
-  costLimitPerRun: number | null;
-  costLimitDaily: number | null;
+  tokenLimitPerRun: number | null;
+  tokenLimitDaily: number | null;
 
   capability: AgentCapability | null;
 }

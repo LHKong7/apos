@@ -53,11 +53,20 @@ export async function resolveExecutor(
   const loadMap = new Map(loads.map((l) => [l.agentId, l.n]));
 
   /**
-   * ★ 今日花费按**自然日**统计，与 costLimitDaily 的语义对齐。
+   * ★ 今日用量按**自然日**统计，与 tokenLimitDaily 的语义对齐。
    *   用滚动 24 小时的话，「今天的额度」会在半夜之后仍然被昨天的消耗占着。
+   *
+   * ★ 四类 token 必须一起加。少一类就是少算，而少算只会让额度显得没用完，
+   *   于是本该被拦下的派发照常发出去 —— 闸门失效的方向永远是「放行」。
    */
   const spent = await db
-    .select({ agentId: agentRuns.agentId, total: sum(agentRuns.cost) })
+    .select({
+      agentId: agentRuns.agentId,
+      total: sum(
+        sql`${agentRuns.tokensInput} + ${agentRuns.tokensOutput}
+            + ${agentRuns.tokensCacheRead} + ${agentRuns.tokensCacheWrite}`,
+      ),
+    })
     .from(agentRuns)
     // ★ 按 createdAt 不按 startedAt：后者可空（排队中的 Run 还没开始），
     //   用它会把已经排上队、马上要花钱的那些漏出统计
@@ -76,10 +85,10 @@ export async function resolveExecutor(
       applicableTypes: a.applicableTypes as WorkItemType[],
       successRate: typeof stats['successRate'] === 'number' ? stats['successRate'] : null,
       sampleSize: typeof stats['sampleSize'] === 'number' ? stats['sampleSize'] : 0,
-      avgCost: typeof stats['avgCost'] === 'number' ? stats['avgCost'] : null,
+      avgTokens: typeof stats['avgTokens'] === 'number' ? stats['avgTokens'] : null,
       currentLoad: loadMap.get(a.id) ?? 0,
       maxConcurrency: a.maxConcurrency,
-      costLimitPerRun: a.costLimitPerRun ? Number(a.costLimitPerRun) : null,
+      tokenLimitPerRun: a.tokenLimitPerRun ?? null,
       allowedTools: a.allowedTools,
       deniedTools: a.deniedTools,
       contextAffinity: 0.5,
@@ -92,8 +101,8 @@ export async function resolveExecutor(
        */
       registered: opts.registry ? opts.registry.has(a.id) : true,
       resourceRefs: a.resourceScopes.filter((s) => s.access !== 'none').map((s) => s.ref),
-      spentToday: spentMap.get(a.id) ?? 0,
-      costLimitDaily: a.costLimitDaily ? Number(a.costLimitDaily) : null,
+      tokensToday: spentMap.get(a.id) ?? 0,
+      tokenLimitDaily: a.tokenLimitDaily ?? null,
     };
   });
 
@@ -101,7 +110,7 @@ export async function resolveExecutor(
     type: item.type,
     requiredSkills: Array.isArray(meta['requiredSkills']) ? (meta['requiredSkills'] as string[]) : [],
     requiredTools: Array.isArray(meta['requiredTools']) ? (meta['requiredTools'] as string[]) : [],
-    estimatedCost: item.estimatedCost ? Number(item.estimatedCost) : null,
+    estimatedTokens: item.estimatedTokens ?? null,
     riskLevel: item.riskLevel,
     executionMode: executionModeOf(meta),
     requiredResources: Array.isArray(meta['requiredResources'])

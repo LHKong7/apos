@@ -65,7 +65,7 @@ describe('解释内容', () => {
         { fact: 'riskLevel', op: 'eq', value: 'low' },
         { fact: 'testsResult', op: 'eq', value: 'passed' },
         { fact: 'agentReview', op: 'eq', value: 'passed' },
-        { fact: 'runCost', op: 'lt', value: 10 },
+        { fact: 'runTokens', op: 'lt', value: 200_000 },
       ],
     };
     const action: Action = {
@@ -74,7 +74,7 @@ describe('解释内容', () => {
     };
 
     expect(explainPolicy(condition, action)).toBe(
-      '当风险等级是低、且自动测试结果是通过、且 Review Agent 结论是通过、且本次执行成本低于 $10 时，' +
+      '当风险等级是低、且自动测试结果是通过、且 Review Agent 结论是通过、且本次执行 token 用量低于 200k token 时，' +
         '系统会自动批准，并通知项目负责人。你不需要手动审批。',
     );
   });
@@ -87,8 +87,8 @@ describe('解释内容', () => {
     );
   });
 
-  it('成本类 fact 用货币格式，百分比类用 %', () => {
-    expect(explainCondition({ fact: 'runCost', op: 'lt', value: 10 })).toContain('$10');
+  it('用量类 fact 用 token 缩写，百分比类用 %', () => {
+    expect(explainCondition({ fact: 'runTokens', op: 'lt', value: 200_000 })).toContain('200k token');
     expect(explainCondition({ fact: 'budgetUsedPct', op: 'gte', value: 100 })).toContain('100%');
     expect(explainCondition({ fact: 'agentConfidence', op: 'gte', value: 0.8 })).toContain('80%');
   });

@@ -254,7 +254,7 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     await approveRequirement(db, { requirementId: req.id, approverId: fx.userId, correlationId: c });
 
     const { projects } = await import('@apos/db');
-    await db.update(projects).set({ budgetAmount: '1.00' }).where(eq(projects.id, fx.projectId));
+    await db.update(projects).set({ tokenBudget: 50_000 }).where(eq(projects.id, fx.projectId));
 
     const plan = await generatePlan(db, provider, { requirementId: req.id, correlationId: c });
     const result = await approvePlan(db, {

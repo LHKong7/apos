@@ -1,5 +1,6 @@
 import { round } from './stats';
 import { formatHours } from '../graph/critical-path';
+import { formatTokens } from '../format/tokens';
 import type {
   AgentMetrics,
   CostMetrics,
@@ -125,22 +126,22 @@ export function findInsights(input: InsightInput): Insight[] {
     out.push({
       type: 'improvement',
       severity: 'warning',
-      message: `${agent.dominance.betterName} 在成功率、成本、耗时上全面优于 ${agent.dominance.worseName}`,
+      message: `${agent.dominance.betterName} 在成功率、token 用量、耗时上全面优于 ${agent.dominance.worseName}`,
       evidence: '三项指标同时更优才会给出这条建议，只赢一两项属于权衡，不做推荐',
       actions: [{ kind: 'view_tab', label: '看 Agent 对比', tab: 'agent' }],
     });
   }
 
-  // ── 成本效率 ──
+  // ── 用量效率 ──
   if (previous && cost.perDelivered !== null && previous.cost.perDelivered !== null) {
     const growth = cost.perDelivered / previous.cost.perDelivered - 1;
     if (growth > COST_INCREASE) {
       out.push({
         type: 'cost_efficiency',
         severity: 'warning',
-        message: `单位交付成本环比上升 ${pct(growth)}（${money(previous.cost.perDelivered)} → ${money(cost.perDelivered)}）`,
-        evidence: `本期完成 ${cost.delivered} 项，总成本 ${money(cost.total)}。判据：环比上升超过 ${pct(COST_INCREASE)}`,
-        actions: [{ kind: 'view_cost', label: '看成本构成' }],
+        message: `单位交付用量环比上升 ${pct(growth)}（${formatTokens(previous.cost.perDelivered)} → ${formatTokens(cost.perDelivered)} token）`,
+        evidence: `本期完成 ${cost.delivered} 项，共 ${formatTokens(cost.total)} token。判据：环比上升超过 ${pct(COST_INCREASE)}`,
+        actions: [{ kind: 'view_cost', label: '看用量构成' }],
       });
     }
   }
@@ -201,8 +202,8 @@ function findImprovement(input: InsightInput): Insight | null {
       const cut = 1 - cost.perDelivered / previous.cost.perDelivered;
       if (cut >= IMPROVEMENT) {
         cands.push({
-          message: `单位交付成本下降 ${pct(cut)}（${money(previous.cost.perDelivered)} → ${money(cost.perDelivered)}）`,
-          evidence: `本期完成 ${cost.delivered} 项，总成本 ${money(cost.total)}`,
+          message: `单位交付用量下降 ${pct(cut)}（${formatTokens(previous.cost.perDelivered)} → ${formatTokens(cost.perDelivered)} token）`,
+          evidence: `本期完成 ${cost.delivered} 项，共 ${formatTokens(cost.total)} token`,
         });
       }
     }
@@ -243,6 +244,3 @@ function pct(v: number): string {
   return `${round(v * 100, 0)}%`;
 }
 
-function money(v: number): string {
-  return `$${v < 1 ? v.toFixed(3) : v.toFixed(2)}`;
-}

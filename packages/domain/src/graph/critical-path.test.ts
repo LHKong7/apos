@@ -25,7 +25,7 @@ function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
     durationHours: 1,
     durationEstimated: false,
     progressPct: null,
-    cost: '0',
+    tokens: 0,
     runId: null,
     humanGateRef: null,
     decisionDueInMinutes: null,

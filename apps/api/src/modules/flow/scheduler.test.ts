@@ -93,7 +93,7 @@ describe('★ 阶段 1 闭环：调度 → 派发 → Agent 执行 → 自动流
     expect(milestones.map((e) => e.type).sort()).toEqual(['artifact', 'run_ended', 'run_started']);
   });
 
-  it('成本从 Run 累加到 Work Item 与项目', async () => {
+  it('token 用量从 Run 累加到 Work Item 与项目', async () => {
     const agent = await seedAgent(db, fx);
     const item = await createWorkItem(db, fx);
 
@@ -101,14 +101,18 @@ describe('★ 阶段 1 闭环：调度 → 派发 → Agent 执行 → 自动流
     await waitForRunEnd(db, item.id);
     await waitFor(async () => {
       const [w] = await db.select().from(workItems).where(eq(workItems.id, item.id));
-      return Number(w?.actualCost ?? 0) > 0 ? w : null;
-    }, { label: '成本未累加' });
+      return Number(w?.actualTokens ?? 0) > 0 ? w : null;
+    }, { label: 'token 未累加' });
 
     const [afterItem] = await db.select().from(workItems).where(eq(workItems.id, item.id));
     const [afterProject] = await db.select().from(projects).where(eq(projects.id, fx.projectId));
 
-    expect(Number(afterItem!.actualCost)).toBeCloseTo(1.5, 4);
-    expect(Number(afterProject!.costSpent)).toBeCloseTo(1.5, 2);
+    /**
+     * ★ mock 运行时每步报 1000 input + 200 output + 500 cacheRead + 300 cacheWrite，
+     *   三步共 6000 —— 四类都要算进去。少算一类这里就对不上。
+     */
+    expect(afterItem!.actualTokens).toBe(6000);
+    expect(afterProject!.tokensSpent).toBe(6000);
   });
 });
 
@@ -176,14 +180,14 @@ describe('WIP 与预算护栏', () => {
     expect(report.outcomes[0]?.reason).toContain('WIP 上限 1');
   });
 
-  it('★ 预估成本会超预算时派发前就拦下', async () => {
+  it('★ 预估 token 会超预算时派发前就拦下', async () => {
     const agent = await seedAgent(db, fx);
     await db
       .update(projects)
-      .set({ budgetAmount: '10.00', costSpent: '8.00' })
+      .set({ tokenBudget: 500_000, tokensSpent: 400_000 })
       .where(eq(projects.id, fx.projectId));
 
-    await createWorkItem(db, fx, { estimatedCost: '5.0000' });
+    await createWorkItem(db, fx, { estimatedTokens: 250_000 });
 
     const report = await scheduleRound(db, agent.registry, {
       projectId: fx.projectId,
@@ -201,7 +205,7 @@ describe('WIP 与预算护栏', () => {
     const agent = await seedAgent(db, fx);
     await db
       .update(projects)
-      .set({ budgetAmount: '10.00', costSpent: '10.00' })
+      .set({ tokenBudget: 500_000, tokensSpent: 500_000 })
       .where(eq(projects.id, fx.projectId));
 
     await createWorkItem(db, fx);
@@ -210,7 +214,7 @@ describe('WIP 与预算护栏', () => {
       projectId: fx.projectId,
       correlationId: corr(),
     });
-    expect(report.outcomes[0]?.reason).toContain('已达预算');
+    expect(report.outcomes[0]?.reason).toContain('达到预算');
   });
 });
 
@@ -305,13 +309,13 @@ describe('执行主体匹配', () => {
       registry,
       runtime,
       name: 'code-agent-1',
-      stats: { successRate: 0.72, sampleSize: 25, avgCost: 9.1 },
+      stats: { successRate: 0.72, sampleSize: 25, avgTokens: 455_000 },
     });
     const better = await seedAgent(db, fx, {
       registry,
       runtime,
       name: 'code-agent-2',
-      stats: { successRate: 0.96, sampleSize: 30, avgCost: 3.8 },
+      stats: { successRate: 0.96, sampleSize: 30, avgTokens: 190_000 },
     });
 
     await createWorkItem(db, fx, { executorType: null, executorId: null });

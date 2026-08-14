@@ -53,7 +53,7 @@ export interface PlanSummary {
   agentTaskCount: number;
   humanTaskCount: number;
   estimatedHours: number;
-  estimatedCost: number;
+  estimatedTokens: number;
   /** 批准后将自动发生的行为 —— 计划确认页的灵魂 */
   autoActions: AutoAction[];
   humanGates: HumanGateEntry[];
@@ -177,13 +177,13 @@ export async function generatePlan(
   const { autoActions, humanGates } = predictPolicyOutcomes(generated, {
     projectType: project?.type ?? 'development',
     autonomyLevel: project?.autonomyLevel ?? 'agent_led_approval',
-    budget: project?.budgetAmount ? Number(project.budgetAmount) : null,
-    spent: Number(project?.costSpent ?? 0),
+    budget: project?.tokenBudget ? project.tokenBudget : null,
+    spent: Number(project?.tokensSpent ?? 0),
     rules,
   });
 
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
-  const estimatedCost = generated.tasks.reduce((s, t) => s + (t.estimatedCost ?? 0), 0);
+  const estimatedTokens = generated.tasks.reduce((s, t) => s + (t.estimatedTokens ?? 0), 0);
 
   /**
    * ★★ 计划、任务、依赖边必须在**同一个事务**里落地。
@@ -208,7 +208,7 @@ export async function generatePlan(
       milestones: generated.milestones,
       risks: generated.risks,
       estimatedHours: String(estimatedHours),
-      estimatedCost: String(estimatedCost),
+      estimatedTokens,
       autoActions: autoActions as unknown[],
       humanGates: humanGates as unknown[],
       model: generated.model,
@@ -241,7 +241,7 @@ export async function generatePlan(
         description: task.description,
         riskLevel: task.riskLevel,
         estimatedHours: String(task.estimatedHours),
-        estimatedCost: task.estimatedCost === null ? null : String(task.estimatedCost),
+        estimatedTokens: task.estimatedTokens,
         acceptanceCriteria: task.acceptanceCriteria,
         typeData: {
           phase: task.phase,
@@ -301,7 +301,7 @@ export async function generatePlan(
     payload: {
       version,
       taskCount: generated.tasks.length,
-      estimatedCost,
+      estimatedTokens,
       estimatedHours,
       durationMs: Date.now() - started,
       model: generated.model,
@@ -318,7 +318,7 @@ export async function generatePlan(
     agentTaskCount: generated.tasks.length - humanTaskCount,
     humanTaskCount,
     estimatedHours,
-    estimatedCost,
+    estimatedTokens,
     autoActions,
     humanGates,
     riskCount: generated.risks.length,
@@ -385,9 +385,9 @@ function predictPolicyOutcomes(
       agentConfidence: null,
       agentSuccessRate: null,
       consecutiveFailures: 0,
-      runCost: task.estimatedCost ?? 0,
-      projectCostSpent: ctx.spent,
-      projectBudget: ctx.budget,
+      runTokens: task.estimatedTokens ?? 0,
+      projectTokensSpent: ctx.spent,
+      projectTokenBudget: ctx.budget,
       budgetUsedPct: ctx.budget ? (ctx.spent / ctx.budget) * 100 : null,
       testsResult: 'not_run',
       testCoverage: null,
@@ -440,11 +440,11 @@ function predictPolicyOutcomes(
     });
   }
 
-  const totalCost = plan.tasks.reduce((s, t) => s + (t.estimatedCost ?? 0), 0);
-  if (totalCost > 0) {
-    const pct = ctx.budget ? ((totalCost / ctx.budget) * 100).toFixed(1) : null;
+  const totalTokens = plan.tasks.reduce((s, t) => s + (t.estimatedTokens ?? 0), 0);
+  if (totalTokens > 0) {
+    const pct = ctx.budget ? ((totalTokens / ctx.budget) * 100).toFixed(1) : null;
     autoActions.push({
-      description: `预计消耗 $${totalCost.toFixed(2)}${pct ? `（占预算 ${pct}%）` : ''}`,
+      description: `预计消耗 $${totalTokens.toFixed(2)}${pct ? `（占预算 ${pct}%）` : ''}`,
       policyId: null,
       policyName: null,
       reversible: false,
@@ -503,8 +503,8 @@ export async function approvePlan(
   if (!plan) throw new Error(`计划不存在: ${input.planId}`);
 
   const [project] = await db.select().from(projects).where(eq(projects.id, plan.projectId));
-  const estimated = Number(plan.estimatedCost ?? 0);
-  const budget = project?.budgetAmount ? Number(project.budgetAmount) : null;
+  const estimated = (plan.estimatedTokens ?? 0);
+  const budget = project?.tokenBudget ? project.tokenBudget : null;
 
   if (budget !== null && estimated > budget && !input.acknowledgedOverrun) {
     return { ok: false, code: 'BUDGET_EXCEEDED', estimated, budget };

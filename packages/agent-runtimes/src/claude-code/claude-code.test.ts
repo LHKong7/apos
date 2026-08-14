@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RunEvent, TaskDispatch } from '@apos/contracts';
+import { totalTokens, type RunEvent, type TaskDispatch } from '@apos/contracts';
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeCodeRuntime, PromptStream, type QueryFn } from './adapter';
 import { UnsupportedFeatureError } from '../adapter';
@@ -350,7 +350,7 @@ describe('成本估算', () => {
 // ── 错误分类 ───────────────────────────────────────────────────────
 
 describe('错误分类', () => {
-  it('预算触顶是运行时上报的，不可重试', () => {
+  it('额度触顶是运行时上报的，不可重试', () => {
     const err = classifyResultError({ subtype: 'error_max_budget_usd', maxCostUsd: 5 });
     expect(err.class).toBe('budget_exceeded');
     expect(err.retriable).toBe(false);
@@ -476,7 +476,32 @@ describe('消息翻译', () => {
     expect(cost.totalUsd).toBeCloseTo(4.2, 6);
     expect(cost.deltaUsd).toBeCloseTo(-0.8, 6);
     // ingest 对 token 是累加语义，校正事件必须置零
-    expect(cost.tokens).toEqual({ input: 0, output: 0, cacheRead: 0 });
+    expect(cost.tokens).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  });
+
+  /**
+   * ★ cacheWrite 一度只进了美元估算、没有上报。
+   *
+   *   在美元记账下这不明显（钱是对的），换成 token 记账之后它就是
+   *   系统性少算 —— 而且偏差方向是「看起来更省」，不会有人来报错。
+   *   长上下文任务里缓存写入常常是四类里最大的一项。
+   */
+  it('★ 缓存写入必须上报 —— 少报一类 token 只会让账变小，没人会来报错', () => {
+    const tr = new EventTranslator({ task: task(), maxTurns: 60 });
+    const events = tr.translate(
+      assistantMsg([{ type: 'text', text: 'x' }], {
+        usage: {
+          input_tokens: 100,
+          output_tokens: 200,
+          cache_read_input_tokens: 300,
+          cache_creation_input_tokens: 400,
+        },
+      }),
+    );
+
+    const cost = events.find((e) => e.type === 'cost') as Extract<RunEvent, { type: 'cost' }>;
+    expect(cost.tokens).toEqual({ input: 100, output: 200, cacheRead: 300, cacheWrite: 400 });
+    expect(totalTokens(cost.tokens)).toBe(1000);
   });
 
   it('成功结束时合成产物，PR 链接单列', () => {
@@ -534,7 +559,7 @@ describe('消息翻译', () => {
 
     const ended = events.at(-1) as Extract<RunEvent, { type: 'run_ended' }>;
     expect(ended.outcome).toBe('failed');
-    expect(ended.selfReport).toContain('预算');
+    expect(ended.selfReport).toContain('额度');
   });
 
   it('子 Agent 委派翻译为 delegation', () => {

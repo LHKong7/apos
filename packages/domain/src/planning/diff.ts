@@ -18,7 +18,7 @@ export interface PlanSide {
   status: string;
   createdAt: string;
   estimatedHours: number;
-  estimatedCost: number;
+  estimatedTokens: number;
   tasks: PlanTaskSide[];
   /** 「批准后将自动发生」的快照 */
   autoActions: { title: string; detail?: string }[];
@@ -32,7 +32,7 @@ export interface PlanTaskSide {
   type: string;
   riskLevel: string;
   estimatedHours: number | null;
-  estimatedCost: number | null;
+  estimatedTokens: number | null;
   requiresHuman: boolean;
 }
 
@@ -197,13 +197,13 @@ function diffTaskFields(before: PlanTaskSide, after: PlanTaskSide): FieldChange[
     });
   }
 
-  if (numChanged(before.estimatedCost, after.estimatedCost)) {
+  if (numChanged(before.estimatedTokens, after.estimatedTokens)) {
     out.push({
-      field: 'estimatedCost',
-      label: '成本',
-      before: fmtNum(before.estimatedCost, ''),
-      after: fmtNum(after.estimatedCost, ''),
-      loosened: (after.estimatedCost ?? 0) > (before.estimatedCost ?? 0),
+      field: 'estimatedTokens',
+      label: 'token 用量',
+      before: fmtNum(before.estimatedTokens, ''),
+      after: fmtNum(after.estimatedTokens, ''),
+      loosened: (after.estimatedTokens ?? 0) > (before.estimatedTokens ?? 0),
     });
   }
 
@@ -243,13 +243,13 @@ function diffMetrics(before: PlanSide, after: PlanSide): FieldChange[] {
     });
   }
 
-  if (numChanged(before.estimatedCost, after.estimatedCost)) {
+  if (numChanged(before.estimatedTokens, after.estimatedTokens)) {
     out.push({
-      field: 'estimatedCost',
-      label: '预估成本',
-      before: fmtNum(before.estimatedCost, ''),
-      after: fmtNum(after.estimatedCost, ''),
-      loosened: after.estimatedCost > before.estimatedCost,
+      field: 'estimatedTokens',
+      label: '预估 token 用量',
+      before: fmtNum(before.estimatedTokens, ''),
+      after: fmtNum(after.estimatedTokens, ''),
+      loosened: after.estimatedTokens > before.estimatedTokens,
     });
   }
 

@@ -88,7 +88,12 @@ export class CliOutputTranslator {
        */
       out.push({
         type: 'cost',
-        tokens: { input: this.tokens.input, output: this.tokens.output, cacheRead: 0 },
+        tokens: {
+          input: this.tokens.input,
+          output: this.tokens.output,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
         deltaUsd: 0,
         totalUsd: 0,
       });

@@ -75,8 +75,8 @@ export async function getOverview(db: Database, projectId: string, userId: strin
     doneTasks: done,
     blockedTasks: blocked.length,
     overdueDecisions,
-    costSpent: Number(project.costSpent),
-    budget: project.budgetAmount === null ? null : Number(project.budgetAmount),
+    tokensSpent: project.tokensSpent,
+    tokenBudget: project.tokenBudget,
   });
 
   const delay = predictDelay({
@@ -143,9 +143,9 @@ export async function getOverview(db: Database, projectId: string, userId: strin
     health,
     progress: computeProgress(done, items.length),
     delay,
-    cost: {
-      spent: Number(project.costSpent),
-      budget: project.budgetAmount === null ? null : Number(project.budgetAmount),
+    tokens: {
+      spent: project.tokensSpent,
+      budget: project.tokenBudget,
     },
     decisions: {
       pending: pending.length,
@@ -210,7 +210,7 @@ export async function getOverview(db: Database, projectId: string, userId: strin
         currentRunId: running?.id ?? null,
         successRate: perf?.successRate ?? null,
         runs: perf?.runs ?? 0,
-        cost: perf?.totalCost ?? 0,
+        tokens: perf?.totalTokens ?? 0,
       };
     }),
 

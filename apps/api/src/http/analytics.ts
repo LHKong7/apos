@@ -95,7 +95,7 @@ export async function loadAnalyticsInput(
     actualStart: i.actualStart?.getTime() ?? null,
     actualEnd: i.actualEnd?.getTime() ?? null,
     plannedEnd: i.plannedEnd?.getTime() ?? null,
-    actualCost: Number(i.actualCost),
+    actualTokens: i.actualTokens,
     blockedSince: i.blockedSince?.getTime() ?? null,
     ownerId: i.ownerId,
     executorType: i.executorType,
@@ -130,13 +130,16 @@ export async function loadAnalyticsInput(
     agentId: r.agentId,
     attempt: r.attempt,
     status: r.status as string,
-    cost: Number(r.cost),
+    tokens: r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite,
+    /** ★ 只喂给 ROI（benefit.ts）—— 其余指标一律读 tokens */
+    costUsd: Number(r.cost),
     startedAt: r.startedAt?.getTime() ?? null,
     endedAt: r.endedAt?.getTime() ?? null,
     createdAt: r.createdAt.getTime(),
     tokensInput: r.tokensInput,
     tokensOutput: r.tokensOutput,
     tokensCacheRead: r.tokensCacheRead,
+    tokensCacheWrite: r.tokensCacheWrite,
     errorClass: r.errorClass,
     model: r.model,
   }));
@@ -182,8 +185,8 @@ export async function loadAnalyticsInput(
     agents: agentRows,
     overrides,
     policyEvals,
-    budget: project.budgetAmount === null ? null : Number(project.budgetAmount),
-    costSpentTotal: Number(project.costSpent),
+    tokenBudget: project.tokenBudget,
+    tokensSpentTotal: project.tokensSpent,
   };
 }
 

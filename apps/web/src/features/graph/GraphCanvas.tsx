@@ -5,7 +5,7 @@ import type { GraphEdge, GraphNode, LayoutResult } from '@apos/domain';
 import { NODE_H, NODE_W, edgePath, edgeStyle, fitTransform } from './geometry';
 import { KIND_META, NodeShape } from './shapes';
 import { edgeKey, type HighlightResult } from './highlight';
-import { money } from '../../lib/format';
+import { tokens } from '../../lib/format';
 
 interface Props {
   nodes: GraphNode[];
@@ -291,7 +291,7 @@ export function GraphCanvas({
                             fill="var(--graph-meta)"
                           >
                             {node.durationHours}h
-                            {node.durationEstimated ? t('graph.estimated') : ''} · {money(node.cost)}
+                            {node.durationEstimated ? t('graph.estimated') : ''} · {tokens(node.tokens)}
                             {node.progressPct !== null && ` · ${node.progressPct}%`}
                           </text>
                         </>
@@ -407,7 +407,7 @@ function tooltipOf(node: GraphNode): string {
     node.title,
     `${t(KIND_META[node.kind].labelKey)} · ${node.status}`,
     t('graph.executorLine', { name: node.executor?.name ?? t('graph.unassigned') }),
-    t('graph.durationLine', { hours: node.durationHours, estimated: node.durationEstimated ? t('graph.defaultEstimate') : '', cost: money(node.cost) }),
+    t('graph.durationLine', { hours: node.durationHours, estimated: node.durationEstimated ? t('graph.defaultEstimate') : '', cost: tokens(node.tokens) }),
   ];
   if (node.blockedReason) lines.push(t('graph.blockedLine', { reason: node.blockedReason }));
   if (node.decisionDueInMinutes !== null) {

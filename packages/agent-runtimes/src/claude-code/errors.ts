@@ -19,7 +19,7 @@ export function classifyResultError(input: {
   subtype: ResultSubtype;
   errors?: string[];
   permissionDenials?: { tool_name: string }[];
-  maxCostUsd: number;
+  maxCostUsd: number | null;
 }): AgentError {
   const detail = (input.errors ?? []).join('\n').trim();
 
@@ -27,9 +27,17 @@ export function classifyResultError(input: {
     case 'error_max_budget_usd':
       return {
         class: 'budget_exceeded',
-        message: `执行成本触及上限 $${input.maxCostUsd}，运行时已主动停止`,
+        /**
+         * ★ 这条线是从 token 上限折算出来的保险丝（见 cost.ts
+         *   usdCeilingForTokens），所以报的是「触及上限」而不是一个
+         *   用户配过的美元数 —— 用户从来没有配过美元。
+         */
+        message:
+          input.maxCostUsd === null
+            ? '执行用量触及运行时上限，运行时已主动停止'
+            : `执行用量触及运行时上限（约 $${input.maxCostUsd.toFixed(2)}），运行时已主动停止`,
         retriable: false,
-        selfReport: '任务未完成就用尽了预算。继续需要人类调高预算或缩小任务范围。',
+        selfReport: '任务未完成就用尽了额度。继续需要人类调高 token 上限或缩小任务范围。',
         classificationSource: 'reported',
       };
 

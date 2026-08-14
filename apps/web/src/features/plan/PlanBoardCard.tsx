@@ -1,7 +1,7 @@
 import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import { AssigneeChip } from '../../components/AssigneeChip';
-import { duration } from '../../lib/format';
+import { duration, tokens } from '../../lib/format';
 import type { PlanCard } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 
@@ -76,8 +76,8 @@ export function PlanBoardCard({ plan, onOpen }: { plan: PlanCard; onOpen: (plan:
             {plan.estimatedHours && (
               <span className="ml-1.5 tabular-nums">{Number(plan.estimatedHours)}h</span>
             )}
-            {plan.estimatedCost && (
-              <span className="ml-1.5 tabular-nums">${Number(plan.estimatedCost).toFixed(2)}</span>
+            {plan.estimatedTokens !== null && (
+              <span className="ml-1.5 tabular-nums">{tokens(plan.estimatedTokens)}</span>
             )}
           </span>
           {/*

@@ -18,7 +18,7 @@ function ev(
     level: 'detail',
     summary,
     payload: payload ?? null,
-    costDelta: null,
+    tokensDelta: null,
   };
 }
 

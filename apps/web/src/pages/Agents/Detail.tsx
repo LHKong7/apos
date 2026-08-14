@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, money, relativeTime, riskLabel, statusLabel } from '../../lib/format';
+import { duration, relativeTime, riskLabel, statusLabel, tokens } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CapabilityPanel } from './CapabilityPanel';
@@ -127,9 +127,9 @@ export function AgentDetailPage() {
                 tone={d.performance.firstTrySuccessRate < 0.6 ? 'warn' : 'normal'}
               />
               <Stat
-                label={t('agentDetail.avgCost')}
-                value={money(String(d.performance.avgCost))}
-                sub={t('agentDetail.totalCost', { amount: money(String(d.performance.totalCost)) })}
+                label={t('agentDetail.avgTokens')}
+                value={tokens(d.performance.avgTokens)}
+                sub={t('agentDetail.totalTokens', { amount: tokens(d.performance.totalTokens) })}
               />
               <Stat
                 label={t('agentDetail.avgDuration')}
@@ -235,8 +235,8 @@ export function AgentDetailPage() {
               <span>{t('agentDetail.maxConcurrency', { n: a.maxConcurrency })}</span>
               <span>{t('agentDetail.timeoutMinutes', { n: Math.round(a.timeoutSeconds / 60) })}</span>
               <span>
-                {t('agentDetail.costLimitPerRun')}{' '}
-                {a.costLimitPerRun === null ? t('agentDetail.unset') : money(String(a.costLimitPerRun))}
+                {t('agentDetail.tokenLimitPerRun')}{' '}
+                {a.tokenLimitPerRun === null ? t('agentDetail.unset') : tokens(a.tokenLimitPerRun)}
               </span>
               <span>{t('agentDetail.ownerName', { name: a.ownerName })}</span>
             </div>
@@ -323,7 +323,7 @@ export function AgentDetailPage() {
                       {r.errorClass && (
                         <span className="text-[11px] text-red-600">{r.errorClass}</span>
                       )}
-                      <span className="tabular-nums text-slate-500">{money(String(r.cost))}</span>
+                      <span className="tabular-nums text-slate-500">{tokens(r.tokens)}</span>
                       <span className="text-[11px] text-slate-400">
                         {r.startedAt ? relativeTime(r.startedAt) : '—'}
                       </span>

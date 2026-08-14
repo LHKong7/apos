@@ -50,8 +50,8 @@ const healthy = {
   doneTasks: 10,
   blockedTasks: 0,
   overdueDecisions: 0,
-  costSpent: 100,
-  budget: 1000,
+  tokensSpent: 100,
+  tokenBudget: 1000,
 };
 
 describe('健康度', () => {
@@ -91,14 +91,14 @@ describe('健康度', () => {
   });
 
   /**
-   * ★ 「钱花得多」本身不是问题，「钱花得比活干得快」才是。
+   * ★ 「token 用得多」本身不是问题，「用得比活干得快」才是。
    *   按绝对消耗扣分，会把一个进度也很快的项目判成不健康。
    */
   it('★ 预算按「消耗 vs 进度」判，不按绝对消耗', () => {
-    const fast = computeHealth({ ...healthy, costSpent: 800, doneTasks: 18, totalTasks: 20 });
+    const fast = computeHealth({ ...healthy, tokensSpent: 800, doneTasks: 18, totalTasks: 20 });
     expect(fast.contributions.some((c) => c.key === 'budget_pace')).toBe(false);
 
-    const wasteful = computeHealth({ ...healthy, costSpent: 800, doneTasks: 2, totalTasks: 20 });
+    const wasteful = computeHealth({ ...healthy, tokensSpent: 800, doneTasks: 2, totalTasks: 20 });
     expect(wasteful.contributions.some((c) => c.key === 'budget_pace')).toBe(true);
   });
 
@@ -108,7 +108,7 @@ describe('健康度', () => {
       blockedTasks: 20,
       overdueDecisions: 20,
       agentSuccessRate: 0.1,
-      costSpent: 1000,
+      tokensSpent: 1000,
       doneTasks: 0,
       flow: flow({ flowEfficiency: 0, reworkRate: 0.9, reworkedItems: 18 }),
     });

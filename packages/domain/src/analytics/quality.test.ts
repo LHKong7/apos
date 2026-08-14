@@ -16,7 +16,7 @@ function item(over: Partial<ItemRow> = {}): ItemRow {
     actualStart: T0,
     actualEnd: T0 + DAY,
     plannedEnd: null,
-    actualCost: 0,
+    actualTokens: 0,
     blockedSince: null,
     ownerId: null,
     executorType: 'agent',
@@ -35,8 +35,8 @@ function input(items: ItemRow[]): AnalyticsInput {
     agents: [],
     overrides: [],
     policyEvals: [],
-    budget: null,
-    costSpentTotal: 0,
+    tokenBudget: null,
+    tokensSpentTotal: 0,
   } as unknown as AnalyticsInput;
 }
 

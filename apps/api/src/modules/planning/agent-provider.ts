@@ -11,7 +11,7 @@ import {
   runEvents,
   type Database,
 } from '@apos/db';
-import type { RuntimeRegistry } from '@apos/agent-runtimes';
+import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
 import { WorkspaceService } from '../workspace';
 import { AgentPlanOutput, AgentStructuredOutput, validatePlanGraph } from './agent-output';
@@ -212,7 +212,7 @@ export class AgentPlanningProvider implements PlanningProvider {
         type: t.type,
         phase: t.phase,
         estimatedHours: t.estimatedHours,
-        estimatedCost: t.estimatedCost,
+        estimatedTokens: t.estimatedTokens,
         riskLevel: t.riskLevel,
         requiredSkills: t.requiredSkills,
         requiredTools: t.requiredTools,
@@ -670,9 +670,9 @@ export class AgentPlanningProvider implements PlanningProvider {
       context: [],
       permissions,
       limits: {
-        maxCostUsd: Number(agent.costLimitPerRun ?? 5),
+        maxTokens: agent.tokenLimitPerRun,
+        maxCostUsd: usdCeilingForTokens(agent.model, agent.tokenLimitPerRun),
         maxDurationSeconds: agent.timeoutSeconds,
-        maxTokens: null,
       },
       model: agent.model,
       /**

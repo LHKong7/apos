@@ -160,15 +160,15 @@ describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
       'projectType', 'workItemType', 'riskLevel', 'reversible', 'externalFacing',
       'environment', 'dataSensitivity', 'impactTaskCount', 'impactServices', 'operationType',
       'agentType', 'agentConfidence', 'agentSuccessRate', 'consecutiveFailures',
-      'runCost', 'projectCostSpent', 'projectBudget', 'budgetUsedPct',
+      'runTokens', 'projectTokensSpent', 'projectTokenBudget', 'budgetUsedPct',
       'testsResult', 'testCoverage', 'securityScan', 'agentReview', 'autonomyLevel',
     ]) {
       expect(snapshot, `快照缺少 fact: ${key}`).toHaveProperty(key);
     }
   });
 
-  it('快照反映真实的项目预算与成本', async () => {
-    const item = await createWorkItem(db, fx, { ...assigned, actualCost: '8.2000' });
+  it('快照反映真实的项目 token 预算与用量', async () => {
+    const item = await createWorkItem(db, fx, { ...assigned, actualTokens: 410_000 });
 
     await transition(db, {
       workItemId: item.id,
@@ -179,8 +179,8 @@ describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
 
     const rows = await eventsFor(item.id);
     const snapshot = rows.find((r) => r.type === 'policy.evaluated')!.contextSnapshot!;
-    expect(snapshot.runCost).toBe(8.2);
-    expect(snapshot.projectBudget).toBe(500);
+    expect(snapshot.runTokens).toBe(410_000);
+    expect(snapshot.projectTokenBudget).toBe(5_000_000);
   });
 });
 

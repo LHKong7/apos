@@ -25,9 +25,9 @@ function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
     agentConfidence: 0.9,
     agentSuccessRate: 0.92,
     consecutiveFailures: 0,
-    runCost: 2,
-    projectCostSpent: 50,
-    projectBudget: 500,
+    runTokens: 2,
+    projectTokensSpent: 50,
+    projectTokenBudget: 500,
     budgetUsedPct: 10,
     testsResult: 'passed',
     testCoverage: 84,
@@ -112,13 +112,13 @@ describe('matchCondition', () => {
     const cond = {
       all: [
         { fact: 'riskLevel' as const, op: 'eq' as const, value: 'low' },
-        { fact: 'runCost' as const, op: 'lt' as const, value: 1 },
+        { fact: 'runTokens' as const, op: 'lt' as const, value: 1 },
       ],
     };
-    const r = matchCondition(cond, ctx({ runCost: 8 }));
+    const r = matchCondition(cond, ctx({ runTokens: 8 }));
     expect(r.matched).toBe(false);
     if (!r.matched) {
-      expect(r.failedAt?.fact).toBe('runCost');
+      expect(r.failedAt?.fact).toBe('runTokens');
       expect(r.failedAt?.actual).toBe(8);
       expect(r.failedAt?.expected).toBe(1);
     }
@@ -322,22 +322,22 @@ describe('产品文档 8.9.3 的示例规则', () => {
         { fact: 'riskLevel', op: 'eq', value: 'low' },
         { fact: 'testsResult', op: 'eq', value: 'passed' },
         { fact: 'agentReview', op: 'eq', value: 'passed' },
-        { fact: 'runCost', op: 'lt', value: 10 },
+        { fact: 'runTokens', op: 'lt', value: 10 },
       ],
     },
     action: { type: 'allow_and_notify', notify: [{ kind: 'project_role', role: 'pm' }] },
   });
 
   it('四个条件全满足时自动批准', () => {
-    const v = evaluate(ctx({ runCost: 8 }), compile([lowRiskAutoApprove]));
+    const v = evaluate(ctx({ runTokens: 8 }), compile([lowRiskAutoApprove]));
     expect(v.matchedPolicyId).toBe('low-risk');
     expect(v.requiresHuman).toBe(false);
   });
 
   it('成本超阈值则不命中，回落到默认动作', () => {
-    const v = evaluate(ctx({ runCost: 12 }), compile([lowRiskAutoApprove]));
+    const v = evaluate(ctx({ runTokens: 12 }), compile([lowRiskAutoApprove]));
     expect(v.matchedPolicyId).toBeNull();
-    expect(v.trace[0]?.failedAt?.fact).toBe('runCost');
+    expect(v.trace[0]?.failedAt?.fact).toBe('runTokens');
   });
 });
 

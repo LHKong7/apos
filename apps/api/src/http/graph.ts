@@ -159,7 +159,7 @@ async function buildNodes(
         run && run.stepCurrent !== null && run.stepTotal
           ? Math.round((run.stepCurrent / run.stepTotal) * 100)
           : null,
-      cost: item.actualCost,
+      tokens: item.actualTokens,
       runId: run?.id ?? null,
       humanGateRef: decision?.id ?? null,
       decisionDueInMinutes: decision?.dueAt

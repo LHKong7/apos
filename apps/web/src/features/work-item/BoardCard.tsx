@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
 import { BlockedDuration, CostMeter, HumanGateBadge, PriorityBadge, RiskBadge } from '../../components/badges';
-import { duration, sourceIcon, sourceLabel, statusLabel, typeIcon } from '../../lib/format';
+import { duration, sourceIcon, sourceLabel, statusLabel, tokens, typeIcon } from '../../lib/format';
 import { MOVE_HIGHLIGHT_MS, useBoardStore } from '../../stores/board';
 import type { BoardCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -239,7 +239,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       <>
         <div className="flex items-center justify-between gap-2">
           {chip}
-          <CostMeter spent={card.cost} estimated={card.estimatedCost} />
+          <CostMeter spent={card.tokens} estimated={card.estimatedTokens} />
         </div>
         {pct !== null && (
           <div className="flex items-center gap-1.5">
@@ -282,7 +282,7 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
         <div className="flex items-center justify-between gap-2">
           {chip}
           <span className="text-[11px] tabular-nums text-slate-500">
-            ✓ ${Number(card.cost).toFixed(2)}
+            ✓ {tokens(card.tokens)}
           </span>
         </div>
         {card.owner && (

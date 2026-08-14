@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, relativeTime } from '../../lib/format';
+import { relativeTime, tokens } from '../../lib/format';
 
 /**
  * 这条需求的历次分析 / 规划执行。
@@ -75,7 +75,7 @@ export function AnalysisRuns({ requirementId }: { requirementId: string }) {
                   : ''}
             </span>
             {r.model && <span className="shrink-0 font-mono text-slate-400">{r.model}</span>}
-            <span className="shrink-0 tabular-nums text-slate-500">{money(String(r.cost))}</span>
+            <span className="shrink-0 tabular-nums text-slate-500">{tokens(r.tokens)}</span>
             <span className="shrink-0 text-slate-400">
               {r.startedAt ? relativeTime(r.startedAt) : '—'}
             </span>

@@ -1,4 +1,5 @@
 import type { RiskLevel, WorkItemType } from '@apos/contracts';
+import { formatTokens as fmtTokens } from '../format/tokens';
 
 /**
  * 执行主体匹配 —— 产品文档 8.3.4 / docs/tech/04-flow-engine.md §4.3
@@ -15,10 +16,11 @@ export interface AgentCandidate {
   applicableTypes: WorkItemType[];
   successRate: number | null;
   sampleSize: number;
-  avgCost: number | null;
+  /** 历史平均 token 用量；null = 没有样本 */
+  avgTokens: number | null;
   currentLoad: number;
   maxConcurrency: number;
-  costLimitPerRun: number | null;
+  tokenLimitPerRun: number | null;
   allowedTools: string[];
   deniedTools: string[];
   /** 该 Agent 是否在本项目做过同模块的任务 */
@@ -38,16 +40,16 @@ export interface AgentCandidate {
   registered: boolean;
   /** 该 Agent 被授权的资源（repo / dataset 的 ref），用于比对任务所需资源 */
   resourceRefs: string[];
-  /** 今日已花费，用于日预算闸 */
-  spentToday: number | null;
-  costLimitDaily: number | null;
+  /** 今日已用 token，用于日额度闸 */
+  tokensToday: number | null;
+  tokenLimitDaily: number | null;
 }
 
 export interface MatchTarget {
   type: WorkItemType;
   requiredSkills: string[];
   requiredTools: string[];
-  estimatedCost: number | null;
+  estimatedTokens: number | null;
   riskLevel: RiskLevel;
   /**
    * 谁来执行。
@@ -129,9 +131,9 @@ export function matchExecutors(
     };
   }
 
-  const costs = candidates.map((c) => c.avgCost).filter((c): c is number => c !== null);
-  const minCost = costs.length ? Math.min(...costs) : 0;
-  const maxCost = costs.length ? Math.max(...costs) : 0;
+  const usages = candidates.map((c) => c.avgTokens).filter((c): c is number => c !== null);
+  const minTokens = usages.length ? Math.min(...usages) : 0;
+  const maxTokens = usages.length ? Math.max(...usages) : 0;
 
   for (const agent of candidates) {
     // ── 硬性条件：不满足直接淘汰，并给出原因 ──
@@ -211,29 +213,29 @@ export function matchExecutors(
       continue;
     }
 
-    /** ★ 日预算是硬闸：跑到一半被扣停留下的是半成品，不如一开始就不派 */
+    /** ★ 日额度是硬闸：跑到一半被扣停留下的是半成品，不如一开始就不派 */
     if (
-      agent.costLimitDaily !== null &&
-      agent.spentToday !== null &&
-      agent.spentToday >= agent.costLimitDaily
+      agent.tokenLimitDaily !== null &&
+      agent.tokensToday !== null &&
+      agent.tokensToday >= agent.tokenLimitDaily
     ) {
       rejected.push({
         agentId: agent.id,
         agentName: agent.name,
-        reason: `今日预算已用尽（${agent.spentToday.toFixed(2)}/${agent.costLimitDaily.toFixed(2)}）`,
+        reason: `今日 token 额度已用尽（${fmtTokens(agent.tokensToday)}/${fmtTokens(agent.tokenLimitDaily)}）`,
       });
       continue;
     }
 
     if (
-      target.estimatedCost !== null &&
-      agent.costLimitPerRun !== null &&
-      target.estimatedCost > agent.costLimitPerRun
+      target.estimatedTokens !== null &&
+      agent.tokenLimitPerRun !== null &&
+      target.estimatedTokens > agent.tokenLimitPerRun
     ) {
       rejected.push({
         agentId: agent.id,
         agentName: agent.name,
-        reason: `预估成本 $${target.estimatedCost} 超出该 Agent 单次上限 $${agent.costLimitPerRun}`,
+        reason: `预估 ${fmtTokens(target.estimatedTokens)} token 超出该 Agent 单次上限 ${fmtTokens(agent.tokenLimitPerRun)}`,
       });
       continue;
     }
@@ -244,9 +246,9 @@ export function matchExecutors(
     const successRate = hasStats ? agent.successRate! : NEUTRAL_SUCCESS_RATE;
     const loadFactor = 1 - agent.currentLoad / agent.maxConcurrency;
     const costFactor =
-      agent.avgCost === null || maxCost === minCost
+      agent.avgTokens === null || maxTokens === minTokens
         ? 0.5
-        : 1 - (agent.avgCost - minCost) / (maxCost - minCost);
+        : 1 - (agent.avgTokens - minTokens) / (maxTokens - minTokens);
 
     const score =
       weights.skill * skillMatch +
@@ -265,7 +267,7 @@ export function matchExecutors(
         : `样本不足（${agent.sampleSize} 次），按中性值 ${Math.round(NEUTRAL_SUCCESS_RATE * 100)}% 计`,
       `当前负载 ${agent.currentLoad}/${agent.maxConcurrency}`,
     ];
-    if (agent.avgCost !== null) reasons.push(`平均成本 $${agent.avgCost.toFixed(2)}/任务`);
+    if (agent.avgTokens !== null) reasons.push(`平均 ${fmtTokens(agent.avgTokens)} token/任务`);
     if (agent.contextAffinity > 0.5) reasons.push('做过本项目同类任务');
 
     scores.push({ agentId: agent.id, agentName: agent.name, score, reasons });

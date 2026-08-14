@@ -17,7 +17,7 @@ import {
   type AgentPermissions,
   type TaskDispatch,
 } from '@apos/contracts';
-import type { RuntimeRegistry } from '@apos/agent-runtimes';
+import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { transition } from '../flow/transition';
 import type { WorkspaceService } from '../workspace';
@@ -247,9 +247,9 @@ export async function dispatchRun(
     context,
     permissions: permissionSnapshot,
     limits: {
-      maxCostUsd: Number(agent.costLimitPerRun ?? 20),
+      maxTokens: agent.tokenLimitPerRun,
+      maxCostUsd: usdCeilingForTokens(agent.model, agent.tokenLimitPerRun),
       maxDurationSeconds: agent.timeoutSeconds,
-      maxTokens: null,
     },
     model: agent.model,
     callback: { eventsUrl: `/api/v1/agent-callback/runs/${runId}/events`, token: runId },

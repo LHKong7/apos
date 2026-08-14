@@ -116,7 +116,7 @@ export async function seedFixture(
       name: '订单系统重构',
       techLeadId: user!.id,
       autonomyLevel: overrides.autonomyLevel ?? 'agent_led_approval',
-      budgetAmount: '500.00',
+      tokenBudget: 5_000_000,
     })
     .returning();
 

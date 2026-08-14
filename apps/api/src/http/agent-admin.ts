@@ -107,8 +107,8 @@ export const AgentInput = z.object({
 
   maxConcurrency: z.number().int().positive().max(50).default(3),
   timeoutSeconds: z.number().int().positive().max(86_400).default(1800),
-  costLimitPerRun: z.number().positive().nullable().optional(),
-  costLimitDaily: z.number().positive().nullable().optional(),
+  tokenLimitPerRun: z.number().int().positive().nullable().optional(),
+  tokenLimitDaily: z.number().int().positive().nullable().optional(),
 
   /** ★ 不可为空：出问题时的问责链条不能断 */
   ownerId: z.string().uuid('必须指定负责人'),
@@ -158,8 +158,8 @@ export async function createAgent(
       resourceScopes: input.resourceScopes,
       maxConcurrency: input.maxConcurrency,
       timeoutSeconds: input.timeoutSeconds,
-      costLimitPerRun: input.costLimitPerRun == null ? null : String(input.costLimitPerRun),
-      costLimitDaily: input.costLimitDaily == null ? null : String(input.costLimitDaily),
+      tokenLimitPerRun: input.tokenLimitPerRun ?? null,
+      tokenLimitDaily: input.tokenLimitDaily ?? null,
       ownerId: input.ownerId,
       status: 'active',
     })
@@ -289,11 +289,11 @@ export async function updateAgent(
       ...(input.resourceScopes ? { resourceScopes: input.resourceScopes } : {}),
       ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
       ...(input.timeoutSeconds ? { timeoutSeconds: input.timeoutSeconds } : {}),
-      ...(input.costLimitPerRun !== undefined
-        ? { costLimitPerRun: input.costLimitPerRun == null ? null : String(input.costLimitPerRun) }
+      ...(input.tokenLimitPerRun !== undefined
+        ? { tokenLimitPerRun: input.tokenLimitPerRun ?? null }
         : {}),
-      ...(input.costLimitDaily !== undefined
-        ? { costLimitDaily: input.costLimitDaily == null ? null : String(input.costLimitDaily) }
+      ...(input.tokenLimitDaily !== undefined
+        ? { tokenLimitDaily: input.tokenLimitDaily ?? null }
         : {}),
       ...(input.ownerId ? { ownerId: input.ownerId } : {}),
       updatedAt: new Date(),
@@ -520,8 +520,8 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     permissions: permissionsOf(row),
     maxConcurrency: row.maxConcurrency,
     timeoutSeconds: row.timeoutSeconds,
-    costLimitPerRun: row.costLimitPerRun === null ? null : Number(row.costLimitPerRun),
-    costLimitDaily: row.costLimitDaily === null ? null : Number(row.costLimitDaily),
+    tokenLimitPerRun: row.tokenLimitPerRun,
+    tokenLimitDaily: row.tokenLimitDaily,
 
     capability,
   };

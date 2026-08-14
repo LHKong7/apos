@@ -51,8 +51,8 @@ export interface BoardCard {
   blockedReason: string | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
-  cost: string;
-  estimatedCost: string | null;
+  tokens: number;
+  estimatedTokens: number | null;
   runId: string | null;
   runStatus: string | null;
   consecutiveFailures: number;
@@ -90,7 +90,7 @@ export interface PlanCard {
    */
   approver: { id: string; name: string } | null;
   estimatedHours: string | null;
-  estimatedCost: string | null;
+  estimatedTokens: number | null;
   /**
    * 已经等了多久（分钟）。
    *
@@ -247,7 +247,7 @@ async function loadPendingPlans(
       requirementId: plans.requirementId,
       version: plans.version,
       estimatedHours: plans.estimatedHours,
-      estimatedCost: plans.estimatedCost,
+      estimatedTokens: plans.estimatedTokens,
       createdAt: plans.createdAt,
       requirementTitle: requirements.title,
       requirementRaw: requirements.rawInput,
@@ -287,7 +287,7 @@ async function loadPendingPlans(
     taskCount: taskCount.get(r.id) ?? 0,
     approver,
     estimatedHours: r.estimatedHours,
-    estimatedCost: r.estimatedCost,
+    estimatedTokens: r.estimatedTokens,
     waitingMinutes: Math.round((now - r.createdAt.getTime()) / 60_000),
     createdAt: r.createdAt.toISOString(),
   }));
@@ -446,8 +446,8 @@ async function enrich(
         run && run.stepCurrent !== null
           ? { step: run.stepCurrent, total: run.stepTotal, description: run.stepDescription }
           : null,
-      cost: r.actualCost,
-      estimatedCost: r.estimatedCost,
+      tokens: r.actualTokens,
+      estimatedTokens: r.estimatedTokens,
       runId: run?.id ?? null,
       runStatus: run?.status ?? null,
       consecutiveFailures: r.consecutiveFailures,

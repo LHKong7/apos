@@ -222,8 +222,8 @@ describe('其余体检项', () => {
   });
 
   it('零命中的项目规则给出提示，组织规则不提示', () => {
-    const projectRule = policy('从没命中过', 100, { fact: 'runCost', op: 'gt', value: 9999 }, GATE);
-    const orgRule = policy('组织规则', 5, { fact: 'runCost', op: 'gt', value: 9999 }, GATE, {
+    const projectRule = policy('从没命中过', 100, { fact: 'runTokens', op: 'gt', value: 9999 }, GATE);
+    const orgRule = policy('组织规则', 5, { fact: 'runTokens', op: 'gt', value: 9999 }, GATE, {
       projectId: null,
     });
 
@@ -245,7 +245,7 @@ describe('其余体检项', () => {
    *   作为提示是纯噪声 —— 而体检区一旦有噪声，用户连带会略过真正重要的几条。
    */
   it('★ 刚建的规则不报零命中', () => {
-    const fresh = policy('刚建的', 100, { fact: 'runCost', op: 'gt', value: 9999 }, GATE);
+    const fresh = policy('刚建的', 100, { fact: 'runTokens', op: 'gt', value: 9999 }, GATE);
     const { issues } = auditPolicies([fresh], 'agent_led_approval', [
       { policyId: fresh.id, hits30d: 0, ageDays: 0.01, avgWaitSeconds: null },
     ]);
@@ -297,7 +297,7 @@ describe('其余体检项', () => {
       // 被上一条完全覆盖
       policy('低风险也放行', 20, { fact: 'riskLevel', op: 'eq', value: 'low' }, ALLOW),
       // 用的是网格测不到的 fact，不该被判为不可达
-      policy('成本高的审批', 30, { fact: 'runCost', op: 'gt', value: 100 }, GATE),
+      policy('成本高的审批', 30, { fact: 'runTokens', op: 'gt', value: 100 }, GATE),
     ];
 
     const { issues } = auditPolicies(rules, 'agent_autonomous');

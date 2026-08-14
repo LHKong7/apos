@@ -139,7 +139,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'research',
         phase: 'Research',
         estimatedHours: 4,
-        estimatedCost: 1.5,
+        estimatedTokens: 75_000,
         riskLevel: 'low',
         requiredSkills: ['需求分析'],
         requiredTools: ['read_file'],
@@ -154,7 +154,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'task',
         phase: 'Design',
         estimatedHours: 6,
-        estimatedCost: 2.0,
+        estimatedTokens: 100_000,
         riskLevel: 'low',
         requiredSkills: ['系统设计'],
         requiredTools: ['read_file', 'write_file'],
@@ -169,7 +169,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'task',
         phase: 'Backend',
         estimatedHours: 12,
-        estimatedCost: 6.5,
+        estimatedTokens: 325_000,
         riskLevel: 'medium',
         requiredSkills: ['TypeScript'],
         requiredTools: ['read_file', 'write_file', 'create_pr'],
@@ -184,7 +184,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'test',
         phase: 'Test',
         estimatedHours: 6,
-        estimatedCost: 2.5,
+        estimatedTokens: 125_000,
         riskLevel: 'low',
         requiredSkills: ['测试'],
         requiredTools: ['read_file', 'write_file', 'run_tests'],
@@ -199,7 +199,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'release',
         phase: 'Release',
         estimatedHours: 2,
-        estimatedCost: null,
+        estimatedTokens: null,
         riskLevel: 'high',
         requiredSkills: [],
         requiredTools: [],
@@ -220,7 +220,7 @@ export class StubPlanningProvider implements PlanningProvider {
         type: 'task',
         phase: 'Backend',
         estimatedHours: 4,
-        estimatedCost: null,
+        estimatedTokens: null,
         riskLevel: 'high',
         requiredSkills: ['SQL 优化'],
         requiredTools: [],
@@ -307,7 +307,7 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
         title: '单元测试',
         description: '按验收标准补充单元测试',
         estimatedHours: half,
-        estimatedCost: test.estimatedCost === null ? null : round2(test.estimatedCost / 2),
+        estimatedTokens: test.estimatedTokens === null ? null : Math.round(test.estimatedTokens / 2),
         acceptanceCriteria: [],
       }, {
         ...test,
@@ -315,7 +315,7 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
         title: '集成测试',
         description: '端到端验证与覆盖率达标',
         estimatedHours: test.estimatedHours - half,
-        estimatedCost: test.estimatedCost === null ? null : round2(test.estimatedCost / 2),
+        estimatedTokens: test.estimatedTokens === null ? null : Math.round(test.estimatedTokens / 2),
         dependsOn: [{ ref: 'test-unit', type: 'finish_to_start' }],
       });
       // 原本依赖 test 的任务改依赖拆出来的最后一条
@@ -339,8 +339,4 @@ function mentions(feedback: string, task: PlanTaskDraft): boolean {
   if (/发布|上线|部署/.test(feedback) && task.type === 'release') return true;
   if (/数据库|索引|建表/.test(feedback) && task.operationType === 'db_ddl') return true;
   return false;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

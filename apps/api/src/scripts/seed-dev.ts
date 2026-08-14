@@ -134,7 +134,7 @@ async function main() {
       goal: '把订单查询从 8s 降到 1s 以内，并支持多条件组合查询',
       techLeadId: lead!.id,
       autonomyLevel: 'agent_led_approval',
-      budgetAmount: '500.00',
+      tokenBudget: 5_000_000,
       wipLimits: { execution: 3, review: 4 },
     })
     .returning();
@@ -178,9 +178,9 @@ async function main() {
         allowedTools: ['read_file', 'write_file', 'run_tests', 'create_pr'],
         deniedTools: ['merge_pr'],
         maxConcurrency: 3,
-        costLimitPerRun: '15.0000',
+        tokenLimitPerRun: 800_000,
         ownerId: lead!.id,
-        stats: { successRate: 0.92, sampleSize: 25, avgCost: 5.2 },
+        stats: { successRate: 0.92, sampleSize: 25, avgTokens: 5.2 },
       },
       {
         orgId,
@@ -193,9 +193,9 @@ async function main() {
         allowedTools: ['read_file', 'write_file', 'run_tests'],
         deniedTools: ['merge_pr'],
         maxConcurrency: 2,
-        costLimitPerRun: '8.0000',
+        tokenLimitPerRun: 400_000,
         ownerId: lead!.id,
-        stats: { successRate: 0.81, sampleSize: 16, avgCost: 2.1 },
+        stats: { successRate: 0.81, sampleSize: 16, avgTokens: 2.1 },
       },
       {
         orgId,
@@ -208,9 +208,9 @@ async function main() {
         allowedTools: ['read_file', 'run_tests'],
         deniedTools: ['write_file', 'merge_pr'],
         maxConcurrency: 2,
-        costLimitPerRun: '5.0000',
+        tokenLimitPerRun: 250_000,
         ownerId: lead!.id,
-        stats: { successRate: 0.95, sampleSize: 40, avgCost: 0.9 },
+        stats: { successRate: 0.95, sampleSize: 40, avgTokens: 0.9 },
       },
       {
         orgId,
@@ -223,9 +223,9 @@ async function main() {
         allowedTools: ['read_file', 'create_pr'],
         deniedTools: ['merge_pr'],
         maxConcurrency: 1,
-        costLimitPerRun: '4.0000',
+        tokenLimitPerRun: 200_000,
         ownerId: lead!.id,
-        stats: { successRate: 0.88, sampleSize: 12, avgCost: 1.4 },
+        stats: { successRate: 0.88, sampleSize: 12, avgTokens: 1.4 },
       },
     ])
     .returning();
@@ -423,7 +423,7 @@ async function main() {
       ownerId: pm!.id,
       executorType: 'human',
       executorId: pm!.id,
-      estimatedCost: '0.8000',
+      estimatedTokens: 40_000,
       position: 100,
     })
     .returning();
@@ -469,7 +469,7 @@ async function main() {
       riskLevel: 'medium',
       priority: 1,
       ownerId: lead!.id,
-      estimatedCost: '2.0000',
+      estimatedTokens: 100_000,
       position: 101,
     })
     .returning();
@@ -543,12 +543,12 @@ async function main() {
         orgId,
         projectId,
         name: '低风险任务自动批准',
-        description: '测试通过且成本可控的低风险任务无需人工审批',
+        description: '测试通过且 token 用量可控的低风险任务无需人工审批',
         priority: 100,
         condition: {
           all: [
             { fact: 'riskLevel', op: 'eq', value: 'low' },
-            { fact: 'runCost', op: 'lt', value: 10 },
+            { fact: 'runTokens', op: 'lt', value: 200_000 },
           ],
         },
         action: { type: 'allow_and_notify', notify: [{ kind: 'project_role', role: 'pm' }] },

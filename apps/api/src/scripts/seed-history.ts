@@ -223,7 +223,7 @@ export async function seedHistory(ctx: Ctx): Promise<number> {
         // 排期只给一部分 —— 让「按时交付率」有真实数据，而不是全空或全满。
         // 窗口刻意压到实际耗时附近，才会有一部分真的延期
         plannedEnd: rand() < 0.7 ? new Date(start + (8 + rand() * 16) * HOUR) : null,
-        actualCost: '0',
+        actualTokens: 0,
         createdAt: new Date(start),
         position: 1000 + n,
       });
@@ -377,9 +377,9 @@ function policyEvent(
     agentConfidence: Number((0.6 + rand() * 0.38).toFixed(2)),
     agentSuccessRate: Number((0.7 + rand() * 0.28).toFixed(2)),
     consecutiveFailures: 0,
-    runCost: Number(shape.cost.toFixed(2)),
-    projectCostSpent: 100,
-    projectBudget: 500,
+    runTokens: Number(shape.cost.toFixed(2)),
+    projectTokensSpent: 100,
+    projectTokenBudget: 500,
     budgetUsedPct: 20,
     testsResult: rand() < 0.85 ? 'passed' : 'failed',
     testCoverage: 70 + Math.floor(rand() * 25),

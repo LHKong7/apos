@@ -1,7 +1,7 @@
 import { useT } from '../../lib/i18n';
 import type { Analytics } from '@apos/domain';
 import { BarChart, NotWired, StatTile, TrendChart } from '../../features/analytics/charts';
-import { money } from '../../lib/format';
+import { tokens } from '../../lib/format';
 import { Card } from './Card';
 import { Button } from '@/components/ui/button';
 
@@ -23,14 +23,14 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
       <div className="flex flex-wrap gap-2">
         <StatTile
           label={t('cost.totalInWindow')}
-          value={money(String(cost.total))}
+          value={tokens(cost.total)}
           hint={t('cost.totalHelp')}
         />
         <StatTile
           label={t('cost.perDelivery')}
-          value={cost.perDelivered === null ? '—' : money(String(cost.perDelivered))}
+          value={cost.perDelivered === null ? '—' : tokens(cost.perDelivered)}
           sub={t('cost.delivered', { count: cost.delivered })}
-          delta={deltas?.costPerDelivered}
+          delta={deltas?.tokensPerDelivered}
           higherIsBetter={false}
           hint={t('cost.perDeliveryHelp')}
         />
@@ -40,7 +40,7 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
           <StatTile
             label={t('cost.budgetUsed')}
             value={`${Math.round((cost.budgetSpent / cost.budget) * 100)}%`}
-            sub={`${money(String(cost.budgetSpent))} / ${money(String(cost.budget))}`}
+            sub={`${tokens(cost.budgetSpent)} / ${tokens(cost.budget)}`}
             higherIsBetter={false}
             hint={t('cost.budgetUsedHelp')}
           />
@@ -58,7 +58,7 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
       </div>
 
       <Card title={t('cost.trend')} subtitle={t('cost.trendHint')}>
-        <TrendChart points={cost.trend} format={(v) => money(String(v))} />
+        <TrendChart points={cost.trend} format={(v) => tokens(v)} />
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
@@ -66,8 +66,8 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
           <BarChart
             data={cost.byAgent.map((a) => ({
               label: a.label,
-              value: a.cost,
-              display: `${money(String(a.cost))} ${a.percent}%`,
+              value: a.tokens,
+              display: `${tokens(a.tokens)} ${a.percent}%`,
             }))}
           />
         </Card>
@@ -75,8 +75,8 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
           <BarChart
             data={cost.byType.map((t) => ({
               label: t.label,
-              value: t.cost,
-              display: `${money(String(t.cost))} ${t.percent}%`,
+              value: t.tokens,
+              display: `${tokens(t.tokens)} ${t.percent}%`,
             }))}
           />
         </Card>
@@ -97,7 +97,7 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
                 </span>
                 <span className="shrink-0 text-slate-500">{a.agentName}</span>
                 <span className="shrink-0 tabular-nums font-medium text-orange-700">
-                  {t('cost.timesNormal', { amount: money(String(a.cost)), times: a.times })}
+                  {t('cost.timesNormal', { amount: tokens(a.tokens), times: a.times })}
                 </span>
                 <Button variant="outline" size="xs"
                   onClick={() => onOpenRun(a.runId)}

@@ -232,10 +232,20 @@ export const projects = pgTable(
 
     startsAt: date(),
     endsAt: date(),
-    budgetAmount: numeric({ precision: 12, scale: 2 }),
-    budgetCurrency: text().notNull().default('USD'),
+    /**
+     * 预算以 token 计。
+     *
+     * ★ 换掉金额是因为单价会漂移而 token 不会：一个按美元设的上限，
+     *   在官方调价那天就悄悄变成了另一个上限，而没有任何事件记录这件事。
+     *   token 额度是用户真正能控制的量。
+     *
+     * The budget is denominated in tokens. Unit prices drift and token counts
+     * do not: a dollar-denominated cap silently becomes a different cap the
+     * day the vendor reprices, with no event recording the change.
+     */
+    tokenBudget: bigint({ mode: 'number' }),
     /** 冗余累加，避免看板每张卡片都聚合 agent_runs；每日对账纠偏 */
-    costSpent: numeric({ precision: 12, scale: 2 }).notNull().default('0'),
+    tokensSpent: bigint({ mode: 'number' }).notNull().default(0),
     /**
      * 人力小时成本基准（成本效益换算用）。
      *
@@ -435,7 +445,7 @@ export const plans = pgTable(
     rollbackPlan: jsonb().$type<Record<string, unknown>>(),
 
     estimatedHours: numeric({ precision: 8, scale: 2 }),
-    estimatedCost: numeric({ precision: 10, scale: 2 }),
+    estimatedTokens: bigint({ mode: 'number' }),
     estimatedEnd: date(),
 
     /**
@@ -508,8 +518,8 @@ export const workItems = pgTable(
     actualEnd: timestamp({ withTimezone: true }),
     estimatedHours: numeric({ precision: 6, scale: 2 }),
 
-    estimatedCost: numeric({ precision: 10, scale: 4 }),
-    actualCost: numeric({ precision: 10, scale: 4 }).notNull().default('0'),
+    estimatedTokens: bigint({ mode: 'number' }),
+    actualTokens: bigint({ mode: 'number' }).notNull().default(0),
 
     acceptanceCriteria: jsonb().$type<AcceptanceCriterion[]>().notNull().default([]),
     /** 来自 Approve with Constraints，Agent 执行时必须遵守 */
@@ -825,8 +835,9 @@ export const agents = pgTable(
 
     maxConcurrency: integer().notNull().default(3),
     timeoutSeconds: integer().notNull().default(1800),
-    costLimitPerRun: numeric({ precision: 10, scale: 4 }),
-    costLimitDaily: numeric({ precision: 10, scale: 2 }),
+    /** 用量上限以 token 计，理由同 projects.tokenBudget */
+    tokenLimitPerRun: bigint({ mode: 'number' }),
+    tokenLimitDaily: bigint({ mode: 'number' }),
     retryPolicy: jsonb().$type<Record<string, unknown>>().notNull().default({
       max_attempts: 2,
       backoff_seconds: [60, 300],
@@ -1036,6 +1047,24 @@ export const agentRuns = pgTable(
     tokensInput: bigint({ mode: 'number' }).notNull().default(0),
     tokensOutput: bigint({ mode: 'number' }).notNull().default(0),
     tokensCacheRead: bigint({ mode: 'number' }).notNull().default(0),
+    /**
+     * ★ 缓存写入必须单独记：它按输入价的 1.25 倍计费，在长上下文任务里
+     *   常常是最大的一项。以前只是没落库，于是记账口径换成 token 之后
+     *   会系统性少算 —— 而少算的方向恰好是「看起来更省」，不会有人来报错。
+     */
+    tokensCacheWrite: bigint({ mode: 'number' }).notNull().default(0),
+    /**
+     * 运行时结算的美元值，**仅作参考**，不参与任何上限、预算或告警判定。
+     *
+     * ★ 保留它是因为这是运行时给出的权威账目，丢了就再也算不回来；
+     *   不用它记账是因为它随官方定价漂移。谁是记账单位，看的是
+     *   下游读哪一列 —— 读 tokens_* 的是记账，读这一列的是对账。
+     *
+     * The runtime's settled USD figure, kept for reference only: no limit,
+     * budget, or alert reads it. It is the authoritative bill and cannot be
+     * recomputed once dropped, but it drifts with vendor pricing, which is
+     * why accounting reads the token columns instead.
+     */
     cost: numeric({ precision: 10, scale: 4 }).notNull().default('0'),
     toolCallCount: integer().notNull().default(0),
 
@@ -1105,6 +1134,12 @@ export const runEvents = pgTable(
     level: text().notNull().default('detail'),
     summary: text().notNull(),
     payload: jsonb().$type<Record<string, unknown>>(),
+    /**
+     * 本条事件带来的 token 增量（四类相加）。Run 详情页按步骤聚合它，
+     * 用来回答「哪一步烧掉了配额」。
+     */
+    tokensDelta: bigint({ mode: 'number' }),
+    /** 同 agent_runs.cost：美元参考值，不参与判定 */
     costDelta: numeric({ precision: 10, scale: 6 }),
   },
   (t) => [primaryKey({ columns: [t.runId, t.seq] })],

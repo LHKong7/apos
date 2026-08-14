@@ -7,7 +7,7 @@ function task(title: string, over: Partial<PlanTaskSide> = {}): PlanTaskSide {
     type: 'task',
     riskLevel: 'low',
     estimatedHours: 4,
-    estimatedCost: 2,
+    estimatedTokens: 2,
     requiresHuman: false,
     ...over,
   };
@@ -19,7 +19,7 @@ function plan(over: Partial<PlanSide> = {}): PlanSide {
     status: 'awaiting_approval',
     createdAt: '2026-08-01T00:00:00Z',
     estimatedHours: 8,
-    estimatedCost: 4,
+    estimatedTokens: 4,
     tasks: [task('服务端实现'), task('单元测试')],
     autoActions: [{ title: '服务端实现' }],
     humanGates: [{ taskTitle: '发布到生产环境' }],
@@ -153,18 +153,18 @@ describe('任务级差异', () => {
 });
 
 describe('总量与风险', () => {
-  it('总工时、成本、需人确认数变化都列出来', () => {
-    const before = plan({ estimatedHours: 8, estimatedCost: 4 });
+  it('总工时、token 用量、需人确认数变化都列出来', () => {
+    const before = plan({ estimatedHours: 8, estimatedTokens: 4 });
     const after = plan({
       version: 2,
       estimatedHours: 20,
-      estimatedCost: 12,
+      estimatedTokens: 12,
       tasks: [task('服务端实现'), task('单元测试'), task('新任务')],
     });
 
     const labels = diffPlans(before, after).metrics.map((m) => m.label);
     expect(labels).toContain('总工时');
-    expect(labels).toContain('预估成本');
+    expect(labels).toContain('预估 token 用量');
     expect(labels).toContain('任务数');
   });
 

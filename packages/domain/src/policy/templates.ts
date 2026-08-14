@@ -100,7 +100,7 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
       condition: {
         all: [
           { fact: 'riskLevel', op: 'eq', value: 'low' },
-          { fact: 'runCost', op: 'lt', value: Number(v.maxCost) },
+          { fact: 'runTokens', op: 'lt', value: Number(v.maxCost) },
           ...(v.requireTests === 'yes'
             ? ([{ fact: 'testsResult', op: 'eq', value: 'passed' }] as Condition[])
             : []),
@@ -173,7 +173,7 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
       { key: 'approver', label: '谁来审批', type: 'role', options: ROLE_OPTIONS, default: 'tech_lead' },
     ],
     build: (v) => ({
-      condition: { fact: 'runCost', op: 'gte', value: Number(v.threshold) },
+      condition: { fact: 'runTokens', op: 'gte', value: Number(v.threshold) },
       action: {
         type: 'require_human_review',
         assignee: assignee(String(v.approver)),
@@ -248,7 +248,7 @@ export const EDITABLE_FACTS: FactKey[] = [
   'dataSensitivity',
   'externalFacing',
   'reversible',
-  'runCost',
+  'runTokens',
   'budgetUsedPct',
   'consecutiveFailures',
   'testsResult',

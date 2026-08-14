@@ -197,6 +197,20 @@
       "when": 1786687563172,
       "tag": "0027_requirement_author_agent",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786735409349,
+      "tag": "0028_token_accounting_add",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786735459919,
+      "tag": "0029_token_accounting_drop",
+      "breakpoints": true
     }
   ]
 }

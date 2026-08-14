@@ -13,6 +13,7 @@ import {
 import {
   agentActor,
   MILESTONE_RUN_EVENTS,
+  totalTokens,
   type InterventionRequest,
   type RunEvent,
 } from '@apos/contracts';
@@ -90,6 +91,7 @@ export async function ingestRunEvent(
       level: MILESTONE_RUN_EVENTS.includes(event.type) ? 'milestone' : 'detail',
       summary: summarize(event),
       payload: event as unknown as Record<string, unknown>,
+      tokensDelta: event.type === 'cost' ? totalTokens(event.tokens) : null,
       costDelta: event.type === 'cost' ? String(event.deltaUsd) : null,
     })
     .onConflictDoNothing()
@@ -373,10 +375,16 @@ async function applyRunPatch(db: Database, runId: string, event: RunEvent) {
       await db
         .update(agentRuns)
         .set({
+          /**
+           * ★ token 是累加、美元是覆盖 —— 两种语义不能弄混。
+           *   事件里的 tokens 是本次增量，而 totalUsd 是运行时给的累计权威值
+           *   （结束时那条校正事件正是靠覆盖语义生效的）。
+           */
           cost: String(event.totalUsd),
           tokensInput: sql`${agentRuns.tokensInput} + ${event.tokens.input}`,
           tokensOutput: sql`${agentRuns.tokensOutput} + ${event.tokens.output}`,
           tokensCacheRead: sql`${agentRuns.tokensCacheRead} + ${event.tokens.cacheRead}`,
+          tokensCacheWrite: sql`${agentRuns.tokensCacheWrite} + ${event.tokens.cacheWrite}`,
           lastHeartbeatAt: new Date(),
         })
         .where(eq(agentRuns.id, runId));
@@ -579,21 +587,22 @@ async function promote(
     }
 
     case 'cost': {
-      // 成本累加到项目，并在触及阈值时发事件（页面上的成本预警靠它）
+      // 用量累加到项目，并在触及阈值时发事件（页面上的预算预警靠它）
+      const delta = totalTokens(event.tokens);
       const [project] = await db
         .update(projects)
-        .set({ costSpent: sql`${projects.costSpent} + ${event.deltaUsd}` })
+        .set({ tokensSpent: sql`${projects.tokensSpent} + ${delta}` })
         .where(eq(projects.id, run.projectId))
-        .returning({ spent: projects.costSpent, budget: projects.budgetAmount });
+        .returning({ spent: projects.tokensSpent, budget: projects.tokenBudget });
 
       await db
         .update(workItems)
-        .set({ actualCost: sql`${workItems.actualCost} + ${event.deltaUsd}` })
+        .set({ actualTokens: sql`${workItems.actualTokens} + ${delta}` })
         .where(eq(workItems.id, run.workItemId));
 
       if (project?.budget) {
-        const pct = (Number(project.spent) / Number(project.budget)) * 100;
-        const before = ((Number(project.spent) - event.deltaUsd) / Number(project.budget)) * 100;
+        const pct = (project.spent / project.budget) * 100;
+        const before = ((project.spent - delta) / project.budget) * 100;
         for (const threshold of [80, 100]) {
           if (before < threshold && pct >= threshold) {
             await emitAndPublish(db, {
@@ -670,8 +679,8 @@ async function handleFailure(
     .set({ consecutiveFailures: consecutive })
     .where(eq(workItems.id, run.workItemId));
 
-  const estimated = Number(item?.estimatedCost ?? 0);
-  const spent = Number(item?.actualCost ?? 0);
+  const estimated = item?.estimatedTokens ?? 0;
+  const spent = item?.actualTokens ?? 0;
 
   /**
    * ★ 这里以前硬编码 false，后果是 `switch_agent` 这条分支永远不可达 ——

@@ -79,19 +79,25 @@ export const DEGRADATION_MATRIX: Record<FeatureKey, Degradation> = {
     userImpactEn: 'You cannot see what the Agent based its judgement on',
     severity: 'info',
   },
+  /**
+   * ★ 这两条的严重性在换成 token 记账后对调了。
+   *   美元现在只是参考值，缺了它不影响任何判定；
+   *   token 才是上限、预算与 Analytics 的计量基础，缺了它全线失灵。
+   */
   costReporting: {
-    behavior: '按 token × 单价估算；无 token 则按时长粗估',
-    behaviorEn: 'Estimated as tokens × unit price; without tokens, roughly by duration',
-    userImpact: '成本标注为「估算值」',
-    userImpactEn: 'Cost is labelled "estimated"',
-    severity: 'warning',
+    behavior: '按 token × 单价估算美元参考值',
+    behaviorEn: 'Derives the USD reference figure as tokens × unit price',
+    userImpact: '美元金额标注为「估算值」；token 计量不受影响',
+    userImpactEn: 'The USD figure is labelled "estimated"; token accounting is unaffected',
+    severity: 'info',
   },
   tokenReporting: {
-    behavior: '不记录 token 明细',
-    behaviorEn: 'No token breakdown is recorded',
-    userImpact: '成本构成不可下钻',
-    userImpactEn: 'Cost cannot be drilled into',
-    severity: 'info',
+    behavior: '不记录 token 明细，用量按时长粗估',
+    behaviorEn: 'No token breakdown; usage is roughly estimated from duration',
+    userImpact: 'token 上限与预算对该 Agent 失效，成本页标注「不可计量」',
+    userImpactEn:
+      'Token limits and budgets do not apply to this Agent; the cost page marks it "not measurable"',
+    severity: 'critical',
   },
   progressReporting: {
     behavior: '不显示百分比，只显示已耗时',
@@ -284,9 +290,25 @@ export const TaskDispatch = z.object({
   /** 平台已备好的工作区；null 表示这次派发不涉及代码仓库 */
   workspace: RunWorkspace.nullable().default(null),
   limits: z.object({
-    maxCostUsd: z.number().positive(),
-    maxDurationSeconds: z.number().int().positive(),
+    /**
+     * ★ 平台侧的权威上限。null = 没配（迁移后的默认状态），不拦。
+     *
+     * The platform's authoritative cap. null means unset — the state every
+     * agent is in right after the token-accounting migration — and does not
+     * block dispatch.
+     */
     maxTokens: z.number().int().positive().nullable(),
+    /**
+     * ★ 运行时自带的美元硬停线，**保险丝而非账目**。
+     *   由 maxTokens 按最贵的那类 token 折算而来，因此一定晚于它触发；
+     *   模型价格未知时为 null，此时这道保险丝不存在。
+     *
+     * The runtime's own USD hard stop: a fuse, not an accounting figure.
+     * Derived from maxTokens at the most expensive per-token rate so it always
+     * trips after the token cap; null when the model's price is unknown.
+     */
+    maxCostUsd: z.number().positive().nullable(),
+    maxDurationSeconds: z.number().int().positive(),
   }),
   model: z.string().nullable(),
   callback: z.object({ eventsUrl: z.string(), token: z.string() }),
@@ -417,11 +439,38 @@ export const RunEvent = z.discriminatedUnion('type', [
     agentRef: z.string(),
     goal: z.string(),
   }),
+  /**
+   * 用量事件。事件名保留 `cost` —— 它已经写进了 run_events.type 的历史行，
+   * 改名要连带迁移既有数据，而收益只是一个更贴切的字面量。
+   *
+   * ★ token 是记账单位，美元只是参考值。
+   *   两者都报：token 不随官方定价漂移，适合做上限与预算；
+   *   美元来自运行时的权威结算，适合回答「这个月账单大概多少」。
+   *   谁是记账单位这件事只体现在下游怎么用，不体现在这里报不报。
+   *
+   * The usage event. The name stays `cost`: it is already written into
+   * historical `run_events.type` rows, and renaming it would mean migrating
+   * that data for nothing but a better-fitting literal.
+   *
+   * Tokens are the unit of account; USD is a reference figure. Both are
+   * reported — tokens do not drift with vendor pricing, which is what makes
+   * them usable for limits and budgets, while USD comes from the runtime's
+   * authoritative settlement.
+   */
   RunEventBase.extend({
     type: z.literal('cost'),
     deltaUsd: z.number(),
     totalUsd: z.number(),
-    tokens: z.object({ input: z.number(), output: z.number(), cacheRead: z.number() }),
+    /**
+     * 本次增量的 token 明细。★ cacheWrite 必须报：它按输入价的 1.25 倍计费，
+     * 长上下文任务里往往是最大的一项，漏掉它等于系统性少算。
+     */
+    tokens: z.object({
+      input: z.number(),
+      output: z.number(),
+      cacheRead: z.number(),
+      cacheWrite: z.number(),
+    }),
   }),
   RunEventBase.extend({
     type: z.literal('intervention_request'),
@@ -439,6 +488,25 @@ export const RunEvent = z.discriminatedUnion('type', [
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 export type RunEventType = RunEvent['type'];
+
+/** cost 事件里的 token 明细 / The token breakdown carried by a cost event */
+export type TokenBreakdown = Extract<RunEvent, { type: 'cost' }>['tokens'];
+
+/**
+ * 四类 token 相加 —— 记账单位的唯一定义。
+ *
+ * ★ 之所以要一个函数而不是让每个调用方自己写加法：漏掉一项（历史上就是
+ *   cacheWrite）不会有任何症状，只会让总量偏小，而偏小的方向没有人会来报错。
+ *   放在契约包里，加一类 token 时改一处，所有调用方跟着走。
+ *
+ * The single definition of the unit of account. It is a function rather than
+ * inline addition in each caller because dropping a class (historically
+ * cacheWrite) produces no symptom — only an undercount, and nobody reports a
+ * bill that looks too low. Adding a class is then a one-line change here.
+ */
+export function totalTokens(t: TokenBreakdown): number {
+  return t.input + t.output + t.cacheRead + t.cacheWrite;
+}
 
 /** Omit 不会在联合类型上分配，需要这个包装才能保留判别联合的收窄能力 */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

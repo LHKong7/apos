@@ -337,8 +337,16 @@ export const WorkItem = z.object({
   actualEnd: z.string().datetime().nullable(),
   estimatedHours: z.number().nullable(),
 
-  estimatedCost: z.string().nullable(),
-  actualCost: z.string(),
+  /**
+   * 用量以 token 计，不以金额计 —— 单价会随官方定价漂移，token 不会。
+   * 整数，所以用 number 而不是「金额一律字符串」那条约定里的十进制字符串。
+   *
+   * Usage is accounted in tokens, not currency: unit prices drift with vendor
+   * pricing, token counts do not. These are integers, hence `number` rather
+   * than the decimal-string convention that applies to monetary amounts.
+   */
+  estimatedTokens: z.number().int().nullable(),
+  actualTokens: z.number().int(),
 
   acceptanceCriteria: z.array(AcceptanceCriterion),
   constraints: z.array(ExecutionConstraint),

@@ -205,15 +205,17 @@ export class EventTranslator {
 
     const events: RunEventBody[] = [];
 
-    // ★ 成本校正：SDK 的 total_cost_usd 是权威值，实时估算只是过程量。
+    // ★ 美元校正：SDK 的 total_cost_usd 是权威值，实时估算只是过程量。
     //   tokens 全填 0 —— ingest 对 token 是累加语义，这里再报一次会重复计数。
+    //   注意这条只校正美元那一侧：token 记账不需要校正，
+    //   因为它一路都是实测值，从来没有估算参与。
     const delta = round(msg.total_cost_usd - this.estimatedTotalUsd, 6);
     if (delta !== 0 || !hasPricing(this.model)) {
       events.push({
         type: 'cost',
         deltaUsd: delta,
         totalUsd: round(msg.total_cost_usd, 6),
-        tokens: { input: 0, output: 0, cacheRead: 0 },
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       });
       this.estimatedTotalUsd = msg.total_cost_usd;
     }
@@ -289,7 +291,17 @@ export class EventTranslator {
       type: 'cost',
       deltaUsd,
       totalUsd: this.estimatedTotalUsd,
-      tokens: { input: tokens.input, output: tokens.output, cacheRead: tokens.cacheRead },
+      /**
+       * ★ cacheWrite 以前算进了美元估算却没往上报，于是它在库里不存在。
+       *   记账单位换成 token 之后这就成了系统性少算 —— 而且偏差方向是
+       *   「看起来更省」，没有人会因此来报错。
+       */
+      tokens: {
+        input: tokens.input,
+        output: tokens.output,
+        cacheRead: tokens.cacheRead,
+        cacheWrite: tokens.cacheWrite,
+      },
     };
   }
 }

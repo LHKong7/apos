@@ -44,7 +44,7 @@ describe('卡片按状态裁剪内容', () => {
           humanGateRef: 'd-1',
           decisionDueInMinutes: 240,
           riskLevel: 'high',
-          cost: '8.2000',
+          tokens: 410000,
           progress: { step: 3, total: 5, description: '实现逻辑' },
         })}
         actions={a}
@@ -56,7 +56,7 @@ describe('卡片按状态裁剪内容', () => {
     expect(screen.getByText(/高风险/)).toBeInTheDocument();
     // 进度与成本在待决策卡片上不该出现
     expect(screen.queryByText('60%')).not.toBeInTheDocument();
-    expect(screen.queryByText(/8\.20/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/410k/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /处理/ }));
     expect(a.onHandleGate).toHaveBeenCalled();
@@ -109,15 +109,15 @@ describe('卡片按状态裁剪内容', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
   });
 
-  it('执行中：Agent、进度、成本与最新事件', () => {
+  it('执行中：Agent、进度、token 用量与最新事件', () => {
     render(
       <BoardCard
         card={card({
           status: 'executing',
           executor: { type: 'agent', id: 'a-1', name: 'code-agent-1' },
           progress: { step: 3, total: 5, description: '实现逻辑' },
-          cost: '8.2000',
-          estimatedCost: '12.0000',
+          tokens: 410000,
+          estimatedTokens: 600_000,
           latestNote: '已通过 48/48 测试',
         })}
         actions={actions()}
@@ -126,7 +126,7 @@ describe('卡片按状态裁剪内容', () => {
 
     expect(screen.getByText('code-agent-1')).toBeInTheDocument();
     expect(screen.getByText('60%')).toBeInTheDocument();
-    expect(screen.getByText('$8.20 / $12.00')).toBeInTheDocument();
+    expect(screen.getByText('410k / 600k')).toBeInTheDocument();
     expect(screen.getByText('最新：已通过 48/48 测试')).toBeInTheDocument();
   });
 
@@ -138,14 +138,14 @@ describe('卡片按状态裁剪内容', () => {
           stage: 'done',
           executor: { type: 'agent', id: 'a-1', name: 'code-agent-1' },
           owner: { id: 'u-1', name: '李娜' },
-          cost: '1.2000',
+          tokens: 60000,
           progress: { step: 5, total: 5, description: '完成' },
         })}
         actions={actions()}
       />,
     );
 
-    expect(screen.getByText('✓ $1.20')).toBeInTheDocument();
+    expect(screen.getByText('✓ 60k')).toBeInTheDocument();
     expect(screen.getByText('验收：李娜')).toBeInTheDocument();
     expect(screen.queryByText('100%')).not.toBeInTheDocument();
   });

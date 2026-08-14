@@ -134,8 +134,8 @@ export async function buildPolicyContext(
     .from(workItemDependencies)
     .where(eq(workItemDependencies.fromId, item.id));
 
-  const budget = project?.budgetAmount ? Number(project.budgetAmount) : null;
-  const spent = Number(project?.costSpent ?? 0);
+  const budget = project?.tokenBudget ?? null;
+  const spent = project?.tokensSpent ?? 0;
   const meta = item.typeData;
   const quality = (meta['qualityGate'] ?? {}) as Record<string, unknown>;
   const agentStats = (agent?.stats ?? {}) as Record<string, unknown>;
@@ -159,9 +159,9 @@ export async function buildPolicyContext(
       typeof agentStats['successRate'] === 'number' ? agentStats['successRate'] : null,
     consecutiveFailures: item.consecutiveFailures,
 
-    runCost: Number(item.actualCost),
-    projectCostSpent: spent,
-    projectBudget: budget,
+    runTokens: item.actualTokens,
+    projectTokensSpent: spent,
+    projectTokenBudget: budget,
     budgetUsedPct: budget && budget > 0 ? (spent / budget) * 100 : null,
 
     testsResult: quality['testsPassed'] === true ? 'passed'

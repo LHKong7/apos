@@ -12,7 +12,8 @@ function run(over: Partial<RunRow> = {}): RunRow {
     agentId: 'a1',
     attempt: 1,
     status: 'completed',
-    cost: 1,
+    tokens: 1,
+    costUsd: 1,
     startedAt: T0,
     endedAt: T0 + 2 * H,
     createdAt: T0,
@@ -21,6 +22,7 @@ function run(over: Partial<RunRow> = {}): RunRow {
     tokensInput: 0,
     tokensOutput: 0,
     tokensCacheRead: 0,
+    tokensCacheWrite: 0,
     ...over,
   };
 }
@@ -35,8 +37,8 @@ function input(runs: RunRow[], overrides: { itemId: string; at: number; category
     agents: [],
     overrides,
     policyEvals: [],
-    budget: null,
-    costSpentTotal: 0,
+    tokenBudget: null,
+    tokensSpentTotal: 0,
   } as unknown as AnalyticsInput;
 }
 
@@ -93,7 +95,7 @@ describe('填了基准之后', () => {
    *   得到的是一个营销数字。净投入的情况必须说得出来。
    */
   it('★ 代价大于收益时如实说「净投入」', () => {
-    const b = computeBenefit(input([run({ cost: 500 })]), { laborHourlyCost: 10, currency: '$' });
+    const b = computeBenefit(input([run({ costUsd: 500 })]), { laborHourlyCost: 10, currency: '$' });
     expect(b.net! < 0).toBe(true);
     expect(b.verdict).toContain('净投入');
   });

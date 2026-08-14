@@ -1,6 +1,44 @@
 import { t, type MessageKey } from '../i18n';
 
-/** 成本统一两位小数并带 $ —— 看板上要能一眼横向比较 */
+/**
+ * token 用量。
+ *
+ * ★ 缩写而不是印全数：看板卡片、Agent 列表这些地方要能**一眼横向比较**，
+ *   而 1,203,884 和 984,120 放在一起，先看到的是长度不是大小。
+ *   1.2M 和 984k 才是能扫一眼就排出序的写法。
+ *
+ * ★ 不带千分位本地化：数字缩写在中英文里读法一致（1.2M），
+ *   而 `toLocaleString` 会按 locale 换分隔符，让同一份界面在两种语言下
+ *   宽度不同 —— 卡片布局会跟着抖。
+ *
+ * Token usage, abbreviated. Cards and tables need to be scannable: two full
+ * counts side by side read as lengths before they read as magnitudes.
+ */
+export function tokens(value: number | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return '0';
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `${trimUnit(n / 1e9)}B`;
+  if (abs >= 1e6) return `${trimUnit(n / 1e6)}M`;
+  if (abs >= 1e3) return `${trimUnit(n / 1e3)}k`;
+  return String(Math.round(n));
+}
+
+function trimUnit(v: number): string {
+  return v.toFixed(Math.abs(v) < 10 ? 1 : 0).replace(/\.0$/, '');
+}
+
+/**
+ * 美元金额。
+ *
+ * ★ 记账单位已经是 token，这个函数只剩两处用途：ROI（要和人力成本相减，
+ *   见 domain/analytics/benefit.ts）和 Run 详情里那个标着「参考」的结算值。
+ *   任何新的成本展示都该用 `tokens()` —— 用了这个就意味着那个数会随
+ *   官方调价漂移。
+ *
+ * Only ROI (which must share a unit with labour cost) and the run detail's
+ * reference figure still use this. Anything new should use `tokens()`.
+ */
 export function money(value: string | number | null | undefined): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return '$0.00';

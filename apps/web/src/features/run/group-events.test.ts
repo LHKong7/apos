@@ -11,7 +11,7 @@ function ev(seq: number, type: string, summary: string, payload?: Record<string,
     level: 'detail',
     summary,
     payload: payload ?? null,
-    costDelta: null,
+    tokensDelta: null,
   };
 }
 

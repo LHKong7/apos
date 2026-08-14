@@ -100,7 +100,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
             </select>
           </Field>
 
-          <Field label={t('scenario.cost')}>
+          <Field label={t('scenario.tokens')}>
             <Input
               type="number"
               value={Number(ctx.runCost)}

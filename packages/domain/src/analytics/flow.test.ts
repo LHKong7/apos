@@ -18,7 +18,7 @@ function item(id: string, o: Partial<ItemRow> = {}): ItemRow {
     actualStart: null,
     actualEnd: null,
     plannedEnd: null,
-    actualCost: 0,
+    actualTokens: 0,
     blockedSince: null,
     ownerId: null,
     executorType: null,
@@ -41,8 +41,8 @@ function input(o: Partial<AnalyticsInput> = {}): AnalyticsInput {
     agents: [],
     overrides: [],
     policyEvals: [],
-    budget: null,
-    costSpentTotal: 0,
+    tokenBudget: null,
+    tokensSpentTotal: 0,
     ...o,
   };
 }

@@ -2,7 +2,7 @@ import { useT, type MessageKey } from '../lib/i18n';
 import clsx from 'clsx';
 import type { HumanGate, RiskLevel } from '@apos/contracts';
 import { Badge } from '@/components/ui/badge';
-import { duration, riskLabel } from '../lib/format';
+import { duration, riskLabel, tokens } from '../lib/format';
 
 /**
  * Human Gate 八种状态（页面文档通用组件 §5.1）。
@@ -136,14 +136,14 @@ export function CostMeter({
   spent,
   estimated,
 }: {
-  spent: string | number;
-  estimated: string | number | null;
+  spent: number;
+  estimated: number | null;
 }) {
-  const s = Number(spent ?? 0);
-  const e = estimated === null ? null : Number(estimated);
+  const s = spent;
+  const e = estimated;
 
   if (e === null || e <= 0) {
-    return <span className="text-[11px] tabular-nums text-slate-500">${s.toFixed(2)}</span>;
+    return <span className="text-[11px] tabular-nums text-slate-500">{tokens(s)}</span>;
   }
 
   const pct = Math.min((s / e) * 100, 200);
@@ -161,7 +161,7 @@ export function CostMeter({
         />
       </span>
       <span className={over ? 'text-red-600' : undefined}>
-        ${s.toFixed(2)} / ${e.toFixed(2)}
+        {tokens(s)} / {tokens(e)}
       </span>
     </span>
   );

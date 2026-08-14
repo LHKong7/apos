@@ -6,7 +6,7 @@ import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
-import { money, relativeTime } from '../../lib/format';
+import { relativeTime, tokens } from '../../lib/format';
 import { useOrgStore } from '../../stores/org';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,9 +85,9 @@ export function ProjectListPage() {
                       : p.autonomyLevel}
                   </span>
                   <span className="shrink-0 font-mono text-xs tabular-nums text-slate-500">
-                    {money(p.costSpent)}
-                    {p.budgetAmount && (
-                      <span className="text-slate-400"> / {money(p.budgetAmount)}</span>
+                    {tokens(p.tokensSpent)}
+                    {p.tokenBudget !== null && (
+                      <span className="text-slate-400"> / {tokens(p.tokenBudget)}</span>
                     )}
                   </span>
                   <span className="shrink-0 text-[11px] text-slate-400">
@@ -120,7 +120,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         name: name.trim(),
         ...(goal.trim() ? { goal: goal.trim() } : {}),
         autonomyLevel,
-        ...(budget.trim() ? { budgetAmount: budget.trim() } : {}),
+        ...(budget.trim() ? { tokenBudget: Number(budget.trim()) } : {}),
       }),
     onSuccess: async (res) => {
       await qc.invalidateQueries({ queryKey: qk.projects() });
