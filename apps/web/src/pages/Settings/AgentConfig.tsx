@@ -2648,16 +2648,11 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
 
                   <p className="mt-0.5 text-[11px] text-slate-400">{t(hintKey)}</p>
                   {/*
-                    ★ planner 必须能处理 requirement。在这里就说出来，
-                      而不是等第一次分析失败 —— 那时用户已经在等结果了。
+                    ★ 这里曾经对 planner 提示「适用类型里没有 requirement，做不了规划」。
+                      那条判据已经取消 —— 它管的是派工作项时的执行者匹配，
+                      而规划与 PRD 编写不派工作项（见 http/project-agents.ts）。
+                      留着这行黄字会指着一个其实跑得动的绑定说它跑不动。
                   */}
-                  {role === 'planner' &&
-                    bound &&
-                    !bound.applicableTypes.includes('requirement') && (
-                      <p className="mt-1 text-[11px] text-amber-700">
-                        {t('binding.plannerNeedsRequirement', { name: bound.agentName })}
-                      </p>
-                    )}
                 </div>
               );
             })}

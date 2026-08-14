@@ -248,8 +248,8 @@ async function main() {
      *   而底下是关键词正则，用户拿回自己的原话换了三个标签，
      *   只会觉得「这 AI 真差」——没人会想到根本没接模型。
      *
-     * ★ 用哪个运行时由组织里的 Agent 配置决定（applicableTypes 含
-     *   requirement 的那个），claude-code / codex / 将来的 pi / kimi
+     * ★ 用哪个运行时由挑中的那个 Agent 的配置决定（候选是项目的 Agent
+     *   成员，见 pickAgent），claude-code / codex / 将来的 pi / kimi
      *   都走 AgentRuntimeAdapter 这一个接口，这里不用区分。
      */
     provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider(), {

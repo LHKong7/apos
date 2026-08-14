@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import {
   agentRuns,
@@ -61,7 +61,25 @@ function planningEventSummary(e: RunEvent): string {
   }
 }
 
-/** 规划 Agent 的判据：能处理 `requirement` 类型的工作项 */
+/**
+ * 自动挑选时**优先**考虑的适用类型 —— 注意是偏好，不是门槛。
+ *
+ * ★★ `applicableTypes` 回答的是「派工作项时能不能派给它」
+ *   （domain/flow/matching.ts 里那条 `applicableTypes.includes(target.type)`），
+ *   而写 PRD 根本不经过派工：这会儿工作项还不存在，那正是
+ *   `agent_runs.work_item_id` 被放开成可空的原因。拿它当门槛是把两件事
+ *   混成了一件，代价是项目里明明有一队 Agent，能写 PRD 的却是零个 ——
+ *   而用户在需求页上看到的是一个空下拉框，没有任何线索说明为什么。
+ *
+ *   所以现在：**项目 Agent 成员都能写 PRD**，这个类型只用来给自动挑选
+ *   排个先后。人点了名的那个一律照办（见 pickAgent）。
+ *
+ *   `applicableTypes` answers "can this agent be *assigned* a work item of
+ *   type X" — PRD authoring dispatches no work item at all, so gating on it
+ *   conflated two things and left projects with a full agent team and zero
+ *   eligible PRD authors. Any project agent member can author now; this type
+ *   only orders the automatic pick.
+ */
 const PLANNING_TYPE = 'requirement';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -374,7 +392,16 @@ export class AgentPlanningProvider implements PlanningProvider {
    */
   private unusableReason(agent: typeof agents.$inferSelect): string | null {
     if (agent.status !== 'active') return agent.status;
-    if (!agent.applicableTypes.includes(PLANNING_TYPE)) return `适用类型里没有 ${PLANNING_TYPE}`;
+    /**
+     * ★ 这里**不再**卡 applicableTypes。理由见 PLANNING_TYPE 上的那段：
+     *   它是派工作项的判据，不是「能不能写 PRD」的判据。留在这里的话，
+     *   需求页上刚放开的选择会在分析这一刻被否掉 —— 校验从「选的时候」
+     *   推迟到「等结果的时候」，是这个功能最不该有的表现。
+     *
+     *   Deliberately no applicableTypes gate: it decides work-item dispatch,
+     *   not PRD authorship. Keeping it here would veto at analysis time the
+     *   very pick the requirement page just accepted.
+     */
     if (!this.registry.has(agent.id)) return '运行时未注册';
     return null;
   }
@@ -387,6 +414,10 @@ export class AgentPlanningProvider implements PlanningProvider {
    *   三个后果：用户指定不了；想换只能去改另一个 Agent 的配置或建号顺序；
    *   而且它**完全不看项目成员关系** —— 组织里任何一个 Agent 都可能被拉来
    *   读这个项目的需求，而项目正是权限与上下文的边界。
+   *
+   * ★★ 候选是**项目的 Agent 成员**，全体，不按适用类型筛。
+   *   写 PRD 不是派工作项，applicableTypes 在这一条路上只排先后
+   *   （见 PLANNING_TYPE）。授权边界仍然是成员关系，一道不减。
    *
    * ★ 绑定优先，没绑定才回退到旧的「组织内自动挑」，并且**在回退时说出来**
    *   （reason 会一路进到 model 字段里，见类文档那条纪律）。直接报错的话，
@@ -502,7 +533,7 @@ export class AgentPlanningProvider implements PlanningProvider {
       };
     }
 
-    const [row] = await this.db
+    const candidates = await this.db
       .select()
       .from(agents)
       .where(
@@ -510,18 +541,39 @@ export class AgentPlanningProvider implements PlanningProvider {
           eq(agents.orgId, scope.orgId),
           eq(agents.status, 'active'),
           inArray(agents.id, members.map((m) => m.actorId)),
-          sql`${agents.applicableTypes} @> ARRAY[${PLANNING_TYPE}]::work_item_type[]`,
         ),
       )
-      .orderBy(agents.createdAt)
-      .limit(1);
+      .orderBy(agents.createdAt);
 
-    if (!row) {
+    if (candidates.length === 0) {
       return {
         agent: null,
-        reason: `这个项目还没有绑定规划 Agent，成员里也没有适用于 ${PLANNING_TYPE} 的可用 Agent`,
+        reason: '这个项目还没有绑定规划 Agent，成员里也没有启用中的 Agent',
       };
     }
+
+    /**
+     * ★★ 「适用类型含 requirement」在这里是**排序偏好**，不是过滤条件。
+     *
+     *   以前它是一条 SQL where：一个项目哪怕有五个 Agent 成员，只要没人
+     *   勾过 requirement，自动挑就返回空，分析直接退成规则占位 —— 而那
+     *   五个 Agent 里任何一个都写得了 PRD。现在勾过的排在前面，没勾过的
+     *   照样能被挑中。
+     *
+     * ★ 先按「现在可用」分层，再按偏好挑：反过来的话，会挑中一个勾了
+     *   requirement 但运行时没注册的，而旁边就站着一个跑得动的。
+     *   一个都不可用时退回整份名单，好让 run() 报出那条具体的原因，
+     *   而不是含混的「没有可用 Agent」。
+     *
+     *   Preference, not filter: agents declaring `requirement` sort first, but
+     *   any active project agent member can be picked. Usability is layered
+     *   ahead of preference so a declared-but-unregistered agent never beats a
+     *   runnable one.
+     */
+    const usable = candidates.filter((a) => this.unusableReason(a) === null);
+    const pool = usable.length > 0 ? usable : candidates;
+    const row = pool.find((a) => a.applicableTypes.includes(PLANNING_TYPE)) ?? pool[0]!;
+
     return { agent: row, reason: '' };
   }
 

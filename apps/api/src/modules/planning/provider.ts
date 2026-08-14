@@ -11,8 +11,8 @@ import type { AcceptanceCriterion, DependencyType, WorkItemType } from '@apos/co
 /**
  * 这次规划属于谁。
  *
- * ★ 走真实 Agent 的 provider 需要它来挑执行者：规划 Agent 是按组织配置的
- *   （agents.applicableTypes 含 `requirement`），不给 scope 就只能退回规则占位。
+ * ★ 走真实 Agent 的 provider 需要它来挑执行者：候选是**这个项目的 Agent 成员**
+ *   （成员关系是授权，不是偏好），不给 scope 就只能退回规则占位。
  *
  * ★ 做成可选而不是必填：StubProvider 根本不看它，而一堆既有测试是直接
  *   构造 StructureInput 的 —— 为了一个它们用不到的字段去改测试，

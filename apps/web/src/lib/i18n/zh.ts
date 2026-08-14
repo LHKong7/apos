@@ -364,7 +364,7 @@ export const zh: Record<keyof typeof en, string> = {
   'requirement.author.saving': '保存中…',
   'requirement.author.failed': '更换编写 Agent 失败',
   'requirement.author.noneEligible':
-    '这个项目的 Agent 成员里没有能写 PRD 的 —— 适用类型要含 requirement。去「成员与角色」加一个，或在 Agent 配置里勾上它。',
+    '这个项目还没有 Agent 成员 —— 去「成员与角色」加一个，加进来的任何一个都能写这份 PRD。',
   'requirement.author.gone': '{name} 已不是这个项目的成员，下一次分析会失败。换一个，或改回按项目绑定挑。',
   'requirement.author.inactive': '{name} 当前是 {status}，下一次分析会失败。',
 
@@ -1938,7 +1938,6 @@ export const zh: Record<keyof typeof en, string> = {
   'binding.coordinatorHint': '协调看板上的任务。',
   'binding.reviewer': '评审 Agent',
   'binding.reviewerHint': '审查交付物。',
-  'binding.plannerNeedsRequirement': '⚠ {name} 的适用类型里没有 requirement，做不了规划 —— 去 Agent 配置里勾上它。',
   'binding.fallback': '备选',
   'binding.noFallback': '不设 —— 主 Agent 不可用就直接失败',
   'artifact.fileCount': '{count} 个文件',

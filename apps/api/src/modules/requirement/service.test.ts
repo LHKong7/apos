@@ -169,7 +169,14 @@ describe('setRequirementAuthorAgent 的判据', () => {
     expect(row!.authorAgentId).toBeNull();
   });
 
-  it('适用类型不含 requirement 的 Agent 被拒，并回报它现在有哪些类型', async () => {
+  /**
+   * ★★ 适用类型不再是门槛：项目里的任何一个 Agent 成员都写得了 PRD。
+   *
+   *   那条判据是从派工作项那边借来的（matchExecutors 按
+   *   applicableTypes 匹配执行者），而写 PRD 不派工作项 —— 借过来的后果
+   *   是一个配了整队 Agent 的项目，能写 PRD 的却是零个。
+   */
+  it('适用类型不含 requirement 的 Agent 照样能被指定，并且真的落库', async () => {
     const id = await createRequirement();
     const coder = await seedAgent(db, fx, { name: 'coder', applicableTypes: ['task', 'bug'] });
 
@@ -180,9 +187,30 @@ describe('setRequirementAuthorAgent 的判据', () => {
       correlationId: randomUUID(),
     });
 
-    expect(result).toMatchObject({ ok: false, code: 'CANNOT_AUTHOR', agentName: 'coder' });
-    if (!result.ok && result.code === 'CANNOT_AUTHOR') {
-      expect(result.applicableTypes).toContain('task');
-    }
+    expect(result).toMatchObject({ ok: true, agentId: coder.agentId, agentName: 'coder' });
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBe(coder.agentId);
+  });
+
+  /**
+   * ★ 成员校验是**授权**，与适用类型那条放宽是两回事 —— 放宽了前者，
+   *   后者一道不减。规划 Run 会把项目资源只读挂进 Agent 的工作区。
+   */
+  it('放宽适用类型之后，非成员仍然被拒 —— 授权那道没跟着松', async () => {
+    const id = await createRequirement();
+    const outsider = await seedAgent(db, fx, {
+      name: 'outsider-coder',
+      applicableTypes: ['task'],
+      inProject: false,
+    });
+
+    const result = await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: outsider.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_PROJECT_MEMBER' });
   });
 });

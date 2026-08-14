@@ -1347,10 +1347,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     });
 
     /**
-     * ★ 四种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
+     * ★ 三种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
      *   「需求已结案」要去重新打开，「不在这个项目里」要去成员页，
-     *   「适用类型没勾 requirement」要去 Agent 配置页。出路各不相同，
+     *   「这个 Agent 不存在」多半是别处删掉了。出路各不相同，
      *   合并之后用户只能挨个试。
+     *
+     * ★ 这里曾经还有第四种：「适用类型没勾 requirement」。它已经取消 ——
+     *   项目的 Agent 成员都能写 PRD，理由见 setRequirementAuthorAgent。
      */
     if (!result.ok) {
       if (result.code === 'REQUIREMENT_SETTLED') {
@@ -1360,17 +1363,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         );
       }
       if (result.code === 'AGENT_NOT_FOUND') throw notFound('Agent');
-      if (result.code === 'NOT_PROJECT_MEMBER') {
-        throw new ApiError(
-          'VALIDATION_FAILED',
-          `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-          { agentId: body.agentId },
-        );
-      }
       throw new ApiError(
         'VALIDATION_FAILED',
-        `${result.agentName} 的适用类型里没有 requirement，写不了 PRD —— 在 Agent 配置里勾上它`,
-        { agentId: body.agentId, applicableTypes: result.applicableTypes },
+        `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
+        { agentId: body.agentId },
       );
     }
 

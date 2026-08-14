@@ -73,7 +73,7 @@ export async function listProjectAgents(db: Database, projectId: string) {
  * 绑定 / 解绑一个角色。
  *
  * ★ 校验放在保存这一刻，理由与仓库登记那边一样：等到第一次分析才发现
- *   「这个 Agent 不适用于 requirement」，代价是一次白跑的规划，
+ *   「这个 Agent 不是本项目成员」，代价是一次白跑的规划，
  *   而那时用户已经在等结果了。
  */
 export async function setProjectAgent(
@@ -118,17 +118,21 @@ export async function setProjectAgent(
   }
 
   /**
-   * ★ planner 必须能处理 requirement，否则绑上去也跑不动。
-   *   coordinator / reviewer 暂不校验类型：它们的判据还没定死，
-   *   现在卡死会把「先绑上再配」这条正常路径堵住。
+   * ★★ 三个角色都**不校验 applicableTypes**。
+   *
+   *   planner 这一格以前卡「适用类型含 requirement」，与需求页上的 PRD
+   *   编写 Agent 是同一条判据 —— 那条判据现在取消了（见
+   *   modules/requirement/service.ts）：它管的是派工作项时的执行者匹配，
+   *   而规划与 PRD 编写压根不经过派工。留一半在这里的话，同一个 Agent
+   *   在需求页上选得上、在项目设置里绑不上，而两处指的是同一件活。
+   *
+   *   No applicableTypes gate on any role: it governs work-item dispatch
+   *   matching, which planning never goes through. Keeping it only here would
+   *   let an agent be picked as PRD author on the requirement page yet be
+   *   refused as the project's planner — the same job, two answers.
+   *
+   * ★ 成员校验照旧 —— 那是授权，不是偏好。
    */
-  if (input.role === 'planner' && !agent.applicableTypes.includes('requirement')) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      `${agent.name} 的适用类型里没有 requirement，做不了规划 —— 在 Agent 配置里勾上它`,
-      { agentId: input.agentId, applicableTypes: agent.applicableTypes },
-    );
-  }
 
   await db
     .insert(projectAgentBindings)

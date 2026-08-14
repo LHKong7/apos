@@ -384,7 +384,7 @@ export const en = {
   'requirement.author.saving': 'Saving…',
   'requirement.author.failed': 'Could not change the author agent',
   'requirement.author.noneEligible':
-    'None of this project’s agent members can author a PRD — an agent needs "requirement" among its applicable types. Add one under Members & roles, or tick it in the agent configuration.',
+    'This project has no agent members yet — add one under Members & roles, and any agent on the team can author this PRD.',
   'requirement.author.gone':
     '{name} is no longer a member of this project, so the next analysis will fail. Pick another agent, or go back to the project binding.',
   'requirement.author.inactive': '{name} is currently {status}; the next analysis will fail.',
@@ -1965,7 +1965,6 @@ export const en = {
   'binding.coordinatorHint': 'Coordinates board tasks.',
   'binding.reviewer': 'Reviewer',
   'binding.reviewerHint': 'Reviews deliverables.',
-  'binding.plannerNeedsRequirement': '⚠ {name} does not have requirement in its applicable types, so it cannot plan — tick it in the agent configuration.',
   'binding.fallback': 'Fallback',
   'binding.noFallback': 'None — fail if the primary is unavailable',
   'artifact.fileCount': '{count} files',
