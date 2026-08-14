@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agents, projectMembers } from '@apos/db';
+import { agents, projectAgentBindings, projectMembers } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, type AgentRuntimeAdapter } from '@apos/agent-runtimes';
 import type {
   CapabilityManifest,
@@ -91,12 +93,17 @@ const STRUCTURED_OUTPUT = {
   assumptions: [],
 };
 
-async function seedPlanningAgent(registry: RuntimeRegistry, runtime: AgentRuntimeAdapter) {
+async function seedPlanningAgent(
+  registry: RuntimeRegistry,
+  runtime: AgentRuntimeAdapter,
+  name = 'planner-1',
+  opts: { inProject?: boolean } = {},
+) {
   const [agent] = await db
     .insert(agents)
     .values({
       orgId: fx.orgId,
-      name: 'planner-1',
+      name,
       type: 'planning',
       runtimeKind: 'mock',
       capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
@@ -119,13 +126,16 @@ async function seedPlanningAgent(registry: RuntimeRegistry, runtime: AgentRuntim
    *   回一句「这个项目还没有绑定规划 Agent」并退到规则占位，
    *   于是下面几条验的就不是真 Agent 那条链路了。
    */
-  await db.insert(projectMembers).values({
-    orgId: fx.orgId,
-    projectId: fx.projectId,
-    actorType: 'agent',
-    actorId: agent!.id,
-    role: 'executor',
-  });
+  /** ★ inProject:false 用来测「点名一个非本项目成员的 Agent」那条授权路径 */
+  if (opts.inProject ?? true) {
+    await db.insert(projectMembers).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      actorType: 'agent',
+      actorId: agent!.id,
+      role: 'executor',
+    });
+  }
   return agent!;
 }
 
@@ -217,5 +227,124 @@ describe('规划 Agent 的工作区', () => {
     });
 
     expect(result.model).toContain('规划 Agent');
+  });
+});
+
+/**
+ * 需求上点名的编写 Agent（scope.agentId）。
+ *
+ * ★★ 这一组的中心只有一条：**点名之后绝不换人**。
+ *   点名的那个不可用时如实失败并说出原因，而不是悄悄找另一个跑完 ——
+ *   后者在界面上一切正常，产出却来自一个用户没选的 Agent。
+ */
+describe('点名指定的 PRD 编写 Agent', () => {
+  it('压过项目绑定：绑定的是 A，点名 B 就由 B 跑', async () => {
+    const registry = new RuntimeRegistry();
+    const boundRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'A 写的' });
+    const namedRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'B 写的' });
+
+    const bound = await seedPlanningAgent(registry, boundRuntime, 'planner-A');
+    const named = await seedPlanningAgent(registry, namedRuntime, 'planner-B');
+    await db.insert(projectAgentBindings).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      role: 'planner',
+      priority: 0,
+      agentId: bound.id,
+      createdBy: fx.userId,
+    });
+
+    const result = await provider(registry).structureRequirement({
+      rawInput: '订单超时要重试',
+      projectType: 'web',
+      context: [],
+      scope: { orgId: fx.orgId, projectId: fx.projectId, agentId: named.id },
+    });
+
+    expect(result.title).toBe('B 写的');
+    // 绑定的那个一次都没被派到
+    expect(boundRuntime.lastTask).toBeNull();
+    expect(namedRuntime.lastTask).not.toBeNull();
+  });
+
+  /**
+   * ★★ 授权：非本项目成员的 Agent 即使被点名也不能跑。
+   *   这个 id 是从 HTTP 请求一路传下来的，而项目是权限与上下文的边界 ——
+   *   规划 Run 会把项目资源只读挂进工作区。
+   */
+  it('点名一个非本项目成员的 Agent：不跑，且说出是成员关系的问题', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(STRUCTURED_OUTPUT);
+    const outsider = await seedPlanningAgent(registry, runtime, 'outsider', {
+      inProject: false,
+    });
+
+    const result = await provider(registry).structureRequirement({
+      rawInput: '订单超时要重试',
+      projectType: 'web',
+      context: [],
+      scope: { orgId: fx.orgId, projectId: fx.projectId, agentId: outsider.id },
+    });
+
+    expect(runtime.lastTask).toBeNull();
+    expect(result.model).toContain('不是这个项目的成员');
+  });
+
+  /**
+   * ★★ 有一个完全可用的备选摆在那里，也不许拿它顶上。
+   *   这条是整组的核心：静默换人比失败更糟。
+   */
+  it('点名的 Agent 停用时：不退给别人，回退到规则占位并说明', async () => {
+    const registry = new RuntimeRegistry();
+    const healthyRuntime = new FileWritingRuntime(STRUCTURED_OUTPUT);
+    const pausedRuntime = new FileWritingRuntime(STRUCTURED_OUTPUT);
+
+    await seedPlanningAgent(registry, healthyRuntime, 'healthy');
+    const paused = await seedPlanningAgent(registry, pausedRuntime, 'paused-one');
+    await db.update(agents).set({ status: 'paused' }).where(eq(agents.id, paused.id));
+
+    const result = await provider(registry).structureRequirement({
+      rawInput: '订单超时要重试',
+      projectType: 'web',
+      context: [],
+      scope: { orgId: fx.orgId, projectId: fx.projectId, agentId: paused.id },
+    });
+
+    expect(result.model).toContain('paused-one');
+    expect(result.model).toContain('paused');
+    // 健康的那个没有被拿来顶班
+    expect(healthyRuntime.lastTask).toBeNull();
+  });
+
+  it('点名的 Agent 已被删除：如实说不存在', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(STRUCTURED_OUTPUT);
+    await seedPlanningAgent(registry, runtime, 'still-here');
+
+    const result = await provider(registry).structureRequirement({
+      rawInput: '订单超时要重试',
+      projectType: 'web',
+      context: [],
+      scope: { orgId: fx.orgId, projectId: fx.projectId, agentId: randomUUID() },
+    });
+
+    expect(runtime.lastTask).toBeNull();
+    expect(result.model).toContain('已不存在');
+  });
+
+  it('没点名时行为不变，仍然按项目成员自动挑', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(STRUCTURED_OUTPUT);
+    await seedPlanningAgent(registry, runtime, 'auto-picked');
+
+    const result = await provider(registry).structureRequirement({
+      rawInput: '订单超时要重试',
+      projectType: 'web',
+      context: [],
+      scope: { orgId: fx.orgId, projectId: fx.projectId },
+    });
+
+    expect(result.title).toBe('订单超时重试');
+    expect(runtime.lastTask).not.toBeNull();
   });
 });

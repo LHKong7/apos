@@ -21,7 +21,21 @@ export async function seedAgent(
     maxConcurrency?: number;
     costLimitPerRun?: string;
     stats?: Record<string, unknown>;
-    applicableTypes?: ('task' | 'bug' | 'test' | 'research' | 'review' | 'release')[];
+    /**
+     * ★ 含 `requirement`：规划 / PRD 编写 Agent 靠这个类型被挑中
+     *   （pickAgent 的 PLANNING_TYPE）。此前这个联合漏了它，于是想造一个
+     *   「能写 PRD 的 Agent」只能绕开夹具直接插表 —— 而绕开夹具的测试
+     *   造出来的形态迟早与真实路径分家。
+     */
+    applicableTypes?: (
+      | 'task'
+      | 'bug'
+      | 'test'
+      | 'research'
+      | 'review'
+      | 'release'
+      | 'requirement'
+    )[];
     /**
      * 把这个 Agent 登记成项目成员。默认 **true** —— 派发的硬性前置就是
      * 项目成员关系（domain 的 matchExecutors 里那条 inProject），

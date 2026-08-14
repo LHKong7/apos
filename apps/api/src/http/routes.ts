@@ -154,6 +154,7 @@ import {
   invalidateAssumption,
   listAssumptions,
   reopenRequirement,
+  setRequirementAuthorAgent,
 } from '../modules/requirement/service';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
 import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
@@ -1281,7 +1282,31 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .from(requirementClarifications)
       .where(eq(requirementClarifications.requirementId, id));
 
-    return { requirement, clarifications };
+    /**
+     * ★★ 指定的编写 Agent 连**名字**一起给出去，不能只给 id。
+     *
+     *   前端的下拉框只装得下「本项目现有的 Agent 成员」。那个 Agent 后来被
+     *   移出项目（或停用）的话，下拉框里找不到它，界面就会显示成「未指定」——
+     *   而库里明明还指着它，下一次分析也会照着它失败。选择被静默抹掉，
+     *   正是这个功能最该避免的那种表现。
+     *
+     *   The name ships alongside the id: the dropdown only holds agents that
+     *   are currently project members, so an agent later removed from the
+     *   project would render as "unset" while the row still points at it.
+     */
+    const [author] = requirement.authorAgentId
+      ? await db
+          .select({ id: agents.id, name: agents.name, status: agents.status })
+          .from(agents)
+          /**
+           * ★ 顺手带上 orgId：写入那一侧已经拦了跨组织的 id，这里再限一次，
+           *   万一哪天有别的写入路径漏了，表现是「显示成未指定」而不是
+           *   「把别的组织的 Agent 名字念出来」。
+           */
+          .where(and(eq(agents.id, requirement.authorAgentId), eq(agents.orgId, requirement.orgId)))
+      : [];
+
+    return { requirement, clarifications, authorAgent: author ?? null };
   });
 
   app.post('/api/v1/requirements/:id/analyze', async (req) => {
@@ -1292,6 +1317,64 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       correlationId: corr(req),
       actor,
     });
+  });
+
+  /**
+   * 指定这条需求的 PRD 编写 Agent（页面文档 03 §5.4）。
+   *
+   * ★ 单独一条路由，不并进 PATCH /requirements/:id。
+   *   那条路的语义是「人工改结构化字段」：它会把改过的字段标成 👤 人工、
+   *   重算完整度、推进状态。选谁来写不是需求的内容，混进去会让「谁写的」
+   *   那排标记开始撒谎，也会让一次换人凭空推动一次状态流转。
+   *
+   * ★ PUT 而不是 POST：设定同一个值两次的结果与一次相同。
+   */
+  const AuthorAgentInput = z.object({
+    /** null = 取消指定，回到「按项目绑定的规划 Agent 自动挑」 */
+    agentId: z.string().uuid().nullable(),
+  });
+
+  app.put('/api/v1/requirements/:id/author-agent', async (req) => {
+    const { userId } = actorFrom(req);
+    const { id } = req.params as { id: string };
+    const body = AuthorAgentInput.parse(req.body);
+
+    const result = await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: body.agentId,
+      actorId: userId,
+      correlationId: corr(req),
+    });
+
+    /**
+     * ★ 四种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
+     *   「需求已结案」要去重新打开，「不在这个项目里」要去成员页，
+     *   「适用类型没勾 requirement」要去 Agent 配置页。出路各不相同，
+     *   合并之后用户只能挨个试。
+     */
+    if (!result.ok) {
+      if (result.code === 'REQUIREMENT_SETTLED') {
+        throw new ApiError(
+          'INVALID_TRANSITION',
+          '需求已确认或已驳回，不能再更换 PRD 编写 Agent。如需修改请先重新打开。',
+        );
+      }
+      if (result.code === 'AGENT_NOT_FOUND') throw notFound('Agent');
+      if (result.code === 'NOT_PROJECT_MEMBER') {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
+          { agentId: body.agentId },
+        );
+      }
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        `${result.agentName} 的适用类型里没有 requirement，写不了 PRD —— 在 Agent 配置里勾上它`,
+        { agentId: body.agentId, applicableTypes: result.applicableTypes },
+      );
+    }
+
+    return result;
   });
 
   const Answer = z.object({
@@ -1342,6 +1425,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    */
   app.get('/api/v1/requirements/:id/runs', async (req) => {
     const { id } = req.params as { id: string };
+    /**
+     * ★★ 带上**是谁跑的**，不只是用了什么模型。
+     *
+     *   既然编写 Agent 现在可以由人指定，「这一版 PRD 是谁写的」就是这张
+     *   列表最该回答的问题 —— 只显示 `claude-code:sonnet` 的话，换了 Agent
+     *   前后两行看起来一模一样，那个选择等于没有反馈。
+     *
+     * ★ leftJoin 而不是 innerJoin：Agent 被删掉之后这几次 Run 仍然发生过，
+     *   把它们从历史里抹掉比显示一个空名字糟得多。
+     */
     const rows = await db
       .select({
         id: agentRuns.id,
@@ -1349,11 +1442,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         goal: agentRuns.goal,
         cost: agentRuns.cost,
         model: agentRuns.model,
+        agentId: agentRuns.agentId,
+        agentName: agents.name,
         errorMessage: agentRuns.errorMessage,
         startedAt: agentRuns.startedAt,
         endedAt: agentRuns.endedAt,
       })
       .from(agentRuns)
+      .leftJoin(agents, eq(agents.id, agentRuns.agentId))
       .where(eq(agentRuns.requirementId, id))
       .orderBy(desc(agentRuns.createdAt));
 

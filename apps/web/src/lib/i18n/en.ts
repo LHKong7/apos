@@ -86,6 +86,7 @@ export const en = {
   'event.requirement.analyzed': 'Requirement analysed',
   'event.requirement.clarification_answered': 'Clarification answered',
   'event.requirement.field_edited': 'Requirement field edited',
+  'event.requirement.author_agent_set': 'PRD author agent changed',
   'event.requirement.approved': 'Requirement approved',
   'event.requirement.rejected': 'Requirement rejected',
   'event.requirement.deleted': 'Requirement deleted',
@@ -374,6 +375,19 @@ export const en = {
 
   'requirement.detail.bothPathsNote':
     'Both paths lead to approval. If the requirement is already clear, or AI analysis is unavailable, just fill it in.',
+
+  // ── PRD author agent / PRD 编写 Agent ─────────────────────────────
+  'requirement.author.label': 'PRD author',
+  'requirement.author.auto': 'Unset — use the project’s planner binding',
+  'requirement.author.hint':
+    'The agent picked here writes this requirement’s PRD, this time and on every re-analysis.',
+  'requirement.author.saving': 'Saving…',
+  'requirement.author.failed': 'Could not change the author agent',
+  'requirement.author.noneEligible':
+    'None of this project’s agent members can author a PRD — an agent needs "requirement" among its applicable types. Add one under Members & roles, or tick it in the agent configuration.',
+  'requirement.author.gone':
+    '{name} is no longer a member of this project, so the next analysis will fail. Pick another agent, or go back to the project binding.',
+  'requirement.author.inactive': '{name} is currently {status}; the next analysis will fail.',
   'requirement.detail.acceptanceCriteria': 'Acceptance criteria ({count})',
   'requirement.detail.assumptions': '📌 Recorded assumptions ({count})',
   'requirement.detail.assumptionsNote':
@@ -415,6 +429,9 @@ export const en = {
   'requirement.detail.approvedButPlanFailed': 'The requirement was approved, but plan generation failed: {reason}. Retry generating the plan — do not approve again.',
   'requirement.runs.title': 'Analysis runs ({count})',
   'requirement.runs.detail': 'Details',
+  /** ★ Who ran it, not just which model — otherwise two runs by different agents look identical */
+  'requirement.runs.by': 'by {name}',
+  'requirement.runs.agentGone': 'agent deleted',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': 'No repositories registered yet',

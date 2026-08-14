@@ -361,6 +361,25 @@ export class AgentPlanningProvider implements PlanningProvider {
   }
 
   /**
+   * 这个 Agent 现在能不能干规划活；能就返回 null，不能就返回**一句能直接
+   * 念给用户听的原因**。
+   *
+   * ★ 抽出来是因为「点名的那个」与「绑定的那些」要走**同一套**判据。
+   *   两处各写一遍的话，迟早出现「绑定路径拦得住、点名路径拦不住」——
+   *   而点名路径恰恰是用户输入直接决定的那一条。
+   *
+   *   Whether this agent can take planning work right now; null when it can,
+   *   otherwise a reason phrased for the user. Shared deliberately: the
+   *   explicitly named agent and the bound ones must be judged identically.
+   */
+  private unusableReason(agent: typeof agents.$inferSelect): string | null {
+    if (agent.status !== 'active') return agent.status;
+    if (!agent.applicableTypes.includes(PLANNING_TYPE)) return `适用类型里没有 ${PLANNING_TYPE}`;
+    if (!this.registry.has(agent.id)) return '运行时未注册';
+    return null;
+  }
+
+  /**
    * 挑规划 Agent —— 先看项目**显式绑定**的那个。
    *
    * ★★ 在 project_agent_bindings 出现之前，这里是「组织里第一个
@@ -379,6 +398,50 @@ export class AgentPlanningProvider implements PlanningProvider {
   private async pickAgent(
     scope: PlanningScope,
   ): Promise<{ agent: typeof agents.$inferSelect | null; reason: string }> {
+    /**
+     * ★★ 用户在需求页上点了名 —— 这一条压过项目绑定，而且**没有备选**。
+     *
+     *   退到别人身上是这里唯一不能做的事：绑定路径退到备选是「系统替你
+     *   兜底」，而点名路径退到别人是「系统否决了你的选择还不告诉你」。
+     *   所以不可用时返回 null + 原因，让这次分析如实回退到规则占位，
+     *   原因一路写进 analysisModel，需求页上就摆在结果标题旁边。
+     *
+     * ★ 授权检查一道不减，而且**排在可用性之前**：不是本项目成员的 Agent
+     *   连「不可用」都不该被谈论 —— 项目是权限与上下文的边界，
+     *   而这个 id 是从 HTTP 请求一路传下来的。
+     */
+    if (scope.agentId) {
+      const [named] = await this.db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.id, scope.agentId), eq(agents.orgId, scope.orgId)));
+      if (!named) {
+        return { agent: null, reason: '需求上指定的 PRD 编写 Agent 已不存在' };
+      }
+
+      const [member] = await this.db
+        .select({ actorId: projectMembers.actorId })
+        .from(projectMembers)
+        .where(
+          and(
+            eq(projectMembers.projectId, scope.projectId),
+            eq(projectMembers.actorType, 'agent'),
+            eq(projectMembers.actorId, named.id),
+          ),
+        );
+      if (!member) {
+        return {
+          agent: null,
+          reason: `需求上指定的 Agent「${named.name}」已不是这个项目的成员`,
+        };
+      }
+
+      const why = this.unusableReason(named);
+      return why
+        ? { agent: null, reason: `需求上指定的 Agent「${named.name}」现在不可用：${why}` }
+        : { agent: named, reason: '' };
+    }
+
     /**
      * ★★ 按 priority 顺着往下退，而不是只看主 Agent。
      *
@@ -401,16 +464,9 @@ export class AgentPlanningProvider implements PlanningProvider {
     if (bound.length > 0) {
       const skipped: string[] = [];
       for (const row of bound) {
-        if (row.agent.status !== 'active') {
-          skipped.push(`${row.agent.name}（${row.agent.status}）`);
-          continue;
-        }
-        if (!row.agent.applicableTypes.includes(PLANNING_TYPE)) {
-          skipped.push(`${row.agent.name}（适用类型里没有 ${PLANNING_TYPE}）`);
-          continue;
-        }
-        if (!this.registry.has(row.agent.id)) {
-          skipped.push(`${row.agent.name}（运行时未注册）`);
+        const why = this.unusableReason(row.agent);
+        if (why) {
+          skipped.push(`${row.agent.name}（${why}）`);
           continue;
         }
         /**

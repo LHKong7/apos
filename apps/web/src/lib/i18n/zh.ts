@@ -76,6 +76,7 @@ export const zh: Record<keyof typeof en, string> = {
   'event.requirement.analyzed': '需求分析完成',
   'event.requirement.clarification_answered': '澄清已回答',
   'event.requirement.field_edited': '需求字段修改',
+  'event.requirement.author_agent_set': '更换 PRD 编写 Agent',
   'event.requirement.approved': '需求确认',
   'event.requirement.rejected': '需求驳回',
   'event.requirement.deleted': '需求删除',
@@ -355,6 +356,18 @@ export const zh: Record<keyof typeof en, string> = {
 
   'requirement.detail.bothPathsNote':
     '两条路都能走到确认。需求本身已经写清楚了，或者 AI 分析用不了时，直接自己填',
+
+  // ── PRD 编写 Agent ────────────────────────────────────────────────
+  'requirement.author.label': 'PRD 编写',
+  'requirement.author.auto': '未指定 —— 按项目绑定的规划 Agent 挑',
+  'requirement.author.hint': '选定之后，这条需求的分析与每一次重新分析都由它来跑。',
+  'requirement.author.saving': '保存中…',
+  'requirement.author.failed': '更换编写 Agent 失败',
+  'requirement.author.noneEligible':
+    '这个项目的 Agent 成员里没有能写 PRD 的 —— 适用类型要含 requirement。去「成员与角色」加一个，或在 Agent 配置里勾上它。',
+  'requirement.author.gone': '{name} 已不是这个项目的成员，下一次分析会失败。换一个，或改回按项目绑定挑。',
+  'requirement.author.inactive': '{name} 当前是 {status}，下一次分析会失败。',
+
   'requirement.detail.acceptanceCriteria': '验收标准（{count}）',
   'requirement.detail.assumptions': '📌 已记录假设（{count}）',
   'requirement.detail.assumptionsNote':
@@ -394,6 +407,8 @@ export const zh: Record<keyof typeof en, string> = {
   'requirement.detail.approvedButPlanFailed': '需求已确认，但生成计划失败：{reason}。重试「生成计划」即可，不需要再确认一次。',
   'requirement.runs.title': '历次分析（{count}）',
   'requirement.runs.detail': '详情',
+  'requirement.runs.by': '由 {name}',
+  'requirement.runs.agentGone': 'Agent 已删除',
 
   // 代码仓库与 JSON 校验 / Repositories and JSON validation
   'agentCfg.repo.empty': '还没有登记任何代码仓库',

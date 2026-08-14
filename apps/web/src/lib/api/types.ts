@@ -570,11 +570,21 @@ export interface RequirementDetail {
     fieldProvenance: Record<string, unknown>;
     /** 上一次是谁分析的。回退到规则占位时会带上原因 —— 界面必须如实显示 */
     analysisModel: string | null;
+    /** 指定由哪个 Agent 编写 PRD；null = 按项目绑定的规划 Agent 自动挑 */
+    authorAgentId: string | null;
     priority: string;
     rejectReason: string | null;
     approvedAt: string | null;
   };
   clarifications: Clarification[];
+  /**
+   * 指定的编写 Agent 详情。
+   *
+   * ★ 名字随 id 一起下发，因为下拉框里只装得下**当前**的项目 Agent 成员：
+   *   那个 Agent 后来被移出项目的话，光有 id 会让界面显示成「未指定」，
+   *   而库里明明还指着它。
+   */
+  authorAgent: { id: string; name: string; status: string } | null;
 }
 
 export interface PlanDetail {

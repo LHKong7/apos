@@ -1,0 +1,188 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { requirements } from '@apos/db';
+import { randomUUID } from 'node:crypto';
+import { resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
+import { seedAgent } from '../../test/agent-fixtures';
+import { StubPlanningProvider } from '../planning/stub-provider';
+import type {
+  GeneratedPlan,
+  PlanningProvider,
+  PlanningScope,
+  StructureInput,
+  StructuredRequirement,
+} from '../planning/provider';
+import { analyzeRequirement, setRequirementAuthorAgent } from './service';
+
+const db = testDb();
+let fx: Fixture;
+
+beforeEach(async () => {
+  await resetDb(db);
+  fx = await seedFixture(db);
+});
+
+/**
+ * 记下调用方给了什么 scope —— 这一层要验的正是「需求上选定的编写 Agent
+ * 有没有被传下去」，而挑执行者本身发生在 provider 里面。
+ */
+class CapturingProvider implements PlanningProvider {
+  readonly name = 'capturing';
+  scope: PlanningScope | undefined;
+  /** 有没有把 agentId 这个键**摆上去**（区分「给了 undefined」和「没给」） */
+  hasAgentIdKey = false;
+
+  /** ★ 按接口类型持有：StubPlanningProvider 的 generatePlan 少声明了 scope 形参 */
+  private readonly inner: PlanningProvider = new StubPlanningProvider();
+
+  async structureRequirement(input: StructureInput): Promise<StructuredRequirement> {
+    this.scope = input.scope;
+    this.hasAgentIdKey = Boolean(input.scope && 'agentId' in input.scope);
+    return this.inner.structureRequirement(input);
+  }
+
+  async generatePlan(
+    req: StructuredRequirement,
+    projectType: string,
+    feedback?: string,
+    scope?: PlanningScope,
+  ): Promise<GeneratedPlan> {
+    return this.inner.generatePlan(req, projectType, feedback, scope);
+  }
+}
+
+async function createRequirement(rawInput = '订单查询太慢') {
+  const [row] = await db
+    .insert(requirements)
+    .values({ orgId: fx.orgId, projectId: fx.projectId, rawInput })
+    .returning();
+  return row!.id;
+}
+
+describe('分析时把需求上选定的编写 Agent 传下去', () => {
+  it('选过 Agent 的需求，scope 里带着它', async () => {
+    const id = await createRequirement();
+    const author = await seedAgent(db, fx, {
+      name: 'prd-writer',
+      applicableTypes: ['requirement'],
+    });
+    await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: author.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+
+    const provider = new CapturingProvider();
+    await analyzeRequirement(db, provider, { requirementId: id, correlationId: randomUUID() });
+
+    expect(provider.scope?.agentId).toBe(author.agentId);
+    expect(provider.scope?.requirementId).toBe(id);
+  });
+
+  /**
+   * ★★ 没选过的时候连**键**都不该出现。
+   *
+   *   provider 那边是按「有没有 agentId」分岔的：塞一个空串或 null 进去，
+   *   所有没选过的需求都会走进点名分支，然后一律以「指定的 Agent 已不存在」
+   *   失败 —— 而这是绝大多数需求的默认状态。
+   */
+  it('没选过的需求，scope 里连 agentId 这个键都没有', async () => {
+    const id = await createRequirement();
+
+    const provider = new CapturingProvider();
+    await analyzeRequirement(db, provider, { requirementId: id, correlationId: randomUUID() });
+
+    expect(provider.hasAgentIdKey).toBe(false);
+    expect(provider.scope?.projectId).toBe(fx.projectId);
+  });
+
+  it('换过一次之后，下一次分析跟着换', async () => {
+    const id = await createRequirement();
+    const first = await seedAgent(db, fx, { name: 'writer-1', applicableTypes: ['requirement'] });
+    const second = await seedAgent(db, fx, { name: 'writer-2', applicableTypes: ['requirement'] });
+
+    const provider = new CapturingProvider();
+    await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: first.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+    await analyzeRequirement(db, provider, { requirementId: id, correlationId: randomUUID() });
+    expect(provider.scope?.agentId).toBe(first.agentId);
+
+    await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: second.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+    await analyzeRequirement(db, provider, { requirementId: id, correlationId: randomUUID() });
+    expect(provider.scope?.agentId).toBe(second.agentId);
+  });
+
+  /**
+   * ★ 分析本身不该动这个选择 —— 它是人做的决定，不是分析的产物。
+   */
+  it('分析不会清掉或改写已选的编写 Agent', async () => {
+    const id = await createRequirement();
+    const author = await seedAgent(db, fx, {
+      name: 'prd-writer',
+      applicableTypes: ['requirement'],
+    });
+    await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: author.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+
+    await analyzeRequirement(db, new CapturingProvider(), {
+      requirementId: id,
+      correlationId: randomUUID(),
+    });
+
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBe(author.agentId);
+  });
+});
+
+describe('setRequirementAuthorAgent 的判据', () => {
+  it('不是本项目成员的 Agent 被拒，库里不动', async () => {
+    const id = await createRequirement();
+    const outsider = await seedAgent(db, fx, {
+      name: 'outsider',
+      applicableTypes: ['requirement'],
+      inProject: false,
+    });
+
+    const result = await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: outsider.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_PROJECT_MEMBER' });
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.authorAgentId).toBeNull();
+  });
+
+  it('适用类型不含 requirement 的 Agent 被拒，并回报它现在有哪些类型', async () => {
+    const id = await createRequirement();
+    const coder = await seedAgent(db, fx, { name: 'coder', applicableTypes: ['task', 'bug'] });
+
+    const result = await setRequirementAuthorAgent(db, {
+      requirementId: id,
+      agentId: coder.agentId,
+      actorId: fx.userId,
+      correlationId: randomUUID(),
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'CANNOT_AUTHOR', agentName: 'coder' });
+    if (!result.ok && result.code === 'CANNOT_AUTHOR') {
+      expect(result.applicableTypes).toContain('task');
+    }
+  });
+});

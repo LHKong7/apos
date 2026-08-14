@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { agentPermissionChanges, agents, repositories } from '@apos/db';
+import { agentPermissionChanges, agents, repositories, requirements } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -595,6 +595,57 @@ describe('Agent 档案与权限', () => {
       .where(eq(agentPermissionChanges.agentId, res.json().agent.id));
     expect(changes).toHaveLength(1);
     expect(changes[0]!.direction).toBe('grant');
+  });
+
+  /**
+   * ★★ 被某条需求指定为 PRD 编写者的 Agent 只停用不删除。
+   *
+   *   requirements.author_agent_id 是外键，直接 DELETE 会撞上 23503，
+   *   而那个码没有映射 —— 用户点「删除」会得到一句「服务器内部错误」，
+   *   看不出真正拦住它的是一条需求。
+   */
+  it('有需求指定它写 PRD 时，删除转为停用并说清是被什么牵连', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    const [req] = await db
+      .insert(requirements)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        rawInput: '订单查询太慢',
+        authorAgentId: agentId,
+      })
+      .returning();
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().retired).toBe(true);
+    expect(res.json().reason).toContain('PRD');
+
+    const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(row!.status).toBe('retired');
+    /**
+     * ★ 引用留着不清空：清掉等于替用户撤销了他做过的指定，
+     *   而他下次进那条需求只会看到「未指定」，没有任何迹象说明发生过什么。
+     */
+    const [after] = await db.select().from(requirements).where(eq(requirements.id, req!.id));
+    expect(after!.authorAgentId).toBe(agentId);
+  });
+
+  it('没有任何牵连的 Agent 仍然是真删除', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+
+    expect(res.json().retired).toBe(false);
+    expect(await db.select().from(agents).where(eq(agents.id, agentId))).toHaveLength(0);
   });
 
   it('给了写工具却没有可写仓库范围时，配置阶段就拒绝', async () => {

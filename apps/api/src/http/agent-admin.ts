@@ -4,6 +4,7 @@ import {
   agentPermissionChanges,
   agentRuns,
   agents,
+  requirements,
   users,
   workItems,
   type Database,
@@ -346,16 +347,48 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(and(eq(workItems.executorType, 'agent'), eq(workItems.executorId, agentId)));
 
   /**
+   * ★★ 被某条需求指定为 PRD 编写者的 Agent 同样只停用不删除。
+   *
+   *   requirements.author_agent_id 是一条**外键**：直接 DELETE 会撞上
+   *   23503，而那个码不在 CLIENT_INPUT_PG_CODES 里 —— 用户点「删除 Agent」
+   *   得到的会是一句「服务器内部错误」，看不出真正拦住它的是一条需求。
+   *
+   *   停用而不是把引用清空：清空等于替用户撤销了他做过的指定，
+   *   而他下一次进那条需求只会看到「未指定」，没有任何迹象说明发生过什么。
+   *   停用之后需求页会明说「当前是 retired，下一次分析会失败」。
+   *
+   *   An agent named as some requirement's PRD author is retired, not deleted:
+   *   the column is a foreign key, so deleting would surface as a raw 23503
+   *   ("internal error" to the user), and nulling it out would silently undo a
+   *   choice a person made.
+   */
+  const [authoring] = await db
+    .select({ n: count() })
+    .from(requirements)
+    .where(eq(requirements.authorAgentId, agentId));
+
+  /**
    * ★ 有历史执行记录的 Agent 只停用不删除。
    *   删掉的话，那些 Run 与产物的「谁做的」会指向一个不存在的 id ——
    *   审计链断在这里，而这正是最需要它的时候。
    */
-  if ((assigned?.n ?? 0) > 0) {
+  if ((assigned?.n ?? 0) > 0 || (authoring?.n ?? 0) > 0) {
     await db
       .update(agents)
       .set({ status: 'retired', pausedReason: '已停用（保留历史记录）', updatedAt: new Date() })
       .where(eq(agents.id, agentId));
-    return { ok: true as const, retired: true, reason: '该 Agent 有历史执行记录，已停用而非删除' };
+    /**
+     * ★ 说清是**哪一种**牵连。两种的下一步不一样：有历史执行记录时用户
+     *   什么都不用做，而被需求指定为编写者时，他多半想去那条需求上换一个。
+     */
+    return {
+      ok: true as const,
+      retired: true,
+      reason:
+        (assigned?.n ?? 0) > 0
+          ? '该 Agent 有历史执行记录，已停用而非删除'
+          : `有 ${authoring!.n} 条需求指定由它编写 PRD，已停用而非删除`,
+    };
   }
 
   await db.delete(agentPermissionChanges).where(eq(agentPermissionChanges.agentId, agentId));

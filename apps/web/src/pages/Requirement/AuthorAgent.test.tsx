@@ -1,0 +1,258 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
+import { useLocaleStore } from '../../lib/i18n';
+import { api } from '../../lib/api/client';
+import { useAuthStore } from '../../stores/auth';
+import type {
+  Permission,
+  ProjectAgentBindings,
+  ProjectPermissions,
+  RequirementDetail,
+} from '../../lib/api/types';
+import { AuthorAgent } from './AuthorAgent';
+
+/**
+ * 需求页上的「PRD 编写」下拉框。
+ *
+ * ★★ 这一组盯的是**选择不能被静默抹掉**。
+ *
+ *   候选只列当前的项目 Agent 成员，所以一个已经选中、但后来被移出项目的
+ *   Agent 在这个列表里找不到 —— 如果就此让 select 落回「未指定」，
+ *   界面会说没选过，而库里还指着它，下一次分析也会照着它失败。
+ *   这正是这个功能最该避免的那种表现。
+ */
+
+function requirement(over: Partial<RequirementDetail['requirement']> = {}) {
+  return {
+    id: 'r1',
+    projectId: 'p1',
+    status: 'draft',
+    rawInput: '订单查询太慢',
+    title: null,
+    businessContext: null,
+    userProblem: null,
+    businessGoal: null,
+    userStories: [],
+    scope: {},
+    nonFunctional: [],
+    risks: [],
+    acceptanceCriteria: [],
+    completeness: {},
+    fieldProvenance: {},
+    analysisModel: null,
+    authorAgentId: null,
+    priority: 'medium',
+    rejectReason: null,
+    approvedAt: null,
+    ...over,
+  } as RequirementDetail['requirement'];
+}
+
+function agentList(
+  available: Partial<ProjectAgentBindings['available'][number]>[],
+): ProjectAgentBindings {
+  return {
+    bindings: [],
+    available: available.map((a) => ({
+      agentId: a.agentId ?? 'a1',
+      name: a.name ?? 'prd-writer',
+      runtimeKind: a.runtimeKind ?? 'claude-code',
+      status: a.status ?? 'active',
+      applicableTypes: a.applicableTypes ?? ['requirement'],
+      skills: a.skills ?? [],
+    })),
+  };
+}
+
+function wrapper(children: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+const PERMS = (canEdit = true): ProjectPermissions => ({
+  projectId: 'p1',
+  userId: 'u-1',
+  orgRole: 'member',
+  projectRole: 'pm',
+  permissions: { 'requirement.edit': canEdit } as Record<Permission, boolean>,
+  denyReasons: canEdit ? {} : { 'requirement.edit': '编辑需求需要项目成员权限' },
+});
+
+/** ★ 钉住中文：下面按具体文案定位与断言，而默认语言是英文 */
+beforeEach(() => {
+  useLocaleStore.setState({ locale: 'zh' });
+  useAuthStore.setState({ token: 't', userId: 'u-1', user: null, resolving: false });
+  vi.spyOn(api, 'permissions').mockResolvedValue(PERMS());
+});
+
+function renderPicker(over: {
+  requirement?: Partial<RequirementDetail['requirement']>;
+  authorAgent?: RequirementDetail['authorAgent'];
+  readOnly?: boolean;
+} = {}) {
+  return render(
+    wrapper(
+      <AuthorAgent
+        projectId="p1"
+        requirementId="r1"
+        requirement={requirement(over.requirement)}
+        authorAgent={over.authorAgent ?? null}
+        readOnly={over.readOnly ?? false}
+      />,
+    ),
+  );
+}
+
+describe('PRD 编写 Agent 选择', () => {
+  it('只列能写 PRD 的项目 Agent —— 适用类型不含 requirement 的不出现在选项里', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([
+        { agentId: 'a1', name: 'prd-writer', applicableTypes: ['requirement'] },
+        { agentId: 'a2', name: 'coder', applicableTypes: ['task'] },
+      ]),
+    );
+
+    renderPicker();
+
+    await screen.findByRole('option', { name: /prd-writer/ });
+    /**
+     * ★ 与服务端同一条判据。列出来的话，用户会选到一个保存时才被拒的 Agent ——
+     *   而那条报错出现在提交之后，不在选择的时候。
+     */
+    expect(screen.queryByRole('option', { name: /coder/ })).toBeNull();
+  });
+
+  it('选中之后立刻保存，传的是 agentId', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a1', name: 'prd-writer' }]),
+    );
+    const save = vi
+      .spyOn(api, 'setRequirementAuthorAgent')
+      .mockResolvedValue({ ok: true, agentId: 'a1', agentName: 'prd-writer' });
+
+    renderPicker();
+    await screen.findByRole('option', { name: /prd-writer/ });
+
+    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), 'a1');
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith('r1', 'a1'));
+  });
+
+  /** ★ 「未指定」是显式的一档：它表示回到按项目绑定挑，不是「没保存」 */
+  it('选回「未指定」传的是 null，不是空字符串', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a1', name: 'prd-writer' }]),
+    );
+    const save = vi
+      .spyOn(api, 'setRequirementAuthorAgent')
+      .mockResolvedValue({ ok: true, agentId: null, agentName: null });
+
+    renderPicker({ requirement: { authorAgentId: 'a1' } });
+    await screen.findByRole('option', { name: /prd-writer/ });
+
+    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), '');
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith('r1', null));
+  });
+
+  /**
+   * ★★ 已选、但如今不在候选里的那个（被移出项目 / 类型被取消勾选）
+   *   必须仍然显示出来并说清后果 —— 显示成「未指定」是最坏的处理。
+   */
+  it('选中的 Agent 已不在项目里时照旧显示，并说明下次分析会失败', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a2', name: '还在的那个' }]),
+    );
+
+    renderPicker({
+      requirement: { authorAgentId: 'gone-1' },
+      authorAgent: { id: 'gone-1', name: '被移走的', status: 'active' },
+    });
+
+    await screen.findByRole('option', { name: /还在的那个/ });
+    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
+    // 值没有被悄悄落回「未指定」
+    expect(select.value).toBe('gone-1');
+    expect(screen.getByText(/被移走的.*已不是这个项目的成员/)).toBeTruthy();
+  });
+
+  it('选中的 Agent 停用时说出来 —— 下一次分析会失败', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a1', name: 'prd-writer', status: 'paused' }]),
+    );
+
+    renderPicker({
+      requirement: { authorAgentId: 'a1' },
+      authorAgent: { id: 'a1', name: 'prd-writer', status: 'paused' },
+    });
+
+    expect(await screen.findByText(/prd-writer 当前是 paused/)).toBeTruthy();
+  });
+
+  /** ★ 一个可选项都没有时说清怎么才能有，而不是给一个空下拉框 */
+  it('没有任何能写 PRD 的 Agent 时给出两条出路', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(agentList([]));
+
+    renderPicker();
+
+    expect(await screen.findByText(/适用类型要含 requirement/)).toBeTruthy();
+  });
+
+  /**
+   * ★★ 保存失败之后不能停在那个其实没存上的选项上。
+   *   乐观显示一旦跨过失败，就变成了骗人：用户以为换成了 B，
+   *   而下一次分析仍然由 A 来跑。
+   */
+  it('保存失败时落回服务端的真值，并把报错摆出来', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([
+        { agentId: 'a1', name: 'writer-1' },
+        { agentId: 'a2', name: 'writer-2' },
+      ]),
+    );
+    vi.spyOn(api, 'setRequirementAuthorAgent').mockRejectedValue(
+      new Error('writer-2 不是这个项目的成员'),
+    );
+
+    renderPicker({ requirement: { authorAgentId: 'a1' } });
+    await screen.findByRole('option', { name: /writer-2/ });
+
+    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
+    await userEvent.selectOptions(select, 'a2');
+
+    await waitFor(() => expect(screen.getByText('更换编写 Agent 失败')).toBeTruthy());
+    expect(select.value).toBe('a1');
+  });
+
+  it('已确认的需求上是只读的', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a1', name: 'prd-writer' }]),
+    );
+
+    renderPicker({ readOnly: true });
+
+    await screen.findByRole('option', { name: /prd-writer/ });
+    expect(screen.getByLabelText<HTMLSelectElement>('PRD 编写').disabled).toBe(true);
+  });
+
+  /**
+   * ★ 没权限的人看到的是**灰着并说明原因**的下拉框，不是一个点下去收 403 的。
+   *   灰掉不是权限 —— 服务端仍然独立判一遍。
+   */
+  it('没有 requirement.edit 时灰掉，并把原因挂在上面', async () => {
+    vi.spyOn(api, 'projectAgents').mockResolvedValue(
+      agentList([{ agentId: 'a1', name: 'prd-writer' }]),
+    );
+    vi.spyOn(api, 'permissions').mockResolvedValue(PERMS(false));
+
+    renderPicker();
+
+    await screen.findByRole('option', { name: /prd-writer/ });
+    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
+    await waitFor(() => expect(select.disabled).toBe(true));
+    expect(select.title).toContain('编辑需求');
+  });
+});

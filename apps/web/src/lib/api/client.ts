@@ -704,6 +704,18 @@ export const api = {
 
   requirement: (id: string) => request<RequirementDetail>(`/requirements/${id}`),
 
+  /**
+   * 指定这条需求的 PRD 编写 Agent；null 表示回到「按项目绑定自动挑」。
+   *
+   * ★ 不走 editRequirement：那条路会把提交的字段标成 👤 人工并重算完整度，
+   *   而「谁来写」不是需求的内容。
+   */
+  setRequirementAuthorAgent: (id: string, agentId: string | null) =>
+    request<{ ok: true; agentId: string | null; agentName: string | null }>(
+      `/requirements/${id}/author-agent`,
+      { method: 'PUT', json: { agentId } },
+    ),
+
   analyzeRequirement: (id: string) =>
     request<{
       requirementId: string;
@@ -772,6 +784,9 @@ export const api = {
         goal: string;
         cost: number;
         model: string | null;
+        /** ★ 是谁跑的。换过编写 Agent 之后，这一列才让两次分析分得开 */
+        agentId: string | null;
+        agentName: string | null;
         errorMessage: string | null;
         startedAt: string | null;
         endedAt: string | null;

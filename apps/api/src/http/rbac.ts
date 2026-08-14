@@ -247,6 +247,13 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'POST /api/v1/projects/:id/requirements': 'requirement.create',
   'PATCH /api/v1/requirements/:id': 'requirement.edit',
   'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
+  /**
+   * ★ 与 analyze 同档（requirement.edit），不是 project.settings.update。
+   *   项目级绑定改的是此后所有需求的产出，要更高一档；这一条只改这一条
+   *   需求由谁写，而能点 analyze 的人本来就能决定这条需求要不要跑 AI，
+   *   也能把每个字段手改一遍。
+   */
+  'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',
   'POST /api/v1/requirements/:id/approve': 'requirement.approve',
   /** ★ 重新打开等于撤销一次确认，与确认同档 */
   'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
