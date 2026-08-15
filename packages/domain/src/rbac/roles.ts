@@ -93,6 +93,34 @@ const BUILTIN_META: Record<ProjectRole, { name: string; description: string }> =
   viewer: { name: '只读', description: '只能看，不能做任何改动' },
 };
 
+/**
+ * Agent 加入项目时、调用方没有点名角色的默认档。
+ *
+ * ★★ 默认发生在**加入项目**这一刻，不发生在**建 Agent**那一刻。
+ *
+ *   两者差别很大：建 Agent 是组织级动作，那时还不知道它要去哪个项目；
+ *   让它自动进所有项目等于把一个刚建好、还没配凭证的执行体
+ *   授权到了全组织的代码上。而「加入项目」本身已经是一次显式授权，
+ *   在这一刻补一个最低档的角色，不扩大任何人的意图。
+ *
+ * ★ 选 executor 是因为它是内置角色里唯一 Agent 能担任的「干活」角色，
+ *   而且是最低的那一档（只执行，不决策不审批）。默认值往高了补
+ *   就是凭空提权 —— 同一条理由写在 migrations/0026 的补登记里。
+ *
+ * ★ 只在「还不是成员」时生效。已经在项目里的 Agent 不给 role 时一律**不动**，
+ *   否则一次误点会把管理员精心调过的自定义角色打回 executor，
+ *   而这种降权在界面上和「本来就是 executor」长得一模一样。
+ *
+ * The default role for an agent joining a project when the caller names none.
+ * It applies at join time, not at creation time: creating an agent is an
+ * org-level act that says nothing about which project it belongs to, whereas
+ * joining a project is already an explicit grant. `executor` is the only
+ * builtin working role an agent may hold and the lowest one; defaulting any
+ * higher would invent privilege. It applies only when no membership exists —
+ * re-adding never overwrites a role an admin has tuned.
+ */
+export const DEFAULT_AGENT_PROJECT_ROLE = 'executor' satisfies ProjectRole;
+
 /** 内置角色。每个组织建立时都会得到一份同样的拷贝 */
 export const BUILTIN_ROLES: Role[] = ProjectRole.options.map((key) => ({
   key,

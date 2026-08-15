@@ -610,6 +610,111 @@ describe('成员与角色管理', () => {
     expect(rows[0]!.subjectId).toBe(target);
   });
 
+  /**
+   * ★★ Agent 加入项目时可以不点角色，落到 executor。
+   *
+   *   这一组测的是「默认发生在加入项目、而不是建 Agent」这条边界：
+   *   建 Agent 不该碰任何项目，加入项目才补最低档。
+   */
+  describe('Agent 加入项目的默认角色', () => {
+    it('不给 role 的 Agent 进项目，拿到 executor', async () => {
+      const agent = await seedAgent(db, fx, { registry, inProject: false });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${fx.projectId}/members/${agent.agentId}`,
+        headers: as(fx.userId),
+        payload: { actorType: 'agent' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ role: 'executor', changed: true, previousRole: null });
+    });
+
+    /**
+     * ★★ 这条比默认值本身更重要。
+     *
+     *   「加入项目」和「改角色」是同一个端点，一次误点如果把管理员调过的
+     *   角色重置成 executor，降完之后它和「本来就是 executor」在界面上
+     *   完全一样 —— 没有人会发现自己被降权了。
+     */
+    it('★ 已是成员的 Agent 再不给 role，角色不被覆盖', async () => {
+      const agent = await seedAgent(db, fx, { registry, inProject: false });
+      const url = `/api/v1/projects/${fx.projectId}/members/${agent.agentId}`;
+
+      await app.inject({
+        method: 'PUT',
+        url,
+        headers: as(fx.userId),
+        payload: { actorType: 'agent', role: 'viewer' },
+      });
+
+      const again = await app.inject({
+        method: 'PUT',
+        url,
+        headers: as(fx.userId),
+        payload: { actorType: 'agent' },
+      });
+
+      expect(again.statusCode).toBe(200);
+      expect(again.json()).toMatchObject({ role: 'viewer', changed: false });
+
+      const [row] = await db
+        .select()
+        .from(projectMembers)
+        .where(eq(projectMembers.actorId, agent.agentId));
+      expect(row!.role).toBe('viewer');
+    });
+
+    it('显式给的 role 优先于默认档', async () => {
+      const agent = await seedAgent(db, fx, { registry, inProject: false });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${fx.projectId}/members/${agent.agentId}`,
+        headers: as(fx.userId),
+        payload: { actorType: 'agent', role: 'viewer' },
+      });
+
+      expect(res.json().role).toBe('viewer');
+    });
+
+    /**
+     * ★ 人没有安全的默认档：角色从业务负责人到只读都有，
+     *   替他默认任何一档都是替他做了一次授权决定。
+     */
+    it('★ 人不给 role 一律拒绝，不套用 Agent 的默认档', async () => {
+      // projectRole: null = 本组织的人，但还不是这个项目的成员
+      const notYetMember = await createMember(db, fx, { projectRole: null });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${fx.projectId}/members/${notYetMember}`,
+        headers: as(fx.userId),
+        payload: { actorType: 'human' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('必须指定角色');
+    });
+
+    it('默认补的那一档在审计事件里标了出来', async () => {
+      const agent = await seedAgent(db, fx, { registry, inProject: false });
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/projects/${fx.projectId}/members/${agent.agentId}`,
+        headers: as(fx.userId),
+        payload: { actorType: 'agent' },
+      });
+
+      const [row] = await db
+        .select()
+        .from(events)
+        .where(eq(events.type, 'project.member_added'));
+      expect(row!.payload).toMatchObject({ to: 'executor', roleDefaulted: true });
+    });
+  });
+
   it('★ 不能把外组织的人拉进项目', async () => {
     const outsider = await createOutsider(db, fx);
     const res = await app.inject({

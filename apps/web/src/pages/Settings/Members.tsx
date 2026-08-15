@@ -63,7 +63,7 @@ export function MembersPage() {
   };
 
   const setRole = useMutation({
-    mutationFn: (v: { id: string; role: string; actorType: 'human' | 'agent' }) =>
+    mutationFn: (v: { id: string; role: string | null; actorType: 'human' | 'agent' }) =>
       api.setMemberRole(projectId!, v.id, v.role, v.actorType),
     onSuccess: () => {
       setError(null);
@@ -198,6 +198,26 @@ export function MembersPage() {
                         {c.name}
                         <span className="ml-1 text-[11px] text-slate-400">{c.sub}</span>
                       </span>
+                      {/*
+                        ★★ Agent 一键加入，人必须先挑角色。
+
+                          不对称是有意的：Agent 只有 executor 这一个「干活」档
+                          （其余带 humanOnly 权限的角色它担任不了），默认值不含
+                          任何判断；而人的角色从业务负责人到只读都有，
+                          替他默认任何一档都是在替他做一次授权决定。
+
+                          下拉框对 Agent 仍然留着 —— 它是**覆盖**，不是前置条件。
+                      */}
+                      {adding === 'agent' && (
+                        <button
+                          type="button"
+                          disabled={setRole.isPending}
+                          onClick={() => setRole.mutate({ id: c.id, role: null, actorType: 'agent' })}
+                          className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {t('members.addAsExecutor')}
+                        </button>
+                      )}
                       <select
                         defaultValue=""
                         onChange={(e) =>
@@ -207,7 +227,9 @@ export function MembersPage() {
                         className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px]"
                         aria-label={t('members.roleOf', { name: c.name })}
                       >
-                        <option value="">{t('members.chooseRole')}</option>
+                        <option value="">
+                          {adding === 'agent' ? t('members.orChooseRole') : t('members.chooseRole')}
+                        </option>
                         {rolesFor(adding).map((r) => (
                           <option key={r.role} value={r.role}>
                             {r.label}

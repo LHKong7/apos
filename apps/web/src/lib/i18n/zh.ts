@@ -552,6 +552,8 @@ export const zh: Record<keyof typeof en, string> = {
   'members.member': '成员',
   'members.orgOnly': '只能添加本组织的人',
   'members.chooseRole': '选择角色…',
+  'members.addAsExecutor': '加为执行者',
+  'members.orChooseRole': '或选择角色…',
   'members.allAgentsAdded': '本组织的 Agent 都已经在这个项目里了',
   'members.allPeopleAdded': '组织里的人都已经是本项目成员了',
   'members.agentRoleNote': 'Agent 担任的是同一套角色。它的工具与资源权限另在 Agent 档案里配置，绝不继承任何人类成员（§1.2）',

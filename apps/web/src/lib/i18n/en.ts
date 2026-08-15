@@ -575,6 +575,9 @@ export const en = {
   'members.member': 'Member',
   'members.orgOnly': 'Only people from this organisation can be added',
   'members.chooseRole': 'Choose a role…',
+  /** ★ 一键加入用的按钮与它旁边那个「或者挑一个」的下拉框占位 */
+  'members.addAsExecutor': 'Add as executor',
+  'members.orChooseRole': 'or pick a role…',
   'members.allAgentsAdded': 'Every Agent in this organisation is already in this project',
   'members.allPeopleAdded': 'Everyone in this organisation is already a member of this project',
   'members.agentRoleNote': 'Agents hold the same roles. Their tool and resource permissions are configured separately in the Agent profile and never inherit from any human member (§1.2)',

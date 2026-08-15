@@ -280,15 +280,20 @@ export const api = {
   members: (projectId: string) => request<MembersResponse>(`/projects/${projectId}/members`),
 
   /** 担任者可以是人，也可以是 Agent —— 同一条 API（09-security §2.2）*/
+  /**
+   * ★ `role` 省略 = 「按默认档加入」，只对 Agent 成立（后端会把人挡回去）。
+   *   已经是成员时省略 role 是空操作，不会把角色打回默认 ——
+   *   一键添加因此可以随便点，不怕覆盖管理员调过的角色。
+   */
   setMemberRole: (
     projectId: string,
     memberId: string,
-    role: string,
+    role: string | null,
     actorType: 'human' | 'agent' = 'human',
   ) =>
     request<{ ok: true; role: string; changed: boolean; previousRole?: string }>(
       `/projects/${projectId}/members/${memberId}`,
-      { method: 'PUT', json: { role, actorType } },
+      { method: 'PUT', json: { ...(role === null ? {} : { role }), actorType } },
     ),
 
   removeMember: (projectId: string, memberId: string, actorType: 'human' | 'agent' = 'human') =>

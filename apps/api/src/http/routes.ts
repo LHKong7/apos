@@ -867,7 +867,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   在这个产品里是同一个问题的两个答案，不该是两条 API。
    */
   const MemberRoleBody = z.object({
-    role: z.string().min(1),
+    /**
+     * ★ 可选 —— 省略表示「按默认档加入」。只有 Agent 能这么调，
+     *   人由 setMemberRole 挡回去（见那里的注释）。
+     */
+    role: z.string().min(1).optional(),
     actorType: z.enum(['human', 'agent']).default('human'),
   });
 
@@ -885,7 +889,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         actorId,
         correlationId: corr(req),
       },
-      body.role,
+      body.role ?? null,
     );
   });
 

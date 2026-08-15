@@ -9,7 +9,7 @@ import {
   type Database,
 } from '@apos/db';
 import { humanActor, isOrgAdmin, ORG_ROLE_LABEL, OrgRole } from '@apos/contracts';
-import { roleAcceptsActor, type Permission } from '@apos/domain';
+import { DEFAULT_AGENT_PROJECT_ROLE, roleAcceptsActor, type Permission } from '@apos/domain';
 import { emitAndPublish } from '../modules/event/bus';
 import { ApiError, notFound } from './errors';
 import { assertNotLastAdmin } from './organizations';
@@ -121,7 +121,22 @@ export interface RoleChangeContext {
   correlationId: string;
 }
 
-export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKey: string) {
+/**
+ * 指派 / 变更项目成员的角色。
+ *
+ * `roleKey` 为 null 表示「调用方没点名角色」—— 只有 Agent 加入项目这一个动作
+ * 允许这样调，落到 {@link DEFAULT_AGENT_PROJECT_ROLE}。人必须点名：
+ * 人类角色横跨 sponsor 到 viewer，没有一个默认档是安全的。
+ *
+ * A null `roleKey` means the caller named no role. Only an agent joining a
+ * project may do that; humans must always name one, because the human role
+ * ladder runs from sponsor to viewer and no rung is a safe default.
+ */
+export async function setMemberRole(
+  db: Database,
+  ctx: RoleChangeContext,
+  roleKey: string | null,
+) {
   const project = await loadProject(db, ctx.projectId);
   const target = await loadTarget(db, ctx.actorType, ctx.targetId, project.orgId);
 
@@ -135,7 +150,38 @@ export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKe
     throw new ApiError('VALIDATION_FAILED', '只能添加本组织的成员', { targetId: ctx.targetId });
   }
 
-  const role = await loadRole(db, project.orgId, roleKey);
+  const before = await currentRole(db, ctx);
+
+  /**
+   * ★★ 没点名角色时的两条分支，顺序不能反。
+   *
+   *   已是成员 → **原样返回，什么都不改**。这一条比默认值本身更重要：
+   *   界面上「加入项目」和「改角色」共用这一个接口，一次误点如果落成
+   *   「重置为 executor」，管理员调过的自定义角色就被悄悄降权了 ——
+   *   而降完之后它和「本来就是 executor」在界面上完全一样，没人会发现。
+   *
+   *   还不是成员 → 落到最低档。加入项目这个动作本身已经是显式授权，
+   *   在这一刻补一个只执行、不决策的角色不扩大任何意图。
+   *
+   * Order matters. Already a member → return untouched: this endpoint backs
+   * both "add to project" and "change role", and a misclick that silently
+   * reset a tuned custom role to `executor` would be indistinguishable
+   * afterwards from having always been `executor`.
+   */
+  if (roleKey === null) {
+    if (before !== null) return { ok: true as const, role: before, changed: false };
+
+    if (ctx.actorType !== 'agent') {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        '添加人类成员必须指定角色 —— 人的角色从业务负责人到只读都有，没有一个默认档是安全的',
+        { actorType: ctx.actorType },
+      );
+    }
+  }
+
+  const effectiveRole = roleKey ?? DEFAULT_AGENT_PROJECT_ROLE;
+  const role = await loadRole(db, project.orgId, effectiveRole);
 
   /**
    * ★★ 角色认不认这一类担任者。
@@ -151,14 +197,15 @@ export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKe
       ctx.actorType === 'agent'
         ? `「${role.name}」不能由 Agent 担任 —— 它含有只能由人类行使的权限（确认需求、批准计划、处理决策这一类）`
         : `「${role.name}」是专门给 Agent 的角色，不能指派给人`,
-      { role: roleKey, appliesTo: role.appliesTo },
+      { role: effectiveRole, appliesTo: role.appliesTo },
     );
   }
 
-  const before = await currentRole(db, ctx);
-  if (before === roleKey) return { ok: true as const, role: roleKey, changed: false };
+  if (before === effectiveRole) {
+    return { ok: true as const, role: effectiveRole, changed: false };
+  }
 
-  await assertProjectKeepsAManager(db, project.orgId, ctx, roleKey);
+  await assertProjectKeepsAManager(db, project.orgId, ctx, effectiveRole);
 
   if (before === null) {
     await db.insert(projectMembers).values({
@@ -166,10 +213,10 @@ export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKe
       projectId: ctx.projectId,
       actorType: ctx.actorType,
       actorId: ctx.targetId,
-      role: roleKey,
+      role: effectiveRole,
     });
   } else {
-    await db.update(projectMembers).set({ role: roleKey }).where(memberRow(ctx));
+    await db.update(projectMembers).set({ role: effectiveRole }).where(memberRow(ctx));
   }
 
   await emitAndPublish(db, {
@@ -179,11 +226,18 @@ export async function setMemberRole(db: Database, ctx: RoleChangeContext, roleKe
     actor: humanActor(ctx.actorId),
     subjectType: ctx.actorType === 'agent' ? 'agent' : 'user',
     subjectId: ctx.targetId,
-    payload: { from: before, to: roleKey, projectId: ctx.projectId, actorType: ctx.actorType },
+    payload: {
+      from: before,
+      to: effectiveRole,
+      projectId: ctx.projectId,
+      actorType: ctx.actorType,
+      /** ★ 记下这一档是默认补的还是人点的 —— 审计里这两者不该长得一样 */
+      roleDefaulted: roleKey === null,
+    },
     correlationId: ctx.correlationId,
   });
 
-  return { ok: true as const, role: roleKey, changed: true, previousRole: before };
+  return { ok: true as const, role: effectiveRole, changed: true, previousRole: before };
 }
 
 export async function removeMember(db: Database, ctx: RoleChangeContext) {
