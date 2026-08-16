@@ -115,7 +115,7 @@ from the repository root automatically, or use
 | --- | --- | --- |
 | `APOS_PUBLIC_PORT` | `8080` | The host port |
 | `APOS_PUBLIC_URL` | `http://localhost:8080` | **The address users actually visit** — see below |
-| `AGENT_WORKSPACE_ROOT` | empty | The root Agents may write to. Unset, the `claude_code` runtime refuses to dispatch |
+| `AGENT_WORKSPACE_ROOT` | `/var/lib/apos/workspaces` | The root Agents may write to. Compose supplies this default and backs it with the `workspaces` volume, so leaving it unset still dispatches; moving it means moving the volume too |
 | `APOS_DB_POOL_MAX` | `10` | Pool size per process. `api` and `worker` take one each; lower it when a managed database is short on connections |
 
 > **Getting `APOS_PUBLIC_URL` wrong fails quietly**: the product works fine, but

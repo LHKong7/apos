@@ -5,11 +5,13 @@ import {
   artifacts,
   projectConventions,
   projects,
+  repositories,
   requirements,
   workItems,
   agentRuns,
   type Database,
 } from '@apos/db';
+import { effectiveResourceScopes, selectPolicyGates } from '@apos/domain';
 import {
   ACTIVE_RUN_STATUSES,
   agentActor,
@@ -19,7 +21,7 @@ import {
 } from '@apos/contracts';
 import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
-import { transition } from '../flow/transition';
+import { loadPolicies, transition } from '../flow/transition';
 import type { WorkspaceService } from '../workspace';
 import { ingestRunEvent } from './ingest';
 
@@ -101,10 +103,39 @@ export async function dispatchRun(
   const attempt = priorRuns.length + 1;
   const idempotencyKey = input.idempotencyKey ?? `${item.id}:${attempt}`;
 
+  /**
+   * 本项目**项目级**登记且启用的仓库 —— 它们对项目内的 Agent 默认只读。
+   *
+   * ★ 只取 projectId 命中的，org 级（projectId 为空）的不在内：
+   *   org 级仓库对全组织可见，默认给出去就成了「A 项目的 Agent 自动能读
+   *   B 项目的代码」。跨项目的授权必须是个决定。
+   */
+  const projectRepos = await db
+    .select({ ref: repositories.ref })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.orgId, item.orgId),
+        eq(repositories.projectId, item.projectId),
+        eq(repositories.status, 'active'),
+      ),
+    );
+
+  /**
+   * ★★ 默认只读在**这一处**注入，而不是在 acquire() 里。
+   *
+   *   permissionSnapshot 既落库当审计凭证，又原样传给工作区供给 ——
+   *   在这里算一次，两边必然一致。放到 acquire() 里算的话，
+   *   「Agent 当时实际能读什么」与「审计记录里写着它能读什么」会分叉，
+   *   而这正是快照存在的意义。
+   */
   const permissionSnapshot: AgentPermissions = {
     allowedTools: agent.allowedTools,
     deniedTools: agent.deniedTools,
-    resourceScopes: agent.resourceScopes,
+    resourceScopes: effectiveResourceScopes({
+      explicit: agent.resourceScopes,
+      projectRepoRefs: projectRepos.map((r) => r.ref),
+    }),
   };
 
   const context = await buildRunContext(db, item, input.additionalContext);
@@ -223,10 +254,28 @@ export async function dispatchRun(
     return { ok: false, code: 'WORKSPACE_UNAVAILABLE', detail: { reason: acquired.reason } };
   }
 
+  /**
+   * 派发前告诉 Agent 哪些情形会把这次工作拦下转人工。
+   *
+   * ★ 复用刚才那次流转算出来的 contextSnapshot，不重新构建 ——
+   *   它就是 buildPolicyContext() 的产物，而且与写进 policy.evaluated
+   *   事件的那一份是同一个对象。另起一份的话，两边会在
+   *   fact 增删时悄悄漂移，而漂移的表现是「警告说会拦，实际没拦」。
+   *
+   * Reuses the context snapshot the transition just computed rather than
+   * rebuilding it: it is the same object written into the policy.evaluated
+   * event, so the warning and the actual gate can never drift apart.
+   */
+  const policyGates = selectPolicyGates(
+    await db.transaction((tx) => loadPolicies(tx, item.orgId, item.projectId)),
+    moved.verdict.contextSnapshot,
+  );
+
   const adapter = registry.get(agent.id);
   const task: TaskDispatch = {
     runId,
     idempotencyKey,
+    policyGates,
     agent: {
       name: agent.name,
       type: agent.type,

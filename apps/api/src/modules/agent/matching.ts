@@ -1,7 +1,13 @@
 import { and, count, eq, gte, inArray, ne, sql, sum } from 'drizzle-orm';
-import { agentRuns, agents, projectMembers, workItems, type Database } from '@apos/db';
+import { agentRuns, agents, projectMembers, repositories, workItems, type Database } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, ExecutionMode, type WorkItemType } from '@apos/contracts';
-import { matchExecutors, type AgentCandidate, type MatchResult, type MatchTarget } from '@apos/domain';
+import {
+  effectiveResourceScopes,
+  matchExecutors,
+  type AgentCandidate,
+  type MatchResult,
+  type MatchTarget,
+} from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 
 type WorkItemRow = typeof workItems.$inferSelect;
@@ -44,6 +50,26 @@ export async function resolveExecutor(
       and(eq(projectMembers.projectId, item.projectId), eq(projectMembers.actorType, 'agent')),
     );
   const members = new Set(memberRows.map((m) => m.actorId));
+
+  /**
+   * ★★ 候选筛选必须和派发用**同一份**生效范围。
+   *
+   *   项目级仓库对项目内 Agent 默认只读（effectiveResourceScopes）。这里若还
+   *   按 agents.resourceScopes 原样判，会出现「调度器说没有候选，而真派下去
+   *   其实能跑」—— 候选面板给出的拒绝理由是「资源范围里没有 X」，
+   *   把人指向去给每个 Agent 配一遍授权，而那件事平台已经替他做了。
+   */
+  const projectRepos = await db
+    .select({ ref: repositories.ref })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.orgId, item.orgId),
+        eq(repositories.projectId, item.projectId),
+        eq(repositories.status, 'active'),
+      ),
+    );
+  const projectRepoRefs = projectRepos.map((r) => r.ref);
 
   const loads = await db
     .select({ agentId: agentRuns.agentId, n: count() })
@@ -100,7 +126,9 @@ export async function resolveExecutor(
        *   会让「有没有替补」这个问题永远答否。
        */
       registered: opts.registry ? opts.registry.has(a.id) : true,
-      resourceRefs: a.resourceScopes.filter((s) => s.access !== 'none').map((s) => s.ref),
+      resourceRefs: effectiveResourceScopes({ explicit: a.resourceScopes, projectRepoRefs })
+        .filter((s) => s.access !== 'none')
+        .map((s) => s.ref),
       tokensToday: spentMap.get(a.id) ?? 0,
       tokenLimitDaily: a.tokenLimitDaily ?? null,
     };

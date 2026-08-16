@@ -164,8 +164,23 @@ The two that most often cause confusion:
 - **`APOS_JWT_SECRET`** — unset means each process generates a random key, so
   everyone is signed out on restart, and a multi-replica deployment shows up as
   random disconnects with nothing pointing at configuration.
-- **`AGENT_WORKSPACE_ROOT`** — the root for every run's work tree. Unset, the
-  `claude_code` runtime refuses to dispatch.
+- **`AGENT_WORKSPACE_ROOT`** — the root for every run's work tree. `.env.example`
+  ships it blank, and `source`-ing that gives you an empty string rather than an
+  unset variable, so
+  [`workspaceRoot()`](../packages/workspace-providers/src/paths.ts) treats empty
+  as unset and falls back to `/tmp/apos-workspaces` (`/var/lib/apos/workspaces`
+  under Compose). Dispatch is unaffected — but `resolve('')` would have returned
+  the process's current directory, which is the repository itself, so the guard
+  is what keeps bare mirrors and work trees from growing inside your checkout.
+  Read the resolved root off the startup line, not off the variable:
+  `[workspace] git version 2.50.1，根目录 /tmp/apos-workspaces`. `/tmp` gets
+  swept, which costs a full re-clone of every mirror; point it somewhere
+  persistent for anything long-lived.
+
+A dispatch rejected with 「未准备出可用的工作目录」 is unrelated to this
+variable: that message comes from the `claude_code` adapter and means the Agent
+has no repo resource scope, or the repository was never registered under Code
+repositories.
 
 ### Model credentials: configured in the UI, not here
 

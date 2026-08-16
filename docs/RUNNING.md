@@ -162,8 +162,25 @@ API_URL=http://localhost:3001 pnpm --filter @apos/web dev
 | `RUNTIME_SYNC_INTERVAL_MS` | `15000` | 多久重新扫一次数据库里的 Agent 运行时，`0` 关闭 |
 | `INTEGRATION_MEMORY_ADAPTERS` | — | 设成 `all` 强制所有集成走进程内适配器（离线开发／演示） |
 | `REDIS_URL` | `redis://localhost:6379` | 目前**还没有代码读它**，留给后续的 BullMQ 队列与多实例 SSE 扇出 |
-| `AGENT_WORKSPACE_ROOT` | — | Agent 可写的目录根。不设时 `claude_code` 运行时拒绝派发 |
+| `AGENT_WORKSPACE_ROOT` | `/tmp/apos-workspaces` | Agent 可写的目录根。**空串按「没设」处理**，兜底到左边这个值，派发不受影响。`/tmp` 会被系统清理，镜像没了要重新全量 clone —— 长期跑请指到仓库外的固定目录 |
 | `APOS_ARCHIVE_ROOT` | — | 本地目录类工作区的归档根。**必须与上面不同且不在它下面**（否则 `pruneOrphans` 会连产物一起删）。不设时这类工作区退回「不交货」 |
+
+> **工作区根要看日志，不要看变量。** `.env.example` 里 `AGENT_WORKSPACE_ROOT=`
+> 是留空的，`source` 过去就是**空字符串**而不是「没设置」——
+> [`workspaceRoot()`](../packages/workspace-providers/src/paths.ts) 用 `||`
+> 而不是 `??` 正是为了挡这一手：`resolve('')` 返回的是进程当前目录，也就是
+> **仓库本身**，工作树和裸镜像会直接长在代码仓库里（`mirrors/`、`runs/`），
+> 而 `pruneOrphans` 回收时删的也是那儿。
+>
+> 所以启动日志里那行打的是**解析后**的根目录，不是照抄变量：
+>
+> ```
+> [workspace] git version 2.50.1，根目录 /tmp/apos-workspaces
+> ```
+>
+> 派发时报**「未准备出可用的工作目录」是另一回事** —— 那句话来自
+> `claude_code` 适配器，说的是这个 Agent 没有 repo 资源范围（或仓库没在
+> 「代码仓库」里登记），跟这个环境变量无关。
 
 `dev-up.sh` 另外认这几个：`APOS_PGPORT`(5433)、`APOS_API_PORT`(3000)、
 `APOS_WEB_PORT`(5173)、`APOS_REDIS_PORT`(6379)、`APOS_LOG_DIR`(`/tmp/apos-dev`)。

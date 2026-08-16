@@ -16,6 +16,7 @@ function task(overrides: Partial<TaskDispatch> = {}): TaskDispatch {
     runId: '11111111-1111-4111-8111-111111111111',
     idempotencyKey: 'wi-1:1',
     agent: null,
+    policyGates: [],
     workspace: null,
     goal: {
       title: '修复登录超时',

@@ -319,7 +319,19 @@ export class VersionConflictError extends Error {
   }
 }
 
-async function loadCompiledPolicies(tx: Tx, orgId: string, projectId: string) {
+/**
+ * 取出对该项目生效的原始规则（组织级 + 项目级 + 不可删的基线）。
+ *
+ * ★ 与 compile 分开是因为有第二个用途：派发前要把「哪些规则会拦下这次工作」
+ *   渲染成人话下发给 Agent（modules/agent/dispatch.ts），而渲染需要
+ *   condition 的 AST —— CompiledRule 只留了闭包，AST 已经不在了。
+ *
+ * Loads the raw rules in force for a project. Kept separate from compile()
+ * because dispatch needs the condition AST to render the rules into prose for
+ * the agent; a CompiledRule has closed over its condition and no longer
+ * carries it.
+ */
+export async function loadPolicies(tx: Tx, orgId: string, projectId: string) {
   const rows = await tx
     .select()
     .from(policies)
@@ -350,7 +362,11 @@ async function loadCompiledPolicies(tx: Tx, orgId: string, projectId: string) {
     orgId,
   }));
 
-  return compile([...baseline, ...stored]);
+  return [...baseline, ...stored];
+}
+
+async function loadCompiledPolicies(tx: Tx, orgId: string, projectId: string) {
+  return compile(await loadPolicies(tx, orgId, projectId));
 }
 
 async function createDecisionFor(

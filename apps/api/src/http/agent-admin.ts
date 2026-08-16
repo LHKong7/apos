@@ -103,7 +103,13 @@ export const AgentInput = z.object({
 
   allowedTools: z.array(z.string()).default([]),
   deniedTools: z.array(z.string()).default([]),
-  resourceScopes: z.array(ResourceScope).default([]),
+  /**
+   * ★ 去掉 `origin` —— 它只在派发快照里有意义，登记的一律是 explicit。
+   *   不去掉的话，调用方能自称 `project_default`，把一条显式授权
+   *   伪装成平台默认给的，而审计恰恰靠这个字段区分责任。
+   *   zod 默认剥掉 shape 外的键，所以传了也进不来。
+   */
+  resourceScopes: z.array(ResourceScope.omit({ origin: true })).default([]),
 
   maxConcurrency: z.number().int().positive().max(50).default(3),
   timeoutSeconds: z.number().int().positive().max(86_400).default(1800),

@@ -189,10 +189,31 @@ export const CapabilityManifest = z.object({
 });
 export type CapabilityManifest = z.infer<typeof CapabilityManifest>;
 
+/**
+ * 这条授权是谁给的。
+ *
+ * ★★ 只在**派发快照**里有意义，登记接口一律忽略它。
+ *
+ *   项目级仓库对项目内 Agent 默认只读（见 domain 的 effectiveResourceScopes），
+ *   于是 permissionSnapshot 里会出现管理员从没配过的条目。不标出处的话，
+ *   审计时「这个 Agent 当时能读这个仓库」有两种完全不同的读法 ——
+ *   管理员授了权，还是平台默认给的 —— 而事后追责最需要区分的正是这两者。
+ *
+ *   缺省视为 explicit：老数据没有这个字段，而它们确实都是显式配的。
+ *
+ * Where this grant came from. Only meaningful inside a dispatch's permission
+ * snapshot: project-scoped repositories are readable by default, so the
+ * snapshot contains entries no admin ever configured. Audit needs to tell the
+ * two apart. Absent means explicit — that is what old rows are.
+ */
+export const ScopeOrigin = z.enum(['explicit', 'project_default']);
+export type ScopeOrigin = z.infer<typeof ScopeOrigin>;
+
 export const ResourceScope = z.object({
   kind: z.enum(['repo', 'env', 'database', 'external_service', 'dataset']),
   ref: z.string(),
   access: z.enum(['none', 'read', 'write']),
+  origin: ScopeOrigin.optional(),
 });
 export type ResourceScope = z.infer<typeof ResourceScope>;
 
@@ -287,6 +308,24 @@ export const TaskDispatch = z.object({
   ),
   /** 权限显式下发，不依赖运行时侧配置（docs/tech/06 §4） */
   permissions: AgentPermissions,
+  /**
+   * 这次工作一旦落到哪些情形上，会被 Policy 拦下转人工 —— 已渲染成人话。
+   *
+   * ★ 派发时算好再下发，而不是让 Agent 自己推断：Agent 看不到 Policy 引擎，
+   *   Policy 评估发生在状态流转上，是平台侧的事。不告诉它的后果是它可能
+   *   一路做到生产发布，才在流转那一步被冻住 —— 那时 token 已经花完了。
+   * ★ 存渲染好的字符串而非规则 AST：`@apos/agent-runtimes` 只依赖
+   *   `@apos/contracts`，取不到 domain 里的 `explainPolicy()`。
+   *
+   * Which situations will get this work held for human approval by Policy,
+   * already rendered as prose. Computed at dispatch rather than inferred by the
+   * agent: policy evaluation happens on state transitions, which the agent
+   * cannot see. Stored rendered because the runtimes package cannot reach
+   * domain's `explainPolicy()`.
+   */
+  policyGates: z
+    .array(z.object({ name: z.string(), explanation: z.string() }))
+    .default([]),
   /** 平台已备好的工作区；null 表示这次派发不涉及代码仓库 */
   workspace: RunWorkspace.nullable().default(null),
   limits: z.object({

@@ -182,7 +182,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
     const { result } = await acquireFor(p, scopes('write'));
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('没有在「代码仓库」里登记');
+    if (!result.ok) expect(result.reason).toContain('没有在「工作区来源」里登记为代码仓库');
   });
 
   it('工作区信息落库，进程重启后还能知道改动在哪个分支', async () => {
@@ -685,7 +685,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('没有在「存储目标」里登记');
+    if (!result.ok) expect(result.reason).toContain('没有在「工作区来源」里登记为存储目标');
   });
 
   /** ★ 交货只对主挂载做：既挂仓库又挂数据集时，产出该进仓库分支而不是覆盖数据集 */

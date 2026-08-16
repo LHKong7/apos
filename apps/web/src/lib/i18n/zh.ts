@@ -160,6 +160,7 @@ export const zh: Record<keyof typeof en, string> = {
   'nav.integrations': '集成',
   'nav.agentConfig': 'Agent 配置',
   'nav.storage': '存储目标',
+  'nav.workspaceSources': '工作区来源',
   'nav.members': '成员与角色',
   'nav.roles': '角色定义',
   'nav.backToBoard': '← 回到看板',
@@ -1831,7 +1832,27 @@ export const zh: Record<keyof typeof en, string> = {
   'agentCfg.repo.strictAfterFirst': '此后转严格校验 —— 填在这里只是把首次那一次的信任窗口也关掉。',
   'agentCfg.repo.checkCommand': '质量核验命令',
   'agentCfg.repo.defaultDelivery': '提交并推送到这个仓库的分支',
-  // ── 存储目标（独立一页）───────────────────────────────────────────
+  // ── 工作区来源（合并页）───────────────────────────────────────────
+  'ws.title': '工作区来源',
+  'ws.subtitle':
+    'Agent 的活儿从哪来、产出去哪：代码仓库、对象存储桶、宿主机目录。按项目或整个组织登记，任何 Agent 都能引用 —— 它不属于其中某一个。',
+  'ws.intro': 'Agent 的资源范围按这里的「标识」解析。没登记的来源，任务派不出去。',
+  'ws.register': '+ 登记来源',
+  'ws.registerShort': '登记来源',
+  'ws.pickKind': '登记哪一类来源？',
+  'ws.kindGit': '代码仓库（Git）',
+  'ws.kindGitHint': '检出成一棵工作树；产出提交并推送到同一个仓库的分支。',
+  'ws.kindObject': '对象存储（S3 兼容）',
+  'ws.kindObjectHint': 'bucket/前缀 下的对象同步成一个本地目录；产出同步回同一个前缀。',
+  'ws.kindLocal': '宿主机目录',
+  'ws.kindLocalHint': '内容复制进来而不是原地改；产出归档到 APOS_ARCHIVE_ROOT 下。',
+  'ws.empty': '还没有登记任何工作区来源',
+  'ws.emptyHint':
+    '代码仓库、对象存储桶、宿主机目录都在这里登记。Agent 被授权的来源必须先登记，否则准备工作区会失败。',
+  'ws.grantHint': '登记不等于授权。哪个 Agent 看得见哪个来源，在这里配：',
+  'ws.grantHintDefault':
+    '。唯一的例外是项目级的代码仓库 —— 项目里的 Agent 不必逐个授权就能读，但「写」仍然要显式授。',
+  // ── 存储目标（组件）───────────────────────────────────────────────
   'storage.title': '存储目标',
   'storage.subtitle':
     '非 Git 的工作区来源：对象存储桶与宿主机目录。按项目或整个组织登记，任何 Agent 都能引用 —— 它不属于其中某一个。',

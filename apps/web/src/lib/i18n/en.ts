@@ -170,6 +170,7 @@ export const en = {
   'nav.integrations': 'Integrations',
   'nav.agentConfig': 'Agent settings',
   'nav.storage': 'Storage targets',
+  'nav.workspaceSources': 'Workspace sources',
   'nav.members': 'Members & roles',
   'nav.roles': 'Role definitions',
   'nav.backToBoard': '← Back to board',
@@ -1857,7 +1858,32 @@ export const en = {
   'agentCfg.repo.strictAfterFirst': 'Strict checking applies from then on — filling this in only closes the trust window on that very first connection too.',
   'agentCfg.repo.checkCommand': 'Quality check command',
   'agentCfg.repo.defaultDelivery': 'commit and push to a branch of this repository',
-  // ── Storage targets (own page) / 存储目标（独立一页）─────────────────
+  // ── Workspace sources (merged page) / 工作区来源（合并页）──────────────
+  'ws.title': 'Workspace sources',
+  'ws.subtitle':
+    'Where an agent’s work comes from and where its output goes: code repositories, object-storage buckets and host directories. Registered per project or org-wide, and referenced by any agent — not owned by one.',
+  'ws.intro':
+    'An agent’s resource scopes resolve against the keys registered here. Tasks cannot be dispatched against unregistered sources.',
+  'ws.register': '+ Register source',
+  'ws.registerShort': 'Register source',
+  'ws.pickKind': 'What kind of source?',
+  'ws.kindGit': 'Code repository (Git)',
+  'ws.kindGitHint':
+    'Cloned into a work tree; output is committed and pushed to a branch of the same repository.',
+  'ws.kindObject': 'Object storage (S3-compatible)',
+  'ws.kindObjectHint':
+    'Objects under bucket/prefix are synced down to a local directory; output syncs back to the same prefix.',
+  'ws.kindLocal': 'Host directory',
+  'ws.kindLocalHint':
+    'Contents are copied in rather than worked on in place; output is archived under APOS_ARCHIVE_ROOT.',
+  'ws.empty': 'No workspace source registered yet',
+  'ws.emptyHint':
+    'Repositories, buckets and host directories are all registered here. A source an agent is authorized for must be registered first, or preparing the workspace fails.',
+  'ws.grantHint':
+    'Registering a source does not grant access to it. Resource scopes are set per agent under',
+  'ws.grantHintDefault':
+    '. The one exception: project-scoped repositories are readable by every agent in the project without being granted — write access still has to be granted explicitly.',
+  // ── Storage targets (components) / 存储目标（组件）─────────────────────
   'storage.title': 'Storage targets',
   'storage.subtitle':
     'Non-Git workspace sources: object-storage buckets and host directories. Registered per project or org-wide, and referenced by any agent — not owned by one.',

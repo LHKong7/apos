@@ -235,11 +235,12 @@ function navGroups(id: string): { titleKey: MessageKey; items: NavItem[] }[] {
         { to: `${p}/settings/integrations`, labelKey: 'nav.integrations', icon: <Icon.Integration /> },
         { to: `${p}/settings/agents`, labelKey: 'nav.agentConfig', icon: <Icon.AgentConfig /> },
         /**
-         * ★ 存储目标是一格独立的导航，不是 Agent 配置里的第四个标签页。
-         *   它是与代码仓库同级的项目资源登记，不属于任何一个 Agent ——
-         *   而藏在别的页面里的设置，对没读过文档的人等于不存在。
+         * ★ 工作区来源是一格独立的导航（代码仓库 + 对象存储 + 宿主机目录）。
+         *   三类都是项目级的资源登记，不属于任何一个 Agent ——
+         *   而藏在 Agent 配置的标签页里的设置，对没读过文档的人等于不存在：
+         *   想登记一个仓库或挂一个数据目录的人，脑子里没有 Agent。
          */
-        { to: `${p}/settings/storage`, labelKey: 'nav.storage', icon: <Icon.Storage /> },
+        { to: `${p}/settings/storage`, labelKey: 'nav.workspaceSources', icon: <Icon.Storage /> },
         { to: `${p}/settings/members`, labelKey: 'nav.members', icon: <Icon.Members /> },
         { to: `${p}/settings/roles`, labelKey: 'nav.roles', icon: <Icon.Roles /> },
       ],

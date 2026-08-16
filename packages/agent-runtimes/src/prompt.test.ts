@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { RunWorkspace, TaskDispatch } from '@apos/contracts';
 import { buildGovernanceRules } from './prompt';
 
-function task(workspace: RunWorkspace | null): TaskDispatch {
+function task(
+  workspace: RunWorkspace | null,
+  policyGates: TaskDispatch['policyGates'] = [],
+): TaskDispatch {
   return {
     runId: '11111111-1111-4111-8111-111111111111',
     idempotencyKey: 'wi-1:1',
@@ -11,6 +14,7 @@ function task(workspace: RunWorkspace | null): TaskDispatch {
     goal: { title: 't', description: 'd', acceptanceCriteria: [], constraints: [] },
     context: [],
     permissions: { allowedTools: ['Read'], deniedTools: [], resourceScopes: [] },
+    policyGates,
     limits: { maxCostUsd: 5, maxDurationSeconds: 600, maxTokens: null },
     model: null,
     callback: { eventsUrl: '/x', token: 't' },
@@ -91,5 +95,35 @@ describe('治理规则里的工作区说明', () => {
   it('没有工作区时整段省略', () => {
     const text = buildGovernanceRules(task(null), { writable: false });
     expect(text).not.toContain('工作区：');
+  });
+});
+
+describe('会被 Policy 拦下的情形', () => {
+  const gates = [
+    {
+      name: '生产环境发布需发布负责人审批',
+      explanation: '当操作环境是生产、且操作类型是部署时，系统会暂停并请发布负责人审批。',
+    },
+  ];
+
+  /**
+   * ★ 这条盯的是这个功能唯一的失败方式：文案措辞。
+   *
+   *   拦截由 transition() 执行，与 Agent 读没读这段话无关。写成「你不许做 X」
+   *   会让 Agent 以为自己是执行方 —— 于是它可能为了「合规」绕开正确解法，
+   *   或者做了却瞒着不说。而我们要的恰恰相反：照常做完，然后如实讲。
+   */
+  it('★ 写成「会被拦下」而不是「你不许做」，并要求在最终回复里点名', () => {
+    const text = buildGovernanceRules(task(null, gates), { writable: true });
+
+    expect(text).toContain('生产环境发布需发布负责人审批');
+    expect(text).toContain('照常把工作做完');
+    expect(text).toContain('最终回复');
+    expect(text).not.toContain('不许');
+  });
+
+  it('没有会拦下的规则时整段省略，不留空标题', () => {
+    const text = buildGovernanceRules(task(null), { writable: true });
+    expect(text).not.toContain('转人工审批');
   });
 });

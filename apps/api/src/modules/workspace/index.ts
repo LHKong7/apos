@@ -219,15 +219,16 @@ export class WorkspaceService {
        *   放行的话 Agent 会在一个空目录里开工，然后信心十足地报告
        *   「未找到相关代码，已创建新实现」—— 这种失败比报错难查十倍。
        *
-       * ★ 报错要指到**具体哪个登记页**去补。笼统说一句「资源没登记」，
-       *   管理员还得自己猜是去代码仓库那页还是存储目标那页。
+       * ★ 报错要指到**登记页与类型**。两类现在同处「工作区来源」一页，
+       *   但仍要说清缺的是仓库还是存储目标 —— 页面上按类型分别登记，
+       *   只说「没登记」的话管理员得把两类都翻一遍。
        */
       const parts: string[] = [];
       if (missingRepos.length) {
-        parts.push(`${missingRepos.join('、')} 没有在「代码仓库」里登记`);
+        parts.push(`${missingRepos.join('、')} 没有在「工作区来源」里登记为代码仓库`);
       }
       if (missingStores.length) {
-        parts.push(`${missingStores.join('、')} 没有在「存储目标」里登记`);
+        parts.push(`${missingStores.join('、')} 没有在「工作区来源」里登记为存储目标`);
       }
       return { ok: false, reason: `准备工作区失败：${parts.join('；')}` };
     }

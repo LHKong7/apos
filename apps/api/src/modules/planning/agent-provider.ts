@@ -669,6 +669,19 @@ export class AgentPlanningProvider implements PlanningProvider {
       },
       context: [],
       permissions,
+      /**
+       * ★ 规划 Run 没有 Policy 闸门，空数组是结论不是遗漏。
+       *   Policy 评估挂在 Work Item 的状态流转上，而规划跑在建出工作项**之前**
+       *   —— 它没有可流转的对象。规划产出的把关走的是另一条路：计划审批
+       *   （`plan.approved`）。在这里编一份警告只会让 Agent 去防一道
+       *   它这辈子都碰不到的闸门。
+       *
+       * Planning runs have no policy gates; the empty array is a conclusion,
+       * not an oversight. Policy is evaluated on work-item transitions, and
+       * planning runs before any work item exists. Planning output is gated by
+       * plan approval instead.
+       */
+      policyGates: [],
       limits: {
         maxTokens: agent.tokenLimitPerRun,
         maxCostUsd: usdCeilingForTokens(agent.model, agent.tokenLimitPerRun),

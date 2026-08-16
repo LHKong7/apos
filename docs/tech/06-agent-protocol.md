@@ -164,6 +164,9 @@ interface TaskDispatch {
     resourceScopes: Array<{ kind: string; ref: string; access: 'read' | 'write' | 'none' }>;
   };
 
+  // ★ 会把这次工作拦下转人工的 Policy 规则，派发时算好、已渲染成人话
+  policyGates: Array<{ name: string; explanation: string }>;
+
   limits: {
     maxCostUsd: number;
     maxDurationSeconds: number;
@@ -183,6 +186,17 @@ interface TaskDispatch {
 **权限显式下发**是关键安全设计。不能假设运行时侧配置正确——APOS 是权限的唯一真相来源，每次派发都带上完整清单。适配器负责把它翻译成运行时能理解的形式（MCP 的工具过滤、Claude Code 的 allowedTools 等）。
 
 **幂等**：运行时必须对相同 `idempotencyKey` 返回已存在的 Run，而不是启动新的。不支持的运行时由适配器在 APOS 侧做去重（记录 key → runId 映射）。
+
+**`policyGates` 是告知，不是授权。** Agent 看不到 Policy 引擎——评估发生在 Work Item 的状态流转上（[05 Policy Engine](05-policy-engine.md) §3），是平台侧的事，它既不能遵守也不能违反。不告诉它的代价是它可能把整个 token 预算花在一条注定停在人工审批前的路上，而那道闸门在它结束**之后**才生效，它连失败反馈都拿不到。
+
+因此这个字段：
+
+- **在派发时算好**（`selectPolicyGates`，`packages/domain/src/policy/gates.ts`），用的是那次流转刚算出来的 `contextSnapshot`——与写进 `policy.evaluated` 事件的是同一份，警告与实际判定不会漂移；
+- **只留会卡住人的规则**，且只留在本次执行中**还有可能命中**的（已被固定 fact 排除的不提，否则清单一长真正会命中的那条就被稀释了）；
+- **下发渲染好的字符串**而非规则 AST——`@apos/agent-runtimes` 只依赖 `@apos/contracts`，取不到 domain 的 `explainPolicy()`；
+- **措辞是「会被拦下」而不是「你不许做」**。拦截由 `transition()` 执行，与 Agent 读没读无关；写成禁令会让它以为自己是执行方，于是可能为了「合规」绕开正确解法，或者做了却瞒着不说。要的恰恰相反：照常做完，然后在最终回复里点名。
+
+规划 Run 的这个字段恒为空数组：Policy 挂在 Work Item 的流转上，而规划跑在建出工作项之前，它没有可流转的对象。
 
 ---
 

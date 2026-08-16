@@ -1,179 +1,34 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { t, useT, type MessageKey } from '../../lib/i18n';
+import { t, type MessageKey } from '../../lib/i18n';
 import { ApiError, api } from '../../lib/api/client';
-import { qk } from '../../lib/query/keys';
-import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
-import { useAuthStore } from '../../stores/auth';
 import type { StorageTargetRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { Field, Labeled, Notice, StatusDot } from './primitives';
+import { Field, Labeled, StatusDot } from './primitives';
 
 /**
  * 存储目标 —— 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
  *
- * ★★ 这是**独立一页**，不是 Agent 配置里的一个标签页。
+ * ★★ 这个文件里只剩**组件**，页面在 WorkspaceSources.tsx。
  *
- *   它此前挂在「Agent 配置」下面，而那个位置说错了两件事：
+ *   存储目标曾经是「Agent 配置」下面的第四个标签页，先被拆成独立一页，
+ *   现在与代码仓库合并成「工作区来源」—— 两类都不是某个 Agent 的属性，
+ *   而是项目（或组织）级的资源登记，回答的是同一个问题：
+ *   Agent 的活儿从哪来、产出去哪。
  *
- *   1. 存储目标不属于任何一个 Agent。它是**项目级（或组织级）的资源登记**，
- *      与代码仓库同级 —— 一个 bucket 被三个 Agent 引用是常态，删掉它要看的是
- *      「有没有 Agent 授权指向它」，而不是某一个 Agent 的配置。放在 Agent 页
- *      底下，会让人以为换 Agent 要重配一遍。
- *   2. 找不到。要配一个数据集来源，路径是「Agent 配置 → 第四个标签」——
- *      而用户此刻想的是「我要挂一个数据目录」，脑子里没有 Agent。
- *      导航是功能的可见性：一个要点进别的页面才找得到的设置，
- *      对没读过文档的人等于不存在。
- *
- *   Storage targets are a project-level resource registry (sibling to code
- *   repositories), not a property of any single agent — so they get their own
- *   nav entry instead of living as the fourth tab under Agent settings, where
- *   nobody looking to mount a data directory would think to look.
- *
- * ★ 与「代码仓库」并列而不是合成一页：两类的字段完全不重叠
+ * ★ 与代码仓库同处一页但**各自一张表单**：两类的字段完全不重叠
  *   （bucket / 寻址风格 vs 默认分支 / 分支前缀），混在一张表单里，
  *   不适用的那半边只能显示成灰掉的占位符 —— 而占位符会被当成真实配置。
+ *
+ * Components only; the page lives in WorkspaceSources.tsx. Same page as
+ * repositories, separate forms — the two kinds share no fields, and a
+ * greyed-out placeholder reads as real configuration.
  */
-export function StorageTargetsPage() {
-  const t = useT();
-  const { projectId } = useParams<{ projectId: string }>();
-  const userId = useAuthStore((s) => s.userId);
 
-  if (!projectId || !userId) return null;
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-sm font-semibold text-slate-900">{t('storage.title')}</h1>
-          <Link
-            to={`/projects/${projectId}`}
-            className="text-xs text-slate-500 hover:text-slate-700"
-          >
-            {t('agents.backToOverview')}
-          </Link>
-        </div>
-        <p className="mt-1 text-[11px] text-slate-500">{t('storage.subtitle')}</p>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto p-4">
-        <StorageTargetsSection projectId={projectId} />
-      </div>
-    </div>
-  );
-}
-
-function StorageTargetsSection({ projectId }: { projectId: string }) {
-  const qc = useQueryClient();
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<StorageTargetRow | null>(null);
-
-  const q = useQuery({
-    queryKey: qk.storageTargets(projectId),
-    queryFn: () => api.storageTargets(projectId),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteStorageTarget(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) }),
-  });
-
-  if (q.isLoading) return <CardSkeleton />;
-  if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  const data = q.data!;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <p className="text-xs text-slate-500">{t('storage.intro')}</p>
-        <Button variant="neutral" size="sm" onClick={() => setCreating(true)} className="ml-auto">
-          {t('storage.register')}
-        </Button>
-      </div>
-
-      {/*
-        ★★ 白名单必须在这一页显示出来。
-          它是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员在界面上
-          改不动也看不到，而一条 local 登记过不过闸完全由它决定 ——
-          不显示的话，被闸掉的登记在页面上和正常的一模一样，
-          直到第一次派发才报「不在允许挂载的范围内」。
-      */}
-      <Notice tone={data.localMountRestricted ? 'info' : 'warning'}>
-        {data.localMountRestricted ? (
-          <>
-            {t('storage.mountRoots')}
-            {data.localMountRoots.map((r) => (
-              <code key={r} className="mx-1 rounded bg-white px-1 py-0.5">
-                {r}
-              </code>
-            ))}
-            {t('storage.mountRootsNote')}
-          </>
-        ) : (
-          <>{t('storage.noMountRoots')}</>
-        )}
-      </Notice>
-
-      {data.storageTargets.length === 0 ? (
-        <EmptyState
-          icon="🗄️"
-          message={t('storage.emptyMessage')}
-          hint={t('storage.emptyHint')}
-          action={{ label: t('storage.registerShort'), onClick: () => setCreating(true) }}
-        />
-      ) : (
-        <div className="space-y-2">
-          {data.storageTargets.map((target) => (
-            <StorageTargetCard
-              key={target.id}
-              target={target}
-              onDelete={() => remove.mutate(target.id)}
-              onEdit={() => setEditing(target)}
-              error={remove.error}
-            />
-          ))}
-        </div>
-      )}
-
-      {/*
-        ★ 授权在 Agent 配置那一页 —— 登记一个目标不等于哪个 Agent 看得见它。
-          这条指路是这次拆分欠的：两页分开之后，「配完了为什么 Agent 还读不到」
-          少了一个显而易见的答案。
-      */}
-      <p className="text-[11px] text-slate-500">
-        {t('storage.grantHint')}{' '}
-        <Link
-          to={`/projects/${projectId}/settings/agents`}
-          className="text-slate-600 underline hover:text-slate-900"
-        >
-          {t('nav.agentConfig')}
-        </Link>
-      </p>
-
-      {(creating || editing) && (
-        <StorageTargetForm
-          projectId={projectId}
-          existing={editing}
-          targets={data.storageTargets}
-          encryptsInline={data.encryptsInlineSecrets}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-          onDone={() => {
-            setCreating(false);
-            setEditing(null);
-            void qc.invalidateQueries({ queryKey: qk.storageTargets(projectId) });
-          }}
-        />
-      )}
-    </div>
-  );
-}
 
 /** 存储目标类型 → 词条键 / Storage target kind → message key（模块级只存键） */
 export const TARGET_KIND_KEYS: Record<StorageTargetRow['kind'], MessageKey> = {
@@ -243,7 +98,7 @@ export function DeliveryTargetPicker({
   );
 }
 
-function StorageTargetCard({
+export function StorageTargetCard({
   target,
   onDelete,
   onEdit,
@@ -357,9 +212,10 @@ function StorageTargetCard({
   );
 }
 
-function StorageTargetForm({
+export function StorageTargetForm({
   projectId,
   existing,
+  initialKind,
   targets,
   encryptsInline,
   onClose,
@@ -368,6 +224,14 @@ function StorageTargetForm({
   projectId: string;
   /** 传了就是编辑；标识与类型不可改 */
   existing?: StorageTargetRow | null;
+  /**
+   * 新建时的初始类型。
+   *
+   * ★ 工作区来源页在打开表单**之前**就问过类型了（KindPicker），
+   *   带进来省掉用户再选一次 —— 而「选完类型，表单里的类型又回到默认值」
+   *   会让人以为刚才那一步没生效。编辑时忽略：类型不可改。
+   */
+  initialKind?: StorageTargetRow['kind'];
   /** 交货目标的候选 */
   targets: StorageTargetRow[];
   encryptsInline: boolean;
@@ -378,7 +242,7 @@ function StorageTargetForm({
   const [form, setForm] = useState({
     ref: existing?.ref ?? '',
     name: existing?.name ?? '',
-    kind: existing?.kind ?? ('object_storage' as StorageTargetRow['kind']),
+    kind: existing?.kind ?? initialKind ?? ('object_storage' as StorageTargetRow['kind']),
     endpoint: existing?.endpoint ?? '',
     region: existing?.region ?? 'us-east-1',
     bucket: existing?.bucket ?? '',

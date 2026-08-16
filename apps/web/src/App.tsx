@@ -23,7 +23,7 @@ import { AgentDetailPage } from './pages/Agents/Detail';
 import { DecisionsPage } from './pages/Decisions';
 import { IntegrationsPage } from './pages/Settings/Integrations';
 import { AgentConfigPage } from './pages/Settings/AgentConfig';
-import { StorageTargetsPage } from './pages/Settings/StorageTargets';
+import { WorkspaceSourcesPage } from './pages/Settings/WorkspaceSources';
 import { MembersPage } from './pages/Settings/Members';
 import { AccountsPage } from './pages/Settings/Accounts';
 import { RolesPage } from './pages/Settings/Roles';
@@ -168,7 +168,12 @@ export function App() {
               所以这里不需要旧链接转发：那个标签是 useState，从来没有人
               能收藏或分享它。
           */}
-          <Route path="/projects/:projectId/settings/storage" element={<StorageTargetsPage />} />
+          {/*
+            ★ 路由沿用 /settings/storage 而不是换成 /settings/workspace-sources：
+              这条路径已经被人存过书签、也出现在报错文案里（「没有在…登记」）。
+              换路径换来的只是更贴切的字面，代价是所有旧链接 404。
+          */}
+          <Route path="/projects/:projectId/settings/storage" element={<WorkspaceSourcesPage />} />
           <Route path="/projects/:projectId/settings/members" element={<MembersPage />} />
           <Route path="/projects/:projectId/settings/accounts" element={<AccountsPage />} />
           <Route path="/projects/:projectId/settings/roles" element={<RolesPage />} />

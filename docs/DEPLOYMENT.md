@@ -108,7 +108,7 @@ pnpm deploy:down      # 停止并删除容器（数据卷保留）
 | `APOS_PGPORT` | `5433` | Postgres 在宿主机上的端口，只绑 `127.0.0.1` |
 | `APOS_REDIS_PORT` | `6379` | 同上 |
 | 模型凭证 | — | **不在这里配**：去 设置 → Agent 配置，登记在每个 Agent 的凭证栏上（密文入库，见 `APOS_SECRET_KEY`）。环境变量兜底与各运行时的变量名见 [RUNNING.md § 模型凭证](RUNNING.md#模型凭证在界面上配不在这里配) |
-| `AGENT_WORKSPACE_ROOT` | 空 | Agent 可写的目录根。不配时 `claude_code` 运行时拒绝派发 |
+| `AGENT_WORKSPACE_ROOT` | `/var/lib/apos/workspaces` | Agent 可写的目录根。compose 已给了默认值并挂在 `workspaces` 卷上，不配也能派发；要换位置得连着卷一起改 |
 | `GITHUB_INTEGRATION_TOKEN` | 空 | 不配时 GitHub 集成显示未连接 |
 | `INTEGRATION_MEMORY_ADAPTERS` | 空 | 设 `all` 则所有集成走进程内适配器，不发任何外部请求 |
 | `DATABASE_URL` | 容器内的 `postgres` | 指到外部托管 Postgres 就能去掉 `postgres` 服务，见 [接 Supabase](SUPABASE.md) |

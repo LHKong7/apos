@@ -11,6 +11,7 @@ function task(overrides: Partial<TaskDispatch> = {}): TaskDispatch {
     runId: '22222222-2222-4222-8222-222222222222',
     idempotencyKey: 'wi-1:1',
     agent: { name: 'codex-1', type: 'code', description: null, skills: [] },
+    policyGates: [],
     workspace: {
       path: '/tmp/ws/order-service',
       writable: true,
