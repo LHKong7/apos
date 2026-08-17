@@ -192,13 +192,22 @@ export async function resolveAgentAccess(
       : [undefined];
 
   /**
-   * ★★ 迁移期的回落：项目里没配过时，用 Agent 上那份旧的 resourceScopes。
+   * ★★ 没有项目授权时，资源范围是**空的** —— 不再回落到 Agent 上那份旧字段。
    *
-   *   直接给空数组的话，升级之后所有还没被补过项目授权的 Agent 会失去
-   *   全部资源范围 —— 表现是任务在「找不到仓库」上失败，而没人改过配置。
-   *   这条回落随 Phase 5 一起去掉（届时旧字段停写）。
+   *   旧字段是组织级的，回落等于「在 A 项目配的仓库，B 项目也算数」，
+   *   而那正是权限下沉到项目级要消灭的东西。0031 那次迁移已经给每个
+   *   既有的项目内 Agent 补过授权行，回落只会掩盖漏补的那些。
+   *
+   *   空不等于什么都读不到：项目级登记的仓库仍然默认只读
+   *   （下面 projectRepoRefs 那一档），一个刚进项目、还没人配过授权的
+   *   Agent 照样能读这个项目的代码。
+   *
+   * No fallback to the org-level field: it would mean "a repository granted in
+   * project A also counts in project B", which is exactly what moving
+   * permissions to project scope removes. Project-registered repositories are
+   * still readable by default, so an unconfigured agent is not blind.
    */
-  const scopes = row?.resourceScopes ?? (grant ? [] : agent.resourceScopes);
+  const scopes = row?.resourceScopes ?? [];
 
   /**
    * ★★ 翻译器只取决于**运行时类型**，与「有没有注册进本进程」无关。

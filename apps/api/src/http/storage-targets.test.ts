@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { agents, storageTargets } from '@apos/db';
+import { storageTargets } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -226,11 +226,10 @@ describe('存储目标登记', () => {
    */
   it('★ 还有 Agent 授权指向它时不能删', async () => {
     const id = (await create(S3)).json().storageTarget.id;
-    const { agentId } = await seedAgent(db, fx);
-    await db
-      .update(agents)
-      .set({ resourceScopes: [{ kind: 'dataset', ref: 'reports', access: 'write' }] })
-      .where(eq(agents.id, agentId));
+    /** ★ 授权在项目级 —— 引用检查也去那张表查（见 storage-targets.ts 的注释） */
+    await seedAgent(db, fx, {
+      grant: { resourceScopes: [{ kind: 'dataset', ref: 'reports', access: 'write' }] },
+    });
 
     const blocked = await app.inject({
       method: 'DELETE',

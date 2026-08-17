@@ -19,8 +19,8 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
-import { ResourceScopeEditor, type ScopeRow } from '@/components/ResourceScopeEditor';
 import { AgentAccessPanel } from './AgentAccess';
 
 /**
@@ -553,24 +553,22 @@ function AgentForm({
    *   而页面上没有任何地方提示缺了什么。配置页不给的字段，用户没法自己发现。
    */
   const [applicableTypes, setApplicableTypes] = useState<string[]>(agent?.applicableTypes ?? []);
-  const [allowedTools, setAllowedTools] = useState(
-    (agent?.permissions.allowedTools ?? ['Read', 'Grep']).join(', '),
-  );
-  const [deniedTools, setDeniedTools] = useState((agent?.permissions.deniedTools ?? []).join(', '));
   /**
-   * ★★ 资源范围是**一个列表**，不是「一个仓库 + 一个数据集」两格。
+   * ★★ 组织级配置的是**上限**，不是「它能做什么」。
    *
-   *   此前这里是两个 useState，保存时按这两格重建整个数组 —— 于是编辑一个
-   *   授权了三个仓库的 Agent，另外两条在保存时被静默删掉。数据模型一直
-   *   支持多条，只有表单不支持，而丢掉的是**授权**：撤销一条授权本该是
-   *   一个决定，在那个表单里它是打开页面点保存的副作用。
+   *   实际授权在项目里选档案（见 AgentAccess.tsx）。这一页只回答
+   *   「这个 Agent 最多能被授权到什么程度」—— 项目管理员在自己项目里
+   *   选不出组织没打算给它的能力。
+   *
+   * ★ `null` = 不设上限，和「一条都不给」相反。界面上用一个开关表达，
+   *   而不是让空清单去兼任两种含义。
    */
-  const [scopes, setScopes] = useState<ScopeRow[]>(
-    (agent?.permissions.resourceScopes ?? []).map((s) => ({
-      kind: s.kind,
-      ref: s.ref,
-      access: s.access,
-    })),
+  const [limited, setLimited] = useState(agent?.ceiling.capabilityCeiling !== null);
+  const [ceiling, setCeiling] = useState<string[]>(
+    agent?.ceiling.capabilityCeiling ?? [...DEFAULT_CEILING],
+  );
+  const [deniedCapabilities, setDeniedCapabilities] = useState<string[]>(
+    agent?.ceiling.deniedCapabilities ?? [],
   );
   const [reason, setReason] = useState('');
   /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
@@ -622,10 +620,9 @@ function AgentForm({
         ownerId,
         skills: splitList(skills),
         applicableTypes,
-        allowedTools: splitList(allowedTools),
-        deniedTools: splitList(deniedTools),
-        // ★ 原样送出，一条不丢；ref 为空的那条是用户刚点「新增」还没选，丢掉它
-        resourceScopes: scopes.filter((s) => s.ref.trim().length > 0),
+        // ★ 不设上限时送 null，不是空数组 —— 两者含义相反
+        capabilityCeiling: limited ? ceiling : null,
+        deniedCapabilities,
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
@@ -864,26 +861,37 @@ function AgentForm({
           <p className="mb-2 text-[11px] font-medium text-slate-700">
             {t('agentCfg.form.permissions')}
           </p>
-          <Labeled label={t('agentCfg.form.allowedTools')} help={t('agentCfg.form.allowedToolsHelp')}>
-            <Input
-              value={allowedTools}
-              onChange={(e) => setAllowedTools(e.target.value)}
-              className="font-mono" />
-          </Labeled>
-          <Labeled label={t('agentCfg.form.deniedTools')} help={t('agentCfg.form.deniedToolsHelp')}>
-            <Input
-              value={deniedTools}
-              onChange={(e) => setDeniedTools(e.target.value)}
-              placeholder={t('agentCfg.form.deniedPlaceholder')}
-              className="font-mono" />
-          </Labeled>
           {/*
-            ★ 仓库与数据集在同一个列表里，而不是两组固定字段：一次执行可以
-              同时挂代码仓库与数据集（前者是主挂载，后者是只读参考），
-              而且各自可以有多条。
+            ★★ 这里曾经是三个字段：allowedTools、deniedTools、resourceScopes。
+              前两个要求用户先懂某个 CLI 的工具名，第三个把组织级配置
+              当成了项目级授权用。现在：上限在这一页，实际授权在项目里
+              选档案（项目设置 → 项目 Agent → 生效权限）。
           */}
-          <Labeled label={t('agentCfg.form.scopes')} help={t('agentCfg.form.scopesHelp')}>
-            <ResourceScopeEditor value={scopes} onChange={setScopes} />
+          <label className="flex items-start gap-2 text-xs">
+            <Checkbox
+              checked={limited}
+              onCheckedChange={(v) => setLimited(Boolean(v))}
+              className="mt-0.5"
+            />
+            <span>
+              {t('agentCfg.form.limitCeiling')}
+              <span className="ml-1 text-[11px] text-slate-400">
+                {t('agentCfg.form.limitCeilingHint')}
+              </span>
+            </span>
+          </label>
+
+          {limited && (
+            <Labeled label={t('agentCfg.form.ceiling')} help={t('agentCfg.form.ceilingHelp')}>
+              <CapabilityPicker value={ceiling} onChange={setCeiling} />
+            </Labeled>
+          )}
+
+          <Labeled
+            label={t('agentCfg.form.hardDenied')}
+            help={t('agentCfg.form.hardDeniedHelp')}
+          >
+            <CapabilityPicker value={deniedCapabilities} onChange={setDeniedCapabilities} />
           </Labeled>
         </div>
 
@@ -1536,5 +1544,75 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
         </div>
       )}
     </QueryBoundary>
+  );
+}
+
+/**
+ * 能力上限的默认勾选。
+ *
+ * ★ 与平台默认档案（standard_executor）对齐：新建一个 Agent 时，
+ *   上限刚好覆盖「在隔离工作区里干活」那一档。给一份能直接用的默认，
+ *   而不是让用户对着一张空清单猜该勾什么 —— 猜出来的配置一律偏宽。
+ */
+const DEFAULT_CEILING = [
+  'workspace.read',
+  'workspace.write',
+  'command.build',
+  'command.test',
+  'artifact.create',
+] as const;
+
+/**
+ * 能力多选。
+ *
+ * ★★ 显示的是**后果**，不是能力名。`repository.push` 对用户没有意义，
+ *   「能把分支推到远端。改动从此离开平台的控制范围」才有 ——
+ *   而这正是这一勾与下一勾之间风险差两个数量级的地方。
+ *
+ * ★ 目录来自服务端（`/admin/agents` 的 capabilities），不在前端再抄一份：
+ *   抄一份的代价是平台加了一条能力而界面上没有，用户没有任何迹象。
+ */
+function CapabilityPicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const t = useT();
+  const sx = useSpecText();
+  const catalog = useQuery({ queryKey: qk.capabilityCatalog(), queryFn: api.capabilityCatalog });
+
+  if (catalog.isLoading) return <CardSkeleton />;
+  const items = catalog.data?.capabilities ?? [];
+
+  const toggle = (key: string) =>
+    onChange(value.includes(key) ? value.filter((v) => v !== key) : [...value, key]);
+
+  return (
+    <div className="space-y-1">
+      {items.map((c) => (
+        <label key={c.key} className="flex items-start gap-1.5 text-[11px]">
+          <input
+            type="checkbox"
+            checked={value.includes(c.key)}
+            onChange={() => toggle(c.key)}
+            /**
+             * ★ 平台底线里的能力永远勾不上（改权限、改 Policy）。
+             *   给一个能勾但存不进去的选项，等于让人白填一遍再被拒。
+             */
+            disabled={c.neverAutoGrant}
+            className="mt-0.5"
+          />
+          <span className={clsx(c.neverAutoGrant && 'text-slate-400')}>
+            <span className="font-medium text-slate-700">{sx(c.label, c.labelEn)}</span>
+            <span className="ml-1 text-slate-500">{sx(c.consequence, c.consequenceEn)}</span>
+            {c.neverAutoGrant && (
+              <span className="ml-1 text-amber-700">{t('agentCfg.form.neverGrant')}</span>
+            )}
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }

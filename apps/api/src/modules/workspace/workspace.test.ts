@@ -732,15 +732,16 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
     const runtime = new MockRuntime({}, { steps: ['一步'], stepDelayMs: 0 });
     const registry = new RuntimeRegistry();
+    /**
+     * ★ 可写工作区现在要两件事同时成立：项目里授了 workspace.write 能力，
+     *   且这个项目的授权里那个仓库是 write —— 少任一件都会被求值器降到只读
+     *   （见 domain 的 evaluate.ts：资源范围跟着能力收窄）。
+     */
     const agent = await seedAgent(db, fx, {
       runtime,
       registry,
-      allowedTools: ['read_file', 'write_file'],
+      grant: { resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }] },
     });
-    await db
-      .update(await import('@apos/db').then((m) => m.agents))
-      .set({ resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }] })
-      .where(eq((await import('@apos/db')).agents.id, agent.agentId));
 
     const item = await createWorkItem(db, fx, { status: 'ready' });
     const res = await dispatchRun(

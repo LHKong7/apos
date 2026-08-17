@@ -44,6 +44,7 @@ import type {
   ExecutionModeValue,
   ExecutorCandidates,
   AgentAccessBody,
+  CapabilityCatalog,
   AgentAccessPreview,
   AgentAccessView,
   ProjectAgentBindings,
@@ -413,6 +414,8 @@ export const api = {
    *   而组件测试用 app.inject（自动带 JSON 头）永远复现不出来。
    */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
+  /** ★ 能力目录来自服务端：前端抄一份的话，平台加了能力界面上不会有 */
+  capabilityCatalog: () => request<CapabilityCatalog>('/admin/capabilities'),
   createAgent: (body: Record<string, unknown>) =>
     request<{ agent: { id: string }; unknownConfigKeys: string[] }>('/admin/agents', {
       method: 'POST',

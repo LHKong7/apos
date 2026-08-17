@@ -1161,10 +1161,16 @@ export interface AgentAdminRow {
   model: string | null;
   skills: string[];
   applicableTypes: string[];
-  permissions: {
-    allowedTools: string[];
-    deniedTools: string[];
-    resourceScopes: { kind: string; ref: string; access: string }[];
+  /**
+   * ★★ 组织级记录只有**上限**，没有「它能做什么」。
+   *
+   *   后者是项目级的问题（同一个 Agent 在两个项目里可以是两套答案），
+   *   在这一页给一个数字等于给一个在任何具体项目里都不准的答案。
+   */
+  ceiling: {
+    /** null = 不设上限（沿用平台基线），不是「一条都不给」 */
+    capabilityCeiling: string[] | null;
+    deniedCapabilities: string[];
   };
   maxConcurrency: number;
   timeoutSeconds: number;
@@ -1532,4 +1538,18 @@ export interface RolePreview {
   humanOnlyConflicts: { key: string; label: string }[];
   builtin: boolean;
   requiresReason: boolean;
+}
+
+/** 平台的语义能力目录。每一条都带上「授予它意味着什么」 */
+export interface CapabilityCatalog {
+  capabilities: {
+    key: string;
+    label: string;
+    labelEn: string;
+    consequence: string;
+    consequenceEn: string;
+    risk: string;
+    /** 平台底线：任何配置都授不出去 */
+    neverAutoGrant: boolean;
+  }[];
 }

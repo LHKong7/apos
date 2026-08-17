@@ -260,9 +260,13 @@ describe('执行主体匹配', () => {
 
   it('★ 无匹配 Agent 时任务被阻塞并给出具体原因', async () => {
     const registry = new RuntimeRegistry();
-    await seedAgent(db, fx, { registry, allowedTools: ['read_file'] });
+    /**
+     * ★ 默认档案（standard_executor）不含开 PR 的能力 —— 这正是
+     *   「没配置 ≠ 没权限，但默认档案是有边界的」那条设计的直接体现。
+     */
+    await seedAgent(db, fx, { registry });
 
-    // 任务要求 create_pr，但 Agent 没有该权限
+    // 任务要求 create_pr，而默认档案给不了这条能力
     const item = await createWorkItem(db, fx, {
       executorType: null,
       executorId: null,

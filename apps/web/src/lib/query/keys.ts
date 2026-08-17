@@ -52,6 +52,8 @@ export const qk = {
   agentDetail: (agentId: string) => ['agentDetail', agentId] as const,
   runtimes: () => ['runtimes'] as const,
   adminAgents: () => ['adminAgents'] as const,
+  /** 目录是平台常量，切组织也不变 —— 不带任何作用域 */
+  capabilityCatalog: () => ['capabilityCatalog'] as const,
   repositories: (projectId?: string) => ['repositories', projectId ?? 'all'] as const,
   storageTargets: (projectId?: string) => ['storageTargets', projectId ?? 'all'] as const,
   conventions: (projectId: string) => ['conventions', projectId] as const,

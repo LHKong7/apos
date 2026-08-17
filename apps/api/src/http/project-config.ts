@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   agents,
+  projectAgentPermissions,
   projectConventions,
   projects,
   repositories,
@@ -578,7 +579,16 @@ export async function deleteRepository(db: Database, orgId: string, repoId: stri
    *   会变成解析不出来的字符串，表现是「派发时突然全部失败」，
    *   而错误信息里不会提到有人删了一个仓库。
    */
-  const all = await db.select({ name: agents.name, scopes: agents.resourceScopes }).from(agents).where(eq(agents.orgId, row.orgId));
+  /**
+   * ★ 授权已经下沉到项目级 —— 引用检查也要跟着去 project_agent_permissions 查。
+   *   还在读 agents.resource_scopes 的话，这道把关会永远查出 0 条：
+   *   那一列自 Phase 5 起不再写入，而删除仍然会打断在跑的项目。
+   */
+  const all = await db
+    .select({ name: agents.name, scopes: projectAgentPermissions.resourceScopes })
+    .from(projectAgentPermissions)
+    .innerJoin(agents, eq(agents.id, projectAgentPermissions.agentId))
+    .where(eq(projectAgentPermissions.orgId, row.orgId));
   const referencing = all.filter((a) =>
     a.scopes.some((s) => s.kind === 'repo' && s.ref === row.ref && s.access !== 'none'),
   );

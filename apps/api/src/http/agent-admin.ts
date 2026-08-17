@@ -12,17 +12,17 @@ import {
 } from '@apos/db';
 import {
   ACTIVE_RUN_STATUSES,
+  AGENT_CAPABILITIES,
+  AgentCapability,
   envOverridesOf,
   isKnownRuntimeKind,
   isSecretEnvKey,
-  ResourceScope,
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
   validateRuntimeConfig,
   WorkItemType,
-  type AgentPermissions,
 } from '@apos/contracts';
-import { agentPermissionChangeDirection } from '@apos/domain';
+import { CAPABILITY_SPECS, capabilityChangeImpact } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { registerAgentNow, type AgentRow } from '../modules/agent/runtime-factory';
 import {
@@ -60,6 +60,27 @@ import { ApiError, notFound } from './errors';
  *   在旁边充当说明书（能配什么键、取值范围、默认值、影响成本还是安全）。
  *   JSON 框里没有标签，没有这张表用户就只能猜键名。
  */
+/**
+ * 能力目录 —— 界面照着它渲染上限勾选，并显示每一条的**后果**。
+ *
+ * ★ 前端不再抄一份：抄一份的代价是平台加了一条能力而界面上没有，
+ *   而「界面上没有这一栏」在用户那边等于「这个功能不存在」。
+ */
+export function listCapabilityCatalog() {
+  return {
+    capabilities: AGENT_CAPABILITIES.map((key) => ({
+      key,
+      label: CAPABILITY_SPECS[key].label,
+      labelEn: CAPABILITY_SPECS[key].labelEn,
+      consequence: CAPABILITY_SPECS[key].consequence,
+      consequenceEn: CAPABILITY_SPECS[key].consequenceEn,
+      risk: CAPABILITY_SPECS[key].risk,
+      /** 平台底线：勾不上，也存不进去 */
+      neverAutoGrant: CAPABILITY_SPECS[key].neverAutoGrant === true,
+    })),
+  };
+}
+
 export function listRuntimeCatalog() {
   return {
     kinds: RUNTIME_KIND_SPECS,
@@ -102,15 +123,19 @@ export const AgentInput = z.object({
   skills: z.array(z.string()).default([]),
   applicableTypes: z.array(WorkItemType).default([]),
 
-  allowedTools: z.array(z.string()).default([]),
-  deniedTools: z.array(z.string()).default([]),
   /**
-   * ★ 去掉 `origin` —— 它只在派发快照里有意义，登记的一律是 explicit。
-   *   不去掉的话，调用方能自称 `project_default`，把一条显式授权
-   *   伪装成平台默认给的，而审计恰恰靠这个字段区分责任。
-   *   zod 默认剥掉 shape 外的键，所以传了也进不来。
+   * ★★ 组织给这个 Agent 定的**能力上限**。
+   *
+   *   这一层回答的是「这个 Agent 最多能被授权到什么程度」，
+   *   而不是「它现在能做什么」—— 后者是项目级的事
+   *   （project_agent_permissions），同一个 Agent 在两个项目里可以不一样。
+   *
+   * ★ `null` / 不传 = 不设上限（沿用平台基线），**不是**「一条都不给」。
+   *   两者含义相反：空数组会让这个 Agent 在所有项目里都干不了活。
    */
-  resourceScopes: z.array(ResourceScope.omit({ origin: true })).default([]),
+  capabilityCeiling: z.array(AgentCapability).nullable().optional(),
+  /** 组织级硬拒绝：任何项目授予都压不过它 */
+  deniedCapabilities: z.array(AgentCapability).default([]),
 
   maxConcurrency: z.number().int().positive().max(50).default(3),
   timeoutSeconds: z.number().int().positive().max(86_400).default(1800),
@@ -131,7 +156,10 @@ export async function createAgent(
 ) {
   const spec = assertKind(input.runtimeKind);
   await assertOwner(db, input.ownerId);
-  assertPermissionsSane(input);
+  assertCeilingSane({
+    capabilityCeiling: input.capabilityCeiling ?? null,
+    deniedCapabilities: input.deniedCapabilities,
+  });
 
   const { config, unknownKeys } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
 
@@ -160,9 +188,8 @@ export async function createAgent(
       model: input.model ?? null,
       skills: input.skills,
       applicableTypes: input.applicableTypes,
-      allowedTools: input.allowedTools,
-      deniedTools: input.deniedTools,
-      resourceScopes: input.resourceScopes,
+      capabilityCeiling: input.capabilityCeiling ?? null,
+      deniedCapabilities: input.deniedCapabilities,
       maxConcurrency: input.maxConcurrency,
       timeoutSeconds: input.timeoutSeconds,
       tokenLimitPerRun: input.tokenLimitPerRun ?? null,
@@ -181,8 +208,8 @@ export async function createAgent(
     agentId: row!.id,
     changedBy: actorUserId,
     direction: 'grant',
-    before: { allowedTools: [], deniedTools: [], resourceScopes: [] },
-    after: permissionsOf(row!),
+    before: { capabilityCeiling: [], deniedCapabilities: [] },
+    after: ceilingOf(row!),
     reason: '创建 Agent',
   });
 
@@ -233,14 +260,16 @@ export async function updateAgent(
   if (input.runtimeKind) assertKind(input.runtimeKind);
   if (input.ownerId) await assertOwner(db, input.ownerId);
 
-  const merged = {
-    allowedTools: input.allowedTools ?? existing.allowedTools,
-    deniedTools: input.deniedTools ?? existing.deniedTools,
-    resourceScopes: input.resourceScopes ?? existing.resourceScopes,
+  const merged: AgentCeilingRecord = {
+    capabilityCeiling:
+      input.capabilityCeiling !== undefined
+        ? input.capabilityCeiling
+        : (existing.capabilityCeiling as AgentCapability[] | null),
+    deniedCapabilities: input.deniedCapabilities ?? (existing.deniedCapabilities as AgentCapability[]),
   };
-  assertPermissionsSane(merged);
+  assertCeilingSane(merged);
 
-  const before = permissionsOf(existing);
+  const before = ceilingOf(existing);
   const permissionsChanged = JSON.stringify(before) !== JSON.stringify(merged);
 
   /**
@@ -291,9 +320,10 @@ export async function updateAgent(
       ...(input.model !== undefined ? { model: input.model ?? null } : {}),
       ...(input.skills ? { skills: input.skills } : {}),
       ...(input.applicableTypes ? { applicableTypes: input.applicableTypes } : {}),
-      ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
-      ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
-      ...(input.resourceScopes ? { resourceScopes: input.resourceScopes } : {}),
+      ...(input.capabilityCeiling !== undefined
+        ? { capabilityCeiling: input.capabilityCeiling }
+        : {}),
+      ...(input.deniedCapabilities ? { deniedCapabilities: input.deniedCapabilities } : {}),
       ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
       ...(input.timeoutSeconds ? { timeoutSeconds: input.timeoutSeconds } : {}),
       ...(input.tokenLimitPerRun !== undefined
@@ -610,7 +640,12 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     model: row.model,
     skills: row.skills,
     applicableTypes: row.applicableTypes,
-    permissions: permissionsOf(row),
+    /**
+     * ★ 组织级记录只回**上限**，不回「它能做什么」。
+     *   后者是项目级的问题，同一个 Agent 在两个项目里可以是两套答案 ——
+     *   在这一页给一个数字，等于给一个在任何具体项目里都不准的答案。
+     */
+    ceiling: ceilingOf(row),
     maxConcurrency: row.maxConcurrency,
     timeoutSeconds: row.timeoutSeconds,
     tokenLimitPerRun: row.tokenLimitPerRun,
@@ -718,65 +753,67 @@ async function assertOwner(db: Database, ownerId: string) {
   if (!u) throw notFound('负责人');
 }
 
+export interface AgentCeilingRecord {
+  capabilityCeiling: AgentCapability[] | null;
+  deniedCapabilities: AgentCapability[];
+}
+
 /**
- * 权限自检。
+ * 能力上限自检。
  *
- * ★ 「授予了写工具但没有任何 repo:write 范围」这类组合不报错会很难查：
- *   Agent 看得到 Edit，试着用，被适配器挡下来，然后报告「权限不足」——
- *   而配置页上明明勾着 Edit。在配置时就说清楚。
+ * ★ 同一条能力既在上限里又在硬拒绝里，是配置层面自相矛盾的两句话。
+ *   不报错的话，界面上那条能力看起来是给了的，而实际永远拿不到 ——
+ *   而排查会从项目授权一路查到运行时。
+ *
+ * ★ 空数组与 null 的区别在这里也要守住：空数组是「一条都不给」，
+ *   它会让这个 Agent 在所有项目里都干不了活，值得当场说一句。
  */
-function assertPermissionsSane(p: {
-  allowedTools: string[];
-  deniedTools: string[];
-  resourceScopes: ResourceScope[];
-}) {
-  const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
-  const base = (t: string) => (t.includes('(') ? t.slice(0, t.indexOf('(')) : t).trim();
-
-  const allowed = new Set(p.allowedTools.map(base));
-  const deniedBare = new Set(p.deniedTools.filter((t) => !t.includes('(')).map(base));
-
-  const wantsWrite = WRITE_TOOLS.some((t) => allowed.has(t) && !deniedBare.has(t));
-  const hasWriteScope = p.resourceScopes.some((s) => s.kind === 'repo' && s.access === 'write');
-
-  if (wantsWrite && !hasWriteScope) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      '授予了写文件的工具，但没有任何可写的代码仓库范围 —— 这样配置出来的 Agent 一动手就会被拒',
-      { hint: '要么去掉写类工具，要么给一个 access=write 的 repo 资源范围' },
-    );
-  }
-
-  const conflict = p.allowedTools.filter((t) => deniedBare.has(base(t)));
+function assertCeilingSane(c: AgentCeilingRecord) {
+  const denied = new Set(c.deniedCapabilities);
+  const conflict = (c.capabilityCeiling ?? []).filter((x) => denied.has(x));
   if (conflict.length > 0) {
     throw new ApiError(
       'VALIDATION_FAILED',
-      `以下工具同时出现在允许与禁止列表中：${conflict.join('、')}。黑名单优先级更高，它们实际不可用`,
+      `以下能力同时出现在上限与硬拒绝里：${conflict
+        .map((x) => CAPABILITY_SPECS[x].label)
+        .join('、')}。拒绝优先级更高，它们实际拿不到`,
       { conflict },
     );
   }
 
-  if (p.allowedTools.length === 0) {
-    throw new ApiError('VALIDATION_FAILED', '至少要授予一个工具，否则这个 Agent 什么都做不了');
+  if (c.capabilityCeiling !== null && c.capabilityCeiling.length === 0) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      '能力上限是空的 —— 这个 Agent 在任何项目里都干不了活。不想设上限请留空（不传），而不是给一个空清单',
+    );
   }
 }
 
-function permissionsOf(row: AgentRow): AgentPermissions {
+function ceilingOf(row: AgentRow): AgentCeilingRecord {
   return {
-    allowedTools: row.allowedTools,
-    deniedTools: row.deniedTools,
-    resourceScopes: row.resourceScopes,
+    capabilityCeiling: (row.capabilityCeiling as AgentCapability[] | null) ?? null,
+    deniedCapabilities: row.deniedCapabilities as AgentCapability[],
   };
 }
 
 /**
- * 权限改动的方向：只要有任何一项变宽就算 grant。
+ * 上限改动的方向：只要有任何一面变宽就算 grant。
  *
- * ★ 判据本身在 @apos/domain（agentPermissionChangeDirection）—— 与 Policy 的
- *   收紧/放宽判定同源。这个方向同时决定三件事：要不要填原因、
- *   审计里怎么记、以及需要哪一档权限（§2.3 的不对称设计）。
- *   三处用三份判据的话，总有一处会和另外两处说的不一样。
+ * ★★ 判据与项目级授权同源（domain 的 capabilityChangeImpact）——
+ *   这个方向同时决定三件事：要不要填原因、审计里怎么记、
+ *   以及需要哪一档权限（§2.3 的不对称设计）。三处用三份判据的话，
+ *   总有一处会和另外两处说的不一样。
+ *
+ * ★ `null`（不设上限）在比较时展开成**全部能力**：从「不设上限」改成
+ *   一份具体清单是收紧，反过来是放宽。当成空数组比的话，方向正好判反。
  */
-function directionOf(before: AgentPermissions, after: AgentPermissions): 'grant' | 'revoke' {
-  return agentPermissionChangeDirection(before, after) === 'loosen' ? 'grant' : 'revoke';
+function directionOf(before: AgentCeilingRecord, after: AgentCeilingRecord): 'grant' | 'revoke' {
+  const expand = (c: AgentCeilingRecord) => ({
+    capabilities: c.capabilityCeiling ?? [...AGENT_CAPABILITIES],
+    deniedCapabilities: c.deniedCapabilities,
+    resourceScopes: [],
+  });
+  return capabilityChangeImpact(expand(before), expand(after)).direction === 'loosen'
+    ? 'grant'
+    : 'revoke';
 }

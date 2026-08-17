@@ -7,11 +7,13 @@ import {
   agentRuns,
   agents,
   projectAgentBindings,
+  projectAgentPermissions,
   projectMembers,
   repositories,
   requirements,
 } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
+import { expandProfile, STANDARD_EXECUTOR } from '@apos/domain';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
@@ -68,12 +70,49 @@ async function createAgent(payload: Record<string, unknown> = {}) {
       type: 'code',
       runtimeKind: 'mock',
       ownerId: fx.userId,
-      allowedTools: ['Read', 'Grep'],
-      deniedTools: [],
-      resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'read' }],
+      capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test'],
+      deniedCapabilities: [],
       ...payload,
     },
   });
+}
+
+/**
+ * 给某个 Agent 在夹具项目里配一份授权。
+ *
+ * ★ 授权行对 project_members 有复合外键 —— 数据库保证「有授权的 Agent
+ *   一定是本项目成员」，所以这里必须先登记成员，不能只插授权行。
+ */
+async function grantInProject(
+  agentId: string,
+  scopes: { kind: string; ref: string; access: string }[],
+) {
+  await db
+    .insert(projectMembers)
+    .values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      actorType: 'agent',
+      actorId: agentId,
+      role: 'executor',
+    })
+    .onConflictDoNothing();
+
+  const expanded = expandProfile(STANDARD_EXECUTOR);
+  await db
+    .insert(projectAgentPermissions)
+    .values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      agentId,
+      profileKey: expanded.profileKey,
+      profileVersion: expanded.profileVersion,
+      allowedCapabilities: expanded.allowedCapabilities,
+      deniedCapabilities: expanded.deniedCapabilities,
+      resourceScopes: scopes as never,
+      updatedBy: fx.userId,
+    })
+    .onConflictDoNothing();
 }
 
 describe('Agent 自带运行时配置', () => {
@@ -792,23 +831,33 @@ describe('Agent 档案与权限', () => {
     expect(await db.select().from(agents).where(eq(agents.id, agentId))).toHaveLength(0);
   });
 
-  it('给了写工具却没有可写仓库范围时，配置阶段就拒绝', async () => {
+  /**
+   * ★ 同一条能力既在上限里又在硬拒绝里，是自相矛盾的两句话。
+   *   不报错的话，界面上那条能力看起来是给了的，而实际永远拿不到。
+   */
+  it('同一条能力同时出现在上限与硬拒绝时拒绝', async () => {
     const res = await createAgent({
-      allowedTools: ['Read', 'Edit'],
-      resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'read' }],
+      capabilityCeiling: ['workspace.read', 'repository.push'],
+      deniedCapabilities: ['repository.push'],
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.message).toContain('可写的代码仓库范围');
+    expect(res.json().error.details.conflict).toContain('repository.push');
   });
 
-  it('同一个工具同时出现在允许与禁止列表时拒绝', async () => {
-    const res = await createAgent({ allowedTools: ['Read', 'Bash'], deniedTools: ['Bash'] });
+  /**
+   * ★★ 空清单与「不设上限」含义相反，必须分得开。
+   *   混为一谈的话，想说「不限制」的人会得到一个在所有项目里都干不了活的 Agent。
+   */
+  it('上限给成空清单时拒绝，并说清「不设上限」该怎么写', async () => {
+    const res = await createAgent({ capabilityCeiling: [] });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.details.conflict).toContain('Bash');
+    expect(res.json().error.message).toContain('留空');
   });
 
-  it('一个工具都不给时拒绝', async () => {
-    expect((await createAgent({ allowedTools: [] })).statusCode).toBe(400);
+  it('不传上限 = 不设上限，建得出来', async () => {
+    const res = await createAgent({ capabilityCeiling: null });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().agent.ceiling.capabilityCeiling).toBeNull();
   });
 
   /** ★ 放宽权限的默认解释（「大概是需要吧」）几乎总是不够 */
@@ -819,7 +868,7 @@ describe('Agent 档案与权限', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${id}`,
       headers: auth(),
-      payload: { allowedTools: ['Read', 'Grep', 'Bash'] },
+      payload: { capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test', 'repository.push'] },
     });
     expect(widen.statusCode).toBe(400);
     expect(widen.json().error.message).toContain('必须填写原因');
@@ -828,7 +877,7 @@ describe('Agent 档案与权限', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${id}`,
       headers: auth(),
-      payload: { allowedTools: ['Read'] },
+      payload: { capabilityCeiling: ['workspace.read'] },
     });
     expect(narrow.statusCode).toBe(200);
   });
@@ -839,7 +888,10 @@ describe('Agent 档案与权限', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${id}`,
       headers: auth(),
-      payload: { allowedTools: ['Read', 'Grep', 'Bash'], reason: '需要跑测试' },
+      payload: {
+        capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test', 'repository.push'],
+        reason: '需要跑测试',
+      },
     });
 
     const changes = await db
@@ -848,8 +900,10 @@ describe('Agent 档案与权限', () => {
       .where(eq(agentPermissionChanges.agentId, id));
     const widen = changes.find((c) => c.reason === '需要跑测试')!;
     expect(widen.direction).toBe('grant');
-    expect(widen.before.allowedTools).not.toContain('Bash');
-    expect(widen.after.allowedTools).toContain('Bash');
+    const before = widen.before as { capabilityCeiling: string[] | null };
+    const after = widen.after as { capabilityCeiling: string[] | null };
+    expect(before.capabilityCeiling).not.toContain('repository.push');
+    expect(after.capabilityCeiling).toContain('repository.push');
   });
 
   it('能力探测把缺失能力摊开', async () => {
@@ -892,9 +946,9 @@ describe('Agent 档案与权限', () => {
  *   `/api/v1/admin/…` 不在 rbac 的两条作用域正则里，闸门只答得了
  *   「够不够格」，答不了「这个资源是谁的」。
  *
- * ★ Agent 上这道口子比仓库更要紧：Agent 挂着凭证引用与 resourceScopes，
- *   越界改一个 Agent 等于改别人的执行主体 —— 把 allowedTools 放开、
- *   把 resourceScopes 指到自己的仓库，对方那边不会有任何异常。
+ * ★ Agent 上这道口子比仓库更要紧：Agent 挂着凭证引用与能力上限，
+ *   越界改一个 Agent 等于改别人的执行主体 —— 把上限放开，
+ *   它在对方所有项目里能拿到的授权跟着变宽，而对方那边不会有任何异常。
  *   `ownsAgent` 比的只是 ownerId，同样不看组织，指望不上。
  */
 describe('★ 跨组织越界', () => {
@@ -922,13 +976,13 @@ describe('★ 跨组织越界', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${agentId}`,
       headers: await attacker(),
-      payload: { allowedTools: ['Read', 'Grep', 'Bash'], name: '已被改掉' },
+      payload: { capabilityCeiling: ['repository.push'], name: '已被改掉' },
     });
     expect(denied.statusCode).toBe(404);
 
     const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
     expect(row!.name).toBe('code-agent-1');
-    expect(row!.allowedTools).toEqual(['Read', 'Grep']);
+    expect(row!.capabilityCeiling).toEqual(['workspace.read', 'workspace.write', 'command.test']);
   });
 
   it('删不掉别的组织的 Agent', async () => {
@@ -1328,6 +1382,11 @@ describe('代码仓库与工程约定', () => {
   });
 
   /** ★ 删了仓库，指向它的 Agent 会突然全部派发失败，而错误里不会提到删除 */
+  /**
+   * ★ 引用检查读的是**项目级**授权（project_agent_permissions），
+   *   不再是 agents 上那份组织级旧字段 —— 后者自 Phase 5 起不再写入，
+   *   还照着它查的话这道把关会永远查出 0 条，而删除仍然会打断在跑的项目。
+   */
   it('还有 Agent 资源范围指向的仓库不能删', async () => {
     const repo = await app.inject({
       method: 'POST',
@@ -1339,7 +1398,8 @@ describe('代码仓库与工程约定', () => {
         remoteUrl: 'https://github.com/acme/order-service.git',
       },
     });
-    await createAgent();
+    const agentId = (await createAgent()).json().agent.id as string;
+    await grantInProject(agentId, [{ kind: 'repo', ref: 'order-service', access: 'read' }]);
 
     const res = await app.inject({
       method: 'DELETE',

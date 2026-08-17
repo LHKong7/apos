@@ -1,4 +1,5 @@
-import { agents, projectMembers, type Database } from '@apos/db';
+import { agents, projectAgentPermissions, projectMembers, type Database } from '@apos/db';
+import { capabilityProfile, expandProfile, STANDARD_EXECUTOR } from '@apos/domain';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import type { Fixture } from './db';
 
@@ -16,8 +17,6 @@ export async function seedAgent(
     registry?: RuntimeRegistry;
     name?: string;
     skills?: string[];
-    allowedTools?: string[];
-    deniedTools?: string[];
     maxConcurrency?: number;
     tokenLimitPerRun?: number;
     stats?: Record<string, unknown>;
@@ -52,6 +51,14 @@ export async function seedAgent(
      * ★ 传 false 用来测「没登记就派不出去」那条路径本身。
      */
     inProject?: boolean;
+    /**
+     * 在夹具项目里给这个 Agent 配一份授权。
+     *
+     * ★ 不传 = **不配**，落到平台默认档案上 —— 那才是真实路径上最常见的
+     *   形态（把 Agent 加进项目就能干活，不必先去配一遍权限）。
+     *   想测「配过之后是什么样」的用例才传。
+     */
+    grant?: { profileKey?: string; resourceScopes?: { kind: string; ref: string; access: string }[] };
   } = {},
 ): Promise<AgentFixture> {
   const runtime = opts.runtime ?? new MockRuntime();
@@ -69,8 +76,6 @@ export async function seedAgent(
       model: 'claude-opus-5',
       skills: opts.skills ?? ['TypeScript', 'SQL 优化'],
       applicableTypes: opts.applicableTypes ?? ['task', 'bug', 'test', 'research', 'review'],
-      allowedTools: opts.allowedTools ?? ['read_file', 'write_file', 'run_tests', 'create_pr'],
-      deniedTools: opts.deniedTools ?? ['merge_pr'],
       maxConcurrency: opts.maxConcurrency ?? 3,
       tokenLimitPerRun: opts.tokenLimitPerRun ?? 500_000,
       ownerId: fx.userId,
@@ -95,6 +100,25 @@ export async function seedAgent(
         actorType: 'agent',
         actorId: agent!.id,
         role: 'executor',
+      })
+      .onConflictDoNothing();
+  }
+
+  if (opts.grant) {
+    const profile = capabilityProfile(opts.grant.profileKey ?? STANDARD_EXECUTOR.key)!;
+    const expanded = expandProfile(profile);
+    await db
+      .insert(projectAgentPermissions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        agentId: agent!.id,
+        profileKey: expanded.profileKey,
+        profileVersion: expanded.profileVersion,
+        allowedCapabilities: expanded.allowedCapabilities,
+        deniedCapabilities: expanded.deniedCapabilities,
+        resourceScopes: (opts.grant.resourceScopes ?? []) as never,
+        updatedBy: fx.userId,
       })
       .onConflictDoNothing();
   }

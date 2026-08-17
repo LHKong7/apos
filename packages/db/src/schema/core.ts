@@ -22,6 +22,7 @@ import {
 import type {
   AcceptanceCriterion,
   Action,
+  AgentCapability,
   AgentPermissions,
   AgentPermissionSnapshot,
   Condition,
@@ -31,6 +32,12 @@ import type {
   ResourceScope,
 } from '@apos/contracts';
 import { OrgRole } from '@apos/contracts';
+
+/** 组织给某个 Agent 定的能力上限，落在权限变更审计里 */
+interface AgentCeilingSnapshot {
+  capabilityCeiling: AgentCapability[] | null;
+  deniedCapabilities: AgentCapability[];
+}
 import {
   actorTypeEnum,
   autonomyLevelEnum,
@@ -848,16 +855,25 @@ export const agents = pgTable(
     deniedCapabilities: text().array().notNull().default(sql`'{}'`),
 
     /**
-     * ★ 权限独立配置，绝不继承人类用户。
+     * ★★ 已退役：这三列**不再写入，也不再读取**。
      *
-     * ★★ 这三列是**运行时**层面的旧模型，正在被能力模型取代
-     *   （见 project_agent_permissions）。迁移期内双写：新派发走能力求值，
-     *   这三列继续维持，好让回滚不需要数据迁移。
-     *   Legacy runtime-level fields, superseded by the capability model. Kept
-     *   in sync during migration so a rollback needs no data migration.
+     *   它们是权限还挂在组织级 Agent 上时的形态，已被能力模型取代
+     *   （能力上限在上面两列，实际授权在 project_agent_permissions）。
+     *
+     * ★ 留着列不删，理由有两条，都不是「以防万一」：
+     *   1. 它们是迁移前那份配置的**唯一记录**。0031 的回填是从这里反推的，
+     *      删掉之后就再也无法核对当初推得对不对。
+     *   2. 删列是不可回滚的 DDL，而这次改动的回滚路径要保持开着。
+     *
+     *   要判断某个 Agent 现在能做什么，一律走 resolveEffectiveAgentAccess，
+     *   不要读这三列 —— 它们停在退役那一刻的值上，越往后越不像真的。
+     *
+     * Retired: no longer written or read. They record the pre-migration
+     * configuration, which is the only evidence for checking whether the 0031
+     * backfill inferred correctly — and dropping columns is not reversible.
+     * Anything asking "what may this agent do" must go through the evaluator.
      */
     allowedTools: text().array().notNull().default(sql`'{}'`),
-    /** 黑名单优先，不可被模板或继承覆盖 */
     deniedTools: text().array().notNull().default(sql`'{}'`),
     resourceScopes: jsonb().$type<ResourceScope[]>().notNull().default([]),
 
@@ -1026,8 +1042,19 @@ export const agentPermissionChanges = pgTable('agent_permission_changes', {
   agentId: uuid().notNull().references(() => agents.id),
   changedBy: uuid().notNull().references(() => users.id),
   direction: text().notNull(),
-  before: jsonb().$type<AgentPermissions>().notNull(),
-  after: jsonb().$type<AgentPermissions>().notNull(),
+  /**
+   * ★★ 两代形态同存，且**都不迁移**。
+   *
+   *   旧行记的是运行时工具集（AgentPermissions），新行记的是组织给这个
+   *   Agent 的能力上限。两者回答的不是同一个问题，把旧行改写成新形态
+   *   等于伪造当时那次变更的内容 —— 而审计存在的意义正是「当时到底改了什么」。
+   *
+   * Both shapes coexist and neither is migrated: old rows recorded a runtime
+   * tool set, new rows record the org-level capability ceiling. Rewriting the
+   * old ones would falsify what that change actually was.
+   */
+  before: jsonb().$type<AgentPermissions | AgentCeilingSnapshot>().notNull(),
+  after: jsonb().$type<AgentPermissions | AgentCeilingSnapshot>().notNull(),
   reason: text(),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
 });
