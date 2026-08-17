@@ -4,6 +4,7 @@ import {
   agentPermissionChanges,
   agentRuns,
   agents,
+  projectAgentBindings,
   requirements,
   users,
   workItems,
@@ -347,6 +348,29 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     });
   }
 
+  /**
+   * ★★ 这几项清点的是**指向 agents.id 的每一条外键**，不是「大概哪些地方用得上」。
+   *
+   *   漏掉一条的表现不是漏检，而是 23503 —— 那个码不在 CLIENT_INPUT_PG_CODES
+   *   里，用户点「删除 Agent」得到的是一句「服务器内部错误」，看不出真正拦住
+   *   它的是什么。这个 bug 出现过两次：项目角色绑定与规划 Run 都指着 agents.id，
+   *   而这里只数了工作项与需求。
+   *
+   *   ★ 历史 Run 要**直接数 agent_runs**，不能拿「工作项的执行者是它」当代理指标：
+   *     规划 Run 根本没有工作项（work_item_id 可空），而执行完的工作项换个执行者
+   *     就再也数不到那些 Run —— 两种情况下 agent_runs 里的行都还在。
+   *
+   *   Every foreign key pointing at agents.id must be counted here. A missed one
+   *   does not degrade gracefully: it becomes a raw 23503, which surfaces to the
+   *   user as "internal server error" with nothing naming what blocked the delete.
+   *   Historical runs are counted from agent_runs itself rather than inferred from
+   *   work_items.executor_id, because planning runs have no work item at all.
+   */
+  const [runs] = await db
+    .select({ n: count() })
+    .from(agentRuns)
+    .where(eq(agentRuns.agentId, agentId));
+
   const [assigned] = await db
     .select({ n: count() })
     .from(workItems)
@@ -355,18 +379,12 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
   /**
    * ★★ 被某条需求指定为 PRD 编写者的 Agent 同样只停用不删除。
    *
-   *   requirements.author_agent_id 是一条**外键**：直接 DELETE 会撞上
-   *   23503，而那个码不在 CLIENT_INPUT_PG_CODES 里 —— 用户点「删除 Agent」
-   *   得到的会是一句「服务器内部错误」，看不出真正拦住它的是一条需求。
-   *
    *   停用而不是把引用清空：清空等于替用户撤销了他做过的指定，
    *   而他下一次进那条需求只会看到「未指定」，没有任何迹象说明发生过什么。
    *   停用之后需求页会明说「当前是 retired，下一次分析会失败」。
    *
    *   An agent named as some requirement's PRD author is retired, not deleted:
-   *   the column is a foreign key, so deleting would surface as a raw 23503
-   *   ("internal error" to the user), and nulling it out would silently undo a
-   *   choice a person made.
+   *   nulling the column out would silently undo a choice a person made.
    */
   const [authoring] = await db
     .select({ n: count() })
@@ -374,31 +392,100 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(eq(requirements.authorAgentId, agentId));
 
   /**
+   * ★★ 项目角色绑定同样只停用不删除，理由和上面那条不一样：
+   *   绑定是**当前配置**而不是历史，替用户把它删掉，下一次规划会在
+   *   「planner 没人」上失败，而现场没有任何迹象说明那一格是被谁清掉的。
+   *   停用是绑定表设计时就预留的状态（备选优先级正是为它准备的），
+   *   用户看到 reason 之后可以去改绑，再回来删。
+   *
+   *   A project-role binding is current configuration, not history: silently
+   *   dropping it would break the project's planning with no trace of who
+   *   emptied that slot. Retiring is the state the binding table was designed
+   *   to fall back from.
+   */
+  const [bound] = await db
+    .select({ n: count() })
+    .from(projectAgentBindings)
+    .where(eq(projectAgentBindings.agentId, agentId));
+
+  /**
    * ★ 有历史执行记录的 Agent 只停用不删除。
    *   删掉的话，那些 Run 与产物的「谁做的」会指向一个不存在的 id ——
    *   审计链断在这里，而这正是最需要它的时候。
    */
-  if ((assigned?.n ?? 0) > 0 || (authoring?.n ?? 0) > 0) {
+  const reasons: string[] = [];
+  if ((runs?.n ?? 0) > 0 || (assigned?.n ?? 0) > 0) {
+    reasons.push('该 Agent 有历史执行记录');
+  }
+  if ((authoring?.n ?? 0) > 0) {
+    reasons.push(`有 ${authoring!.n} 条需求指定由它编写 PRD`);
+  }
+  if ((bound?.n ?? 0) > 0) {
+    reasons.push(`仍有 ${bound!.n} 处项目角色绑定指向它，请先到项目的「Agent 绑定」里改绑`);
+  }
+
+  if (reasons.length > 0) {
     await db
       .update(agents)
-      .set({ status: 'retired', pausedReason: '已停用（保留历史记录）', updatedAt: new Date() })
+      .set({
+        status: 'retired',
+        /**
+         * ★ 存下**具体**是被什么牵连，而不是一句「已停用（保留历史记录）」。
+         *   这一列在 Agent 列表与详情页上是唯一的解释；写成通用句子的话，
+         *   用户过几天回来看到一个停用的 Agent，无从知道当初拦住删除的是什么。
+         */
+        pausedReason: `已停用：${reasons.join('；')}`,
+        updatedAt: new Date(),
+      })
       .where(eq(agents.id, agentId));
     /**
-     * ★ 说清是**哪一种**牵连。两种的下一步不一样：有历史执行记录时用户
-     *   什么都不用做，而被需求指定为编写者时，他多半想去那条需求上换一个。
+     * ★ 把牵连**逐条**说清，而不是只报第一条。每一种的下一步不一样：
+     *   有历史执行记录时用户什么都不用做，被需求指定为编写者时他多半想去
+     *   那条需求上换一个，还有绑定时则必须去改绑 —— 只报一条的话，用户改完
+     *   再点一次删除，等来的是另一条他上一次没看到的理由。
      */
     return {
       ok: true as const,
       retired: true,
-      reason:
-        (assigned?.n ?? 0) > 0
-          ? '该 Agent 有历史执行记录，已停用而非删除'
-          : `有 ${authoring!.n} 条需求指定由它编写 PRD，已停用而非删除`,
+      reason: `${reasons.join('；')}，已停用而非删除`,
     };
   }
 
   await db.delete(agentPermissionChanges).where(eq(agentPermissionChanges.agentId, agentId));
-  await db.delete(agents).where(eq(agents.id, agentId));
+
+  try {
+    await db.delete(agents).where(eq(agents.id, agentId));
+  } catch (err) {
+    /**
+     * ★★ 兜底：将来有人新加一张指向 agents.id 的表，而忘了在上面清点。
+     *
+     *   没有这一层的话，那次遗漏的表现是「点删除 → 服务器内部错误」——
+     *   一句既不说明发生了什么、也不告诉用户下一步的话。这里把它落到
+     *   与其他牵连同一条路上：停用，并说明它还被引用着。
+     *
+     *   不回传约束名：那是表名列名，属于信息泄露（见 errors.ts）。要定位
+     *   到具体是哪张表，看服务端日志里这条异常。
+     *
+     *   Safety net for a foreign key added later and not counted above: fall
+     *   back to the same retire path instead of surfacing a bare 500.
+     */
+    if ((err as { code?: string }).code !== '23503') throw err;
+    console.warn(
+      `[agent-admin] 删除 Agent ${agentId} 撞上未清点的外键：${
+        (err as { constraint_name?: string }).constraint_name ?? '未知约束'
+      } —— 请把这张表加进 deleteAgent 的清点里`,
+    );
+    await db
+      .update(agents)
+      .set({ status: 'retired', pausedReason: '已停用（仍被引用）', updatedAt: new Date() })
+      .where(eq(agents.id, agentId));
+    return {
+      ok: true as const,
+      retired: true,
+      reason: '该 Agent 仍被其他记录引用，已停用而非删除',
+    };
+  }
+
   return { ok: true as const, retired: false, reason: null };
 }
 

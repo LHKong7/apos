@@ -2,7 +2,15 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { agentPermissionChanges, agents, repositories, requirements } from '@apos/db';
+import {
+  agentPermissionChanges,
+  agentRuns,
+  agents,
+  projectAgentBindings,
+  projectMembers,
+  repositories,
+  requirements,
+} from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
@@ -634,6 +642,142 @@ describe('Agent 档案与权限', () => {
      */
     const [after] = await db.select().from(requirements).where(eq(requirements.id, req!.id));
     expect(after!.authorAgentId).toBe(agentId);
+  });
+
+  /**
+   * ★★ 每一条指向 agents.id 的外键都要在 deleteAgent 里被清点到。
+   *
+   *   这两条曾经漏掉：项目角色绑定与没有工作项的规划 Run。表现不是「漏检」，
+   *   而是 23503 一路冒到错误处理器，用户点「删除」等来一句
+   *   「服务器内部错误」—— 也就是「删除按钮坏了」。
+   */
+  it('被项目角色绑着时，删除转为停用而不是 500', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    await db.insert(projectMembers).values({
+      projectId: fx.projectId,
+      orgId: fx.orgId,
+      actorType: 'agent',
+      actorId: agentId,
+      role: 'executor',
+    });
+    const bind = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/projects/${fx.projectId}/agents`,
+      headers: auth(),
+      payload: { role: 'planner', agentId },
+    });
+    expect(bind.statusCode).toBe(200);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().retired).toBe(true);
+    /** 只说「删不掉」没用 —— 得说清是绑定拦住的，用户才知道该去改绑 */
+    expect(res.json().reason).toContain('绑定');
+
+    const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(row!.status).toBe('retired');
+    /** 绑定本身留着：替用户清掉的话，下一次规划会在「planner 没人」上失败 */
+    const bindings = await db
+      .select()
+      .from(projectAgentBindings)
+      .where(eq(projectAgentBindings.agentId, agentId));
+    expect(bindings).toHaveLength(1);
+  });
+
+  /**
+   * ★ 规划 Run 没有工作项（work_item_id 可空），所以「工作项的执行者是它」
+   *   数不到它 —— 而 agent_runs.agent_id 是外键，删除照样撞 23503。
+   */
+  it('只有规划 Run（无工作项）的 Agent，删除转为停用而不是 500', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    await db.insert(agentRuns).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      agentId,
+      kind: 'planning',
+      status: 'completed',
+      goal: '结构化需求',
+      idempotencyKey: `planning-${agentId}`,
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().retired).toBe(true);
+    expect(res.json().reason).toContain('历史执行记录');
+    const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(row!.status).toBe('retired');
+  });
+
+  /** ★ 多种牵连要一次说全：只报第一条的话，用户解掉它再点删除，等来的是下一条 */
+  it('同时被多种记录牵连时，理由逐条列全', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    await db.insert(requirements).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      rawInput: '订单查询太慢',
+      authorAgentId: agentId,
+    });
+    await db.insert(agentRuns).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      agentId,
+      kind: 'planning',
+      status: 'completed',
+      goal: '结构化需求',
+      idempotencyKey: `planning-${agentId}`,
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+
+    expect(res.json().reason).toContain('历史执行记录');
+    expect(res.json().reason).toContain('PRD');
+  });
+
+  it('停用之后解除牵连，再点删除就真的删掉了', async () => {
+    const agentId = (await createAgent()).json().agent.id as string;
+    await db.insert(projectMembers).values({
+      projectId: fx.projectId,
+      orgId: fx.orgId,
+      actorType: 'agent',
+      actorId: agentId,
+      role: 'executor',
+    });
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/projects/${fx.projectId}/agents`,
+      headers: auth(),
+      payload: { role: 'planner', agentId },
+    });
+    const first = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+    expect(first.json().retired).toBe(true);
+
+    await db.delete(projectAgentBindings).where(eq(projectAgentBindings.agentId, agentId));
+
+    const second = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/agents/${agentId}`,
+      headers: auth(),
+    });
+    expect(second.json().retired).toBe(false);
+    expect(await db.select().from(agents).where(eq(agents.id, agentId))).toHaveLength(0);
   });
 
   it('没有任何牵连的 Agent 仍然是真删除', async () => {

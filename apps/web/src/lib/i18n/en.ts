@@ -1940,6 +1940,14 @@ export const en = {
   'agentCfg.delivery.help': 'Artifacts are delivered under {where}/<runId>/ — uploaded only, never deleted. ★ This overrides rather than adds: choosing it means the default delivery no longer runs.',
   'agentCfg.delivery.default': 'Default ({label})',
   'agentCfg.unknownKeysNotice': 'The platform does not recognize these keys and saved them exactly as written: {keys}. If you meant to pass them through to the runtime, ignore this; if a key name is simply a typo, it will never take effect.',
+  /**
+   * ★ 删除转停用必须说出来。
+   *   不说的话，用户点了删除，Agent 还在列表里 —— 从他那边看就是「删除按钮坏了」。
+   *
+   *   The reason itself still comes back from the server in Chinese (see CLAUDE.md);
+   *   only the sentence wrapping it is localized here.
+   */
+  'agentCfg.retiredNotice': '“{name}” was retired instead of deleted: {reason}. It stays in the list marked retired and is no longer dispatched; once nothing references it, deleting it removes it for good.',
   'agentCfg.repo.registerButton': '+ Register repository',
   'agentCfg.tab.binding': 'Project agents',
   'agentCfg.tab.bindingDesc': 'Which configured agent plays which role in this project',

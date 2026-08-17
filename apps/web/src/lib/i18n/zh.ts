@@ -1909,6 +1909,7 @@ export const zh: Record<keyof typeof en, string> = {
   'agentCfg.delivery.help': '产出会投递到 {where} 的 <runId>/ 下，只上传不删除。★ 这是覆盖不是追加 —— 选了它就不走默认交货了。',
   'agentCfg.delivery.default': '默认（{label}）',
   'agentCfg.unknownKeysNotice': '这些键平台不认识，已按你写的原样保存：{keys}。如果是有意下发给运行时的就不用管；如果只是键名敲错了，它永远不会生效。',
+  'agentCfg.retiredNotice': '「{name}」没有被删除，而是停用了：{reason}。它会留在列表里标为已停用，不再接受派发；等牵连解除之后再点删除，才会真的删掉。',
   'agentCfg.repo.registerButton': '+ 登记仓库',
   'agentCfg.tab.binding': '项目 Agent',
   'agentCfg.tab.bindingDesc': '这个项目的哪个角色交给哪个已配置的 Agent',

@@ -140,6 +140,15 @@ function AgentsSection() {
    *   而后者永远不会生效 —— 不提示的话，现场没有任何迹象。
    */
   const [unknownKeys, setUnknownKeys] = useState<string[]>([]);
+  /**
+   * ★★ 「删除请求成功了，但那个 Agent 还在」。
+   *
+   *   有历史执行记录、被需求指定为 PRD 编写者、还被项目角色绑着的 Agent
+   *   一律转为停用（后端 deleteAgent）—— 这是对的，但不说出来的话，用户看到的
+   *   只是「点了删除，它还在列表里」，也就是「删除按钮坏了」。
+   *   服务端返回的 reason 说清了是被什么牵连、下一步该去哪儿，必须显示出来。
+   */
+  const [retired, setRetired] = useState<{ name: string; reason: string } | null>(null);
 
   const q = useQuery({ queryKey: qk.adminAgents(), queryFn: api.adminAgents });
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.adminAgents() });
@@ -149,7 +158,16 @@ function AgentsSection() {
   };
 
   const probe = useMutation({ mutationFn: (id: string) => api.probeAgent(id), onSuccess: invalidate });
-  const remove = useMutation({ mutationFn: (id: string) => api.deleteAgent(id), onSuccess: invalidate });
+  const remove = useMutation({
+    mutationFn: (agent: AgentAdminRow) =>
+      api.deleteAgent(agent.id).then((res) => ({ ...res, name: agent.name })),
+    /** 上一次删除留下的提示不能跟着这一次走 —— 它说的是另一个 Agent */
+    onMutate: () => setRetired(null),
+    onSuccess: (res) => {
+      setRetired(res.retired && res.reason ? { name: res.name, reason: res.reason } : null);
+      void invalidate();
+    },
+  });
 
   if (q.isLoading) return <CardSkeleton />;
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -186,6 +204,12 @@ function AgentsSection() {
         </Notice>
       )}
 
+      {retired && (
+        <Notice tone="warning">
+          {t('agentCfg.retiredNotice', { name: retired.name, reason: retired.reason })}
+        </Notice>
+      )}
+
       {data.credentialUsage.length > 0 && <CredentialUsage rows={data.credentialUsage} />}
 
       {data.agents.length === 0 ? (
@@ -204,8 +228,9 @@ function AgentsSection() {
               spec={data.kinds.find((k) => k.kind === a.runtimeKind) ?? null}
               onProbe={() => probe.mutate(a.id)}
               onEdit={() => openForm(a)}
-              onDelete={() => remove.mutate(a.id)}
-              error={remove.error}
+              onDelete={() => remove.mutate(a)}
+              /** 报错只挂在被删的那张卡上：挂在所有卡上会看成「全都删不掉」 */
+              error={remove.variables?.id === a.id ? remove.error : null}
               probing={probe.isPending}
             />
           ))}
