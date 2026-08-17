@@ -1,4 +1,6 @@
 export * from './adapter';
+export * from './capability-map';
+export * from './capability-translators';
 export * from './prompt';
 export * from './claude-code';
 export * from './codex';

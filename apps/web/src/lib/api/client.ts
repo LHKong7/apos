@@ -22,6 +22,7 @@ import type {
   IntegrationsResponse,
   MembersResponse,
   ProjectPermissions,
+  RolePreview,
   RoleRow,
   RolesResponse,
   NotificationConfigRow,
@@ -42,6 +43,10 @@ import type {
   ArtifactFileList,
   ExecutionModeValue,
   ExecutorCandidates,
+  AgentAccessBody,
+  CapabilityCatalog,
+  AgentAccessPreview,
+  AgentAccessView,
   ProjectAgentBindings,
   RequirementDetail,
   RequirementSummary,
@@ -323,6 +328,23 @@ export const api = {
     },
   ) => request<{ role: RoleRow }>(`/admin/roles/${key}`, { method: 'PATCH', json: body }),
 
+  /**
+   * ★ 复制一个角色当模板。内置角色改不了权限（它们就是权限矩阵本身），
+   *   而「跟 tech_lead 一样但少一条」不该靠从零勾一遍来表达。
+   */
+  cloneRole: (key: string, body: { key: string; name: string; description?: string }) =>
+    request<{ role: RoleRow; basedOn: { key: string; name: string } }>(
+      `/admin/roles/${key}/clone`,
+      { method: 'POST', json: body },
+    ),
+
+  /** ★ 保存前算影响：加了什么、减了什么、会影响几个人几个 Agent */
+  previewRole: (
+    key: string,
+    body: { name: string; description?: string; permissions: string[]; appliesTo: string[] },
+  ) =>
+    request<RolePreview>(`/admin/roles/${key}/preview`, { method: 'POST', json: body }),
+
   deleteRole: (key: string) =>
     request<{ ok: true; deleted: boolean }>(`/admin/roles/${key}`, { method: 'DELETE' }),
 
@@ -392,6 +414,8 @@ export const api = {
    *   而组件测试用 app.inject（自动带 JSON 头）永远复现不出来。
    */
   adminAgents: () => request<AgentAdminResponse>('/admin/agents'),
+  /** ★ 能力目录来自服务端：前端抄一份的话，平台加了能力界面上不会有 */
+  capabilityCatalog: () => request<CapabilityCatalog>('/admin/capabilities'),
   createAgent: (body: Record<string, unknown>) =>
     request<{ agent: { id: string }; unknownConfigKeys: string[] }>('/admin/agents', {
       method: 'POST',
@@ -517,6 +541,31 @@ export const api = {
       method: 'PUT',
       json: body,
     }),
+
+  /**
+   * 项目级 Agent 权限。
+   *
+   * ★ 三个方法打到同一个求值器上：读、预览、保存。预览与保存给出不同结论
+   *   是这类界面最难发现的一种失败，服务端靠「只有一份实现」堵死它。
+   */
+  agentAccess: (projectId: string, agentId: string) =>
+    request<AgentAccessView>(`/projects/${projectId}/agents/${agentId}/access`),
+
+  previewAgentAccess: (projectId: string, agentId: string, body: AgentAccessBody) =>
+    request<AgentAccessPreview>(`/projects/${projectId}/agents/${agentId}/access/preview`, {
+      method: 'POST',
+      json: body,
+    }),
+
+  setAgentAccess: (projectId: string, agentId: string, body: AgentAccessBody) =>
+    request<{
+      ok: true;
+      direction: string;
+      profileKey: string;
+      addedCapabilities: string[];
+      removedCapabilities: string[];
+      warnings: string[];
+    }>(`/projects/${projectId}/agents/${agentId}/access`, { method: 'PUT', json: body }),
 
   setLaborCost: (projectId: string, laborHourlyCost: number | null) =>
     request<{ ok: true }>(`/projects/${projectId}/labor-cost`, {

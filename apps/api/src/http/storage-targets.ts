@@ -2,7 +2,14 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { and, asc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-import { agents, projects, repositories, storageTargets, type Database } from '@apos/db';
+import {
+  agents,
+  projectAgentPermissions,
+  projects,
+  repositories,
+  storageTargets,
+  type Database,
+} from '@apos/db';
 import { S3Client, isMountRootAllowed, normalizePrefix } from '@apos/workspace-providers';
 import {
   describeRef,
@@ -346,10 +353,12 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
    *   会变成解析不出来的字符串，表现是「派发时突然全部失败」，
    *   而错误信息里不会提到有人删了一个存储目标。与仓库那边同一条纪律。
    */
+  /** ★ 与仓库那边同一条：授权在项目级，引用检查也要去那张表查 */
   const all = await db
-    .select({ name: agents.name, scopes: agents.resourceScopes })
-    .from(agents)
-    .where(eq(agents.orgId, row.orgId));
+    .select({ name: agents.name, scopes: projectAgentPermissions.resourceScopes })
+    .from(projectAgentPermissions)
+    .innerJoin(agents, eq(agents.id, projectAgentPermissions.agentId))
+    .where(eq(projectAgentPermissions.orgId, row.orgId));
   const referencing = all.filter((a) =>
     a.scopes.some((s) => s.kind === 'dataset' && s.ref === row.ref && s.access !== 'none'),
   );

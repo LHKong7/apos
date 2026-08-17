@@ -22,7 +22,9 @@ import {
 import type {
   AcceptanceCriterion,
   Action,
+  AgentCapability,
   AgentPermissions,
+  AgentPermissionSnapshot,
   Condition,
   ExecutionConstraint,
   HumanGate,
@@ -30,6 +32,12 @@ import type {
   ResourceScope,
 } from '@apos/contracts';
 import { OrgRole } from '@apos/contracts';
+
+/** 组织给某个 Agent 定的能力上限，落在权限变更审计里 */
+interface AgentCeilingSnapshot {
+  capabilityCeiling: AgentCapability[] | null;
+  deniedCapabilities: AgentCapability[];
+}
 import {
   actorTypeEnum,
   autonomyLevelEnum,
@@ -827,9 +835,45 @@ export const agents = pgTable(
     skills: text().array().notNull().default(sql`'{}'`),
     applicableTypes: workItemTypeEnum().array().notNull().default(sql`'{}'`),
 
-    /** ★ 权限独立配置，绝不继承人类用户 */
+    /**
+     * ★★ 组织给这个 Agent 定的**能力上限**（语义能力名，见 AGENT_CAPABILITIES）。
+     *
+     *   项目里选什么档案都超不过它 —— 这是多项目隔离的另一半：项目管理员
+     *   能在自己项目里给 Agent 授权，但授不出组织没打算给这个 Agent 的能力。
+     *   没有这一层的话，「谁能建项目谁就能给任意 Agent 任意权限」。
+     *
+     * ★ 空数组 = 不设上限（沿用平台基线），不是「一条都不给」。
+     *   两者含义相反，而 NOT NULL 的数组表达不了「没设置」——
+     *   所以这一列**可空**：NULL 才是「没设上限」。
+     *
+     * The org-level ceiling on this Agent, in semantic capability names. No
+     * project grant can exceed it. NULL means "no ceiling", which is not the
+     * same as the empty array ("nothing at all") — hence nullable.
+     */
+    capabilityCeiling: text().array(),
+    /** 组织级硬拒绝：任何项目授予都压不过它 */
+    deniedCapabilities: text().array().notNull().default(sql`'{}'`),
+
+    /**
+     * ★★ 已退役：这三列**不再写入，也不再读取**。
+     *
+     *   它们是权限还挂在组织级 Agent 上时的形态，已被能力模型取代
+     *   （能力上限在上面两列，实际授权在 project_agent_permissions）。
+     *
+     * ★ 留着列不删，理由有两条，都不是「以防万一」：
+     *   1. 它们是迁移前那份配置的**唯一记录**。0031 的回填是从这里反推的，
+     *      删掉之后就再也无法核对当初推得对不对。
+     *   2. 删列是不可回滚的 DDL，而这次改动的回滚路径要保持开着。
+     *
+     *   要判断某个 Agent 现在能做什么，一律走 resolveEffectiveAgentAccess，
+     *   不要读这三列 —— 它们停在退役那一刻的值上，越往后越不像真的。
+     *
+     * Retired: no longer written or read. They record the pre-migration
+     * configuration, which is the only evidence for checking whether the 0031
+     * backfill inferred correctly — and dropping columns is not reversible.
+     * Anything asking "what may this agent do" must go through the evaluator.
+     */
     allowedTools: text().array().notNull().default(sql`'{}'`),
-    /** 黑名单优先，不可被模板或继承覆盖 */
     deniedTools: text().array().notNull().default(sql`'{}'`),
     resourceScopes: jsonb().$type<ResourceScope[]>().notNull().default([]),
 
@@ -919,13 +963,98 @@ export const projectAgentBindings = pgTable(
   ],
 );
 
+/**
+ * 项目级 Agent 权限 —— 「这个 Agent 在**这个项目**里能做什么」。
+ *
+ * ★★ 权限从组织级挪到项目级，是因为「同一个 Agent 在两个项目里该有两套权限」
+ *   在旧模型里根本表达不了。
+ *
+ *   旧模型把 allowedTools / resourceScopes 挂在 agents 上，于是给某个项目
+ *   放宽一次，全组织的项目跟着放宽。绕开它的唯一办法是同一份配置建两个
+ *   Agent —— 而那两个 Agent 的凭证、预算、统计从此各算各的，
+ *   「这把 key 被谁在用」也再答不上来。
+ *
+ * ★★ 存的是**展开后的结果**，不是「档案键」加一个指针。
+ *
+ *   只存 profileKey 的话，平台哪天给 standard_executor 加一条能力，
+ *   所有在跑的 Agent 会在没有任何人做过决定的情况下一起变宽 ——
+ *   这正是权限累积（docs/tech/09-security.md §7）最典型的发生方式。
+ *   profileKey/profileVersion 留着只为了显示「它当初选的是哪个档案」
+ *   和「档案有没有出新版」。
+ *
+ * Project-scoped Agent permissions. The old model hung permissions on the
+ * agent itself, so loosening for one project loosened every project. The
+ * expanded capability lists are stored rather than a pointer to a profile: a
+ * pointer would let a platform-side profile edit widen every running Agent at
+ * once, with nobody having made that decision.
+ */
+export const projectAgentPermissions = pgTable(
+  'project_agent_permissions',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    orgId: uuid().notNull().references(() => organizations.id),
+    projectId: uuid().notNull().references(() => projects.id),
+    agentId: uuid().notNull().references(() => agents.id),
+
+    /**
+     * ★ 这一列的值恒为 'agent'，存在只为组成下面那条复合外键。
+     *   数据库据此保证「有权限记录的 Agent 一定是本项目成员」——
+     *   放在应用层的话，先删成员再删权限之间有一个窗口，
+     *   而那个窗口里的 Agent 拿着一份没人管的授权。
+     */
+    memberActorType: actorTypeEnum().notNull().default('agent'),
+
+    /** 当初选的档案，仅用于显示与「有没有新版」提示 */
+    profileKey: text().notNull(),
+    profileVersion: integer().notNull(),
+
+    /** 展开后的生效能力，语义能力名 */
+    allowedCapabilities: text().array().notNull().default(sql`'{}'`),
+    /** 展开后的硬拒绝。拒绝优先级高于允许，任何上游放宽都压不过它 */
+    deniedCapabilities: text().array().notNull().default(sql`'{}'`),
+    /** 这个项目里授予的资源范围 */
+    resourceScopes: jsonb().$type<ResourceScope[]>().notNull().default([]),
+
+    /** 不可为空 —— 问责链条不能断，与 agents.owner_id 同一条纪律 */
+    updatedBy: uuid().notNull().references(() => users.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp({ withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    /** 一个 Agent 在一个项目里只有一份授权 */
+    uniqueIndex('project_agent_permissions_project_agent_idx').on(t.projectId, t.agentId),
+    index('project_agent_permissions_agent_idx').on(t.agentId),
+    /**
+     * ★★ 「必须是本项目成员」由数据库保证，不是由应用层记得去查。
+     *   project_members 的主键正好是 (project_id, actor_type, actor_id)。
+     */
+    foreignKey({
+      columns: [t.projectId, t.memberActorType, t.agentId],
+      foreignColumns: [projectMembers.projectId, projectMembers.actorType, projectMembers.actorId],
+      name: 'project_agent_permissions_member_fk',
+    }),
+    check('project_agent_permissions_actor_type_check', sql`${t.memberActorType} = 'agent'`),
+  ],
+);
+
 export const agentPermissionChanges = pgTable('agent_permission_changes', {
   id: uuid().primaryKey().defaultRandom(),
   agentId: uuid().notNull().references(() => agents.id),
   changedBy: uuid().notNull().references(() => users.id),
   direction: text().notNull(),
-  before: jsonb().$type<AgentPermissions>().notNull(),
-  after: jsonb().$type<AgentPermissions>().notNull(),
+  /**
+   * ★★ 两代形态同存，且**都不迁移**。
+   *
+   *   旧行记的是运行时工具集（AgentPermissions），新行记的是组织给这个
+   *   Agent 的能力上限。两者回答的不是同一个问题，把旧行改写成新形态
+   *   等于伪造当时那次变更的内容 —— 而审计存在的意义正是「当时到底改了什么」。
+   *
+   * Both shapes coexist and neither is migrated: old rows recorded a runtime
+   * tool set, new rows record the org-level capability ceiling. Rewriting the
+   * old ones would falsify what that change actually was.
+   */
+  before: jsonb().$type<AgentPermissions | AgentCeilingSnapshot>().notNull(),
+  after: jsonb().$type<AgentPermissions | AgentCeilingSnapshot>().notNull(),
   reason: text(),
   createdAt: timestamp({ withTimezone: true }).notNull().default(now),
 });
@@ -984,8 +1113,19 @@ export const agentRuns = pgTable(
     model: text(),
     modelConfig: jsonb().$type<Record<string, unknown>>(),
     toolsSnapshot: text().array().notNull().default(sql`'{}'`),
-    /** ★ 派发时的权限快照：权限可能在 Run 之后被改，审计回溯需要当时的状态 */
-    permissionSnapshot: jsonb().$type<AgentPermissions>(),
+    /**
+     * ★ 派发时的权限快照：权限可能在 Run 之后被改，审计回溯需要当时的状态。
+     *
+     * ★★ 类型是**联合**的，因为这一列里同时躺着两代快照：
+     *   v1 只有三个运行时字段（没有 version），v2 带上语义能力、档案与出处。
+     *   历史行绝不迁移 —— 它们是当时那次执行的凭证，改写等于伪造证据。
+     *   读取侧靠 `version` 分辨（缺省即 v1）。写成单一类型会诱导读取代码
+     *   直接访问 v2 才有的字段，而那在老 Run 上是 undefined。
+     *
+     * Deliberately a union: v1 and v2 snapshots coexist in this column forever.
+     * Old rows are never migrated — they are the evidence of that run.
+     */
+    permissionSnapshot: jsonb().$type<AgentPermissions | AgentPermissionSnapshot>(),
 
     /**
      * 本次 Run 的工作区：仓库、分支、基线 commit、本地路径。

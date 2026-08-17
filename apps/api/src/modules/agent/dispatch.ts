@@ -11,17 +11,19 @@ import {
   agentRuns,
   type Database,
 } from '@apos/db';
-import { effectiveResourceScopes, selectPolicyGates } from '@apos/domain';
+import { selectPolicyGates } from '@apos/domain';
 import {
   ACTIVE_RUN_STATUSES,
   agentActor,
   SYSTEM_ACTOR,
   type AgentPermissions,
+  type AgentPermissionSnapshot,
   type TaskDispatch,
 } from '@apos/contracts';
 import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
 import { loadPolicies, transition } from '../flow/transition';
+import { resolveAgentAccess } from './access';
 import type { WorkspaceService } from '../workspace';
 import { ingestRunEvent } from './ingest';
 
@@ -122,20 +124,49 @@ export async function dispatchRun(
     );
 
   /**
-   * ★★ 默认只读在**这一处**注入，而不是在 acquire() 里。
+   * ★★ 权限在**这一处**求值，而不是在 acquire() 或适配器里。
    *
-   *   permissionSnapshot 既落库当审计凭证，又原样传给工作区供给 ——
-   *   在这里算一次，两边必然一致。放到 acquire() 里算的话，
-   *   「Agent 当时实际能读什么」与「审计记录里写着它能读什么」会分叉，
-   *   而这正是快照存在的意义。
+   *   求值结果既落库当审计凭证，又原样传给工作区供给与运行时 ——
+   *   在这里算一次，三边必然一致。分头算的话，「Agent 当时实际能做什么」
+   *   与「审计记录里写着它能做什么」会分叉，而这正是快照存在的意义。
+   *
+   * ★★ 走的是与调度器匹配**同一个**函数（resolveAgentAccess）。
+   *   两条路径各算一套的后果见 modules/agent/matching.ts 里那段。
    */
+  const access = await resolveAgentAccess(db, agent, {
+    orgId: item.orgId,
+    projectId: item.projectId,
+    repoRefs: projectRepos.map((r) => r.ref),
+  });
+
+  /** 下发给运行时与工作区的那一份 —— 协议这一层仍然是工具名 */
   const permissionSnapshot: AgentPermissions = {
-    allowedTools: agent.allowedTools,
-    deniedTools: agent.deniedTools,
-    resourceScopes: effectiveResourceScopes({
-      explicit: agent.resourceScopes,
-      projectRepoRefs: projectRepos.map((r) => r.ref),
-    }),
+    allowedTools: access.runtimePermissions.allowedTools,
+    deniedTools: access.runtimePermissions.deniedTools,
+    resourceScopes: access.runtimePermissions.resourceScopes,
+  };
+
+  /**
+   * 落库的那一份（v2）。
+   *
+   * ★★ 比下发的那份多了语义能力、档案与出处。半年后翻审计的人问的是
+   *   「它当时被授权做什么」，而工具名回答不了 —— 同一串 `['Read','Edit']`
+   *   在适配器改版前后不是一回事。
+   *
+   * ★ 历史快照（v1，没有 version 字段）**原样保留**，不迁移、不补写：
+   *   它们是当时那次执行的凭证，改写等于伪造证据。读取侧靠 version 分辨。
+   */
+  const storedSnapshot: AgentPermissionSnapshot = {
+    version: 2,
+    profileKey: access.profileKey,
+    profileVersion: access.profileVersion,
+    capabilities: access.capabilities,
+    deniedCapabilities: access.deniedCapabilities,
+    allowedTools: permissionSnapshot.allowedTools,
+    deniedTools: permissionSnapshot.deniedTools,
+    resourceScopes: permissionSnapshot.resourceScopes,
+    sources: access.sources,
+    degradations: access.degradations,
   };
 
   const context = await buildRunContext(db, item, input.additionalContext);
@@ -165,8 +196,8 @@ export async function dispatchRun(
     goal: item.title,
     inputContext: context,
     model: agent.model,
-    toolsSnapshot: agent.allowedTools,
-    permissionSnapshot,
+    toolsSnapshot: permissionSnapshot.allowedTools,
+    permissionSnapshot: storedSnapshot,
     timeoutAt: new Date(Date.now() + agent.timeoutSeconds * 1000),
   });
 

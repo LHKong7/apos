@@ -21,6 +21,20 @@ export interface AgentCandidate {
   currentLoad: number;
   maxConcurrency: number;
   tokenLimitPerRun: number | null;
+  /**
+   * ★★ 这个 Agent 在**目标项目**里的生效语义能力。
+   *
+   *   调度器与派发必须看同一份判定。此前这里读的是 agents 表上那份
+   *   全组织通用的工具清单，而派发读的是另一条路径算出来的东西 ——
+   *   两边给出不同答案的表现是「调度器说没有候选，真派下去其实能跑」，
+   *   或者反过来。求值器（capabilities/evaluate.ts）就是为了消灭这个分歧。
+   *
+   * The agent's evaluated capabilities **in the target project**. Scheduler and
+   * dispatch must read one verdict; two paths produce "the scheduler says no
+   * candidate, yet dispatching by hand works".
+   */
+  capabilities: string[];
+  /** 由能力翻译出来的运行时工具集 —— 只用于兼容按工具名提要求的老任务 */
   allowedTools: string[];
   deniedTools: string[];
   /** 该 Agent 是否在本项目做过同模块的任务 */
@@ -48,6 +62,15 @@ export interface AgentCandidate {
 export interface MatchTarget {
   type: WorkItemType;
   requiredSkills: string[];
+  /**
+   * 这活需要哪些语义能力。
+   *
+   * ★ 与 `requiredTools` 的关系是「新的那一栏」：按能力提要求才说得清
+   *   「这活要推分支」和「这活要能改文件」的区别，而工具名说不清 ——
+   *   同一个 `Bash` 在两个运行时上含义都不一样。老任务只有
+   *   requiredTools，两栏都判，谁也不覆盖谁。
+   */
+  requiredCapabilities: string[];
   requiredTools: string[];
   estimatedTokens: number | null;
   riskLevel: RiskLevel;
@@ -178,6 +201,23 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `已满载（${agent.currentLoad}/${agent.maxConcurrency}）`,
+      });
+      continue;
+    }
+
+    /**
+     * ★ 能力先判、工具后判。能力是稳定说法，工具名是运行时词汇 ——
+     *   先给出能力这一侧的拒绝理由，用户拿到的是「它没有推送权限」
+     *   而不是「它缺少 Bash(git push:*)」。
+     */
+    const missingCapabilities = target.requiredCapabilities.filter(
+      (c) => !agent.capabilities.includes(c),
+    );
+    if (missingCapabilities.length > 0) {
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: `在这个项目里没有所需能力：${missingCapabilities.join('、')}`,
       });
       continue;
     }

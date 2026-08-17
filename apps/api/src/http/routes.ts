@@ -89,10 +89,13 @@ import {
 } from '../modules/auth';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
 import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
-import { createRole, deleteRole, listRoles, updateRole } from './roles';
+import { cloneRole, createRole, deleteRole, listRoles, previewRole, updateRole } from './roles';
 import {
   createRbac,
+  agentContext,
+  deferred,
   guardRouteCoverage,
+  runOwnerContext,
   orgHeaderOf,
   resolveCurrentOrg,
   resolveCurrentOrgLenient,
@@ -123,6 +126,7 @@ import {
   createAgent,
   deleteAgent,
   listAgentsAdmin,
+  listCapabilityCatalog,
   probeAgent,
   updateAgent,
 } from './agent-admin';
@@ -157,6 +161,13 @@ import {
   setRequirementAuthorAgent,
 } from '../modules/requirement/service';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
+import {
+  AgentAccessInput,
+  getAgentAccess,
+  previewAgentAccess,
+  setAgentAccess,
+} from '../modules/agent/access';
+import { executeGovernedMutation } from './governed-mutation';
 import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
@@ -692,18 +703,38 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return reply.status(201).send(result);
   });
 
-  app.patch('/api/v1/organizations/:id', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    assertCurrentOrg(req, orgId);
-    const body = OrganizationPatch.parse(req.body);
-    return updateOrganization(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
-  });
+  app.patch(
+    '/api/v1/organizations/:id',
+    {
+      config: {
+        auth: {
+          permission: 'organization.update',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      assertCurrentOrg(req, orgId);
+      const body = OrganizationPatch.parse(req.body);
+      return updateOrganization(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
+    },
+  );
 
-  app.delete('/api/v1/organizations/:id', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    assertCurrentOrg(req, orgId);
-    return deleteOrganization(db, { orgId, actorId: userId, correlationId: corr(req) });
-  });
+  app.delete(
+    '/api/v1/organizations/:id',
+    {
+      config: {
+        auth: {
+          permission: 'organization.delete',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      assertCurrentOrg(req, orgId);
+      return deleteOrganization(db, { orgId, actorId: userId, correlationId: corr(req) });
+    },
+  );
 
   app.get('/api/v1/organizations/:id/members', async (req) => {
     const { orgId } = await callerOrg(req);
@@ -711,25 +742,45 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listOrganizationMembers(db, orgId);
   });
 
-  app.post('/api/v1/organizations/:id/members', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    assertCurrentOrg(req, orgId);
-    const body = z.object({ email: z.string().email(), orgRole: OrgRole.default('member') }).parse(
-      req.body,
-    );
-    return addOrganizationMember(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
-  });
+  app.post(
+    '/api/v1/organizations/:id/members',
+    {
+      config: {
+        auth: {
+          permission: 'organization.members.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      assertCurrentOrg(req, orgId);
+      const body = z.object({ email: z.string().email(), orgRole: OrgRole.default('member') }).parse(
+        req.body,
+      );
+      return addOrganizationMember(db, { orgId, actorId: userId, correlationId: corr(req) }, body);
+    },
+  );
 
-  app.delete('/api/v1/organizations/:id/members/:userId', async (req) => {
-    const { orgId, userId: actorId } = await callerOrg(req);
-    assertCurrentOrg(req, orgId);
-    const { userId: targetId } = req.params as { userId: string };
-    return removeOrganizationMember(
-      db,
-      { orgId, actorId, correlationId: corr(req) },
-      targetId,
-    );
-  });
+  app.delete(
+    '/api/v1/organizations/:id/members/:userId',
+    {
+      config: {
+        auth: {
+          permission: 'organization.members.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId: actorId } = await callerOrg(req);
+      assertCurrentOrg(req, orgId);
+      const { userId: targetId } = req.params as { userId: string };
+      return removeOrganizationMember(
+        db,
+        { orgId, actorId, correlationId: corr(req) },
+        targetId,
+      );
+    },
+  );
 
   /**
    * ★★ URL 里的组织必须就是**当前**组织。
@@ -770,64 +821,74 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     orgId: z.string().uuid().optional(),
   });
 
-  app.post('/api/v1/projects', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const body = CreateProject.parse(req.body);
-    const actor = await rbac.resolveActor(req, userId, null);
+  app.post(
+    '/api/v1/projects',
+    {
+      config: {
+        auth: {
+          permission: 'project.create',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const body = CreateProject.parse(req.body);
+      const actor = await rbac.resolveActor(req, userId, null);
 
-    /**
-     * ★ orgId 以调用者的当前组织为准，不听请求体的。
-     *   照抄 body.orgId 的话，任何人都能往别的组织里塞一个项目 ——
-     *   而那个项目从此挂在对方的项目列表、对方的成本统计里。
-     *
-     * ★ 不传则用当前组织。要求前端必须知道自己的 orgId 才能建项目，
-     *   是把实现细节变成了它的负担 —— 而这个值服务端本来就有。
-     */
-    if (body.orgId && body.orgId !== actor.orgId) {
-      throw new ApiError('FORBIDDEN', '只能在当前组织下创建项目', {
+      /**
+       * ★ orgId 以调用者的当前组织为准，不听请求体的。
+       *   照抄 body.orgId 的话，任何人都能往别的组织里塞一个项目 ——
+       *   而那个项目从此挂在对方的项目列表、对方的成本统计里。
+       *
+       * ★ 不传则用当前组织。要求前端必须知道自己的 orgId 才能建项目，
+       *   是把实现细节变成了它的负担 —— 而这个值服务端本来就有。
+       */
+      if (body.orgId && body.orgId !== actor.orgId) {
+        throw new ApiError('FORBIDDEN', '只能在当前组织下创建项目', {
+          orgId: actor.orgId,
+        });
+      }
+
+      const { orgId: _ignored, identifier, ...fields } = body;
+      /**
+       * ★ 前缀不能留给默认值。所有项目共用 `TASK` 的话，
+       *   `TASK-19` 在组织里指向好几条 —— 而编号存在的全部理由
+       *   就是"说出来能指到唯一一条"。
+       */
+      const prefix = identifier ?? (await freeIdentifier(db, actor.orgId, body.name));
+      const [project] = await db
+        .insert(projects)
+        .values({ ...fields, identifier: prefix, orgId: actor.orgId, techLeadId: userId })
+        .returning();
+
+      /**
+       * ★★ 创建者必须落成成员，否则他建完就进不去自己的项目 ——
+       *   成员关系闸门（§2.1.1）不认 techLeadId 这个字段，只认 project_members。
+       *   这类「功能看起来完成了，实际第一步就走不通」的缺口，
+       *   只有在权限真的生效之后才暴露得出来。
+       */
+      await db.insert(projectMembers).values({
         orgId: actor.orgId,
+        projectId: project!.id,
+        actorType: 'human',
+        actorId: userId,
+        role: 'tech_lead',
       });
-    }
 
-    const { orgId: _ignored, identifier, ...fields } = body;
-    /**
-     * ★ 前缀不能留给默认值。所有项目共用 `TASK` 的话，
-     *   `TASK-19` 在组织里指向好几条 —— 而编号存在的全部理由
-     *   就是"说出来能指到唯一一条"。
-     */
-    const prefix = identifier ?? (await freeIdentifier(db, actor.orgId, body.name));
-    const [project] = await db
-      .insert(projects)
-      .values({ ...fields, identifier: prefix, orgId: actor.orgId, techLeadId: userId })
-      .returning();
+      await emitAndPublish(db, {
+        orgId: actor.orgId,
+        projectId: project!.id,
+        type: 'project.member_added',
+        actor: humanActor(userId),
+        subjectType: 'user',
+        subjectId: userId,
+        payload: { from: null, to: 'tech_lead', projectId: project!.id, reason: 'project_creator' },
+        correlationId: corr(req),
+      });
 
-    /**
-     * ★★ 创建者必须落成成员，否则他建完就进不去自己的项目 ——
-     *   成员关系闸门（§2.1.1）不认 techLeadId 这个字段，只认 project_members。
-     *   这类「功能看起来完成了，实际第一步就走不通」的缺口，
-     *   只有在权限真的生效之后才暴露得出来。
-     */
-    await db.insert(projectMembers).values({
-      orgId: actor.orgId,
-      projectId: project!.id,
-      actorType: 'human',
-      actorId: userId,
-      role: 'tech_lead',
-    });
-
-    await emitAndPublish(db, {
-      orgId: actor.orgId,
-      projectId: project!.id,
-      type: 'project.member_added',
-      actor: humanActor(userId),
-      subjectType: 'user',
-      subjectId: userId,
-      payload: { from: null, to: 'tech_lead', projectId: project!.id, reason: 'project_creator' },
-      correlationId: corr(req),
-    });
-
-    return reply.status(201).send({ project });
-  });
+      return reply.status(201).send({ project });
+    },
+  );
 
   // ── 成员与角色（09-security §2.2）────────────────────────────────────
   /**
@@ -852,12 +913,22 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     };
   });
 
-  app.get('/api/v1/projects/:id/members', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const actor = await rbac.resolveActor(req, userId, id);
-    return listMembers(db, id, actor.orgId);
-  });
+  app.get(
+    '/api/v1/projects/:id/members',
+    {
+      config: {
+        auth: {
+          permission: 'project.view',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const actor = await rbac.resolveActor(req, userId, id);
+      return listMembers(db, id, actor.orgId);
+    },
+  );
 
   /**
    * 指派角色。
@@ -875,36 +946,56 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     actorType: z.enum(['human', 'agent']).default('human'),
   });
 
-  app.put('/api/v1/projects/:id/members/:memberId', async (req) => {
-    const { userId: actorId } = actorFrom(req);
-    const { id, memberId } = req.params as { id: string; memberId: string };
-    const body = MemberRoleBody.parse(req.body);
+  app.put(
+    '/api/v1/projects/:id/members/:memberId',
+    {
+      config: {
+        auth: {
+          permission: 'project.members.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { userId: actorId } = actorFrom(req);
+      const { id, memberId } = req.params as { id: string; memberId: string };
+      const body = MemberRoleBody.parse(req.body);
 
-    return setMemberRole(
-      db,
-      {
+      return setMemberRole(
+        db,
+        {
+          projectId: id,
+          actorType: body.actorType,
+          targetId: memberId,
+          actorId,
+          correlationId: corr(req),
+        },
+        body.role ?? null,
+      );
+    },
+  );
+
+  app.delete(
+    '/api/v1/projects/:id/members/:memberId',
+    {
+      config: {
+        auth: {
+          permission: 'project.members.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { userId: actorId } = actorFrom(req);
+      const { id, memberId } = req.params as { id: string; memberId: string };
+      const q = req.query as { actorType?: string };
+      return removeMember(db, {
         projectId: id,
-        actorType: body.actorType,
+        actorType: q.actorType === 'agent' ? 'agent' : 'human',
         targetId: memberId,
         actorId,
         correlationId: corr(req),
-      },
-      body.role ?? null,
-    );
-  });
-
-  app.delete('/api/v1/projects/:id/members/:memberId', async (req) => {
-    const { userId: actorId } = actorFrom(req);
-    const { id, memberId } = req.params as { id: string; memberId: string };
-    const q = req.query as { actorType?: string };
-    return removeMember(db, {
-      projectId: id,
-      actorType: q.actorType === 'agent' ? 'agent' : 'human',
-      targetId: memberId,
-      actorId,
-      correlationId: corr(req),
-    });
-  });
+      });
+    },
+  );
 
   /** 组织通讯录与身份管理（§2.2「org_admin：身份管理」）*/
   app.get('/api/v1/admin/users', async (req) => {
@@ -923,26 +1014,50 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   catalog 里这两条是分开的，前者是「把边界外的账号放进来」，
    *   后者是「在组织内部改角色」。建号显然是前者 —— 而且更靠前一步。
    */
-  app.post('/api/v1/admin/users', async (req, reply) => {
-    const { orgId, userId: actorId } = await callerOrg(req);
-    const created = await createAccount(
-      db,
-      { orgId, actorId, correlationId: corr(req) },
-      CreateAccountInput.parse(req.body),
-    );
-    return reply.status(201).send(created);
-  });
+  app.post(
+    '/api/v1/admin/users',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
+           *   后者只在组织内部移动权限，前者错了是数据出了租户。
+           */
+          permission: 'organization.members.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId: actorId } = await callerOrg(req);
+      const created = await createAccount(
+        db,
+        { orgId, actorId, correlationId: corr(req) },
+        CreateAccountInput.parse(req.body),
+      );
+      return reply.status(201).send(created);
+    },
+  );
 
-  app.patch('/api/v1/admin/users/:id/org-role', async (req) => {
-    const { orgId, userId: actorId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    const body = z.object({ orgRole: OrgRole }).parse(req.body);
-    return setOrgRole(
-      db,
-      { orgId, targetUserId: id, actorId, correlationId: corr(req) },
-      body.orgRole,
-    );
-  });
+  app.patch(
+    '/api/v1/admin/users/:id/org-role',
+    {
+      config: {
+        auth: {
+          permission: 'org.members.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId: actorId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      const body = z.object({ orgRole: OrgRole }).parse(req.body);
+      return setOrgRole(
+        db,
+        { orgId, targetUserId: id, actorId, correlationId: corr(req) },
+        body.orgRole,
+      );
+    },
+  );
 
   // ── 角色定义（§2.2）─────────────────────────────────────────────────
   /**
@@ -956,23 +1071,102 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listRoles(db, orgId);
   });
 
-  app.post('/api/v1/admin/roles', async (req, reply) => {
-    const { orgId, userId } = await callerOrg(req);
-    const result = await createRole(db, { orgId, actorId: userId, correlationId: corr(req) }, req.body);
-    return reply.status(201).send(result);
-  });
+  app.post(
+    '/api/v1/admin/roles',
+    {
+      config: {
+        auth: {
+          permission: 'org.roles.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId } = await callerOrg(req);
+      const result = await createRole(db, { orgId, actorId: userId, correlationId: corr(req) }, req.body);
+      return reply.status(201).send(result);
+    },
+  );
 
-  app.patch('/api/v1/admin/roles/:key', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    const { key } = req.params as { key: string };
-    return updateRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key, req.body);
-  });
+  app.patch(
+    '/api/v1/admin/roles/:key',
+    {
+      config: {
+        auth: {
+          permission: 'org.roles.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { key } = req.params as { key: string };
+      return updateRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key, req.body);
+    },
+  );
 
-  app.delete('/api/v1/admin/roles/:key', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    const { key } = req.params as { key: string };
-    return deleteRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key);
-  });
+  app.delete(
+    '/api/v1/admin/roles/:key',
+    {
+      config: {
+        auth: {
+          permission: 'org.roles.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { key } = req.params as { key: string };
+      return deleteRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key);
+    },
+  );
+
+  /**
+   * ★★ 「复制并改」是内置角色不可改的另一半。只说「改不了」的话，
+   *   用户的下一步是从零勾一遍权限，而勾出来的东西和他想要的
+   *   「跟 tech_lead 一样但少一条」几乎一定不同。
+   */
+  app.post(
+    '/api/v1/admin/roles/:key/clone',
+    {
+      config: {
+        auth: {
+          /** ★ 复制角色就是新建一个角色 —— 与 POST /admin/roles 同一条权限 */
+          permission: 'org.roles.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { key } = req.params as { key: string };
+      const result = await cloneRole(
+        db,
+        { orgId, actorId: userId, correlationId: corr(req) },
+        key,
+        req.body,
+      );
+      return reply.status(201).send(result);
+    },
+  );
+
+  /**
+   * ★ 保存前的影响预览。角色是**组织级**的：改一次可能同时改掉五个项目里
+   *   十几个人的可做操作，而那件事在保存之后没有任何界面会告诉他。
+   */
+  app.post(
+    '/api/v1/admin/roles/:key/preview',
+    {
+      config: {
+        auth: {
+          /** 预览是只读的：它算「如果保存会影响谁」，不写任何东西 */
+          permission: 'project.view',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { key } = req.params as { key: string };
+      return previewRole(db, orgId, key, req.body);
+    },
+  );
 
   // ── 需求 ────────────────────────────────────────────────────────────
   const CreateRequirement = z.object({
@@ -980,40 +1174,50 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     inputMethod: z.string().default('manual'),
   });
 
-  app.post('/api/v1/projects/:id/requirements', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = CreateRequirement.parse(req.body);
+  app.post(
+    '/api/v1/projects/:id/requirements',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.create',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = CreateRequirement.parse(req.body);
 
-    const [project] = await db.select().from(projects).where(eq(projects.id, id));
-    if (!project) throw notFound('项目');
+      const [project] = await db.select().from(projects).where(eq(projects.id, id));
+      if (!project) throw notFound('项目');
 
-    const { userId } = actorFrom(req);
-    const [requirement] = await db
-      .insert(requirements)
-      .values({ orgId: project.orgId, projectId: id, ...body })
-      .returning();
+      const { userId } = actorFrom(req);
+      const [requirement] = await db
+        .insert(requirements)
+        .values({ orgId: project.orgId, projectId: id, ...body })
+        .returning();
 
-    /**
-     * ★★ requirement.created 此前**从没被发出来过** —— 事件类型目录里
-     *   声明了它，而创建路由只是 insert 完就返回。
-     *
-     *   后果是需求的生命周期从中间开始：审计里第一条是 analyzed 或 approved，
-     *   「谁在什么时候提的这条需求」查不到。而需求是整条链的起点，
-     *   缺了起点的时间线读起来像是凭空冒出来一条已确认的需求。
-     */
-    await emitAndPublish(db, {
-      type: 'requirement.created',
-      orgId: project.orgId,
-      projectId: id,
-      actor: humanActor(userId),
-      subjectType: 'requirement',
-      subjectId: requirement!.id,
-      payload: { title: requirement!.title ?? null, source: body.rawInput ? 'raw_input' : 'manual' },
-      correlationId: corr(req),
-    });
+      /**
+       * ★★ requirement.created 此前**从没被发出来过** —— 事件类型目录里
+       *   声明了它，而创建路由只是 insert 完就返回。
+       *
+       *   后果是需求的生命周期从中间开始：审计里第一条是 analyzed 或 approved，
+       *   「谁在什么时候提的这条需求」查不到。而需求是整条链的起点，
+       *   缺了起点的时间线读起来像是凭空冒出来一条已确认的需求。
+       */
+      await emitAndPublish(db, {
+        type: 'requirement.created',
+        orgId: project.orgId,
+        projectId: id,
+        actor: humanActor(userId),
+        subjectType: 'requirement',
+        subjectId: requirement!.id,
+        payload: { title: requirement!.title ?? null, source: body.rawInput ? 'raw_input' : 'manual' },
+        correlationId: corr(req),
+      });
 
-    return reply.status(201).send({ requirement });
-  });
+      return reply.status(201).send({ requirement });
+    },
+  );
 
   app.get('/api/v1/projects/:id/requirements', async (req) => {
     const { id } = req.params as { id: string };
@@ -1082,123 +1286,143 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .optional(),
   });
 
-  app.patch('/api/v1/requirements/:id', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = EditRequirement.parse(req.body);
+  app.patch(
+    '/api/v1/requirements/:id',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = EditRequirement.parse(req.body);
 
-    const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
-    if (!before) throw notFound('需求');
-    if (before.status === 'approved') {
-      throw new ApiError('INVALID_TRANSITION', '需求已确认，不能再编辑。如需修改请先重新打开。');
-    }
+      const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
+      if (!before) throw notFound('需求');
+      if (before.status === 'approved') {
+        throw new ApiError('INVALID_TRANSITION', '需求已确认，不能再编辑。如需修改请先重新打开。');
+      }
 
-    const submitted = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
+      const submitted = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
 
-    /**
-     * 新写的验收标准补上 id —— 工作项与核验记录都按 id 指回这一条。
-     *
-     * ★ 没带 id 进来时先按原文找回旧的那一条。每次都新发一个 id 的话，
-     *   「原样再存一遍」就会把所有标准换一批身份，而指向它们的工作项
-     *   与核验记录当场变成悬空引用 —— 页面上看不出任何异样。
-     */
-    if (body.acceptanceCriteria) {
-      const idByText = new Map(
-        (before.acceptanceCriteria ?? []).map((c) => [c.text, c.id] as const),
+      /**
+       * 新写的验收标准补上 id —— 工作项与核验记录都按 id 指回这一条。
+       *
+       * ★ 没带 id 进来时先按原文找回旧的那一条。每次都新发一个 id 的话，
+       *   「原样再存一遍」就会把所有标准换一批身份，而指向它们的工作项
+       *   与核验记录当场变成悬空引用 —— 页面上看不出任何异样。
+       */
+      if (body.acceptanceCriteria) {
+        const idByText = new Map(
+          (before.acceptanceCriteria ?? []).map((c) => [c.text, c.id] as const),
+        );
+        submitted['acceptanceCriteria'] = body.acceptanceCriteria.map((c) => ({
+          ...c,
+          id: c.id ?? idByText.get(c.text) ?? randomUUID(),
+        }));
+      }
+
+      /**
+       * ★★ 只认**真的变了**的字段，不认「提交了」的字段。
+       *
+       *   编辑器一次提交整份结构化需求（一份表单，字段之间互相关联，
+       *   拆成一堆 PATCH 只会让中途失败留下半份需求）。按提交的字段记溯源，
+       *   表现就是：AI 出稿之后人只改了业务目标，整块面板全变成「👤 人工」——
+       *   而那一排标记存在的唯一理由，正是让人在确认前分清哪句话是自己写的。
+       *   一改全变之后，它比没有还糟：它在撒谎。
+       */
+      const changed = Object.keys(submitted).filter(
+        (k) =>
+          stableJson(submitted[k]) !==
+          stableJson((before as unknown as Record<string, unknown>)[k]),
       );
-      submitted['acceptanceCriteria'] = body.acceptanceCriteria.map((c) => ({
-        ...c,
-        id: c.id ?? idByText.get(c.text) ?? randomUUID(),
-      }));
-    }
+      if (changed.length === 0) return { requirement: before };
 
-    /**
-     * ★★ 只认**真的变了**的字段，不认「提交了」的字段。
-     *
-     *   编辑器一次提交整份结构化需求（一份表单，字段之间互相关联，
-     *   拆成一堆 PATCH 只会让中途失败留下半份需求）。按提交的字段记溯源，
-     *   表现就是：AI 出稿之后人只改了业务目标，整块面板全变成「👤 人工」——
-     *   而那一排标记存在的唯一理由，正是让人在确认前分清哪句话是自己写的。
-     *   一改全变之后，它比没有还糟：它在撒谎。
-     */
-    const changed = Object.keys(submitted).filter(
-      (k) =>
-        stableJson(submitted[k]) !==
-        stableJson((before as unknown as Record<string, unknown>)[k]),
-    );
-    if (changed.length === 0) return { requirement: before };
+      const patch = Object.fromEntries(changed.map((k) => [k, submitted[k]]));
 
-    const patch = Object.fromEntries(changed.map((k) => [k, submitted[k]]));
+      const [updated] = await db
+        .update(requirements)
+        .set({ ...patch, updatedAt: new Date() } as never)
+        .where(eq(requirements.id, id))
+        .returning();
 
-    const [updated] = await db
-      .update(requirements)
-      .set({ ...patch, updatedAt: new Date() } as never)
-      .where(eq(requirements.id, id))
-      .returning();
+      // 人类改过的字段要能与 AI 原值区分（§5.4「已由人类修改」）
+      const provenance = { ...(before.fieldProvenance as Record<string, unknown>) };
+      for (const field of changed) {
+        provenance[field] = { source: 'human', editedBy: userId, editedAt: new Date().toISOString() };
+      }
+      await db.update(requirements).set({ fieldProvenance: provenance }).where(eq(requirements.id, id));
 
-    // 人类改过的字段要能与 AI 原值区分（§5.4「已由人类修改」）
-    const provenance = { ...(before.fieldProvenance as Record<string, unknown>) };
-    for (const field of changed) {
-      provenance[field] = { source: 'human', editedBy: userId, editedAt: new Date().toISOString() };
-    }
-    await db.update(requirements).set({ fieldProvenance: provenance }).where(eq(requirements.id, id));
+      await emitAndPublish(db, {
+        orgId: before.orgId,
+        projectId: before.projectId,
+        type: 'requirement.field_edited',
+        actor: humanActor(userId),
+        subjectType: 'requirement',
+        subjectId: id,
+        payload: { fields: changed },
+        correlationId: corr(req),
+      });
 
-    await emitAndPublish(db, {
-      orgId: before.orgId,
-      projectId: before.projectId,
-      type: 'requirement.field_edited',
-      actor: humanActor(userId),
-      subjectType: 'requirement',
-      subjectId: id,
-      payload: { fields: changed },
-      correlationId: corr(req),
-    });
+      /**
+       * ★★ 人工改完要重算完整度并推进状态，和回答澄清问题走同一条路径。
+       *
+       *   不重算的话，一个人把目标、范围、验收标准全填好之后，头部的六维
+       *   评分还停在分析那一刻（没分析过就是 0 分），而用户正是照着那个分数
+       *   判断「够不够格确认」的。状态同理：纯人工填出来的需求会一直卡在
+       *   draft，确认按钮永远不出现 —— 人工这条路就走不到头。
+       */
+      const refreshed = await refreshCompleteness(db, id);
 
-    /**
-     * ★★ 人工改完要重算完整度并推进状态，和回答澄清问题走同一条路径。
-     *
-     *   不重算的话，一个人把目标、范围、验收标准全填好之后，头部的六维
-     *   评分还停在分析那一刻（没分析过就是 0 分），而用户正是照着那个分数
-     *   判断「够不够格确认」的。状态同理：纯人工填出来的需求会一直卡在
-     *   draft，确认按钮永远不出现 —— 人工这条路就走不到头。
-     */
-    const refreshed = await refreshCompleteness(db, id);
+      return { requirement: refreshed ?? updated };
+    },
+  );
 
-    return { requirement: refreshed ?? updated };
-  });
+  app.post(
+    '/api/v1/requirements/:id/reject',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.approve',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          // ★ 驳回必须填原因：提出人要知道为什么，否则只会原样再提一遍
+          reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
+        })
+        .parse(req.body);
 
-  app.post('/api/v1/requirements/:id/reject', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        // ★ 驳回必须填原因：提出人要知道为什么，否则只会原样再提一遍
-        reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
-      })
-      .parse(req.body);
+      const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
+      if (!before) throw notFound('需求');
 
-    const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
-    if (!before) throw notFound('需求');
+      const [updated] = await db
+        .update(requirements)
+        .set({ status: 'rejected', rejectReason: body.reason, updatedAt: new Date() })
+        .where(eq(requirements.id, id))
+        .returning();
 
-    const [updated] = await db
-      .update(requirements)
-      .set({ status: 'rejected', rejectReason: body.reason, updatedAt: new Date() })
-      .where(eq(requirements.id, id))
-      .returning();
+      await emitAndPublish(db, {
+        orgId: before.orgId,
+        projectId: before.projectId,
+        type: 'requirement.rejected',
+        actor: humanActor(userId),
+        subjectType: 'requirement',
+        subjectId: id,
+        payload: { reason: body.reason },
+        correlationId: corr(req),
+      });
 
-    await emitAndPublish(db, {
-      orgId: before.orgId,
-      projectId: before.projectId,
-      type: 'requirement.rejected',
-      actor: humanActor(userId),
-      subjectType: 'requirement',
-      subjectId: id,
-      payload: { reason: body.reason },
-      correlationId: corr(req),
-    });
-
-    return { requirement: updated };
-  });
+      return { requirement: updated };
+    },
+  );
 
   /**
    * 删除需求。
@@ -1216,65 +1440,79 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ 澄清项与假设随需求一起删 —— 它们只属于这一条需求，没有独立生命周期。
    *   这也是数据库层面必须的：那两张表的 requirementId 是 NOT NULL 外键。
    */
-  app.delete('/api/v1/requirements/:id', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-
-    const [existing] = await db.select().from(requirements).where(eq(requirements.id, id));
-    if (!existing) throw notFound('需求');
-
-    const derivedPlans = await db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(eq(plans.requirementId, id));
-    const derivedItems = await db
-      .select({ id: workItems.id })
-      .from(workItems)
-      .where(eq(workItems.requirementId, id));
-
-    if (derivedPlans.length > 0 || derivedItems.length > 0) {
-      const blockers = [
-        derivedPlans.length > 0 ? `${derivedPlans.length} 个计划` : null,
-        derivedItems.length > 0 ? `${derivedItems.length} 个工作项` : null,
-      ].filter((s): s is string => s !== null);
-      throw new ApiError(
-        'GUARD_FAILED',
-        `这条需求已经派生出${blockers.join(' 与 ')}，不能删除。要终止它请改用驳回。`,
-        { requirementId: id, plans: derivedPlans.length, workItems: derivedItems.length },
-      );
-    }
-
-    await db.transaction(async (tx) => {
-      await tx
-        .delete(requirementClarifications)
-        .where(eq(requirementClarifications.requirementId, id));
-      await tx.delete(requirementAssumptions).where(eq(requirementAssumptions.requirementId, id));
-      await tx.delete(requirements).where(eq(requirements.id, id));
-    });
-
-    /**
-     * ★ 提交之后才发事件（modules/event/bus.ts 的纪律）。
-     *
-     * ★ payload 要带上标题与原文摘要：实体没了，这条事件是它存在过的
-     *   唯一痕迹。只记一个 id 的话，审计时翻到这一行也不知道删的是什么。
-     */
-    await emitAndPublish(db, {
-      orgId: existing.orgId,
-      projectId: existing.projectId,
-      type: 'requirement.deleted',
-      actor: humanActor(userId),
-      subjectType: 'requirement',
-      subjectId: id,
-      payload: {
-        title: existing.title,
-        status: existing.status,
-        rawInput: existing.rawInput.slice(0, 200),
+  app.delete(
+    '/api/v1/requirements/:id',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
+           *   删除是对记录本身的处置（pm / tech_lead）—— 两者的责任人不是同一批。
+           */
+          permission: 'requirement.delete',
+        },
       },
-      correlationId: corr(req),
-    });
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
 
-    return { ok: true };
-  });
+      const [existing] = await db.select().from(requirements).where(eq(requirements.id, id));
+      if (!existing) throw notFound('需求');
+
+      const derivedPlans = await db
+        .select({ id: plans.id })
+        .from(plans)
+        .where(eq(plans.requirementId, id));
+      const derivedItems = await db
+        .select({ id: workItems.id })
+        .from(workItems)
+        .where(eq(workItems.requirementId, id));
+
+      if (derivedPlans.length > 0 || derivedItems.length > 0) {
+        const blockers = [
+          derivedPlans.length > 0 ? `${derivedPlans.length} 个计划` : null,
+          derivedItems.length > 0 ? `${derivedItems.length} 个工作项` : null,
+        ].filter((s): s is string => s !== null);
+        throw new ApiError(
+          'GUARD_FAILED',
+          `这条需求已经派生出${blockers.join(' 与 ')}，不能删除。要终止它请改用驳回。`,
+          { requirementId: id, plans: derivedPlans.length, workItems: derivedItems.length },
+        );
+      }
+
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(requirementClarifications)
+          .where(eq(requirementClarifications.requirementId, id));
+        await tx.delete(requirementAssumptions).where(eq(requirementAssumptions.requirementId, id));
+        await tx.delete(requirements).where(eq(requirements.id, id));
+      });
+
+      /**
+       * ★ 提交之后才发事件（modules/event/bus.ts 的纪律）。
+       *
+       * ★ payload 要带上标题与原文摘要：实体没了，这条事件是它存在过的
+       *   唯一痕迹。只记一个 id 的话，审计时翻到这一行也不知道删的是什么。
+       */
+      await emitAndPublish(db, {
+        orgId: existing.orgId,
+        projectId: existing.projectId,
+        type: 'requirement.deleted',
+        actor: humanActor(userId),
+        subjectType: 'requirement',
+        subjectId: id,
+        payload: {
+          title: existing.title,
+          status: existing.status,
+          rawInput: existing.rawInput.slice(0, 200),
+        },
+        correlationId: corr(req),
+      });
+
+      return { ok: true };
+    },
+  );
 
   app.get('/api/v1/requirements/:id', async (req) => {
     const { id } = req.params as { id: string };
@@ -1313,15 +1551,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { requirement, clarifications, authorAgent: author ?? null };
   });
 
-  app.post('/api/v1/requirements/:id/analyze', async (req) => {
-    const { actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    return analyzeRequirement(db, deps.provider, {
-      requirementId: id,
-      correlationId: corr(req),
-      actor,
-    });
-  });
+  app.post(
+    '/api/v1/requirements/:id/analyze',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req) => {
+      const { actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      return analyzeRequirement(db, deps.provider, {
+        requirementId: id,
+        correlationId: corr(req),
+        actor,
+      });
+    },
+  );
 
   /**
    * 指定这条需求的 PRD 编写 Agent（页面文档 03 §5.4）。
@@ -1338,63 +1586,89 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     agentId: z.string().uuid().nullable(),
   });
 
-  app.put('/api/v1/requirements/:id/author-agent', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = AuthorAgentInput.parse(req.body);
+  app.put(
+    '/api/v1/requirements/:id/author-agent',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 与 analyze 同档（requirement.edit），不是 project.settings.update。
+           *   项目级绑定改的是此后所有需求的产出，要更高一档；这一条只改这一条
+           *   需求由谁写，而能点 analyze 的人本来就能决定这条需求要不要跑 AI，
+           *   也能把每个字段手改一遍。
+           */
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = AuthorAgentInput.parse(req.body);
 
-    const result = await setRequirementAuthorAgent(db, {
-      requirementId: id,
-      agentId: body.agentId,
-      actorId: userId,
-      correlationId: corr(req),
-    });
+      const result = await setRequirementAuthorAgent(db, {
+        requirementId: id,
+        agentId: body.agentId,
+        actorId: userId,
+        correlationId: corr(req),
+      });
 
-    /**
-     * ★ 三种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
-     *   「需求已结案」要去重新打开，「不在这个项目里」要去成员页，
-     *   「这个 Agent 不存在」多半是别处删掉了。出路各不相同，
-     *   合并之后用户只能挨个试。
-     *
-     * ★ 这里曾经还有第四种：「适用类型没勾 requirement」。它已经取消 ——
-     *   项目的 Agent 成员都能写 PRD，理由见 setRequirementAuthorAgent。
-     */
-    if (!result.ok) {
-      if (result.code === 'REQUIREMENT_SETTLED') {
+      /**
+       * ★ 三种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
+       *   「需求已结案」要去重新打开，「不在这个项目里」要去成员页，
+       *   「这个 Agent 不存在」多半是别处删掉了。出路各不相同，
+       *   合并之后用户只能挨个试。
+       *
+       * ★ 这里曾经还有第四种：「适用类型没勾 requirement」。它已经取消 ——
+       *   项目的 Agent 成员都能写 PRD，理由见 setRequirementAuthorAgent。
+       */
+      if (!result.ok) {
+        if (result.code === 'REQUIREMENT_SETTLED') {
+          throw new ApiError(
+            'INVALID_TRANSITION',
+            '需求已确认或已驳回，不能再更换 PRD 编写 Agent。如需修改请先重新打开。',
+          );
+        }
+        if (result.code === 'AGENT_NOT_FOUND') throw notFound('Agent');
         throw new ApiError(
-          'INVALID_TRANSITION',
-          '需求已确认或已驳回，不能再更换 PRD 编写 Agent。如需修改请先重新打开。',
+          'VALIDATION_FAILED',
+          `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
+          { agentId: body.agentId },
         );
       }
-      if (result.code === 'AGENT_NOT_FOUND') throw notFound('Agent');
-      throw new ApiError(
-        'VALIDATION_FAILED',
-        `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-        { agentId: body.agentId },
-      );
-    }
 
-    return result;
-  });
+      return result;
+    },
+  );
 
   const Answer = z.object({
     answer: z.string().min(1),
     usedSuggestion: z.boolean().default(false),
   });
 
-  app.post('/api/v1/clarifications/:id/answer', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = Answer.parse(req.body);
+  app.post(
+    '/api/v1/clarifications/:id/answer',
+    {
+      config: {
+        auth: {
+          permission: 'clarification.answer',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = Answer.parse(req.body);
 
-    const row = await answerClarification(db, {
-      clarificationId: id,
-      ...body,
-      actorId: userId,
-      correlationId: corr(req),
-    });
-    return { clarification: row };
-  });
+      const row = await answerClarification(db, {
+        clarificationId: id,
+        ...body,
+        actorId: userId,
+        correlationId: corr(req),
+      });
+      return { clarification: row };
+    },
+  );
 
   /**
    * 重新打开一条已确认 / 已驳回的需求。
@@ -1466,87 +1740,144 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     };
   });
 
-  app.post('/api/v1/requirements/:id/assumptions', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ statement: z.string().trim().min(1, '假设内容不能为空').max(2000) })
-      .parse(req.body);
+  app.post(
+    '/api/v1/requirements/:id/assumptions',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ statement: z.string().trim().min(1, '假设内容不能为空').max(2000) })
+        .parse(req.body);
 
-    const created = await addAssumption(db, {
-      requirementId: id,
-      statement: body.statement,
-      actorId: userId,
-      correlationId: corr(req),
-    });
-    return reply.status(201).send(created);
-  });
+      const created = await addAssumption(db, {
+        requirementId: id,
+        statement: body.statement,
+        actorId: userId,
+        correlationId: corr(req),
+      });
+      return reply.status(201).send(created);
+    },
+  );
 
-  app.post('/api/v1/assumptions/:id/confirm', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    return confirmAssumption(db, { assumptionId: id, actorId: userId });
-  });
+  app.post(
+    '/api/v1/assumptions/:id/confirm',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须
+           *   登记进 RESOURCE_SCOPED_URL 与 projectOfResource（见下面那条正则与
+           *   routes.ts），否则成员关系闸门够不着它，这两条路由对任何登录用户敞开。
+           *   与 artifacts 是同一条纪律。
+           */
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      return confirmAssumption(db, { assumptionId: id, actorId: userId });
+    },
+  );
 
   /** ★ 证伪必须写原因：它会让已生成的计划失去一块前提 */
-  app.post('/api/v1/assumptions/:id/invalidate', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ reason: z.string().trim().min(1, '证伪必须写明原因').max(2000) })
-      .parse(req.body);
-    return invalidateAssumption(db, {
-      assumptionId: id,
-      reason: body.reason,
-      actorId: userId,
-      correlationId: corr(req),
-    });
-  });
+  app.post(
+    '/api/v1/assumptions/:id/invalidate',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.edit',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ reason: z.string().trim().min(1, '证伪必须写明原因').max(2000) })
+        .parse(req.body);
+      return invalidateAssumption(db, {
+        assumptionId: id,
+        reason: body.reason,
+        actorId: userId,
+        correlationId: corr(req),
+      });
+    },
+  );
 
-  app.post('/api/v1/requirements/:id/reopen', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ reason: z.string().min(1, '重新打开必须写明原因').max(2000) })
-      .parse(req.body ?? {});
+  app.post(
+    '/api/v1/requirements/:id/reopen',
+    {
+      config: {
+        auth: {
+          /** ★ 重新打开等于撤销一次确认，与确认同档 */
+          permission: 'requirement.approve',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ reason: z.string().min(1, '重新打开必须写明原因').max(2000) })
+        .parse(req.body ?? {});
 
-    return reopenRequirement(db, {
-      requirementId: id,
-      actorId: userId,
-      reason: body.reason,
-      correlationId: corr(req),
-    });
-  });
+      return reopenRequirement(db, {
+        requirementId: id,
+        actorId: userId,
+        reason: body.reason,
+        correlationId: corr(req),
+      });
+    },
+  );
 
-  app.post('/api/v1/requirements/:id/approve', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const note = (req.body as { note?: string } | undefined)?.note;
+  app.post(
+    '/api/v1/requirements/:id/approve',
+    {
+      config: {
+        auth: {
+          permission: 'requirement.approve',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const note = (req.body as { note?: string } | undefined)?.note;
 
-    const result = await approveRequirement(db, {
-      requirementId: id,
-      approverId: userId,
-      correlationId: corr(req),
-      note,
-    });
+      const result = await approveRequirement(db, {
+        requirementId: id,
+        approverId: userId,
+        correlationId: corr(req),
+        note,
+      });
 
-    if (!result.ok) {
-      /**
-       * ★ 空需求要给出**两条**出路。
-       *   只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路 ——
-       *   而这一页本来就允许人自己把结构化字段填出来。
-       */
-      if (result.code === 'EMPTY_REQUIREMENT') {
-        throw new ApiError(
-          'VALIDATION_FAILED',
-          '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
-        );
+      if (!result.ok) {
+        /**
+         * ★ 空需求要给出**两条**出路。
+         *   只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路 ——
+         *   而这一页本来就允许人自己把结构化字段填出来。
+         */
+        if (result.code === 'EMPTY_REQUIREMENT') {
+          throw new ApiError(
+            'VALIDATION_FAILED',
+            '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
+          );
+        }
+        // 必答问题未回答 —— 返回具体是哪几个，前端可直接定位
+        throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', result.questions);
       }
-      // 必答问题未回答 —— 返回具体是哪几个，前端可直接定位
-      throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', result.questions);
-    }
-    return result;
-  });
+      return result;
+    },
+  );
 
   // ── 计划 ────────────────────────────────────────────────────────────
   /**
@@ -1565,57 +1896,81 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   生成失败时需求仍是 approved（那一步确实成功了），调用方可以重试
    *   POST /requirements/:id/plans —— 不需要也不能再确认一次。
    */
-  app.post('/api/v1/requirements/:id/approve-and-plan', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const note = (req.body as { note?: string } | undefined)?.note;
+  app.post(
+    '/api/v1/requirements/:id/approve-and-plan',
+    {
+      config: {
+        auth: {
+          /** ★ 组合命令要两个权限都有 —— 它确实同时做了这两件事 */
+          permission: () => [
+              'requirement.approve',
+              'plan.generate',
+            ],
+          },
+      },
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const note = (req.body as { note?: string } | undefined)?.note;
 
-    const approved = await approveRequirement(db, {
-      requirementId: id,
-      approverId: userId,
-      correlationId: corr(req),
-      note,
-    });
+      const approved = await approveRequirement(db, {
+        requirementId: id,
+        approverId: userId,
+        correlationId: corr(req),
+        note,
+      });
 
-    if (!approved.ok) {
-      if (approved.code === 'EMPTY_REQUIREMENT') {
-        throw new ApiError(
-          'VALIDATION_FAILED',
-          '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
-        );
+      if (!approved.ok) {
+        if (approved.code === 'EMPTY_REQUIREMENT') {
+          throw new ApiError(
+            'VALIDATION_FAILED',
+            '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
+          );
+        }
+        throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', approved.questions);
       }
-      throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', approved.questions);
-    }
 
-    try {
+      try {
+        const summary = await generatePlan(db, deps.provider, {
+          requirementId: id,
+          correlationId: corr(req),
+        });
+        return reply.status(201).send({ requirementId: id, plan: summary, planError: null });
+      } catch (err) {
+        /**
+         * ★ 生成失败不回滚确认 —— 确认是人做的判断，它真的发生了。
+         *   把它撤掉会让「我明明点了确认」和界面状态对不上。
+         *   如实回报，让调用方决定是重试生成还是先去看需求。
+         */
+        return reply.status(201).send({
+          requirementId: id,
+          plan: null,
+          planError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  );
+
+  app.post(
+    '/api/v1/requirements/:id/plans',
+    {
+      config: {
+        auth: {
+          permission: 'plan.generate',
+        },
+      },
+    },
+    async (req, reply) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
       const summary = await generatePlan(db, deps.provider, {
         requirementId: id,
         correlationId: corr(req),
       });
-      return reply.status(201).send({ requirementId: id, plan: summary, planError: null });
-    } catch (err) {
-      /**
-       * ★ 生成失败不回滚确认 —— 确认是人做的判断，它真的发生了。
-       *   把它撤掉会让「我明明点了确认」和界面状态对不上。
-       *   如实回报，让调用方决定是重试生成还是先去看需求。
-       */
-      return reply.status(201).send({
-        requirementId: id,
-        plan: null,
-        planError: err instanceof Error ? err.message : String(err),
-      });
-    }
-  });
-
-  app.post('/api/v1/requirements/:id/plans', async (req, reply) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    const summary = await generatePlan(db, deps.provider, {
-      requirementId: id,
-      correlationId: corr(req),
-    });
-    return reply.status(201).send(summary);
-  });
+      return reply.status(201).send(summary);
+    },
+  );
 
   app.get('/api/v1/plans/:id', async (req) => {
     const { id } = req.params as { id: string };
@@ -1629,76 +1984,96 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   把 v1 悄悄改成 v2 的内容，事后就说不清他到底批准了什么。
    *   旧版标记 superseded，两版都留着，前端可以对比。
    */
-  app.post('/api/v1/plans/:id/revise', async (req, reply) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ feedback: z.string().min(1, '要求修改必须说明改什么') })
-      .parse(req.body);
+  app.post(
+    '/api/v1/plans/:id/revise',
+    {
+      config: {
+        auth: {
+          permission: 'plan.generate',
+        },
+      },
+    },
+    async (req, reply) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ feedback: z.string().min(1, '要求修改必须说明改什么') })
+        .parse(req.body);
 
-    const [plan] = await db.select().from(plans).where(eq(plans.id, id));
-    if (!plan) throw notFound('计划');
-    if (!plan.requirementId) {
-      throw new ApiError('INVALID_TRANSITION', '这份计划没有关联需求，无法重新规划');
-    }
-    if (plan.status === 'approved') {
-      throw new ApiError('INVALID_TRANSITION', '已批准的计划不能重新规划，请新建需求');
-    }
+      const [plan] = await db.select().from(plans).where(eq(plans.id, id));
+      if (!plan) throw notFound('计划');
+      if (!plan.requirementId) {
+        throw new ApiError('INVALID_TRANSITION', '这份计划没有关联需求，无法重新规划');
+      }
+      if (plan.status === 'approved') {
+        throw new ApiError('INVALID_TRANSITION', '已批准的计划不能重新规划，请新建需求');
+      }
 
-    await db
-      .update(plans)
-      .set({ status: 'superseded', revisionFeedback: body.feedback })
-      .where(eq(plans.id, id));
+      await db
+        .update(plans)
+        .set({ status: 'superseded', revisionFeedback: body.feedback })
+        .where(eq(plans.id, id));
 
-    const summary = await generatePlan(db, deps.provider, {
-      requirementId: plan.requirementId,
-      correlationId: corr(req),
-      feedback: body.feedback,
-    });
-    return reply.status(201).send(summary);
-  });
+      const summary = await generatePlan(db, deps.provider, {
+        requirementId: plan.requirementId,
+        correlationId: corr(req),
+        feedback: body.feedback,
+      });
+      return reply.status(201).send(summary);
+    },
+  );
 
-  app.post('/api/v1/plans/:id/approve', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        acknowledgedOverrun: z.boolean().optional(),
-        /** 确认「这几项人工任务先进待认领队列」 */
-        acknowledgedUnassigned: z.boolean().optional(),
-      })
-      .parse(req.body ?? {});
+  app.post(
+    '/api/v1/plans/:id/approve',
+    {
+      config: {
+        auth: {
+          permission: 'plan.approve',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          acknowledgedOverrun: z.boolean().optional(),
+          /** 确认「这几项人工任务先进待认领队列」 */
+          acknowledgedUnassigned: z.boolean().optional(),
+        })
+        .parse(req.body ?? {});
 
-    const result = await approvePlan(db, {
-      planId: id,
-      approverId: userId,
-      correlationId: corr(req),
-      ...body,
-    });
+      const result = await approvePlan(db, {
+        planId: id,
+        approverId: userId,
+        correlationId: corr(req),
+        ...body,
+      });
 
-    if (!result.ok) {
-      /**
-       * ★ 两种拦截各用各的错误码。合成一个的话前端分不清该弹哪个确认框 ——
-       *   一个是「确认超支」，一个是「确认这几项先没人认领」，
-       *   用户要做的判断完全不同。
-       */
-      if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
+      if (!result.ok) {
+        /**
+         * ★ 两种拦截各用各的错误码。合成一个的话前端分不清该弹哪个确认框 ——
+         *   一个是「确认超支」，一个是「确认这几项先没人认领」，
+         *   用户要做的判断完全不同。
+         */
+        if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
+          throw new ApiError(
+            'VALIDATION_FAILED',
+            `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
+              .map((t) => t.title)
+              .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,
+            result,
+          );
+        }
         throw new ApiError(
-          'VALIDATION_FAILED',
-          `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
-            .map((t) => t.title)
-            .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,
+          'BUDGET_EXCEEDED',
+          `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
           result,
         );
       }
-      throw new ApiError(
-        'BUDGET_EXCEEDED',
-        `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
-        result,
-      );
-    }
-    return result;
-  });
+      return result;
+    },
+  );
 
   // ── 看板 ────────────────────────────────────────────────────────────
   app.get('/api/v1/projects/:id/board', async (req) => {
@@ -1857,45 +2232,57 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   「这个 Agent 为什么一直是停的」，而一个停着的 Agent
    *   会安静地让整个项目慢下来。
    */
-  app.post('/api/v1/agents/:agentId/pause', async (req) => {
-    const { userId } = actorFrom(req);
-    const { agentId } = req.params as { agentId: string };
-    const body = z
-      .object({
-        paused: z.boolean(),
-        reason: z.string().optional(),
-      })
-      .parse(req.body);
+  app.post(
+    '/api/v1/agents/:agentId/pause',
+    {
+      config: {
+        auth: {
+          permission: 'agent.pause',
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { agentId: string }).agentId),
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { agentId } = req.params as { agentId: string };
+      const body = z
+        .object({
+          paused: z.boolean(),
+          reason: z.string().optional(),
+        })
+        .parse(req.body);
 
-    if (body.paused && !body.reason?.trim()) {
-      throw new ApiError('VALIDATION_FAILED', '暂停 Agent 必须填写原因');
-    }
+      if (body.paused && !body.reason?.trim()) {
+        throw new ApiError('VALIDATION_FAILED', '暂停 Agent 必须填写原因');
+      }
 
-    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-    if (!agent) throw notFound('Agent');
+      const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+      if (!agent) throw notFound('Agent');
 
-    await db
-      .update(agents)
-      .set({
-        status: body.paused ? 'paused' : 'active',
-        pausedReason: body.paused ? (body.reason ?? null) : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(agents.id, agentId));
+      await db
+        .update(agents)
+        .set({
+          status: body.paused ? 'paused' : 'active',
+          pausedReason: body.paused ? (body.reason ?? null) : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, agentId));
 
-    await emitAndPublish(db, {
-      orgId: agent.orgId,
-      projectId: null,
-      type: body.paused ? 'agent.paused' : 'agent.registered',
-      actor: humanActor(userId),
-      subjectType: 'agent',
-      subjectId: agentId,
-      payload: { paused: body.paused, reason: body.reason ?? null },
-      correlationId: corr(req),
-    });
+      await emitAndPublish(db, {
+        orgId: agent.orgId,
+        projectId: null,
+        type: body.paused ? 'agent.paused' : 'agent.registered',
+        actor: humanActor(userId),
+        subjectType: 'agent',
+        subjectId: agentId,
+        payload: { paused: body.paused, reason: body.reason ?? null },
+        correlationId: corr(req),
+      });
 
-    return { ok: true as const, paused: body.paused };
-  });
+      return { ok: true as const, paused: body.paused };
+    },
+  );
 
   // ── 运行时能力（页面文档 14 §5.4 —— 集成里唯一有真实后端的一块）──
   app.get('/api/v1/runtimes', async () => listRuntimes(db, deps.registry));
@@ -1931,70 +2318,133 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listAgentsAdmin(db, deps.registry, orgId);
   });
 
-  app.post('/api/v1/admin/agents', async (req, reply) => {
-    const { orgId, userId } = await callerOrg(req);
-    const body = AgentInput.parse(req.body);
-    const result = await createAgent(db, deps.registry, orgId, body, userId);
+  /**
+   * ★ 只读的**平台常量**目录：没有任何组织或项目数据，因此不需要作用域。
+   *   声明 `agent.view` 是为了让它和别的 admin 读接口一档 ——
+   *   `/api/v1/admin/…` 不在闸门的两条作用域正则里，不声明就等于匿名可读。
+   */
+  app.get(
+    '/api/v1/admin/capabilities',
+    { config: { auth: { permission: 'agent.view' } } },
+    async () => listCapabilityCatalog(),
+  );
 
-    await emitAndPublish(db, {
-      orgId,
-      projectId: null,
-      type: 'agent.registered',
-      actor: humanActor(userId),
-      subjectType: 'agent',
-      subjectId: result.agent.id,
-      payload: { name: body.name, type: body.type, runtimeKind: body.runtimeKind },
-      correlationId: corr(req),
-    });
+  app.post(
+    '/api/v1/admin/agents',
+    {
+      config: {
+        auth: {
+          permission: 'agent.create',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId } = await callerOrg(req);
+      const body = AgentInput.parse(req.body);
+      const result = await createAgent(db, deps.registry, orgId, body, userId);
 
-    return reply.status(201).send(result);
-  });
-
-  app.patch('/api/v1/admin/agents/:id', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
-
-    // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
-    const subject = await rbac.subjectForAgent(req, userId, id);
-    const result = await updateAgent(db, deps.registry, orgId, id, body, userId, (permission) =>
-      rbac.assertPermission(subject, permission, { agentId: id }),
-    );
-
-    if (result.permissionsChanged) {
-      // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
       await emitAndPublish(db, {
         orgId,
         projectId: null,
-        type: 'agent.permissions_changed',
+        type: 'agent.registered',
         actor: humanActor(userId),
         subjectType: 'agent',
-        subjectId: id,
-        payload: {
-          allowedTools: body.allowedTools ?? null,
-          deniedTools: body.deniedTools ?? null,
-          resourceScopes: body.resourceScopes ?? null,
-          reason: body.reason ?? null,
-        },
+        subjectId: result.agent.id,
+        payload: { name: body.name, type: body.type, runtimeKind: body.runtimeKind },
         correlationId: corr(req),
       });
-    }
 
-    return result;
-  });
+      return reply.status(201).send(result);
+    },
+  );
 
-  app.delete('/api/v1/admin/agents/:id', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return deleteAgent(db, orgId, id);
-  });
+  app.patch(
+    '/api/v1/admin/agents/:id',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 改档案与改权限是两回事，后者还分扩大 / 收紧。
+           *   路由表只能判出「至少要能改档案」，权限维度的方向判定
+           *   在 updateAgent 里（见 agent-admin.ts 的 assertPermissionChange）。
+           */
+          permission: 'agent.update',
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { id: string }).id),
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
+
+      // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
+      const subject = await rbac.subjectForAgent(req, userId, id);
+      const result = await updateAgent(db, deps.registry, orgId, id, body, userId, (permission) =>
+        rbac.assertPermission(subject, permission, { agentId: id }),
+      );
+
+      if (result.permissionsChanged) {
+        // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
+        await emitAndPublish(db, {
+          orgId,
+          projectId: null,
+          type: 'agent.permissions_changed',
+          actor: humanActor(userId),
+          subjectType: 'agent',
+          subjectId: id,
+          payload: {
+            /** ★ 组织级改的是**上限**，不是「它能做什么」—— 后者按项目算 */
+            scope: 'organization',
+            capabilityCeiling: body.capabilityCeiling ?? null,
+            deniedCapabilities: body.deniedCapabilities ?? null,
+            reason: body.reason ?? null,
+          },
+          correlationId: corr(req),
+        });
+      }
+
+      return result;
+    },
+  );
+
+  app.delete(
+    '/api/v1/admin/agents/:id',
+    {
+      config: {
+        auth: {
+          permission: 'agent.delete',
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { id: string }).id),
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return deleteAgent(db, orgId, id);
+    },
+  );
 
   /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
-  app.post('/api/v1/admin/agents/:id/probe', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return probeAgent(db, deps.registry, orgId, id);
-  });
+  app.post(
+    '/api/v1/admin/agents/:id/probe',
+    {
+      config: {
+        auth: {
+          permission: 'agent.update',
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { id: string }).id),
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return probeAgent(db, deps.registry, orgId, id);
+    },
+  );
 
   // ── 代码仓库登记 ────────────────────────────────────────────────────
   app.get('/api/v1/admin/repositories', async (req) => {
@@ -2004,36 +2454,76 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listRepositories(db, orgId, projectId);
   });
 
-  app.post('/api/v1/admin/repositories', async (req, reply) => {
-    const { orgId, userId } = await callerOrg(req);
-    const body = RepositoryInput.parse(req.body);
-    return reply.status(201).send(await createRepository(db, orgId, userId, body));
-  });
+  app.post(
+    '/api/v1/admin/repositories',
+    {
+      config: {
+        auth: {
+          permission: 'repository.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId } = await callerOrg(req);
+      const body = RepositoryInput.parse(req.body);
+      return reply.status(201).send(await createRepository(db, orgId, userId, body));
+    },
+  );
 
-  app.patch('/api/v1/admin/repositories/:id', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    const body = RepositoryInput.partial()
-      .extend({ status: z.enum(['active', 'disabled']).optional() })
-      .parse(req.body);
-    return updateRepository(db, orgId, id, body);
-  });
+  app.patch(
+    '/api/v1/admin/repositories/:id',
+    {
+      config: {
+        auth: {
+          permission: 'repository.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      const body = RepositoryInput.partial()
+        .extend({ status: z.enum(['active', 'disabled']).optional() })
+        .parse(req.body);
+      return updateRepository(db, orgId, id, body);
+    },
+  );
 
   /**
    * 连通性探测。★ 凭证配错了要在配置页上知道，而不是等第一次派发 ——
    *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
    */
-  app.post('/api/v1/admin/repositories/:id/probe', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return probeRepository(db, orgId, id);
-  });
+  app.post(
+    '/api/v1/admin/repositories/:id/probe',
+    {
+      config: {
+        auth: {
+          permission: 'repository.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return probeRepository(db, orgId, id);
+    },
+  );
 
-  app.delete('/api/v1/admin/repositories/:id', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return deleteRepository(db, orgId, id);
-  });
+  app.delete(
+    '/api/v1/admin/repositories/:id',
+    {
+      config: {
+        auth: {
+          permission: 'repository.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return deleteRepository(db, orgId, id);
+    },
+  );
 
   // ── 存储目标登记（非 Git 的工作区来源）──────────────────────────────
   app.get('/api/v1/admin/storage-targets', async (req) => {
@@ -2043,40 +2533,85 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listStorageTargets(db, orgId, projectId);
   });
 
-  app.post('/api/v1/admin/storage-targets', async (req, reply) => {
-    const { orgId, userId } = await callerOrg(req);
-    const body = StorageTargetInput.parse(req.body);
-    return reply.status(201).send(await createStorageTarget(db, orgId, userId, body));
-  });
+  app.post(
+    '/api/v1/admin/storage-targets',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ probe 也要 storage_target.manage，虽然它是只读的。
+           *   它会拿着登记里的凭证去连远端 —— 能触发一次带凭证的出网请求，
+           *   本身就是「管理存储目标」的一部分，不是一次普通的查询。
+           */
+          permission: 'storage_target.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { orgId, userId } = await callerOrg(req);
+      const body = StorageTargetInput.parse(req.body);
+      return reply.status(201).send(await createStorageTarget(db, orgId, userId, body));
+    },
+  );
 
-  app.patch('/api/v1/admin/storage-targets/:id', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    /**
-     * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
-     *   StorageTargetInput 外面裹了一层 superRefine（ZodEffects），
-     *   ZodEffects 上没有 partial()。而那层交叉校验本来也只对**完整**
-     *   输入成立 —— 局部更新时缺 bucket 不代表配错了，代表这次没改它。
-     */
-    const body = StorageTargetInput.innerType()
-      .partial()
-      .extend({ status: z.enum(['active', 'disabled']).optional() })
-      .parse(req.body);
-    return updateStorageTarget(db, orgId, id, body);
-  });
+  app.patch(
+    '/api/v1/admin/storage-targets/:id',
+    {
+      config: {
+        auth: {
+          permission: 'storage_target.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      /**
+       * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
+       *   StorageTargetInput 外面裹了一层 superRefine（ZodEffects），
+       *   ZodEffects 上没有 partial()。而那层交叉校验本来也只对**完整**
+       *   输入成立 —— 局部更新时缺 bucket 不代表配错了，代表这次没改它。
+       */
+      const body = StorageTargetInput.innerType()
+        .partial()
+        .extend({ status: z.enum(['active', 'disabled']).optional() })
+        .parse(req.body);
+      return updateStorageTarget(db, orgId, id, body);
+    },
+  );
 
   /** 连通性探测。★ 与仓库那边同理：配错了要在配置页上知道，而不是等第一次派发 */
-  app.post('/api/v1/admin/storage-targets/:id/probe', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return probeStorageTarget(db, orgId, id);
-  });
+  app.post(
+    '/api/v1/admin/storage-targets/:id/probe',
+    {
+      config: {
+        auth: {
+          permission: 'storage_target.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return probeStorageTarget(db, orgId, id);
+    },
+  );
 
-  app.delete('/api/v1/admin/storage-targets/:id', async (req) => {
-    const { orgId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    return deleteStorageTarget(db, orgId, id);
-  });
+  app.delete(
+    '/api/v1/admin/storage-targets/:id',
+    {
+      config: {
+        auth: {
+          permission: 'storage_target.manage',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      return deleteStorageTarget(db, orgId, id);
+    },
+  );
 
   // ── 产物文件 ────────────────────────────────────────────────────────
   /**
@@ -2125,25 +2660,168 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listProjectAgents(db, id);
   });
 
-  app.put('/api/v1/projects/:id/agents', async (req) => {
-    const { orgId, userId } = await callerOrg(req);
-    const { id } = req.params as { id: string };
-    const body = BindingInput.parse(req.body);
-    const result = await setProjectAgent(db, { orgId, projectId: id, userId }, body);
+  app.put(
+    '/api/v1/projects/:id/agents',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 只设执行者要的权限比「开始执行」低一档。
+           *
+           *   把卡片挂到某人名下是排活，不是动预算；要求 work_item.execute
+           *   会让排活这件事只有能派发的人做得了，而排活恰恰是 PM 的日常。
+           *   真正花钱的那一步在 /start，那里仍然是 work_item.execute。
+           */
+          permission: 'project.settings.update',
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { id } = req.params as { id: string };
+      const body = BindingInput.parse(req.body);
+      const result = await setProjectAgent(db, { orgId, projectId: id, userId }, body);
 
-    await emitAndPublish(db, {
-      orgId,
-      projectId: id,
-      type: 'project.agent_bound',
-      actor: humanActor(userId),
-      subjectType: 'project',
-      subjectId: id,
-      payload: { role: result.role, agentId: result.agentId },
-      correlationId: corr(req),
-    });
+      await emitAndPublish(db, {
+        orgId,
+        projectId: id,
+        type: 'project.agent_bound',
+        actor: humanActor(userId),
+        subjectType: 'project',
+        subjectId: id,
+        payload: { role: result.role, agentId: result.agentId },
+        correlationId: corr(req),
+      });
 
-    return result;
+      return result;
+    },
+  );
+
+  /**
+   * ── 项目级 Agent 权限 ──────────────────────────────────────────────
+   *
+   * ★★ 「这个 Agent 在**这个项目**里能做什么」。与上面那组绑定路由的分工是：
+   *   绑定回答「谁干这个角色」，这里回答「它被授权做什么」。
+   *
+   * ★ 三条路由共用一个求值器（见 project-agent-access.ts）。预览与保存
+   *   给出不同结论是这类界面最难发现的一种失败，而唯一可靠的防法
+   *   是让它们没有第二份实现可用。
+   */
+  app.get('/api/v1/projects/:id/agents/:agentId/access', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id, agentId } = req.params as { id: string; agentId: string };
+    return getAgentAccess(db, { orgId, projectId: id }, agentId);
   });
+
+  app.post(
+    '/api/v1/projects/:id/agents/:agentId/access/preview',
+    {
+      config: {
+        auth: {
+          /** 预览是只读的：它算「如果保存会怎样」，不写任何东西 */
+          permission: 'agent.view',
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { agentId: string }).agentId),
+        },
+      },
+    },
+    async (req) => {
+      const { orgId } = await callerOrg(req);
+      const { id, agentId } = req.params as { id: string; agentId: string };
+      const body = AgentAccessInput.parse(req.body);
+      const { next: _expanded, ...preview } = await previewAgentAccess(
+        db,
+        { orgId, projectId: id },
+        agentId,
+        body,
+      );
+      return preview;
+    },
+  );
+
+  app.put(
+    '/api/v1/projects/:id/agents/:agentId/access',
+    {
+      config: {
+        auth: {
+          /**
+           * ★★ 项目级授权同样只能判出「至少要能收紧」，方向判定在 handler 里
+           *   （executeGovernedMutation：先算方向，再要对应那条权限）。
+           *
+           *   这里登记的必须是**较严**的那一条吗 —— 不。登记 restrict 是因为
+           *   闸门只做粗筛，真正的判定在里层，而里层一定会再判一次；
+           *   登记 expand 反而会把「只想收紧」的 owner 挡在门外，
+           *   于是没人再去收紧（§2.3 不对称设计的原意正好相反）。
+           */
+          permission: 'agent.permissions.restrict',
+          /**
+           * ★ 项目级授权要带上 agent_owner 这一维：收紧自己名下的 Agent
+           *   在项目里同样该放行，与组织级那条保持一致。
+           */
+          context: (req, ctx) =>
+        agentContext(ctx, (req.params as { agentId: string }).agentId),
+        },
+      },
+    },
+    async (req) => {
+      const { orgId, userId } = await callerOrg(req);
+      const { id, agentId } = req.params as { id: string; agentId: string };
+      const body = AgentAccessInput.parse(req.body);
+
+      /**
+       * ★ 判定主体与 preHandler 用同一个（subjectForAgent）——
+       *   两边算出不同的角色会出现「闸门放行了、里层又拦下」这种
+       *   没人看得懂的 403。
+       */
+      const subject = await rbac.subjectForAgent(req, userId, agentId);
+
+      const result = await setAgentAccess(
+        db,
+        { orgId, projectId: id, userId },
+        agentId,
+        body,
+        ({ direction, reason, mutate }) =>
+          executeGovernedMutation({
+            assertPermission: (permission) =>
+              rbac.assertPermission(subject, permission, { agentId, projectId: id }),
+            direction,
+            permissionForDirection: {
+              loosen: 'agent.permissions.expand',
+              tighten: 'agent.permissions.restrict',
+              /**
+               * ★ 「什么都没变」也是一次写操作，按收紧那一档要权限。
+               *   放行掉的话，一次 neutral 请求会成为无需任何权限的写入口。
+               */
+              neutral: 'agent.permissions.restrict',
+            },
+            reason,
+            mutate,
+            audit: async (saved) => {
+              await emitAndPublish(db, {
+                orgId,
+                projectId: id,
+                type: 'agent.permissions_changed',
+                actor: humanActor(userId),
+                subjectType: 'agent',
+                subjectId: agentId,
+                payload: {
+                  projectId: id,
+                  direction: saved.direction,
+                  profileKey: saved.profileKey,
+                  profileVersion: saved.profileVersion,
+                  addedCapabilities: saved.addedCapabilities,
+                  removedCapabilities: saved.removedCapabilities,
+                  reason,
+                },
+                correlationId: corr(req),
+              });
+            },
+          }),
+      );
+
+      return result;
+    },
+  );
 
   // ── 项目工程约定 ────────────────────────────────────────────────────
   // 成员关系与 convention.manage 权限都由 preHandler 统一判过（见闸门那一节）
@@ -2152,24 +2830,54 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return listConventions(db, id);
   });
 
-  app.post('/api/v1/projects/:id/conventions', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = ConventionInput.parse(req.body);
-    return reply.status(201).send(await createConvention(db, id, userId, body));
-  });
+  app.post(
+    '/api/v1/projects/:id/conventions',
+    {
+      config: {
+        auth: {
+          permission: 'convention.manage',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = ConventionInput.parse(req.body);
+      return reply.status(201).send(await createConvention(db, id, userId, body));
+    },
+  );
 
-  app.patch('/api/v1/conventions/:id', async (req) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    return updateConvention(db, id, ConventionInput.partial().parse(req.body));
-  });
+  app.patch(
+    '/api/v1/conventions/:id',
+    {
+      config: {
+        auth: {
+          permission: 'convention.manage',
+        },
+      },
+    },
+    async (req) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
+      return updateConvention(db, id, ConventionInput.partial().parse(req.body));
+    },
+  );
 
-  app.delete('/api/v1/conventions/:id', async (req) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    return deleteConvention(db, id);
-  });
+  app.delete(
+    '/api/v1/conventions/:id',
+    {
+      config: {
+        auth: {
+          permission: 'convention.manage',
+        },
+      },
+    },
+    async (req) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
+      return deleteConvention(db, id);
+    },
+  );
 
   // ── 决策中心（页面文档 10）──────────────────────────────────────────
   app.get('/api/v1/decision-inbox', async (req) => {
@@ -2186,86 +2894,98 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return getDecisionInbox(db, userId, scope as DecisionScope, projectId, visible);
   });
 
-  app.post('/api/v1/decisions/batch-approve', async (req) => {
-    const { userId, actor } = actorFrom(req);
-    const body = z
-      .object({ ids: z.array(z.string().uuid()).min(1, '至少选一条'), note: z.string().optional() })
-      .parse(req.body);
-    const correlationId = corr(req);
+  app.post(
+    '/api/v1/decisions/batch-approve',
+    {
+      config: {
+        auth: {
+          permission: deferred(
+              '一次提交的十条决策可能属于十个项目，URL 上一个都看不出来 —— 逐条按各自所属项目判（见 routes.ts 的 batch-approve）',
+            ),
+          },
+      },
+    },
+    async (req) => {
+      const { userId, actor } = actorFrom(req);
+      const body = z
+        .object({ ids: z.array(z.string().uuid()).min(1, '至少选一条'), note: z.string().optional() })
+        .parse(req.body);
+      const correlationId = corr(req);
 
-    /**
-     * ★★ 批量资格必须在服务端判。
-     *
-     *   此前这里只校验了 id 格式，然后逐条调单条批准 —— 而单条批准
-     *   只管「你是不是责任人」，不管「这条能不能被批量处理」。
-     *   于是「高风险/不可逆决策不给勾选框」这条设计，实际上只存在于
-     *   前端的 isBatchable 里：直接调 API，或者用一个旧版本的前端，
-     *   就能把不可逆的生产操作一次批掉。灰按钮不是权限。
-     *
-     *   判定用 @apos/domain 的同一个函数，和界面共用一份口径。
-     */
-    const targets = await db
-      .select({
-        id: decisions.id,
-        projectId: decisions.projectId,
-        riskLevel: decisions.riskLevel,
-        reversible: decisions.reversible,
-        assigneeId: decisions.assigneeId,
-      })
-      .from(decisions)
-      .where(inArray(decisions.id, body.ids));
-    const byId = new Map(targets.map((d) => [d.id, d]));
+      /**
+       * ★★ 批量资格必须在服务端判。
+       *
+       *   此前这里只校验了 id 格式，然后逐条调单条批准 —— 而单条批准
+       *   只管「你是不是责任人」，不管「这条能不能被批量处理」。
+       *   于是「高风险/不可逆决策不给勾选框」这条设计，实际上只存在于
+       *   前端的 isBatchable 里：直接调 API，或者用一个旧版本的前端，
+       *   就能把不可逆的生产操作一次批掉。灰按钮不是权限。
+       *
+       *   判定用 @apos/domain 的同一个函数，和界面共用一份口径。
+       */
+      const targets = await db
+        .select({
+          id: decisions.id,
+          projectId: decisions.projectId,
+          riskLevel: decisions.riskLevel,
+          reversible: decisions.reversible,
+          assigneeId: decisions.assigneeId,
+        })
+        .from(decisions)
+        .where(inArray(decisions.id, body.ids));
+      const byId = new Map(targets.map((d) => [d.id, d]));
 
-    /**
-     * ★★ 权限也必须逐条判，按**这条决策所属的项目**。
-     *
-     *   批量接口的 URL 里没有项目 id，闸门（②层）够不着它 ——
-     *   而这里此前只判了「是不是责任人」。一条无人认领的决策
-     *   （assigneeId 为空，产品口径里它照样进批量）因此对任何人开放：
-     *   把 id 猜出来或从别处拿到，非成员就能替别的项目做批准。
-     *   一次跨项目的提交要按每条各自的归属判，不能按调用者「大概是谁」判。
-     */
-    const visible = new Set(await visibleProjectIds(userId));
-    const blocked: { id: string; ok: false; error: string }[] = [];
-    const allowed: string[] = [];
-    for (const id of body.ids) {
-      const d = byId.get(id);
-      if (!d) {
-        // 不存在的 id 交给单条批准去报「决策不存在」，口径一致
-        allowed.push(id);
-        continue;
+      /**
+       * ★★ 权限也必须逐条判，按**这条决策所属的项目**。
+       *
+       *   批量接口的 URL 里没有项目 id，闸门（②层）够不着它 ——
+       *   而这里此前只判了「是不是责任人」。一条无人认领的决策
+       *   （assigneeId 为空，产品口径里它照样进批量）因此对任何人开放：
+       *   把 id 猜出来或从别处拿到，非成员就能替别的项目做批准。
+       *   一次跨项目的提交要按每条各自的归属判，不能按调用者「大概是谁」判。
+       */
+      const visible = new Set(await visibleProjectIds(userId));
+      const blocked: { id: string; ok: false; error: string }[] = [];
+      const allowed: string[] = [];
+      for (const id of body.ids) {
+        const d = byId.get(id);
+        if (!d) {
+          // 不存在的 id 交给单条批准去报「决策不存在」，口径一致
+          allowed.push(id);
+          continue;
+        }
+        if (!visible.has(d.projectId)) {
+          // 与②层同一口径：不确认「这条决策存在」，只说够不着
+          blocked.push({ id, ok: false, error: '决策不存在，或当前身份没有访问权限' });
+          continue;
+        }
+        const permission = check(await rbac.resolveActor(req, userId, d.projectId), 'decision.act');
+        if (!permission.allowed) {
+          blocked.push({ id, ok: false, error: permission.reason ?? '权限不足' });
+          continue;
+        }
+        const candidate = {
+          canAct: d.assigneeId === null || d.assigneeId === userId,
+          reversible: d.reversible,
+          riskLevel: d.riskLevel,
+        };
+        const reason = batchDenyReason(candidate);
+        if (reason) blocked.push({ id, ok: false, error: reason });
+        else allowed.push(id);
       }
-      if (!visible.has(d.projectId)) {
-        // 与②层同一口径：不确认「这条决策存在」，只说够不着
-        blocked.push({ id, ok: false, error: '决策不存在，或当前身份没有访问权限' });
-        continue;
-      }
-      const permission = check(await rbac.resolveActor(req, userId, d.projectId), 'decision.act');
-      if (!permission.allowed) {
-        blocked.push({ id, ok: false, error: permission.reason ?? '权限不足' });
-        continue;
-      }
-      const candidate = {
-        canAct: d.assigneeId === null || d.assigneeId === userId,
-        reversible: d.reversible,
-        riskLevel: d.riskLevel,
+
+      // 逐条走单条批准的同一个函数 —— 批量省的是点击，不是规则
+      const result = await batchApprove(allowed, (id) =>
+        approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
+      );
+
+      return {
+        ...result,
+        failed: [...result.failed, ...blocked],
+        results: [...result.results, ...blocked],
       };
-      const reason = batchDenyReason(candidate);
-      if (reason) blocked.push({ id, ok: false, error: reason });
-      else allowed.push(id);
-    }
-
-    // 逐条走单条批准的同一个函数 —— 批量省的是点击，不是规则
-    const result = await batchApprove(allowed, (id) =>
-      approveDecisionById(id, userId, actor, { note: body.note, constraints: [] }, correlationId),
-    );
-
-    return {
-      ...result,
-      failed: [...result.failed, ...blocked],
-      results: [...result.results, ...blocked],
-    };
-  });
+    },
+  );
 
   /**
    * 通知投递记录（产品文档十一）。
@@ -2299,26 +3019,36 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ 允许清空。系统不替用户猜一个时薪 —— 用户改主意了要能回到「不换算」，
    *   否则一旦填过就再也去不掉，那个数字会一直挂在页面上被当成事实。
    */
-  app.patch('/api/v1/projects/:id/labor-cost', async (req) => {
-    const { id } = req.params as { id: string };
-    actorFrom(req);
-    const body = z
-      .object({ laborHourlyCost: z.number().positive().nullable() })
-      .parse(req.body);
+  app.patch(
+    '/api/v1/projects/:id/labor-cost',
+    {
+      config: {
+        auth: {
+          permission: 'project.settings.update',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      actorFrom(req);
+      const body = z
+        .object({ laborHourlyCost: z.number().positive().nullable() })
+        .parse(req.body);
 
-    const [row] = await db.select().from(projects).where(eq(projects.id, id));
-    if (!row) throw notFound('项目');
+      const [row] = await db.select().from(projects).where(eq(projects.id, id));
+      if (!row) throw notFound('项目');
 
-    await db
-      .update(projects)
-      .set({
-        laborHourlyCost: body.laborHourlyCost === null ? null : String(body.laborHourlyCost),
-        updatedAt: new Date(),
-      })
-      .where(eq(projects.id, id));
+      await db
+        .update(projects)
+        .set({
+          laborHourlyCost: body.laborHourlyCost === null ? null : String(body.laborHourlyCost),
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, id));
 
-    return { ok: true };
-  });
+      return { ok: true };
+    },
+  );
 
   /** 一条规则的命中明细 —— 无法审计的规则没人敢改（页面文档 13）*/
   app.get('/api/v1/projects/:id/policies/:policyId/hits', async (req) => {
@@ -2398,165 +3128,230 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { ...data, permissions: integrationPermissions(actor) };
   });
 
-  app.post('/api/v1/projects/:id/integrations', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const { userId, actor } = actorFrom(req);
-    const body = z
-      .object({
-        provider: IntegrationProvider,
-        displayName: z.string().min(1),
-        config: z.record(z.unknown()).default({}),
-        credential: z.string().nullable().default(null),
-        /** 是否需要写权限 —— 单独一档授权，见 §8 */
-        grantWrite: z.boolean().default(false),
-      })
-      .parse(req.body);
+  app.post(
+    '/api/v1/projects/:id/integrations',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 集成的写操作大多要看 body 才知道该判哪一档
+           *   （连接时带不带写 scope、改的是不是 SoT），
+           *   那些判定留在 handler 里（assertIntegration）。这里登记的是下限。
+           */
+          permission: 'integration.connect',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { userId, actor } = actorFrom(req);
+      const body = z
+        .object({
+          provider: IntegrationProvider,
+          displayName: z.string().min(1),
+          config: z.record(z.unknown()).default({}),
+          credential: z.string().nullable().default(null),
+          /** 是否需要写权限 —— 单独一档授权，见 §8 */
+          grantWrite: z.boolean().default(false),
+        })
+        .parse(req.body);
 
-    await assertIntegration(id, userId, 'connect', req);
-    /**
-     * ★ 写权限是比「连上」高一个量级的授权，单独判一次。
-     *   pm 能连 GitHub，但让它能改代码需要 tech_lead。
-     */
-    if (body.grantWrite) await assertIntegration(id, userId, 'grant_write', req);
+      await assertIntegration(id, userId, 'connect', req);
+      /**
+       * ★ 写权限是比「连上」高一个量级的授权，单独判一次。
+       *   pm 能连 GitHub，但让它能改代码需要 tech_lead。
+       */
+      if (body.grantWrite) await assertIntegration(id, userId, 'grant_write', req);
 
-    const created = await createIntegration(db, deps.integrations, {
-      projectId: id,
-      provider: body.provider,
-      displayName: body.displayName,
-      config: body.config,
-      credential: body.credential,
-      userId,
-    });
+      const created = await createIntegration(db, deps.integrations, {
+        projectId: id,
+        provider: body.provider,
+        displayName: body.displayName,
+        config: body.config,
+        credential: body.credential,
+        userId,
+      });
 
-    const [project] = await db.select().from(projects).where(eq(projects.id, id));
-    await emitAndPublish(db, {
-      orgId: project!.orgId,
-      projectId: id,
-      actor,
-      type: 'integration.connected',
-      subjectType: 'integration',
-      subjectId: created.id,
-      // ★ 授予了什么权限要进审计。事后追责时「谁开的写权限」必须查得到
-      payload: { provider: body.provider, scopes: created.scopes, grantWrite: body.grantWrite },
-      correlationId: corr(req),
-    });
-
-    reply.code(201);
-    return created;
-  });
-
-  app.patch('/api/v1/integrations/:id/sync-mapping', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId, actor } = actorFrom(req);
-    const body = z.object({ mappings: z.array(SyncMapping).min(1) }).parse(req.body);
-
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'change_sot', req);
-
-    const result = await updateSyncMapping(db, id, body.mappings, userId);
-
-    /**
-     * ★ SoT 变更必须留痕。它决定以后哪一边的修改会被丢掉，
-     *   而且改错之后不会立刻显现 —— 等到发现数据对不上时，
-     *   唯一能回答「什么时候变的、谁变的」的就是这条事件。
-     */
-    if (result.changed.length > 0) {
+      const [project] = await db.select().from(projects).where(eq(projects.id, id));
       await emitAndPublish(db, {
-        orgId: result.orgId,
-        projectId: result.projectId,
+        orgId: project!.orgId,
+        projectId: id,
         actor,
-        type: 'integration.synced',
+        type: 'integration.connected',
         subjectType: 'integration',
-        subjectId: id,
-        payload: { kind: 'sot_changed', changes: result.changed },
+        subjectId: created.id,
+        // ★ 授予了什么权限要进审计。事后追责时「谁开的写权限」必须查得到
+        payload: { provider: body.provider, scopes: created.scopes, grantWrite: body.grantWrite },
         correlationId: corr(req),
       });
-    }
 
-    return { ok: true, changed: result.changed };
-  });
+      reply.code(201);
+      return created;
+    },
+  );
+
+  app.patch(
+    '/api/v1/integrations/:id/sync-mapping',
+    {
+      config: {
+        auth: {
+          permission: 'integration.change_sot',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId, actor } = actorFrom(req);
+      const body = z.object({ mappings: z.array(SyncMapping).min(1) }).parse(req.body);
+
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'change_sot', req);
+
+      const result = await updateSyncMapping(db, id, body.mappings, userId);
+
+      /**
+       * ★ SoT 变更必须留痕。它决定以后哪一边的修改会被丢掉，
+       *   而且改错之后不会立刻显现 —— 等到发现数据对不上时，
+       *   唯一能回答「什么时候变的、谁变的」的就是这条事件。
+       */
+      if (result.changed.length > 0) {
+        await emitAndPublish(db, {
+          orgId: result.orgId,
+          projectId: result.projectId,
+          actor,
+          type: 'integration.synced',
+          subjectType: 'integration',
+          subjectId: id,
+          payload: { kind: 'sot_changed', changes: result.changed },
+          correlationId: corr(req),
+        });
+      }
+
+      return { ok: true, changed: result.changed };
+    },
+  );
 
   /** 从代码仓库回流 CI 结果 —— 质量 Tab 的数据源（页面文档 12）*/
-  app.post('/api/v1/integrations/:id/ingest-ci', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId } = actorFrom(req);
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view', req);
-    return ingestCiResults(db, deps.integrations, id);
-  });
+  app.post(
+    '/api/v1/integrations/:id/ingest-ci',
+    {
+      config: {
+        auth: {
+          permission: 'integration.view',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId } = actorFrom(req);
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'view', req);
+      return ingestCiResults(db, deps.integrations, id);
+    },
+  );
 
-  app.post('/api/v1/integrations/:id/sync', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId } = actorFrom(req);
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'view', req);
+  app.post(
+    '/api/v1/integrations/:id/sync',
+    {
+      config: {
+        auth: {
+          permission: 'integration.view',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId } = actorFrom(req);
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'view', req);
 
-    return runSync(db, deps.integrations, id);
-  });
+      return runSync(db, deps.integrations, id);
+    },
+  );
 
   app.get('/api/v1/projects/:id/sync-conflicts', async (req) => {
     const { id } = req.params as { id: string };
     return listConflicts(db, id);
   });
 
-  app.post('/api/v1/sync-conflicts/:id/resolve', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId, actor } = actorFrom(req);
-    const body = z
-      .object({
-        winner: z.enum(['apos', 'external']),
-        applyToSimilar: z.boolean().default(false),
-      })
-      .parse(req.body);
-
-    const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
-    if (!conflict) throw notFound('冲突');
-    await assertIntegration(conflict.projectId, userId, 'resolve_conflict', req);
-
-    const result = await resolveConflict(db, deps.integrations, {
-      conflictId: id,
-      winner: body.winner,
-      applyToSimilar: body.applyToSimilar,
-      userId,
-    });
-
-    await emitAndPublish(db, {
-      orgId: result.orgId,
-      projectId: result.projectId,
-      actor,
-      type: 'integration.conflict_resolved',
-      subjectType: 'integration',
-      subjectId: conflict.integrationId,
-      payload: {
-        field: result.field,
-        winner: result.winner,
-        workItemId: result.workItemId,
-        applyToSimilar: body.applyToSimilar,
+  app.post(
+    '/api/v1/sync-conflicts/:id/resolve',
+    {
+      config: {
+        auth: {
+          permission: 'integration.resolve_conflict',
+        },
       },
-      correlationId: corr(req),
-    });
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId, actor } = actorFrom(req);
+      const body = z
+        .object({
+          winner: z.enum(['apos', 'external']),
+          applyToSimilar: z.boolean().default(false),
+        })
+        .parse(req.body);
 
-    return result;
-  });
+      const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
+      if (!conflict) throw notFound('冲突');
+      await assertIntegration(conflict.projectId, userId, 'resolve_conflict', req);
 
-  app.post('/api/v1/integrations/:id/objects', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const { userId } = actorFrom(req);
-    const body = z
-      .object({
-        workItemId: z.string().uuid(),
-        externalKey: z.string().min(1),
-        externalUrl: z.string().url().optional(),
-      })
-      .parse(req.body);
+      const result = await resolveConflict(db, deps.integrations, {
+        conflictId: id,
+        winner: body.winner,
+        applyToSimilar: body.applyToSimilar,
+        userId,
+      });
 
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'connect', req);
+      await emitAndPublish(db, {
+        orgId: result.orgId,
+        projectId: result.projectId,
+        actor,
+        type: 'integration.conflict_resolved',
+        subjectType: 'integration',
+        subjectId: conflict.integrationId,
+        payload: {
+          field: result.field,
+          winner: result.winner,
+          workItemId: result.workItemId,
+          applyToSimilar: body.applyToSimilar,
+        },
+        correlationId: corr(req),
+      });
 
-    const link = await linkObject(db, { integrationId: id, ...body });
-    reply.code(201);
-    return link;
-  });
+      return result;
+    },
+  );
+
+  app.post(
+    '/api/v1/integrations/:id/objects',
+    {
+      config: {
+        auth: {
+          permission: 'integration.view',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { userId } = actorFrom(req);
+      const body = z
+        .object({
+          workItemId: z.string().uuid(),
+          externalKey: z.string().min(1),
+          externalUrl: z.string().url().optional(),
+        })
+        .parse(req.body);
+
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'connect', req);
+
+      const link = await linkObject(db, { integrationId: id, ...body });
+      reply.code(201);
+      return link;
+    },
+  );
 
   /** 断开前先看影响 —— 一个只问「确定吗」的确认框等于没问（§7） */
   app.get('/api/v1/integrations/:id/disconnect-impact', async (req) => {
@@ -2564,40 +3359,60 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return disconnectImpact(db, id);
   });
 
-  app.delete('/api/v1/integrations/:id', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId, actor } = actorFrom(req);
-    const body = z.object({ confirmImpact: z.literal(true) }).parse(req.body ?? {});
-    void body;
+  app.delete(
+    '/api/v1/integrations/:id',
+    {
+      config: {
+        auth: {
+          permission: 'integration.disconnect',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId, actor } = actorFrom(req);
+      const body = z.object({ confirmImpact: z.literal(true) }).parse(req.body ?? {});
+      void body;
 
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'disconnect', req);
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'disconnect', req);
 
-    const result = await disconnectIntegration(db, id);
-    await emitAndPublish(db, {
-      orgId: result.orgId,
-      projectId: result.projectId,
-      actor,
-      type: 'integration.disconnected',
-      subjectType: 'integration',
-      subjectId: id,
-      payload: { provider: result.provider },
-      correlationId: corr(req),
-    });
+      const result = await disconnectIntegration(db, id);
+      await emitAndPublish(db, {
+        orgId: result.orgId,
+        projectId: result.projectId,
+        actor,
+        type: 'integration.disconnected',
+        subjectType: 'integration',
+        subjectId: id,
+        payload: { provider: result.provider },
+        correlationId: corr(req),
+      });
 
-    return { ok: true };
-  });
+      return { ok: true };
+    },
+  );
 
-  app.patch('/api/v1/integrations/:id/notifications', async (req) => {
-    const { id } = req.params as { id: string };
-    const { userId } = actorFrom(req);
-    const config = NotificationConfig.parse(req.body);
+  app.patch(
+    '/api/v1/integrations/:id/notifications',
+    {
+      config: {
+        auth: {
+          permission: 'integration.configure_notification',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const { userId } = actorFrom(req);
+      const config = NotificationConfig.parse(req.body);
 
-    const projectId = await projectOfIntegration(id);
-    await assertIntegration(projectId, userId, 'configure_notification', req);
+      const projectId = await projectOfIntegration(id);
+      await assertIntegration(projectId, userId, 'configure_notification', req);
 
-    return updateNotificationConfig(db, id, config);
-  });
+      return updateNotificationConfig(db, id, config);
+    },
+  );
 
   // ── Analytics ───────────────────────────────────────────────────────
   app.get('/api/v1/projects/:id/analytics', async (req) => {
@@ -2655,76 +3470,128 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       rbac.assertPermission(actor, permission, { projectId });
   }
 
-  app.post('/api/v1/projects/:id/policies', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = PolicyDraftBody.parse(req.body);
-
-    const result = await savePolicy(
-      db,
-      id,
-      {
-        name: body.name,
-        description: body.description,
-        priority: body.priority,
-        condition: Condition.parse(body.condition),
-        action: Action.parse(body.action),
-        enabled: body.enabled,
+  app.post(
+    '/api/v1/projects/:id/policies',
+    {
+      config: {
+        auth: {
+          /**
+           * ★★ 收紧与放宽是两档权限（§2.3 的不对称设计）。
+           *
+           *   路由表在这里只能判出「至少要能收紧」；究竟是不是放宽
+           *   要把新旧规则各跑一遍场景才知道，那在 savePolicy 里做
+           *   （见 policies.ts 的 assertChangeAllowed）。这一层先挡掉
+           *   连收紧都不够格的人，省掉后面的一大堆计算。
+           */
+          permission: 'policy.tighten',
+        },
       },
-      userId,
-      {
-        acknowledgeMismatches: body.acknowledgeMismatches,
-        assertCan: await policyGuard(req, id),
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = PolicyDraftBody.parse(req.body);
+
+      const result = await savePolicy(
+        db,
+        id,
+        {
+          name: body.name,
+          description: body.description,
+          priority: body.priority,
+          condition: Condition.parse(body.condition),
+          action: Action.parse(body.action),
+          enabled: body.enabled,
+        },
+        userId,
+        {
+          acknowledgeMismatches: body.acknowledgeMismatches,
+          assertCan: await policyGuard(req, id),
+        },
+      );
+      return reply.code(201).send(result);
+    },
+  );
+
+  app.patch(
+    '/api/v1/projects/:id/policies/:policyId',
+    {
+      config: {
+        auth: {
+          permission: 'policy.tighten',
+        },
       },
-    );
-    return reply.code(201).send(result);
-  });
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id, policyId } = req.params as { id: string; policyId: string };
+      const body = PolicyDraftBody.parse(req.body);
 
-  app.patch('/api/v1/projects/:id/policies/:policyId', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id, policyId } = req.params as { id: string; policyId: string };
-    const body = PolicyDraftBody.parse(req.body);
+      return savePolicy(
+        db,
+        id,
+        {
+          name: body.name,
+          description: body.description,
+          priority: body.priority,
+          condition: Condition.parse(body.condition),
+          action: Action.parse(body.action),
+          enabled: body.enabled,
+        },
+        userId,
+        {
+          policyId,
+          acknowledgeMismatches: body.acknowledgeMismatches,
+          assertCan: await policyGuard(req, id),
+        },
+      );
+    },
+  );
 
-    return savePolicy(
-      db,
-      id,
-      {
-        name: body.name,
-        description: body.description,
-        priority: body.priority,
-        condition: Condition.parse(body.condition),
-        action: Action.parse(body.action),
-        enabled: body.enabled,
+  app.post(
+    '/api/v1/projects/:id/policies/:policyId/toggle',
+    {
+      config: {
+        auth: {
+          /** 停用一条规则就是把治理拿掉 —— 与放宽同档 */
+          permission: (req) =>
+            (req.body as { enabled?: unknown } | undefined)?.enabled === false
+              ? 'policy.loosen'
+              : 'policy.tighten',
+          },
       },
-      userId,
-      {
-        policyId,
-        acknowledgeMismatches: body.acknowledgeMismatches,
-        assertCan: await policyGuard(req, id),
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id, policyId } = req.params as { id: string; policyId: string };
+      const body = z
+        .object({
+          enabled: z.boolean(),
+          // ★ 停用规则必须填原因（页面文档 13 §8）——
+          //   规则的变更历史本身就是组织知识，「为什么停用」比「停用了」重要
+          reason: z.string().min(1, '停用规则必须填写原因'),
+        })
+        .parse(req.body);
+
+      return togglePolicy(db, id, policyId, body.enabled, body.reason, userId);
+    },
+  );
+
+  app.delete(
+    '/api/v1/projects/:id/policies/:policyId',
+    {
+      config: {
+        auth: {
+          permission: 'policy.loosen',
+        },
       },
-    );
-  });
-
-  app.post('/api/v1/projects/:id/policies/:policyId/toggle', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id, policyId } = req.params as { id: string; policyId: string };
-    const body = z
-      .object({
-        enabled: z.boolean(),
-        // ★ 停用规则必须填原因（页面文档 13 §8）——
-        //   规则的变更历史本身就是组织知识，「为什么停用」比「停用了」重要
-        reason: z.string().min(1, '停用规则必须填写原因'),
-      })
-      .parse(req.body);
-
-    return togglePolicy(db, id, policyId, body.enabled, body.reason, userId);
-  });
-
-  app.delete('/api/v1/projects/:id/policies/:policyId', async (req) => {
-    actorFrom(req);
-    const { id, policyId } = req.params as { id: string; policyId: string };
-    return deletePolicy(db, id, policyId);
-  });
+    },
+    async (req) => {
+      actorFrom(req);
+      const { id, policyId } = req.params as { id: string; policyId: string };
+      return deletePolicy(db, id, policyId);
+    },
+  );
 
   /**
    * 模板 → 条件/动作。
@@ -2734,78 +3601,129 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   「界面上写的规则」和「实际执行的规则」不是同一条。
    *   顺带把人话解释一起返回，编辑器改参数时能实时更新（页面文档 13 §5.6）。
    */
-  app.post('/api/v1/projects/:id/policies/from-template', async (req) => {
-    const body = z
-      .object({ templateId: z.string(), values: z.record(z.union([z.string(), z.number()])) })
-      .parse(req.body);
+  app.post(
+    '/api/v1/projects/:id/policies/from-template',
+    {
+      config: {
+        auth: {
+          permission: 'policy.view',
+        },
+      },
+    },
+    async (req) => {
+      const body = z
+        .object({ templateId: z.string(), values: z.record(z.union([z.string(), z.number()])) })
+        .parse(req.body);
 
-    const template = templateById(body.templateId);
-    if (!template) throw notFound('模板');
+      const template = templateById(body.templateId);
+      if (!template) throw notFound('模板');
 
-    const built = template.build(body.values);
-    return { ...built, explanation: explainPolicy(built.condition, built.action) };
-  });
+      const built = template.build(body.values);
+      return { ...built, explanation: explainPolicy(built.condition, built.action) };
+    },
+  );
 
-  app.post('/api/v1/projects/:id/policies/simulate', async (req) => {
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        condition: z.unknown(),
-        action: z.unknown(),
-        range: z.enum(['7d', '30d', '90d']).default('30d'),
-      })
-      .parse(req.body);
+  app.post(
+    '/api/v1/projects/:id/policies/simulate',
+    {
+      config: {
+        auth: {
+          /** 模拟 / 预演 / 套模板都是只读推演，不改任何东西 */
+          permission: 'policy.view',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          condition: z.unknown(),
+          action: z.unknown(),
+          range: z.enum(['7d', '30d', '90d']).default('30d'),
+        })
+        .parse(req.body);
 
-    return runSimulation(
-      db,
-      id,
-      { condition: Condition.parse(body.condition), action: Action.parse(body.action) },
-      body.range,
-    );
-  });
+      return runSimulation(
+        db,
+        id,
+        { condition: Condition.parse(body.condition), action: Action.parse(body.action) },
+        body.range,
+      );
+    },
+  );
 
-  app.post('/api/v1/projects/:id/policies/evaluate', async (req) => {
-    const { id } = req.params as { id: string };
-    const body = z.object({ context: z.record(z.unknown()) }).parse(req.body);
-    return evaluateScenario(db, id, body.context as Partial<PolicyContext>);
-  });
+  app.post(
+    '/api/v1/projects/:id/policies/evaluate',
+    {
+      config: {
+        auth: {
+          permission: 'policy.view',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const body = z.object({ context: z.record(z.unknown()) }).parse(req.body);
+      return evaluateScenario(db, id, body.context as Partial<PolicyContext>);
+    },
+  );
 
-  app.post('/api/v1/projects/:id/policies/autonomy-preview', async (req) => {
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ to: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
-      .parse(req.body);
-    return autonomyPreview(db, id, body.to);
-  });
+  app.post(
+    '/api/v1/projects/:id/policies/autonomy-preview',
+    {
+      config: {
+        auth: {
+          permission: 'policy.view',
+        },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ to: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
+        .parse(req.body);
+      return autonomyPreview(db, id, body.to);
+    },
+  );
 
-  app.patch('/api/v1/projects/:id/autonomy', async (req) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ autonomyLevel: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
-      .parse(req.body);
+  app.patch(
+    '/api/v1/projects/:id/autonomy',
+    {
+      config: {
+        auth: {
+          permission: 'project.autonomy.change',
+        },
+      },
+    },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ autonomyLevel: z.enum(['human_led', 'agent_led_approval', 'agent_autonomous']) })
+        .parse(req.body);
 
-    const [before] = await db.select().from(projects).where(eq(projects.id, id));
-    if (!before) throw notFound('项目');
+      const [before] = await db.select().from(projects).where(eq(projects.id, id));
+      if (!before) throw notFound('项目');
 
-    await db
-      .update(projects)
-      .set({ autonomyLevel: body.autonomyLevel, updatedAt: new Date() })
-      .where(eq(projects.id, id));
+      await db
+        .update(projects)
+        .set({ autonomyLevel: body.autonomyLevel, updatedAt: new Date() })
+        .where(eq(projects.id, id));
 
-    await emitAndPublish(db, {
-      orgId: before.orgId,
-      projectId: id,
-      type: 'project.autonomy_changed',
-      actor: humanActor(userId),
-      subjectType: 'project',
-      subjectId: id,
-      payload: { from: before.autonomyLevel, to: body.autonomyLevel },
-      correlationId: corr(req),
-    });
+      await emitAndPublish(db, {
+        orgId: before.orgId,
+        projectId: id,
+        type: 'project.autonomy_changed',
+        actor: humanActor(userId),
+        subjectType: 'project',
+        subjectId: id,
+        payload: { from: before.autonomyLevel, to: body.autonomyLevel },
+        correlationId: corr(req),
+      });
 
-    return { ok: true as const, autonomyLevel: body.autonomyLevel };
-  });
+      return { ok: true as const, autonomyLevel: body.autonomyLevel };
+    },
+  );
 
   app.get('/api/v1/policies/:policyId/history', async (req) => {
     const { policyId } = req.params as { policyId: string };
@@ -2855,69 +3773,105 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     overrideGuards: z.array(z.string()).optional(),
   });
 
-  app.post('/api/v1/projects/:id/work-items', async (req, reply) => {
-    const { userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = WorkItemInput.parse(req.body);
-    const result = await createWorkItem(
-      db,
-      { projectId: id, actorId: userId, correlationId: corr(req) },
-      body,
-    );
-    return reply.status(201).send(result);
-  });
-
-  app.patch('/api/v1/work-items/:id/status', async (req) => {
-    const { userId, actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = StatusChange.parse(req.body);
-
-    const [current] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!current) throw notFound('任务');
-
-    /**
-     * ★★ `draft → ready` 是把一个任务放进**可派发队列**，
-     *   那正是 `plan.approve` 这道 Human Gate 的内容。
-     *
-     *   手工建的任务不经过「需求 → 计划 → 批准」那条链，如果这一步
-     *   只要 `work_item.execute`，那么任何能建任务的人都能让 Agent
-     *   去做任意事情 —— 两道 Human Gate 就都被绕开了。
-     *
-     * ★ 判定放在 handler 而不是路由表：路由表看不到任务**当前**的状态，
-     *   而 `changes_requested → ready`（返工重新开始）同样落在 ready 上，
-     *   那一步的计划早就批过了，不该再要一次批准权限。
-     */
-    if (current.status === 'draft' && body.toStatus === 'ready') {
-      const gateActor = await rbac.resolveActor(req, userId, current.projectId);
-      rbac.assertPermission(gateActor, 'plan.approve', {
-        workItemId: id,
-        why: '手工建的任务没有经过计划批准，放行去执行等同于批准一份计划',
-      });
-    }
-
-    const trigger = manualTriggerFor(current.status, body.toStatus);
-    if (!trigger) {
-      throw new ApiError(
-        'INVALID_TRANSITION',
-        `当前状态 ${current.status} 不能手动切换到 ${body.toStatus}`,
-        { from: current.status, allowedTriggers: availableTriggers(WORK_ITEM_MACHINE, current.status) },
+  app.post(
+    '/api/v1/projects/:id/work-items',
+    {
+      config: {
+        auth: {
+          /**
+           * ★★ 建任务本身门槛很低（能执行任务的人就能建），但**放行去执行**
+           *   仍然要 `plan.approve` —— 那是在 handler 里判的（见 routes.ts
+           *   的 draft → ready 分支），因为它取决于任务**当前**的状态，
+           *   而路由表这一层看不到数据库。
+           */
+          permission: 'work_item.create',
+        },
+      },
+    },
+    async (req, reply) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = WorkItemInput.parse(req.body);
+      const result = await createWorkItem(
+        db,
+        { projectId: id, actorId: userId, correlationId: corr(req) },
+        body,
       );
-    }
+      return reply.status(201).send(result);
+    },
+  );
 
-    const result = await transition(db, {
-      workItemId: id,
-      trigger,
-      actor,
-      reason: body.reason,
-      reasonCategory: body.reasonCategory,
-      manual: true,
-      overrideGuards: body.overrideGuards,
-      correlationId: corr(req),
-    });
+  app.patch(
+    '/api/v1/work-items/:id/status',
+    {
+      config: {
+        auth: {
+          /**
+           * ★ 勾了 overrideGuards 就是强制放行，要的是另一档权限（§2.3）。
+           *   「改状态」和「让不达标的任务过去」共用一个端点，
+           *   但绝不能共用一个权限。
+           */
+          permission: (req) => {
+            const body = req.body as { overrideGuards?: unknown } | undefined;
+            return body?.overrideGuards
+              ? ['work_item.execute', 'work_item.force_pass']
+              : 'work_item.execute';
+          },
+        },
+      },
+    },
+    async (req) => {
+      const { userId, actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = StatusChange.parse(req.body);
 
-    if (!result.ok) return mapTransitionError(result);
-    return toTransitionResponse(result);
-  });
+      const [current] = await db.select().from(workItems).where(eq(workItems.id, id));
+      if (!current) throw notFound('任务');
+
+      /**
+       * ★★ `draft → ready` 是把一个任务放进**可派发队列**，
+       *   那正是 `plan.approve` 这道 Human Gate 的内容。
+       *
+       *   手工建的任务不经过「需求 → 计划 → 批准」那条链，如果这一步
+       *   只要 `work_item.execute`，那么任何能建任务的人都能让 Agent
+       *   去做任意事情 —— 两道 Human Gate 就都被绕开了。
+       *
+       * ★ 判定放在 handler 而不是路由表：路由表看不到任务**当前**的状态，
+       *   而 `changes_requested → ready`（返工重新开始）同样落在 ready 上，
+       *   那一步的计划早就批过了，不该再要一次批准权限。
+       */
+      if (current.status === 'draft' && body.toStatus === 'ready') {
+        const gateActor = await rbac.resolveActor(req, userId, current.projectId);
+        rbac.assertPermission(gateActor, 'plan.approve', {
+          workItemId: id,
+          why: '手工建的任务没有经过计划批准，放行去执行等同于批准一份计划',
+        });
+      }
+
+      const trigger = manualTriggerFor(current.status, body.toStatus);
+      if (!trigger) {
+        throw new ApiError(
+          'INVALID_TRANSITION',
+          `当前状态 ${current.status} 不能手动切换到 ${body.toStatus}`,
+          { from: current.status, allowedTriggers: availableTriggers(WORK_ITEM_MACHINE, current.status) },
+        );
+      }
+
+      const result = await transition(db, {
+        workItemId: id,
+        trigger,
+        actor,
+        reason: body.reason,
+        reasonCategory: body.reasonCategory,
+        manual: true,
+        overrideGuards: body.overrideGuards,
+        correlationId: corr(req),
+      });
+
+      if (!result.ok) return mapTransitionError(result);
+      return toTransitionResponse(result);
+    },
+  );
 
   /**
    * 指派 Agent 并开始执行（页面文档 05/06 的卡片操作）。
@@ -3016,37 +3970,47 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★★ 这是从 /assign 里拆出来的那一半。选执行者是一个「选择」，
    *   不该有副作用 —— 而在拆开之前，它会立刻派 Run、改文件、烧预算。
    */
-  app.patch('/api/v1/work-items/:id/assignee', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = AssigneeInput.parse(req.body ?? {});
-
-    const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!before) throw notFound('任务');
-
-    const result = await setAssignee(db, id, body, { registry: deps.registry });
-
-    await emitAndPublish(db, {
-      orgId: before.orgId,
-      projectId: before.projectId,
-      type: 'work_item.assignee_changed',
-      actor,
-      subjectType: 'work_item',
-      subjectId: id,
-      payload: {
-        from: { executorType: before.executorType, executorId: before.executorId },
-        to: { executorType: result.executorType, executorId: result.executorId },
-        executionMode: result.executionMode,
-        byUserId: userId,
-        /** ★ 改派顺手终止了哪几次执行 —— 这是花过钱的事，必须留痕 */
-        takeover: body.takeover ?? null,
-        terminatedRuns: result.terminatedRuns,
+  app.patch(
+    '/api/v1/work-items/:id/assignee',
+    {
+      config: {
+        auth: {
+          permission: 'work_item.assign',
+        },
       },
-      correlationId: corr(req),
-    });
+    },
+    async (req) => {
+      const { actor, userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = AssigneeInput.parse(req.body ?? {});
 
-    return result;
-  });
+      const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
+      if (!before) throw notFound('任务');
+
+      const result = await setAssignee(db, id, body, { registry: deps.registry });
+
+      await emitAndPublish(db, {
+        orgId: before.orgId,
+        projectId: before.projectId,
+        type: 'work_item.assignee_changed',
+        actor,
+        subjectType: 'work_item',
+        subjectId: id,
+        payload: {
+          from: { executorType: before.executorType, executorId: before.executorId },
+          to: { executorType: result.executorType, executorId: result.executorId },
+          executionMode: result.executionMode,
+          byUserId: userId,
+          /** ★ 改派顺手终止了哪几次执行 —— 这是花过钱的事，必须留痕 */
+          takeover: body.takeover ?? null,
+          terminatedRuns: result.terminatedRuns,
+        },
+        correlationId: corr(req),
+      });
+
+      return result;
+    },
+  );
 
   /**
    * 开始执行 —— 真正派 Run 的那一步。
@@ -3054,133 +4018,173 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ 不带执行者时用卡片上已经设好的那个。这样「先排活、回头再开跑」
    *   是两次独立的动作，而不是必须在一次调用里同时决定。
    */
-  app.post('/api/v1/work-items/:id/start', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({ agentId: z.string().uuid().optional(), note: z.string().max(4000).optional() })
-      .parse(req.body ?? {});
+  app.post(
+    '/api/v1/work-items/:id/start',
+    {
+      config: {
+        auth: {
+          permission: 'work_item.execute',
+        },
+      },
+    },
+    async (req) => {
+      const { actor, userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({ agentId: z.string().uuid().optional(), note: z.string().max(4000).optional() })
+        .parse(req.body ?? {});
 
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
+      const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+      if (!item) throw notFound('任务');
 
-    assertStartable(item.status);
+      assertStartable(item.status);
 
-    const agentId = body.agentId ?? (item.executorType === 'agent' ? item.executorId : null);
-    if (!agentId) {
-      throw new ApiError(
-        'VALIDATION_FAILED',
-        item.executorType === 'human'
-          ? '这张卡的执行者是人，不能派给 Agent 执行'
-          : '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
-        { executorType: item.executorType },
+      const agentId = body.agentId ?? (item.executorType === 'agent' ? item.executorId : null);
+      if (!agentId) {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          item.executorType === 'human'
+            ? '这张卡的执行者是人，不能派给 Agent 执行'
+            : '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
+          { executorType: item.executorType },
+        );
+      }
+
+      return startRun(req, item, agentId, body.note, actor, userId);
+    },
+  );
+
+  app.post(
+    '/api/v1/work-items/:id/assign',
+    {
+      config: {
+        auth: {
+          permission: 'work_item.execute',
+        },
+      },
+    },
+    async (req) => {
+      const { actor, userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          agentId: z.string().uuid().optional(),
+          /** 指派给人时用 */
+          userId: z.string().uuid().optional(),
+          /** 派发时附加的说明，进 must_read 上下文 */
+          note: z.string().max(4000).optional(),
+        })
+        .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
+          message: '必须且只能指定 agentId 或 userId 其中之一',
+        })
+        .parse(req.body ?? {});
+
+      const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+      if (!item) throw notFound('任务');
+
+      assertStartable(item.status);
+
+      if (body.userId) {
+        const moved = await transition(db, {
+          workItemId: id,
+          trigger: 'assigned_to_human',
+          actor,
+          reason: body.note ?? '人工指派',
+          correlationId: corr(req),
+        });
+        if (!moved.ok) return mapTransitionError(moved);
+
+        await db
+          .update(workItems)
+          .set({ executorType: 'human', executorId: body.userId })
+          .where(eq(workItems.id, id));
+
+        return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
+      }
+
+      return startRun(req, item, body.agentId!, body.note, actor, userId);
+    },
+  );
+
+  app.post(
+    '/api/v1/work-items/:id/retry',
+    {
+      config: {
+        auth: {
+          permission: 'work_item.execute',
+        },
+      },
+    },
+    async (req) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          agentId: z.string().uuid().optional(),
+          additionalContext: z
+            .array(z.object({ title: z.string(), content: z.string() }))
+            .optional(),
+        })
+        .parse(req.body ?? {});
+
+      const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
+      if (!item) throw notFound('任务');
+
+      const agentId = body.agentId ?? item.executorId;
+      if (!agentId) throw new ApiError('VALIDATION_FAILED', '未指定执行 Agent');
+
+      // 先把任务拉回 ready，再派发
+      if (item.status === 'failed') {
+        await transition(db, {
+          workItemId: id,
+          trigger: 'retry_requested',
+          actor: actorFrom(req).actor,
+          correlationId: corr(req),
+        });
+      }
+
+      const result = await dispatchRun(
+        db,
+        deps.registry,
+        { workItemId: id, agentId, correlationId: corr(req), additionalContext: body.additionalContext },
+        { workspaces: deps.workspaces },
       );
-    }
 
-    return startRun(req, item, agentId, body.note, actor, userId);
-  });
+      if (!result.ok) throw new ApiError('AGENT_UNAVAILABLE', '派发失败', result.detail);
+      return result;
+    },
+  );
 
-  app.post('/api/v1/work-items/:id/assign', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        agentId: z.string().uuid().optional(),
-        /** 指派给人时用 */
-        userId: z.string().uuid().optional(),
-        /** 派发时附加的说明，进 must_read 上下文 */
-        note: z.string().max(4000).optional(),
-      })
-      .refine((v) => Boolean(v.agentId) !== Boolean(v.userId), {
-        message: '必须且只能指定 agentId 或 userId 其中之一',
-      })
-      .parse(req.body ?? {});
+  app.post(
+    '/api/v1/work-items/:id/takeover',
+    {
+      config: {
+        auth: {
+          permission: 'work_item.takeover',
+        },
+      },
+    },
+    async (req) => {
+      const { actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          reason: z.string({ required_error: '接管必须填写原因' }).min(1, '接管必须填写原因'),
+        })
+        .parse(req.body);
 
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
-
-    assertStartable(item.status);
-
-    if (body.userId) {
-      const moved = await transition(db, {
+      const result = await transition(db, {
         workItemId: id,
-        trigger: 'assigned_to_human',
+        trigger: 'human_took_over',
         actor,
-        reason: body.note ?? '人工指派',
+        reason: body.reason,
         correlationId: corr(req),
       });
-      if (!moved.ok) return mapTransitionError(moved);
 
-      await db
-        .update(workItems)
-        .set({ executorType: 'human', executorId: body.userId })
-        .where(eq(workItems.id, id));
-
-      return { ok: true as const, executorType: 'human' as const, executorId: body.userId };
-    }
-
-    return startRun(req, item, body.agentId!, body.note, actor, userId);
-  });
-
-  app.post('/api/v1/work-items/:id/retry', async (req) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        agentId: z.string().uuid().optional(),
-        additionalContext: z
-          .array(z.object({ title: z.string(), content: z.string() }))
-          .optional(),
-      })
-      .parse(req.body ?? {});
-
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
-
-    const agentId = body.agentId ?? item.executorId;
-    if (!agentId) throw new ApiError('VALIDATION_FAILED', '未指定执行 Agent');
-
-    // 先把任务拉回 ready，再派发
-    if (item.status === 'failed') {
-      await transition(db, {
-        workItemId: id,
-        trigger: 'retry_requested',
-        actor: actorFrom(req).actor,
-        correlationId: corr(req),
-      });
-    }
-
-    const result = await dispatchRun(
-      db,
-      deps.registry,
-      { workItemId: id, agentId, correlationId: corr(req), additionalContext: body.additionalContext },
-      { workspaces: deps.workspaces },
-    );
-
-    if (!result.ok) throw new ApiError('AGENT_UNAVAILABLE', '派发失败', result.detail);
-    return result;
-  });
-
-  app.post('/api/v1/work-items/:id/takeover', async (req) => {
-    const { actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        reason: z.string({ required_error: '接管必须填写原因' }).min(1, '接管必须填写原因'),
-      })
-      .parse(req.body);
-
-    const result = await transition(db, {
-      workItemId: id,
-      trigger: 'human_took_over',
-      actor,
-      reason: body.reason,
-      correlationId: corr(req),
-    });
-
-    if (!result.ok) return mapTransitionError(result);
-    return toTransitionResponse(result);
-  });
+      if (!result.ok) return mapTransitionError(result);
+      return toTransitionResponse(result);
+    },
+  );
 
   // ── Run ─────────────────────────────────────────────────────────────
   app.get('/api/v1/runs/:id', async (req) => {
@@ -3188,16 +4192,32 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return getRunDetail(db, id);
   });
 
-  app.get('/api/v1/runs/:id/events', async (req) => {
-    const { id } = req.params as { id: string };
-    const q = req.query as { level?: string; after?: string; limit?: string };
+  app.get(
+    '/api/v1/runs/:id/events',
+    {
+      config: {
+        auth: {
+          /** 详细模式可能含敏感上下文，简明模式不需要额外权限（§2.3）*/
+          permission: (req) =>
+            (req.query as { level?: string } | undefined)?.level === 'detailed'
+              ? 'run.view_detailed'
+              : null,
+              context: (req, ctx) =>
+            runOwnerContext(ctx, (req.params as { id: string }).id),
+          },
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const q = req.query as { level?: string; after?: string; limit?: string };
 
-    return getRunEvents(db, id, {
-      level: q.level === 'detailed' ? 'detailed' : 'brief',
-      after: q.after !== undefined ? Number(q.after) : undefined,
-      limit: q.limit !== undefined ? Number(q.limit) : undefined,
-    });
-  });
+      return getRunEvents(db, id, {
+        level: q.level === 'detailed' ? 'detailed' : 'brief',
+        after: q.after !== undefined ? Number(q.after) : undefined,
+        limit: q.limit !== undefined ? Number(q.limit) : undefined,
+      });
+    },
+  );
 
   app.get('/api/v1/runs/:id/cost-breakdown', async (req) => {
     const { id } = req.params as { id: string };
@@ -3238,80 +4258,93 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       }
     });
 
-  app.post('/api/v1/runs/:id/control', async (req) => {
-    const { actor, userId } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = RunControl.parse(req.body);
-
-    const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
-    if (!run) throw notFound('Run');
-
-    if (!(ACTIVE_RUN_STATUSES as readonly string[]).includes(run.status)) {
-      throw new ApiError('VERSION_CONFLICT', `Run 已经是 ${run.status} 状态，无法再操作`, {
-        status: run.status,
-      });
-    }
-
-    const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
-    if (!agent) throw notFound('Agent');
-    if (!deps.registry.has(agent.id)) {
-      throw new ApiError('AGENT_UNAVAILABLE', '该 Agent 的运行时未在本进程注册，无法控制', {
-        agentId: agent.id,
-        runtimeKind: agent.runtimeKind,
-      });
-    }
-
-    const adapter = deps.registry.get(agent.id);
-    const command =
-      body.action === 'terminate'
-        ? ({ action: 'terminate', reason: body.reason ?? '人工终止' } as const)
-        : body.action === 'add_constraint'
-          ? ({
-              action: 'add_constraint',
-              constraint: {
-                type: (body.constraint?.type ?? 'freeform') as never,
-                value: null,
-                description: body.constraint!.description,
-                // 运行中注入的约束只能靠 Agent 自觉遵守，如实标注
-                enforcement: 'agent' as const,
-                decisionId: null,
-              },
-            } as const)
-          : ({ action: body.action } as const);
-
-    try {
-      await adapter.control(id, command);
-    } catch (err) {
-      if (err instanceof UnsupportedFeatureError) {
-        // 降级矩阵：不支持的能力如实报回，由调用方决定要不要换个动作
-        throw new ApiError(
-          'UNSUPPORTED_FEATURE',
-          `运行时 ${adapter.kind} 不支持「${LABELS[body.action]}」`,
-          { feature: err.feature, runtimeKind: err.runtimeKind, fallback: FALLBACK[body.action] },
-        );
-      }
-      throw err;
-    }
-
-    await emitAndPublish(db, {
-      orgId: run.orgId,
-      projectId: run.projectId,
-      actor,
-      type: body.action === 'terminate' ? 'agent_run.terminated' : 'agent_run.constraint_added',
-      subjectType: 'agent_run',
-      subjectId: id,
-      payload: {
-        workItemId: run.workItemId,
-        action: body.action,
-        reason: body.reason ?? `人工${LABELS[body.action]}`,
-        constraint: body.constraint?.description ?? null,
-        byUserId: userId,
+  app.post(
+    '/api/v1/runs/:id/control',
+    {
+      config: {
+        auth: {
+          permission: 'run.control',
+          /** Run 自带 projectId，成员关系闸门已经解析出项目角色，只差 owner */
+          context: (req, ctx) =>
+        runOwnerContext(ctx, (req.params as { id: string }).id),
+        },
       },
-      correlationId: corr(req),
-    });
+    },
+    async (req) => {
+      const { actor, userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = RunControl.parse(req.body);
 
-    return { ok: true, action: body.action };
-  });
+      const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
+      if (!run) throw notFound('Run');
+
+      if (!(ACTIVE_RUN_STATUSES as readonly string[]).includes(run.status)) {
+        throw new ApiError('VERSION_CONFLICT', `Run 已经是 ${run.status} 状态，无法再操作`, {
+          status: run.status,
+        });
+      }
+
+      const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
+      if (!agent) throw notFound('Agent');
+      if (!deps.registry.has(agent.id)) {
+        throw new ApiError('AGENT_UNAVAILABLE', '该 Agent 的运行时未在本进程注册，无法控制', {
+          agentId: agent.id,
+          runtimeKind: agent.runtimeKind,
+        });
+      }
+
+      const adapter = deps.registry.get(agent.id);
+      const command =
+        body.action === 'terminate'
+          ? ({ action: 'terminate', reason: body.reason ?? '人工终止' } as const)
+          : body.action === 'add_constraint'
+            ? ({
+                action: 'add_constraint',
+                constraint: {
+                  type: (body.constraint?.type ?? 'freeform') as never,
+                  value: null,
+                  description: body.constraint!.description,
+                  // 运行中注入的约束只能靠 Agent 自觉遵守，如实标注
+                  enforcement: 'agent' as const,
+                  decisionId: null,
+                },
+              } as const)
+            : ({ action: body.action } as const);
+
+      try {
+        await adapter.control(id, command);
+      } catch (err) {
+        if (err instanceof UnsupportedFeatureError) {
+          // 降级矩阵：不支持的能力如实报回，由调用方决定要不要换个动作
+          throw new ApiError(
+            'UNSUPPORTED_FEATURE',
+            `运行时 ${adapter.kind} 不支持「${LABELS[body.action]}」`,
+            { feature: err.feature, runtimeKind: err.runtimeKind, fallback: FALLBACK[body.action] },
+          );
+        }
+        throw err;
+      }
+
+      await emitAndPublish(db, {
+        orgId: run.orgId,
+        projectId: run.projectId,
+        actor,
+        type: body.action === 'terminate' ? 'agent_run.terminated' : 'agent_run.constraint_added',
+        subjectType: 'agent_run',
+        subjectId: id,
+        payload: {
+          workItemId: run.workItemId,
+          action: body.action,
+          reason: body.reason ?? `人工${LABELS[body.action]}`,
+          constraint: body.constraint?.description ?? null,
+          byUserId: userId,
+        },
+        correlationId: corr(req),
+      });
+
+      return { ok: true, action: body.action };
+    },
+  );
 
   // ── 决策 ────────────────────────────────────────────────────────────
   app.get('/api/v1/decisions', async (req) => {
@@ -3379,39 +4412,49 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * 冷却期存在的理由很实际：阻塞卡片就在眼前，不设冷却会被连点，
    * 决策人一分钟收十条提醒之后就会把通知静音。
    */
-  app.post('/api/v1/decisions/:id/remind', async (req) => {
-    const { actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
+  app.post(
+    '/api/v1/decisions/:id/remind',
+    {
+      config: {
+        auth: {
+          permission: 'decision.remind',
+        },
+      },
+    },
+    async (req) => {
+      const { actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
 
-    const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-    if (!decision) throw notFound('决策');
-    if (decision.status !== 'pending') {
-      throw new ApiError('VERSION_CONFLICT', '该决策已被处理', { status: decision.status });
-    }
+      const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
+      if (!decision) throw notFound('决策');
+      if (decision.status !== 'pending') {
+        throw new ApiError('VERSION_CONFLICT', '该决策已被处理', { status: decision.status });
+      }
 
-    const cooldownMs = 30 * 60_000;
-    const since = decision.remindedAt ? Date.now() - decision.remindedAt.getTime() : Infinity;
-    if (since < cooldownMs) {
-      throw new ApiError('RATE_LIMITED', '刚刚已经催办过了，请稍后再试', {
-        retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000),
+      const cooldownMs = 30 * 60_000;
+      const since = decision.remindedAt ? Date.now() - decision.remindedAt.getTime() : Infinity;
+      if (since < cooldownMs) {
+        throw new ApiError('RATE_LIMITED', '刚刚已经催办过了，请稍后再试', {
+          retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000),
+        });
+      }
+
+      await db.update(decisions).set({ remindedAt: new Date() }).where(eq(decisions.id, id));
+
+      await emitAndPublish(db, {
+        orgId: decision.orgId,
+        projectId: decision.projectId,
+        actor,
+        type: 'decision.reminded',
+        subjectType: 'decision',
+        subjectId: id,
+        payload: { assigneeId: decision.assigneeId, workItemId: decision.workItemId },
+        correlationId: corr(req),
       });
-    }
 
-    await db.update(decisions).set({ remindedAt: new Date() }).where(eq(decisions.id, id));
-
-    await emitAndPublish(db, {
-      orgId: decision.orgId,
-      projectId: decision.projectId,
-      actor,
-      type: 'decision.reminded',
-      subjectType: 'decision',
-      subjectId: id,
-      payload: { assigneeId: decision.assigneeId, workItemId: decision.workItemId },
-      correlationId: corr(req),
-    });
-
-    return { ok: true, decisionId: id };
-  });
+      return { ok: true, decisionId: id };
+    },
+  );
 
   const ApproveBody = z.object({
     note: z.string().optional(),
@@ -3495,57 +4538,87 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { ok: true as const, decisionId: id };
   }
 
-  app.post('/api/v1/decisions/:id/approve', async (req) => {
-    const { userId, actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = ApproveBody.parse(req.body ?? {});
-    return approveDecisionById(id, userId, actor, body, corr(req));
-  });
+  app.post(
+    '/api/v1/decisions/:id/approve',
+    {
+      config: {
+        auth: {
+          permission: 'decision.act',
+        },
+      },
+    },
+    async (req) => {
+      const { userId, actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = ApproveBody.parse(req.body ?? {});
+      return approveDecisionById(id, userId, actor, body, corr(req));
+    },
+  );
 
-  app.post('/api/v1/decisions/:id/reject', async (req) => {
-    const { userId, actor } = actorFrom(req);
-    const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
-      })
-      .parse(req.body);
+  app.post(
+    '/api/v1/decisions/:id/reject',
+    {
+      config: {
+        auth: {
+          permission: 'decision.act',
+        },
+      },
+    },
+    async (req) => {
+      const { userId, actor } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
+        })
+        .parse(req.body);
 
-    const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-    if (!decision) throw notFound('决策');
+      const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
+      if (!decision) throw notFound('决策');
 
-    await db
-      .update(decisions)
-      .set({
-        status: 'rejected',
-        resolvedBy: userId,
-        resolvedAt: new Date(),
-        resolutionNote: body.reason,
-      })
-      .where(eq(decisions.id, id));
+      await db
+        .update(decisions)
+        .set({
+          status: 'rejected',
+          resolvedBy: userId,
+          resolvedAt: new Date(),
+          resolutionNote: body.reason,
+        })
+        .where(eq(decisions.id, id));
 
-    if (decision.workItemId) {
-      await transition(db, {
-        workItemId: decision.workItemId,
-        trigger: 'decision_rejected',
-        actor,
-        reason: body.reason,
-        correlationId: corr(req),
-      });
-    }
-    return { ok: true, decisionId: id };
-  });
+      if (decision.workItemId) {
+        await transition(db, {
+          workItemId: decision.workItemId,
+          trigger: 'decision_rejected',
+          actor,
+          reason: body.reason,
+          correlationId: corr(req),
+        });
+      }
+      return { ok: true, decisionId: id };
+    },
+  );
 
   // ── 调度 ────────────────────────────────────────────────────────────
-  app.post('/api/v1/projects/:id/schedule', async (req) => {
-    actorFrom(req);
-    const { id } = req.params as { id: string };
-    return scheduleRound(db, deps.registry, {
-      projectId: id,
-      correlationId: corr(req),
-      workspaces: deps.workspaces,
-    });
-  });
+  app.post(
+    '/api/v1/projects/:id/schedule',
+    {
+      config: {
+        auth: {
+          permission: 'project.schedule',
+        },
+      },
+    },
+    async (req) => {
+      actorFrom(req);
+      const { id } = req.params as { id: string };
+      return scheduleRound(db, deps.registry, {
+        projectId: id,
+        correlationId: corr(req),
+        workspaces: deps.workspaces,
+      });
+    },
+  );
 
   // ── Agent 回调 ──────────────────────────────────────────────────────
   app.post('/api/v1/agent-callback/runs/:id/events', async (req) => {

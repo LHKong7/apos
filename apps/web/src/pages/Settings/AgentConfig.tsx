@@ -19,7 +19,9 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
+import { AgentAccessPanel } from './AgentAccess';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
@@ -140,6 +142,15 @@ function AgentsSection() {
    *   而后者永远不会生效 —— 不提示的话，现场没有任何迹象。
    */
   const [unknownKeys, setUnknownKeys] = useState<string[]>([]);
+  /**
+   * ★★ 「删除请求成功了，但那个 Agent 还在」。
+   *
+   *   有历史执行记录、被需求指定为 PRD 编写者、还被项目角色绑着的 Agent
+   *   一律转为停用（后端 deleteAgent）—— 这是对的，但不说出来的话，用户看到的
+   *   只是「点了删除，它还在列表里」，也就是「删除按钮坏了」。
+   *   服务端返回的 reason 说清了是被什么牵连、下一步该去哪儿，必须显示出来。
+   */
+  const [retired, setRetired] = useState<{ name: string; reason: string } | null>(null);
 
   const q = useQuery({ queryKey: qk.adminAgents(), queryFn: api.adminAgents });
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.adminAgents() });
@@ -149,7 +160,16 @@ function AgentsSection() {
   };
 
   const probe = useMutation({ mutationFn: (id: string) => api.probeAgent(id), onSuccess: invalidate });
-  const remove = useMutation({ mutationFn: (id: string) => api.deleteAgent(id), onSuccess: invalidate });
+  const remove = useMutation({
+    mutationFn: (agent: AgentAdminRow) =>
+      api.deleteAgent(agent.id).then((res) => ({ ...res, name: agent.name })),
+    /** 上一次删除留下的提示不能跟着这一次走 —— 它说的是另一个 Agent */
+    onMutate: () => setRetired(null),
+    onSuccess: (res) => {
+      setRetired(res.retired && res.reason ? { name: res.name, reason: res.reason } : null);
+      void invalidate();
+    },
+  });
 
   if (q.isLoading) return <CardSkeleton />;
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -186,6 +206,12 @@ function AgentsSection() {
         </Notice>
       )}
 
+      {retired && (
+        <Notice tone="warning">
+          {t('agentCfg.retiredNotice', { name: retired.name, reason: retired.reason })}
+        </Notice>
+      )}
+
       {data.credentialUsage.length > 0 && <CredentialUsage rows={data.credentialUsage} />}
 
       {data.agents.length === 0 ? (
@@ -204,8 +230,9 @@ function AgentsSection() {
               spec={data.kinds.find((k) => k.kind === a.runtimeKind) ?? null}
               onProbe={() => probe.mutate(a.id)}
               onEdit={() => openForm(a)}
-              onDelete={() => remove.mutate(a.id)}
-              error={remove.error}
+              onDelete={() => remove.mutate(a)}
+              /** 报错只挂在被删的那张卡上：挂在所有卡上会看成「全都删不掉」 */
+              error={remove.variables?.id === a.id ? remove.error : null}
               probing={probe.isPending}
             />
           ))}
@@ -526,26 +553,22 @@ function AgentForm({
    *   而页面上没有任何地方提示缺了什么。配置页不给的字段，用户没法自己发现。
    */
   const [applicableTypes, setApplicableTypes] = useState<string[]>(agent?.applicableTypes ?? []);
-  const [allowedTools, setAllowedTools] = useState(
-    (agent?.permissions.allowedTools ?? ['Read', 'Grep']).join(', '),
-  );
-  const [deniedTools, setDeniedTools] = useState((agent?.permissions.deniedTools ?? []).join(', '));
-  const [repoRef, setRepoRef] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.ref ?? '',
-  );
-  const [repoAccess, setRepoAccess] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
-  );
   /**
-   * ★ 数据集范围此前在界面上填不了 —— 而 storage_targets 那套后端
-   *   （对象存储 / 宿主机目录）全靠它解析。填不了的表现是：登记了存储目标，
-   *   却没有任何 Agent 能被授权用它。
+   * ★★ 组织级配置的是**上限**，不是「它能做什么」。
+   *
+   *   实际授权在项目里选档案（见 AgentAccess.tsx）。这一页只回答
+   *   「这个 Agent 最多能被授权到什么程度」—— 项目管理员在自己项目里
+   *   选不出组织没打算给它的能力。
+   *
+   * ★ `null` = 不设上限，和「一条都不给」相反。界面上用一个开关表达，
+   *   而不是让空清单去兼任两种含义。
    */
-  const [datasetRef, setDatasetRef] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.ref ?? '',
+  const [limited, setLimited] = useState(agent?.ceiling.capabilityCeiling !== null);
+  const [ceiling, setCeiling] = useState<string[]>(
+    agent?.ceiling.capabilityCeiling ?? [...DEFAULT_CEILING],
   );
-  const [datasetAccess, setDatasetAccess] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.access ?? 'read',
+  const [deniedCapabilities, setDeniedCapabilities] = useState<string[]>(
+    agent?.ceiling.deniedCapabilities ?? [],
   );
   const [reason, setReason] = useState('');
   /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
@@ -597,14 +620,9 @@ function AgentForm({
         ownerId,
         skills: splitList(skills),
         applicableTypes,
-        allowedTools: splitList(allowedTools),
-        deniedTools: splitList(deniedTools),
-        resourceScopes: [
-          ...(repoRef.trim() ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }] : []),
-          ...(datasetRef.trim()
-            ? [{ kind: 'dataset', ref: datasetRef.trim(), access: datasetAccess }]
-            : []),
-        ],
+        // ★ 不设上限时送 null，不是空数组 —— 两者含义相反
+        capabilityCeiling: limited ? ceiling : null,
+        deniedCapabilities,
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
@@ -843,60 +861,38 @@ function AgentForm({
           <p className="mb-2 text-[11px] font-medium text-slate-700">
             {t('agentCfg.form.permissions')}
           </p>
-          <Labeled label={t('agentCfg.form.allowedTools')} help={t('agentCfg.form.allowedToolsHelp')}>
-            <Input
-              value={allowedTools}
-              onChange={(e) => setAllowedTools(e.target.value)}
-              className="font-mono" />
-          </Labeled>
-          <Labeled label={t('agentCfg.form.deniedTools')} help={t('agentCfg.form.deniedToolsHelp')}>
-            <Input
-              value={deniedTools}
-              onChange={(e) => setDeniedTools(e.target.value)}
-              placeholder={t('agentCfg.form.deniedPlaceholder')}
-              className="font-mono" />
-          </Labeled>
-          <div className="grid grid-cols-2 gap-2">
-            <Labeled label={t('agentCfg.form.repo')} help={t('agentCfg.form.repoHelp')}>
-              <Input
-                value={repoRef}
-                onChange={(e) => setRepoRef(e.target.value)}
-                placeholder="order-service" />
-            </Labeled>
-            <Labeled label={t('agentCfg.form.repoAccess')}>
-              <select
-                value={repoAccess}
-                onChange={(e) => setRepoAccess(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                <option value="read">{t('agentCfg.form.readOnly')}</option>
-                <option value="write">{t('agentCfg.form.writable')}</option>
-              </select>
-            </Labeled>
-          </div>
           {/*
-            ★ 数据集与仓库并列而不是二选一：一次执行可以同时挂代码仓库与
-              数据集（前者是主挂载，后者是只读参考）。做成单选就表达不了
-              「读着数据集改代码」这种最常见的组合。
+            ★★ 这里曾经是三个字段：allowedTools、deniedTools、resourceScopes。
+              前两个要求用户先懂某个 CLI 的工具名，第三个把组织级配置
+              当成了项目级授权用。现在：上限在这一页，实际授权在项目里
+              选档案（项目设置 → 项目 Agent → 生效权限）。
           */}
-          <div className="grid grid-cols-2 gap-2">
-            <Labeled label={t('agentCfg.dataset')} help={t('agentCfg.datasetHelp')}>
-              <Input
-                value={datasetRef}
-                onChange={(e) => setDatasetRef(e.target.value)}
-                placeholder="training-set" />
+          <label className="flex items-start gap-2 text-xs">
+            <Checkbox
+              checked={limited}
+              onCheckedChange={(v) => setLimited(Boolean(v))}
+              className="mt-0.5"
+            />
+            <span>
+              {t('agentCfg.form.limitCeiling')}
+              <span className="ml-1 text-[11px] text-slate-400">
+                {t('agentCfg.form.limitCeilingHint')}
+              </span>
+            </span>
+          </label>
+
+          {limited && (
+            <Labeled label={t('agentCfg.form.ceiling')} help={t('agentCfg.form.ceilingHelp')}>
+              <CapabilityPicker value={ceiling} onChange={setCeiling} />
             </Labeled>
-            <Labeled label={t('agentCfg.datasetAccess')}>
-              <select
-                value={datasetAccess}
-                onChange={(e) => setDatasetAccess(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                <option value="read">{t('agentCfg.readOnly')}</option>
-                <option value="write">{t('agentCfg.writable')}</option>
-              </select>
-            </Labeled>
-          </div>
+          )}
+
+          <Labeled
+            label={t('agentCfg.form.hardDenied')}
+            help={t('agentCfg.form.hardDeniedHelp')}
+          >
+            <CapabilityPicker value={deniedCapabilities} onChange={setDeniedCapabilities} />
+          </Labeled>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -1530,8 +1526,93 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
               {save.error.message}
             </p>
           )}
+
+          {/*
+            ★★ 绑定回答「谁干这个角色」，权限回答「它被授权做什么」——
+              两个问题，同一页上下相邻。
+              合成一格的话，「换一个规划 Agent」会顺手改到权限，
+              而那是两个不同的决定，需要的权限也不同。
+          */}
+          {data.available.length > 0 && (
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold text-slate-800">{t('access.title')}</h2>
+              {data.available.map((a) => (
+                <AgentAccessPanel key={a.agentId} projectId={projectId} agentId={a.agentId} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </QueryBoundary>
+  );
+}
+
+/**
+ * 能力上限的默认勾选。
+ *
+ * ★ 与平台默认档案（standard_executor）对齐：新建一个 Agent 时，
+ *   上限刚好覆盖「在隔离工作区里干活」那一档。给一份能直接用的默认，
+ *   而不是让用户对着一张空清单猜该勾什么 —— 猜出来的配置一律偏宽。
+ */
+const DEFAULT_CEILING = [
+  'workspace.read',
+  'workspace.write',
+  'command.build',
+  'command.test',
+  'artifact.create',
+] as const;
+
+/**
+ * 能力多选。
+ *
+ * ★★ 显示的是**后果**，不是能力名。`repository.push` 对用户没有意义，
+ *   「能把分支推到远端。改动从此离开平台的控制范围」才有 ——
+ *   而这正是这一勾与下一勾之间风险差两个数量级的地方。
+ *
+ * ★ 目录来自服务端（`/admin/agents` 的 capabilities），不在前端再抄一份：
+ *   抄一份的代价是平台加了一条能力而界面上没有，用户没有任何迹象。
+ */
+function CapabilityPicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const t = useT();
+  const sx = useSpecText();
+  const catalog = useQuery({ queryKey: qk.capabilityCatalog(), queryFn: api.capabilityCatalog });
+
+  if (catalog.isLoading) return <CardSkeleton />;
+  const items = catalog.data?.capabilities ?? [];
+
+  const toggle = (key: string) =>
+    onChange(value.includes(key) ? value.filter((v) => v !== key) : [...value, key]);
+
+  return (
+    <div className="space-y-1">
+      {items.map((c) => (
+        <label key={c.key} className="flex items-start gap-1.5 text-[11px]">
+          <input
+            type="checkbox"
+            checked={value.includes(c.key)}
+            onChange={() => toggle(c.key)}
+            /**
+             * ★ 平台底线里的能力永远勾不上（改权限、改 Policy）。
+             *   给一个能勾但存不进去的选项，等于让人白填一遍再被拒。
+             */
+            disabled={c.neverAutoGrant}
+            className="mt-0.5"
+          />
+          <span className={clsx(c.neverAutoGrant && 'text-slate-400')}>
+            <span className="font-medium text-slate-700">{sx(c.label, c.labelEn)}</span>
+            <span className="ml-1 text-slate-500">{sx(c.consequence, c.consequenceEn)}</span>
+            {c.neverAutoGrant && (
+              <span className="ml-1 text-amber-700">{t('agentCfg.form.neverGrant')}</span>
+            )}
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }

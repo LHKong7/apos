@@ -28,7 +28,9 @@ import {
   type Fixture,
 } from '../test/db';
 import { seedAgent } from '../test/agent-fixtures';
-import { guardRouteCoverage, isExempt, permissionsForRoute, registeredRoutes } from './rbac';
+import { guardRouteCoverage, isExempt } from './rbac';
+import { PERMISSIONS } from '@apos/domain';
+import { registerRoutes } from './routes';
 
 /**
  * RBAC 的服务端强制（docs/tech/09-security.md §2）。
@@ -95,7 +97,7 @@ describe('★★ 写路由必须登记权限，否则服务起不来', () => {
     await probe.ready();
 
     expect(() => assertCovered()).toThrow('POST /api/v1/projects/:id/danger');
-    expect(() => assertCovered()).toThrow(/ROUTE_PERMISSIONS/);
+    expect(() => assertCovered()).toThrow(/config\.auth\.permission/);
     await probe.close();
   });
 
@@ -127,25 +129,196 @@ describe('★★ 写路由必须登记权限，否则服务起不来', () => {
     expect(isExempt('POST', '/api/v1/projects/x/policies')).toBeNull();
   });
 
-  it('路由表登记的都是真实存在的权限名', () => {
-    expect(registeredRoutes().length).toBeGreaterThan(30);
+});
+
+/**
+ * ★★ 「哪条路由要哪条权限」的对照表 —— 现在是**断言**，不是运行时的第二个真相。
+ *
+ *   权限声明搬到了各条路由自己身上（`config.auth`），换来的是「加路由的人
+ *   看得见它」。代价是这张全景图散掉了：抄错一条权限、把隔壁那条粘过来，
+ *   在单个文件里都长得完全正常。
+ *
+ *   所以对照表留在测试里，钉住搬家前后每一条的取值。它红了只有两种可能：
+ *   有人改了某条路由的权限（那应该是一次明确的决定，连同这里一起改），
+ *   或者搬家搬错了。
+ *
+ * The route-to-permission table, kept as an assertion rather than as runtime
+ * state. Declarations now live on each route, which is what makes them visible
+ * when you add one — but it scatters the overview, and a permission copied
+ * from the neighbouring route looks fine in isolation. This table pins every
+ * value across the move.
+ */
+const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
+  'GET /api/v1/admin/capabilities': 'agent.view',
+  'DELETE /api/v1/admin/agents/:id': 'agent.delete',
+  'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
+  'DELETE /api/v1/admin/roles/:key': 'org.roles.manage',
+  'DELETE /api/v1/admin/storage-targets/:id': 'storage_target.manage',
+  'DELETE /api/v1/conventions/:id': 'convention.manage',
+  'DELETE /api/v1/integrations/:id': 'integration.disconnect',
+  'DELETE /api/v1/organizations/:id': 'organization.delete',
+  'DELETE /api/v1/organizations/:id/members/:userId': 'organization.members.manage',
+  'DELETE /api/v1/projects/:id/members/:memberId': 'project.members.manage',
+  'DELETE /api/v1/projects/:id/policies/:policyId': 'policy.loosen',
+  'DELETE /api/v1/requirements/:id': 'requirement.delete',
+  'GET /api/v1/projects/:id/members': 'project.view',
+  'PATCH /api/v1/admin/agents/:id': 'agent.update',
+  'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
+  'PATCH /api/v1/admin/roles/:key': 'org.roles.manage',
+  'PATCH /api/v1/admin/storage-targets/:id': 'storage_target.manage',
+  'PATCH /api/v1/admin/users/:id/org-role': 'org.members.manage',
+  'PATCH /api/v1/conventions/:id': 'convention.manage',
+  'PATCH /api/v1/integrations/:id/notifications': 'integration.configure_notification',
+  'PATCH /api/v1/integrations/:id/sync-mapping': 'integration.change_sot',
+  'PATCH /api/v1/organizations/:id': 'organization.update',
+  'PATCH /api/v1/projects/:id/autonomy': 'project.autonomy.change',
+  'PATCH /api/v1/projects/:id/labor-cost': 'project.settings.update',
+  'PATCH /api/v1/projects/:id/policies/:policyId': 'policy.tighten',
+  'PATCH /api/v1/requirements/:id': 'requirement.edit',
+  'PATCH /api/v1/work-items/:id/assignee': 'work_item.assign',
+  'POST /api/v1/admin/agents': 'agent.create',
+  'POST /api/v1/admin/agents/:id/probe': 'agent.update',
+  'POST /api/v1/admin/repositories': 'repository.manage',
+  'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
+  'POST /api/v1/admin/roles': 'org.roles.manage',
+  'POST /api/v1/admin/roles/:key/clone': 'org.roles.manage',
+  'POST /api/v1/admin/roles/:key/preview': 'project.view',
+  'POST /api/v1/admin/storage-targets': 'storage_target.manage',
+  'POST /api/v1/admin/storage-targets/:id/probe': 'storage_target.manage',
+  'POST /api/v1/admin/users': 'organization.members.manage',
+  'POST /api/v1/agents/:agentId/pause': 'agent.pause',
+  'POST /api/v1/assumptions/:id/confirm': 'requirement.edit',
+  'POST /api/v1/assumptions/:id/invalidate': 'requirement.edit',
+  'POST /api/v1/clarifications/:id/answer': 'clarification.answer',
+  'POST /api/v1/decisions/:id/approve': 'decision.act',
+  'POST /api/v1/decisions/:id/reject': 'decision.act',
+  'POST /api/v1/decisions/:id/remind': 'decision.remind',
+  'POST /api/v1/integrations/:id/ingest-ci': 'integration.view',
+  'POST /api/v1/integrations/:id/objects': 'integration.view',
+  'POST /api/v1/integrations/:id/sync': 'integration.view',
+  'POST /api/v1/organizations/:id/members': 'organization.members.manage',
+  'POST /api/v1/plans/:id/approve': 'plan.approve',
+  'POST /api/v1/plans/:id/revise': 'plan.generate',
+  'POST /api/v1/projects': 'project.create',
+  'POST /api/v1/projects/:id/agents/:agentId/access/preview': 'agent.view',
+  'POST /api/v1/projects/:id/conventions': 'convention.manage',
+  'POST /api/v1/projects/:id/integrations': 'integration.connect',
+  'POST /api/v1/projects/:id/policies': 'policy.tighten',
+  'POST /api/v1/projects/:id/policies/autonomy-preview': 'policy.view',
+  'POST /api/v1/projects/:id/policies/evaluate': 'policy.view',
+  'POST /api/v1/projects/:id/policies/from-template': 'policy.view',
+  'POST /api/v1/projects/:id/policies/simulate': 'policy.view',
+  'POST /api/v1/projects/:id/requirements': 'requirement.create',
+  'POST /api/v1/projects/:id/schedule': 'project.schedule',
+  'POST /api/v1/projects/:id/work-items': 'work_item.create',
+  'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
+  'POST /api/v1/requirements/:id/approve': 'requirement.approve',
+  'POST /api/v1/requirements/:id/assumptions': 'requirement.edit',
+  'POST /api/v1/requirements/:id/plans': 'plan.generate',
+  'POST /api/v1/requirements/:id/reject': 'requirement.approve',
+  'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
+  'POST /api/v1/runs/:id/control': 'run.control',
+  'POST /api/v1/sync-conflicts/:id/resolve': 'integration.resolve_conflict',
+  'POST /api/v1/work-items/:id/assign': 'work_item.execute',
+  'POST /api/v1/work-items/:id/retry': 'work_item.execute',
+  'POST /api/v1/work-items/:id/start': 'work_item.execute',
+  'POST /api/v1/work-items/:id/takeover': 'work_item.takeover',
+  'PUT /api/v1/projects/:id/agents': 'project.settings.update',
+  'PUT /api/v1/projects/:id/agents/:agentId/access': 'agent.permissions.restrict',
+  'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
+  'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',};
+
+/** 取决于请求内容的那几条，逐个单测（见下面「勾了 overrideGuards」那组） */
+const DYNAMIC_ROUTES = new Set([
+  'GET /api/v1/runs/:id/events',
+  'PATCH /api/v1/work-items/:id/status',
+  'POST /api/v1/decisions/batch-approve',
+  'POST /api/v1/projects/:id/policies/:policyId/toggle',
+  'POST /api/v1/requirements/:id/approve-and-plan',]);
+
+describe('★★ 路由权限声明', () => {
+  async function declarations() {
+    const probe = Fastify();
+    const assertCovered = guardRouteCoverage(probe);
+    await registerRoutes(probe, {
+      db,
+      bus: new EventBus(),
+      registry: new RuntimeRegistry(),
+      integrations: integrationRegistry(),
+      provider: new StubPlanningProvider(),
+    });
+    await probe.ready();
+    const out = assertCovered.declarations();
+    await probe.close();
+    return out;
+  }
+
+  /**
+   * ★★ 搬家不能改变任何一条路由要什么权限。
+   *   这是把集中表拆散那次改动的验收条件本身。
+   */
+  it('每条路由声明的权限与对照表一致', async () => {
+    const actual: Record<string, unknown> = {};
+    for (const d of await declarations()) {
+      const key = `${d.method} ${d.url}`;
+      /**
+       * ★ Fastify 给每条 GET 自动配一条 HEAD。它继承同一份声明是**对的**
+       *   （HEAD 与 GET 该同档），只是对照表按显式注册的路由写的。
+       *   下面那条用例专门盯住这对孪生路由不会走散。
+       */
+      if (d.method === 'HEAD') continue;
+      if (DYNAMIC_ROUTES.has(key)) continue;
+      const p = d.auth.permission;
+      if (p === undefined || typeof p === 'function') continue;
+      if (typeof p === 'object' && !Array.isArray(p)) continue; // deferred
+      actual[key] = p;
+    }
+    expect(actual).toEqual(EXPECTED_PERMISSIONS);
   });
 
-  /** 同一个端点上，「改状态」和「强制放行」不能共用一档权限 */
-  it('★ 勾了 overrideGuards 就额外要 force_pass', () => {
-    const plain = permissionsForRoute('PATCH', '/api/v1/work-items/:id/status', {
-      body: { toStatus: 'done' },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
-    const forced = permissionsForRoute('PATCH', '/api/v1/work-items/:id/status', {
-      body: { toStatus: 'done', overrideGuards: true },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+  /**
+   * ★★ HEAD 是 Fastify 自动配出来的，但它照样打到同一个 handler 上。
+   *   两者的声明一旦走散，就出现「HEAD 能读、GET 不能」这种没人会去试的口子。
+   */
+  it('自动生成的 HEAD 与对应的 GET 同一档权限', async () => {
+    const all = await declarations();
+    const gets = new Map(all.filter((d) => d.method === 'GET').map((d) => [d.url, d.auth]));
+    const heads = all.filter((d) => d.method === 'HEAD');
 
-    expect(plain).toEqual(['work_item.execute']);
-    expect(forced).toContain('work_item.force_pass');
+    expect(heads.length).toBeGreaterThan(0);
+    for (const head of heads) {
+      expect(head.auth.permission, `HEAD ${head.url}`).toEqual(gets.get(head.url)?.permission);
+    }
+  });
+
+  /** ★ deferred 必须带理由：它是这套启动即失败机制唯一的绕过方式 */
+  it('deferred 的路由都写明了理由', async () => {
+    const deferredOnes = (await declarations()).filter(
+      (d) =>
+        typeof d.auth.permission === 'object' &&
+        d.auth.permission !== null &&
+        !Array.isArray(d.auth.permission),
+    );
+    expect(deferredOnes.length).toBeGreaterThan(0);
+    for (const d of deferredOnes) {
+      const why = (d.auth.permission as { deferred: string }).deferred;
+      expect(why.length, `${d.method} ${d.url} 的 deferred 没写理由`).toBeGreaterThan(10);
+    }
+  });
+
+  /** ★ 声明里出现的权限名必须是目录里真有的 —— 敲错一个字母等于这条路由不设防 */
+  it('声明的权限名都在权限目录里', async () => {
+    const known = new Set<string>(PERMISSIONS);
+    for (const d of await declarations()) {
+      const p = d.auth.permission;
+      const names = typeof p === 'string' ? [p] : Array.isArray(p) ? p : [];
+      for (const name of names) {
+        expect(known.has(name), `${d.method} ${d.url} 声明了不存在的权限 ${name}`).toBe(true);
+      }
+    }
   });
 });
+
 
 describe('§2.3 权限矩阵在服务端生效', () => {
   it('★ tech_lead 批不了需求（那是 sponsor / pm 的业务判断）', async () => {
@@ -390,9 +563,8 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
         type: 'reviewer',
         runtimeKind: 'mock',
         ownerId,
-        allowedTools: ['read_file', 'write_file'],
-        deniedTools: ['merge_pr'],
-        resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }],
+        capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test'],
+        deniedCapabilities: ['pull_request.merge'],
       })
       .returning();
     return agent!;
@@ -406,7 +578,7 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${agent.id}`,
       headers: as(owner),
-      payload: { allowedTools: ['read_file'] },
+      payload: { capabilityCeiling: ['workspace.read'] },
     });
     expect(restrict.statusCode).toBe(200);
 
@@ -414,18 +586,21 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${agent.id}`,
       headers: as(owner),
-      payload: { allowedTools: ['read_file', 'deploy'], reason: '要发布' },
+      payload: {
+        capabilityCeiling: ['workspace.read', 'environment.deploy'],
+        reason: '要发布',
+      },
     });
     expect(expand.statusCode).toBe(403);
     expect(expand.json().error.message).toContain('tech_lead');
   });
 
   /**
-   * ★ 黑名单优先级高于白名单（§3.1）。从黑名单里拿掉一项是**放宽**，
-   *   哪怕白名单一个字没动 —— 按「列表变短 = 收紧」的直觉判会判反，
+   * ★ 硬拒绝优先级高于允许（§3.1）。从拒绝清单里拿掉一项是**放宽**，
+   *   哪怕上限一个字没动 —— 按「列表变短 = 收紧」的直觉判会判反，
    *   而判反的后果正是「绝对不能合并代码」这条硬约束被 owner 自己撤掉。
    */
-  it('★ 从黑名单里删一项算扩大权限，owner 做不到', async () => {
+  it('★ 从硬拒绝里删一项算扩大权限，owner 做不到', async () => {
     const owner = await createMember(db, fx, { projectRole: 'member' });
     const agent = await seedOwnedAgent(owner);
 
@@ -433,7 +608,7 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
       method: 'PATCH',
       url: `/api/v1/admin/agents/${agent.id}`,
       headers: as(owner),
-      payload: { deniedTools: [], reason: '不需要这条限制了' },
+      payload: { deniedCapabilities: [], reason: '不需要这条限制了' },
     });
     expect(res.statusCode).toBe(403);
   });

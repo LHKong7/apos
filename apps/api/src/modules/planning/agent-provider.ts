@@ -13,6 +13,8 @@ import {
 } from '@apos/db';
 import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
+import type { EffectiveAgentAccess } from '@apos/domain';
+import { resolveAgentAccess } from '../agent/access';
 import { WorkspaceService } from '../workspace';
 import { AgentPlanOutput, AgentStructuredOutput, validatePlanGraph } from './agent-output';
 import { buildPlanBrief, buildStructureBrief, OUTPUT_FILE } from './agent-brief';
@@ -292,6 +294,23 @@ export class AgentPlanningProvider implements PlanningProvider {
        *   写的话，平台自己的输入文件会出现在变更集的 added 里，被当成
        *   Agent 的产出。
        */
+      /**
+       * ★★ 规划 Run 的权限同样按**项目**求值，与执行 Run 走同一个函数。
+       *
+       *   此前这里直接读 agents 表上那份组织级的 resourceScopes / allowedTools。
+       *   两条派发路径各读各的，意味着「这个 Agent 能读哪些仓库」在规划与
+       *   执行时可以是两个答案 —— 而规划恰恰是最贵、最影响后续所有产出的
+       *   那次调用。
+       *
+       * Planning runs resolve access through the same evaluator as execution
+       * runs. Reading the org-level fields here meant "which repositories may
+       * this agent read" had two answers depending on which path dispatched it.
+       */
+      const access = await resolveAgentAccess(this.db, agent, {
+        orgId: input.scope.orgId,
+        projectId: input.scope.projectId,
+      });
+
       acquired = await this.workspaces.acquireLocal({
         id: runId,
         runId,
@@ -319,12 +338,12 @@ export class AgentPlanningProvider implements PlanningProvider {
         readOnly: {
           orgId: input.scope.orgId,
           projectId: input.scope.projectId,
-          scopes: agent.resourceScopes,
+          scopes: access.runtimePermissions.resourceScopes,
         },
       });
 
       const adapter = this.registry.get(agent.id);
-      const task = this.buildDispatch(runId, agent, acquired.dispatch, input.brief);
+      const task = this.buildDispatch(runId, agent, acquired.dispatch, input.brief, access);
 
       const ack = await adapter.dispatch(task);
       if (!ack.accepted) return failRun(`运行时拒绝任务：${ack.rejectReason ?? '未说明原因'}`);
@@ -637,12 +656,10 @@ export class AgentPlanningProvider implements PlanningProvider {
     agent: typeof agents.$inferSelect,
     workspace: RunWorkspace,
     brief: string,
+    access: EffectiveAgentAccess,
   ): TaskDispatch {
-    const permissions: AgentPermissions = {
-      allowedTools: agent.allowedTools,
-      deniedTools: agent.deniedTools,
-      resourceScopes: agent.resourceScopes,
-    };
+    /** ★ 下发的是求值结果，不是 Agent 上那份组织级旧字段 */
+    const permissions: AgentPermissions = access.runtimePermissions;
 
     return {
       runId,

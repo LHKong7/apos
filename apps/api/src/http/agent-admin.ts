@@ -4,6 +4,7 @@ import {
   agentPermissionChanges,
   agentRuns,
   agents,
+  projectAgentBindings,
   requirements,
   users,
   workItems,
@@ -11,17 +12,17 @@ import {
 } from '@apos/db';
 import {
   ACTIVE_RUN_STATUSES,
+  AGENT_CAPABILITIES,
+  AgentCapability,
   envOverridesOf,
   isKnownRuntimeKind,
   isSecretEnvKey,
-  ResourceScope,
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
   validateRuntimeConfig,
   WorkItemType,
-  type AgentPermissions,
 } from '@apos/contracts';
-import { agentPermissionChangeDirection } from '@apos/domain';
+import { CAPABILITY_SPECS, capabilityChangeImpact } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
 import { registerAgentNow, type AgentRow } from '../modules/agent/runtime-factory';
 import {
@@ -59,6 +60,27 @@ import { ApiError, notFound } from './errors';
  *   在旁边充当说明书（能配什么键、取值范围、默认值、影响成本还是安全）。
  *   JSON 框里没有标签，没有这张表用户就只能猜键名。
  */
+/**
+ * 能力目录 —— 界面照着它渲染上限勾选，并显示每一条的**后果**。
+ *
+ * ★ 前端不再抄一份：抄一份的代价是平台加了一条能力而界面上没有，
+ *   而「界面上没有这一栏」在用户那边等于「这个功能不存在」。
+ */
+export function listCapabilityCatalog() {
+  return {
+    capabilities: AGENT_CAPABILITIES.map((key) => ({
+      key,
+      label: CAPABILITY_SPECS[key].label,
+      labelEn: CAPABILITY_SPECS[key].labelEn,
+      consequence: CAPABILITY_SPECS[key].consequence,
+      consequenceEn: CAPABILITY_SPECS[key].consequenceEn,
+      risk: CAPABILITY_SPECS[key].risk,
+      /** 平台底线：勾不上，也存不进去 */
+      neverAutoGrant: CAPABILITY_SPECS[key].neverAutoGrant === true,
+    })),
+  };
+}
+
 export function listRuntimeCatalog() {
   return {
     kinds: RUNTIME_KIND_SPECS,
@@ -101,15 +123,19 @@ export const AgentInput = z.object({
   skills: z.array(z.string()).default([]),
   applicableTypes: z.array(WorkItemType).default([]),
 
-  allowedTools: z.array(z.string()).default([]),
-  deniedTools: z.array(z.string()).default([]),
   /**
-   * ★ 去掉 `origin` —— 它只在派发快照里有意义，登记的一律是 explicit。
-   *   不去掉的话，调用方能自称 `project_default`，把一条显式授权
-   *   伪装成平台默认给的，而审计恰恰靠这个字段区分责任。
-   *   zod 默认剥掉 shape 外的键，所以传了也进不来。
+   * ★★ 组织给这个 Agent 定的**能力上限**。
+   *
+   *   这一层回答的是「这个 Agent 最多能被授权到什么程度」，
+   *   而不是「它现在能做什么」—— 后者是项目级的事
+   *   （project_agent_permissions），同一个 Agent 在两个项目里可以不一样。
+   *
+   * ★ `null` / 不传 = 不设上限（沿用平台基线），**不是**「一条都不给」。
+   *   两者含义相反：空数组会让这个 Agent 在所有项目里都干不了活。
    */
-  resourceScopes: z.array(ResourceScope.omit({ origin: true })).default([]),
+  capabilityCeiling: z.array(AgentCapability).nullable().optional(),
+  /** 组织级硬拒绝：任何项目授予都压不过它 */
+  deniedCapabilities: z.array(AgentCapability).default([]),
 
   maxConcurrency: z.number().int().positive().max(50).default(3),
   timeoutSeconds: z.number().int().positive().max(86_400).default(1800),
@@ -130,7 +156,10 @@ export async function createAgent(
 ) {
   const spec = assertKind(input.runtimeKind);
   await assertOwner(db, input.ownerId);
-  assertPermissionsSane(input);
+  assertCeilingSane({
+    capabilityCeiling: input.capabilityCeiling ?? null,
+    deniedCapabilities: input.deniedCapabilities,
+  });
 
   const { config, unknownKeys } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
 
@@ -159,9 +188,8 @@ export async function createAgent(
       model: input.model ?? null,
       skills: input.skills,
       applicableTypes: input.applicableTypes,
-      allowedTools: input.allowedTools,
-      deniedTools: input.deniedTools,
-      resourceScopes: input.resourceScopes,
+      capabilityCeiling: input.capabilityCeiling ?? null,
+      deniedCapabilities: input.deniedCapabilities,
       maxConcurrency: input.maxConcurrency,
       timeoutSeconds: input.timeoutSeconds,
       tokenLimitPerRun: input.tokenLimitPerRun ?? null,
@@ -180,8 +208,8 @@ export async function createAgent(
     agentId: row!.id,
     changedBy: actorUserId,
     direction: 'grant',
-    before: { allowedTools: [], deniedTools: [], resourceScopes: [] },
-    after: permissionsOf(row!),
+    before: { capabilityCeiling: [], deniedCapabilities: [] },
+    after: ceilingOf(row!),
     reason: '创建 Agent',
   });
 
@@ -232,14 +260,16 @@ export async function updateAgent(
   if (input.runtimeKind) assertKind(input.runtimeKind);
   if (input.ownerId) await assertOwner(db, input.ownerId);
 
-  const merged = {
-    allowedTools: input.allowedTools ?? existing.allowedTools,
-    deniedTools: input.deniedTools ?? existing.deniedTools,
-    resourceScopes: input.resourceScopes ?? existing.resourceScopes,
+  const merged: AgentCeilingRecord = {
+    capabilityCeiling:
+      input.capabilityCeiling !== undefined
+        ? input.capabilityCeiling
+        : (existing.capabilityCeiling as AgentCapability[] | null),
+    deniedCapabilities: input.deniedCapabilities ?? (existing.deniedCapabilities as AgentCapability[]),
   };
-  assertPermissionsSane(merged);
+  assertCeilingSane(merged);
 
-  const before = permissionsOf(existing);
+  const before = ceilingOf(existing);
   const permissionsChanged = JSON.stringify(before) !== JSON.stringify(merged);
 
   /**
@@ -290,9 +320,10 @@ export async function updateAgent(
       ...(input.model !== undefined ? { model: input.model ?? null } : {}),
       ...(input.skills ? { skills: input.skills } : {}),
       ...(input.applicableTypes ? { applicableTypes: input.applicableTypes } : {}),
-      ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
-      ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
-      ...(input.resourceScopes ? { resourceScopes: input.resourceScopes } : {}),
+      ...(input.capabilityCeiling !== undefined
+        ? { capabilityCeiling: input.capabilityCeiling }
+        : {}),
+      ...(input.deniedCapabilities ? { deniedCapabilities: input.deniedCapabilities } : {}),
       ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
       ...(input.timeoutSeconds ? { timeoutSeconds: input.timeoutSeconds } : {}),
       ...(input.tokenLimitPerRun !== undefined
@@ -347,6 +378,29 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     });
   }
 
+  /**
+   * ★★ 这几项清点的是**指向 agents.id 的每一条外键**，不是「大概哪些地方用得上」。
+   *
+   *   漏掉一条的表现不是漏检，而是 23503 —— 那个码不在 CLIENT_INPUT_PG_CODES
+   *   里，用户点「删除 Agent」得到的是一句「服务器内部错误」，看不出真正拦住
+   *   它的是什么。这个 bug 出现过两次：项目角色绑定与规划 Run 都指着 agents.id，
+   *   而这里只数了工作项与需求。
+   *
+   *   ★ 历史 Run 要**直接数 agent_runs**，不能拿「工作项的执行者是它」当代理指标：
+   *     规划 Run 根本没有工作项（work_item_id 可空），而执行完的工作项换个执行者
+   *     就再也数不到那些 Run —— 两种情况下 agent_runs 里的行都还在。
+   *
+   *   Every foreign key pointing at agents.id must be counted here. A missed one
+   *   does not degrade gracefully: it becomes a raw 23503, which surfaces to the
+   *   user as "internal server error" with nothing naming what blocked the delete.
+   *   Historical runs are counted from agent_runs itself rather than inferred from
+   *   work_items.executor_id, because planning runs have no work item at all.
+   */
+  const [runs] = await db
+    .select({ n: count() })
+    .from(agentRuns)
+    .where(eq(agentRuns.agentId, agentId));
+
   const [assigned] = await db
     .select({ n: count() })
     .from(workItems)
@@ -355,18 +409,12 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
   /**
    * ★★ 被某条需求指定为 PRD 编写者的 Agent 同样只停用不删除。
    *
-   *   requirements.author_agent_id 是一条**外键**：直接 DELETE 会撞上
-   *   23503，而那个码不在 CLIENT_INPUT_PG_CODES 里 —— 用户点「删除 Agent」
-   *   得到的会是一句「服务器内部错误」，看不出真正拦住它的是一条需求。
-   *
    *   停用而不是把引用清空：清空等于替用户撤销了他做过的指定，
    *   而他下一次进那条需求只会看到「未指定」，没有任何迹象说明发生过什么。
    *   停用之后需求页会明说「当前是 retired，下一次分析会失败」。
    *
    *   An agent named as some requirement's PRD author is retired, not deleted:
-   *   the column is a foreign key, so deleting would surface as a raw 23503
-   *   ("internal error" to the user), and nulling it out would silently undo a
-   *   choice a person made.
+   *   nulling the column out would silently undo a choice a person made.
    */
   const [authoring] = await db
     .select({ n: count() })
@@ -374,31 +422,100 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(eq(requirements.authorAgentId, agentId));
 
   /**
+   * ★★ 项目角色绑定同样只停用不删除，理由和上面那条不一样：
+   *   绑定是**当前配置**而不是历史，替用户把它删掉，下一次规划会在
+   *   「planner 没人」上失败，而现场没有任何迹象说明那一格是被谁清掉的。
+   *   停用是绑定表设计时就预留的状态（备选优先级正是为它准备的），
+   *   用户看到 reason 之后可以去改绑，再回来删。
+   *
+   *   A project-role binding is current configuration, not history: silently
+   *   dropping it would break the project's planning with no trace of who
+   *   emptied that slot. Retiring is the state the binding table was designed
+   *   to fall back from.
+   */
+  const [bound] = await db
+    .select({ n: count() })
+    .from(projectAgentBindings)
+    .where(eq(projectAgentBindings.agentId, agentId));
+
+  /**
    * ★ 有历史执行记录的 Agent 只停用不删除。
    *   删掉的话，那些 Run 与产物的「谁做的」会指向一个不存在的 id ——
    *   审计链断在这里，而这正是最需要它的时候。
    */
-  if ((assigned?.n ?? 0) > 0 || (authoring?.n ?? 0) > 0) {
+  const reasons: string[] = [];
+  if ((runs?.n ?? 0) > 0 || (assigned?.n ?? 0) > 0) {
+    reasons.push('该 Agent 有历史执行记录');
+  }
+  if ((authoring?.n ?? 0) > 0) {
+    reasons.push(`有 ${authoring!.n} 条需求指定由它编写 PRD`);
+  }
+  if ((bound?.n ?? 0) > 0) {
+    reasons.push(`仍有 ${bound!.n} 处项目角色绑定指向它，请先到项目的「Agent 绑定」里改绑`);
+  }
+
+  if (reasons.length > 0) {
     await db
       .update(agents)
-      .set({ status: 'retired', pausedReason: '已停用（保留历史记录）', updatedAt: new Date() })
+      .set({
+        status: 'retired',
+        /**
+         * ★ 存下**具体**是被什么牵连，而不是一句「已停用（保留历史记录）」。
+         *   这一列在 Agent 列表与详情页上是唯一的解释；写成通用句子的话，
+         *   用户过几天回来看到一个停用的 Agent，无从知道当初拦住删除的是什么。
+         */
+        pausedReason: `已停用：${reasons.join('；')}`,
+        updatedAt: new Date(),
+      })
       .where(eq(agents.id, agentId));
     /**
-     * ★ 说清是**哪一种**牵连。两种的下一步不一样：有历史执行记录时用户
-     *   什么都不用做，而被需求指定为编写者时，他多半想去那条需求上换一个。
+     * ★ 把牵连**逐条**说清，而不是只报第一条。每一种的下一步不一样：
+     *   有历史执行记录时用户什么都不用做，被需求指定为编写者时他多半想去
+     *   那条需求上换一个，还有绑定时则必须去改绑 —— 只报一条的话，用户改完
+     *   再点一次删除，等来的是另一条他上一次没看到的理由。
      */
     return {
       ok: true as const,
       retired: true,
-      reason:
-        (assigned?.n ?? 0) > 0
-          ? '该 Agent 有历史执行记录，已停用而非删除'
-          : `有 ${authoring!.n} 条需求指定由它编写 PRD，已停用而非删除`,
+      reason: `${reasons.join('；')}，已停用而非删除`,
     };
   }
 
   await db.delete(agentPermissionChanges).where(eq(agentPermissionChanges.agentId, agentId));
-  await db.delete(agents).where(eq(agents.id, agentId));
+
+  try {
+    await db.delete(agents).where(eq(agents.id, agentId));
+  } catch (err) {
+    /**
+     * ★★ 兜底：将来有人新加一张指向 agents.id 的表，而忘了在上面清点。
+     *
+     *   没有这一层的话，那次遗漏的表现是「点删除 → 服务器内部错误」——
+     *   一句既不说明发生了什么、也不告诉用户下一步的话。这里把它落到
+     *   与其他牵连同一条路上：停用，并说明它还被引用着。
+     *
+     *   不回传约束名：那是表名列名，属于信息泄露（见 errors.ts）。要定位
+     *   到具体是哪张表，看服务端日志里这条异常。
+     *
+     *   Safety net for a foreign key added later and not counted above: fall
+     *   back to the same retire path instead of surfacing a bare 500.
+     */
+    if ((err as { code?: string }).code !== '23503') throw err;
+    console.warn(
+      `[agent-admin] 删除 Agent ${agentId} 撞上未清点的外键：${
+        (err as { constraint_name?: string }).constraint_name ?? '未知约束'
+      } —— 请把这张表加进 deleteAgent 的清点里`,
+    );
+    await db
+      .update(agents)
+      .set({ status: 'retired', pausedReason: '已停用（仍被引用）', updatedAt: new Date() })
+      .where(eq(agents.id, agentId));
+    return {
+      ok: true as const,
+      retired: true,
+      reason: '该 Agent 仍被其他记录引用，已停用而非删除',
+    };
+  }
+
   return { ok: true as const, retired: false, reason: null };
 }
 
@@ -523,7 +640,12 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     model: row.model,
     skills: row.skills,
     applicableTypes: row.applicableTypes,
-    permissions: permissionsOf(row),
+    /**
+     * ★ 组织级记录只回**上限**，不回「它能做什么」。
+     *   后者是项目级的问题，同一个 Agent 在两个项目里可以是两套答案 ——
+     *   在这一页给一个数字，等于给一个在任何具体项目里都不准的答案。
+     */
+    ceiling: ceilingOf(row),
     maxConcurrency: row.maxConcurrency,
     timeoutSeconds: row.timeoutSeconds,
     tokenLimitPerRun: row.tokenLimitPerRun,
@@ -631,65 +753,67 @@ async function assertOwner(db: Database, ownerId: string) {
   if (!u) throw notFound('负责人');
 }
 
+export interface AgentCeilingRecord {
+  capabilityCeiling: AgentCapability[] | null;
+  deniedCapabilities: AgentCapability[];
+}
+
 /**
- * 权限自检。
+ * 能力上限自检。
  *
- * ★ 「授予了写工具但没有任何 repo:write 范围」这类组合不报错会很难查：
- *   Agent 看得到 Edit，试着用，被适配器挡下来，然后报告「权限不足」——
- *   而配置页上明明勾着 Edit。在配置时就说清楚。
+ * ★ 同一条能力既在上限里又在硬拒绝里，是配置层面自相矛盾的两句话。
+ *   不报错的话，界面上那条能力看起来是给了的，而实际永远拿不到 ——
+ *   而排查会从项目授权一路查到运行时。
+ *
+ * ★ 空数组与 null 的区别在这里也要守住：空数组是「一条都不给」，
+ *   它会让这个 Agent 在所有项目里都干不了活，值得当场说一句。
  */
-function assertPermissionsSane(p: {
-  allowedTools: string[];
-  deniedTools: string[];
-  resourceScopes: ResourceScope[];
-}) {
-  const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
-  const base = (t: string) => (t.includes('(') ? t.slice(0, t.indexOf('(')) : t).trim();
-
-  const allowed = new Set(p.allowedTools.map(base));
-  const deniedBare = new Set(p.deniedTools.filter((t) => !t.includes('(')).map(base));
-
-  const wantsWrite = WRITE_TOOLS.some((t) => allowed.has(t) && !deniedBare.has(t));
-  const hasWriteScope = p.resourceScopes.some((s) => s.kind === 'repo' && s.access === 'write');
-
-  if (wantsWrite && !hasWriteScope) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      '授予了写文件的工具，但没有任何可写的代码仓库范围 —— 这样配置出来的 Agent 一动手就会被拒',
-      { hint: '要么去掉写类工具，要么给一个 access=write 的 repo 资源范围' },
-    );
-  }
-
-  const conflict = p.allowedTools.filter((t) => deniedBare.has(base(t)));
+function assertCeilingSane(c: AgentCeilingRecord) {
+  const denied = new Set(c.deniedCapabilities);
+  const conflict = (c.capabilityCeiling ?? []).filter((x) => denied.has(x));
   if (conflict.length > 0) {
     throw new ApiError(
       'VALIDATION_FAILED',
-      `以下工具同时出现在允许与禁止列表中：${conflict.join('、')}。黑名单优先级更高，它们实际不可用`,
+      `以下能力同时出现在上限与硬拒绝里：${conflict
+        .map((x) => CAPABILITY_SPECS[x].label)
+        .join('、')}。拒绝优先级更高，它们实际拿不到`,
       { conflict },
     );
   }
 
-  if (p.allowedTools.length === 0) {
-    throw new ApiError('VALIDATION_FAILED', '至少要授予一个工具，否则这个 Agent 什么都做不了');
+  if (c.capabilityCeiling !== null && c.capabilityCeiling.length === 0) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      '能力上限是空的 —— 这个 Agent 在任何项目里都干不了活。不想设上限请留空（不传），而不是给一个空清单',
+    );
   }
 }
 
-function permissionsOf(row: AgentRow): AgentPermissions {
+function ceilingOf(row: AgentRow): AgentCeilingRecord {
   return {
-    allowedTools: row.allowedTools,
-    deniedTools: row.deniedTools,
-    resourceScopes: row.resourceScopes,
+    capabilityCeiling: (row.capabilityCeiling as AgentCapability[] | null) ?? null,
+    deniedCapabilities: row.deniedCapabilities as AgentCapability[],
   };
 }
 
 /**
- * 权限改动的方向：只要有任何一项变宽就算 grant。
+ * 上限改动的方向：只要有任何一面变宽就算 grant。
  *
- * ★ 判据本身在 @apos/domain（agentPermissionChangeDirection）—— 与 Policy 的
- *   收紧/放宽判定同源。这个方向同时决定三件事：要不要填原因、
- *   审计里怎么记、以及需要哪一档权限（§2.3 的不对称设计）。
- *   三处用三份判据的话，总有一处会和另外两处说的不一样。
+ * ★★ 判据与项目级授权同源（domain 的 capabilityChangeImpact）——
+ *   这个方向同时决定三件事：要不要填原因、审计里怎么记、
+ *   以及需要哪一档权限（§2.3 的不对称设计）。三处用三份判据的话，
+ *   总有一处会和另外两处说的不一样。
+ *
+ * ★ `null`（不设上限）在比较时展开成**全部能力**：从「不设上限」改成
+ *   一份具体清单是收紧，反过来是放宽。当成空数组比的话，方向正好判反。
  */
-function directionOf(before: AgentPermissions, after: AgentPermissions): 'grant' | 'revoke' {
-  return agentPermissionChangeDirection(before, after) === 'loosen' ? 'grant' : 'revoke';
+function directionOf(before: AgentCeilingRecord, after: AgentCeilingRecord): 'grant' | 'revoke' {
+  const expand = (c: AgentCeilingRecord) => ({
+    capabilities: c.capabilityCeiling ?? [...AGENT_CAPABILITIES],
+    deniedCapabilities: c.deniedCapabilities,
+    resourceScopes: [],
+  });
+  return capabilityChangeImpact(expand(before), expand(after)).direction === 'loosen'
+    ? 'grant'
+    : 'revoke';
 }

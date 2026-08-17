@@ -211,6 +211,20 @@
       "when": 1786735459919,
       "tag": "0029_token_accounting_drop",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786937625909,
+      "tag": "0030_lively_juggernaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786937626909,
+      "tag": "0031_backfill_project_agent_permissions",
+      "breakpoints": true
     }
   ]
 }

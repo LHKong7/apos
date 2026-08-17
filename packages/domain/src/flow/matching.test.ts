@@ -24,6 +24,7 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
   currentLoad: 0,
   maxConcurrency: 3,
   tokenLimitPerRun: null,
+  capabilities: ['workspace.read', 'workspace.write'],
   allowedTools: ['Read', 'Edit'],
   deniedTools: [],
   contextAffinity: 0.5,
@@ -39,6 +40,7 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
 const target = (over: Partial<MatchTarget> = {}): MatchTarget => ({
   type: 'task',
   requiredSkills: [],
+  requiredCapabilities: [],
   requiredTools: [],
   estimatedTokens: null,
   riskLevel: 'low',

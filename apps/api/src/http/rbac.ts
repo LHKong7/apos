@@ -26,18 +26,25 @@ import { ApiError } from './errors';
  *
  * ★★ 判定规则本身在 `@apos/domain` 的权限目录里，这个文件只做三件事：
  *   1. 把「谁在调用」查出来（组织角色 + 在目标项目里的角色 + 资源归属）；
- *   2. 把「这条路由需要什么权限」登记成一张表；
- *   3. 保证**没有一条写路由能不登记就上线**。
+ *   2. 定义路由怎么声明它要什么权限（`config.auth`，见 {@link RouteAuth}）；
+ *   3. 保证**没有一条写路由能不声明就上线**。
  *
  * ★ 第 3 条是这个文件存在的主要理由。
  *
  *   §2.1.1 已经论证过：这类漏洞的成因永远是「漏了一处」。成员关系闸门
  *   靠 URL 形状统一拦截解决了「新路由默认关着」，但权限矩阵做不到 ——
- *   「批准计划要 tech_lead」不可能从 URL 形状推出来，必须一条条登记。
+ *   「批准计划要 tech_lead」不可能从 URL 形状推出来，必须一条条声明。
  *
- *   所以改成**启动即失败**：注册路由时如果发现某条写路由没登记，
- *   进程直接起不来。这比任何测试都可靠 —— 忘了登记的人当场就知道，
+ *   所以改成**启动即失败**：注册路由时如果发现某条写路由没声明，
+ *   进程直接起不来。这比任何测试都可靠 —— 忘了声明的人当场就知道，
  *   而不是等某天有人发现 viewer 能改自治等级。
+ *
+ * ★★ 声明**写在路由自己身上**，不再是这个文件里的一张集中表。
+ *
+ *   集中表挡得住「忘了加」（启动即失败），挡不住「加错了」：把隔壁那条
+ *   路由的权限抄过来，在一千行外的表里和在 handler 旁边，是两种可读性。
+ *   对照表还在，但它现在活在 rbac.test.ts 里当**断言**用 ——
+ *   钉住每一条的取值，而不是充当运行时的第二个真相。
  */
 
 /** 目录里认识的权限名。角色是数据，写进去的东西未必还认识 —— 见 roles.ts */
@@ -158,6 +165,53 @@ export async function resolveCurrentOrgLenient(
 export type PermissionResolver = (req: FastifyRequest) => Permission | Permission[] | null;
 
 /**
+ * 一条路由的鉴权声明，**写在路由自己身上**（`config.auth`）。
+ *
+ * ★★ 从一张集中表挪到路由旁边，换的是「加路由的人看得见它」。
+ *
+ *   集中表的问题不是难维护，是**距离**：新增一条写路由要去另一个文件加一行，
+ *   而那一行与它保护的东西之间隔着一千行代码。启动即失败挡住了「忘了加」，
+ *   但挡不住「加错了」—— 把 `work_item.execute` 抄到隔壁那条路由上，
+ *   两处都长得完全正常。声明贴着 handler 时，这种错在 review 里是看得见的。
+ *
+ * ★ 只有**权限**挪过来了，作用域（项目 / 资源）仍然由 URL 形状推断。
+ *
+ *   这不是偷懒：URL 形状是**忘不掉**的，而声明可以忘。成员关系闸门必须对
+ *   「新路由默认关着」成立，包括读路由 —— 而读路由没有启动检查兜底。
+ *   把作用域也改成声明式，等于把一条不依赖人记性的防线换成依赖人记性的。
+ *
+ * The auth declaration lives on the route itself. Moving it out of a central
+ * table buys proximity: the table could not be forgotten (startup fails), but
+ * it could be filled in wrong, and a permission copied onto the neighbouring
+ * route looks perfectly normal in both places. Scope stays URL-derived on
+ * purpose — URL shape cannot be forgotten, and the membership gate has to hold
+ * for read routes too, which no startup check covers.
+ */
+export interface RouteAuth {
+  /**
+   * 这条路由要什么权限。
+   *
+   * - 字符串 / 数组：静态
+   * - 函数：取决于请求内容（勾没勾 overrideGuards、是收紧还是放宽）
+   * - `deferred(...)`：由 handler 逐个资源判，必须写理由
+   */
+  permission?: Permission | Permission[] | PermissionResolver | { deferred: string };
+  /**
+   * 资源级角色补充（`agent_owner` 这类）。
+   *
+   * ★ 与 preHandler 用**同一个**主体：两边算出不同的角色，会出现
+   *   「闸门放行了、里层又拦下」这种没人看得懂的 403。
+   */
+  context?: ContextResolver;
+}
+
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    auth?: RouteAuth;
+  }
+}
+
+/**
  * 「这条路由的权限由 handler 自己判」。
  *
  * ★ 唯一合法的用法：一次请求跨多个项目，权限必须逐个资源判
@@ -206,6 +260,10 @@ const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
     pattern: /^\/api\/v1\/dev\/webhook-sink$/,
     why: '开发用回声端点，由 DEV_WEBHOOK_SINK 开关控制，无副作用',
   },
+  /**
+   * ★ 唯一一条「还没有组织」时也要能走通的写路由：四层判定的第①层
+   *   在这一刻没有输入。它开的是一个空的新组织，进不到别人的边界里。
+   */
   {
     method: 'POST',
     pattern: /^\/api\/v1\/organizations$/,
@@ -213,203 +271,6 @@ const EXEMPT: Array<{ method: string; pattern: RegExp; why: string }> = [
   },
 ];
 
-/**
- * 路由 → 权限。key 是 `METHOD 路径模板`，与 Fastify 注册时的字面量一致。
- *
- * ★ 只登记**写**路由与少数需要额外权限的读路由。
- *   其余 GET 由项目成员关系闸门兜底（②层）—— 成员能看项目数据是默认，
- *   逐条登记只会让这张表长到没人愿意维护。
- */
-type RouteEntry = Permission | PermissionResolver | { deferred: string };
-
-const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
-  // ── 组织 ──────────────────────────────────────────────────────────
-  /**
-   * ★ `POST /organizations` 不在这里，在豁免清单里 —— 它是唯一一条
-   *   「还没有组织」时也要能走通的写路由，四层判定的第①层在这一刻
-   *   没有输入。它的门槛是"有没有一个登录账号"，在 handler 里判。
-   */
-  'PATCH /api/v1/organizations/:id': 'organization.update',
-  'DELETE /api/v1/organizations/:id': 'organization.delete',
-  'POST /api/v1/organizations/:id/members': 'organization.members.manage',
-  'DELETE /api/v1/organizations/:id/members/:userId': 'organization.members.manage',
-
-  // ── 项目 ──────────────────────────────────────────────────────────
-  'POST /api/v1/projects': 'project.create',
-  'PATCH /api/v1/projects/:id/labor-cost': 'project.settings.update',
-  'PATCH /api/v1/projects/:id/autonomy': 'project.autonomy.change',
-  'POST /api/v1/projects/:id/schedule': 'project.schedule',
-  'GET /api/v1/projects/:id/members': 'project.view',
-  'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
-  'DELETE /api/v1/projects/:id/members/:memberId': 'project.members.manage',
-
-  // ── 需求 ──────────────────────────────────────────────────────────
-  'POST /api/v1/projects/:id/requirements': 'requirement.create',
-  'PATCH /api/v1/requirements/:id': 'requirement.edit',
-  'POST /api/v1/requirements/:id/analyze': 'requirement.edit',
-  /**
-   * ★ 与 analyze 同档（requirement.edit），不是 project.settings.update。
-   *   项目级绑定改的是此后所有需求的产出，要更高一档；这一条只改这一条
-   *   需求由谁写，而能点 analyze 的人本来就能决定这条需求要不要跑 AI，
-   *   也能把每个字段手改一遍。
-   */
-  'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',
-  'POST /api/v1/requirements/:id/approve': 'requirement.approve',
-  /** ★ 重新打开等于撤销一次确认，与确认同档 */
-  'POST /api/v1/requirements/:id/reopen': 'requirement.approve',
-  /** ★ 组合命令要两个权限都有 —— 它确实同时做了这两件事 */
-  'POST /api/v1/requirements/:id/approve-and-plan': () => [
-    'requirement.approve',
-    'plan.generate',
-  ],
-  'POST /api/v1/requirements/:id/assumptions': 'requirement.edit',
-  /**
-   * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须
-   *   登记进 RESOURCE_SCOPED_URL 与 projectOfResource（见下面那条正则与
-   *   routes.ts），否则成员关系闸门够不着它，这两条路由对任何登录用户敞开。
-   *   与 artifacts 是同一条纪律。
-   */
-  'POST /api/v1/assumptions/:id/confirm': 'requirement.edit',
-  'POST /api/v1/assumptions/:id/invalidate': 'requirement.edit',
-  'POST /api/v1/requirements/:id/reject': 'requirement.approve',
-  /**
-   * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
-   *   删除是对记录本身的处置（pm / tech_lead）—— 两者的责任人不是同一批。
-   */
-  'DELETE /api/v1/requirements/:id': 'requirement.delete',
-  'POST /api/v1/clarifications/:id/answer': 'clarification.answer',
-
-  // ── 计划 ──────────────────────────────────────────────────────────
-  'POST /api/v1/requirements/:id/plans': 'plan.generate',
-  'POST /api/v1/plans/:id/revise': 'plan.generate',
-  'POST /api/v1/plans/:id/approve': 'plan.approve',
-
-  // ── 任务 ──────────────────────────────────────────────────────────
-  /**
-   * ★ 勾了 overrideGuards 就是强制放行，要的是另一档权限（§2.3）。
-   *   「改状态」和「让不达标的任务过去」共用一个端点，
-   *   但绝不能共用一个权限。
-   */
-  'PATCH /api/v1/work-items/:id/status': (req) => {
-    const body = req.body as { overrideGuards?: unknown } | undefined;
-    return body?.overrideGuards
-      ? ['work_item.execute', 'work_item.force_pass']
-      : 'work_item.execute';
-  },
-  /**
-   * ★★ 建任务本身门槛很低（能执行任务的人就能建），但**放行去执行**
-   *   仍然要 `plan.approve` —— 那是在 handler 里判的（见 routes.ts
-   *   的 draft → ready 分支），因为它取决于任务**当前**的状态，
-   *   而路由表这一层看不到数据库。
-   */
-  'POST /api/v1/projects/:id/work-items': 'work_item.create',
-  'POST /api/v1/work-items/:id/assign': 'work_item.execute',
-  /**
-   * ★ 只设执行者要的权限比「开始执行」低一档。
-   *
-   *   把卡片挂到某人名下是排活，不是动预算；要求 work_item.execute
-   *   会让排活这件事只有能派发的人做得了，而排活恰恰是 PM 的日常。
-   *   真正花钱的那一步在 /start，那里仍然是 work_item.execute。
-   */
-  'PUT /api/v1/projects/:id/agents': 'project.settings.update',
-  'PATCH /api/v1/work-items/:id/assignee': 'work_item.assign',
-  'POST /api/v1/work-items/:id/start': 'work_item.execute',
-  'POST /api/v1/work-items/:id/retry': 'work_item.execute',
-  'POST /api/v1/work-items/:id/takeover': 'work_item.takeover',
-
-  // ── Run ───────────────────────────────────────────────────────────
-  'POST /api/v1/runs/:id/control': 'run.control',
-  /** 详细模式可能含敏感上下文，简明模式不需要额外权限（§2.3）*/
-  'GET /api/v1/runs/:id/events': (req) =>
-    (req.query as { level?: string } | undefined)?.level === 'detailed'
-      ? 'run.view_detailed'
-      : null,
-
-  // ── 决策 ──────────────────────────────────────────────────────────
-  'POST /api/v1/decisions/:id/approve': 'decision.act',
-  'POST /api/v1/decisions/:id/reject': 'decision.act',
-  'POST /api/v1/decisions/batch-approve': deferred(
-    '一次提交的十条决策可能属于十个项目，URL 上一个都看不出来 —— 逐条按各自所属项目判（见 routes.ts 的 batch-approve）',
-  ),
-  'POST /api/v1/decisions/:id/remind': 'decision.remind',
-
-  // ── Policy ────────────────────────────────────────────────────────
-  /**
-   * ★★ 收紧与放宽是两档权限（§2.3 的不对称设计）。
-   *
-   *   路由表在这里只能判出「至少要能收紧」；究竟是不是放宽
-   *   要把新旧规则各跑一遍场景才知道，那在 savePolicy 里做
-   *   （见 policies.ts 的 assertChangeAllowed）。这一层先挡掉
-   *   连收紧都不够格的人，省掉后面的一大堆计算。
-   */
-  'POST /api/v1/projects/:id/policies': 'policy.tighten',
-  'PATCH /api/v1/projects/:id/policies/:policyId': 'policy.tighten',
-  /** 停用一条规则就是把治理拿掉 —— 与放宽同档 */
-  'POST /api/v1/projects/:id/policies/:policyId/toggle': (req) =>
-    (req.body as { enabled?: unknown } | undefined)?.enabled === false
-      ? 'policy.loosen'
-      : 'policy.tighten',
-  'DELETE /api/v1/projects/:id/policies/:policyId': 'policy.loosen',
-  /** 模拟 / 预演 / 套模板都是只读推演，不改任何东西 */
-  'POST /api/v1/projects/:id/policies/simulate': 'policy.view',
-  'POST /api/v1/projects/:id/policies/evaluate': 'policy.view',
-  'POST /api/v1/projects/:id/policies/from-template': 'policy.view',
-  'POST /api/v1/projects/:id/policies/autonomy-preview': 'policy.view',
-
-  // ── Agent ─────────────────────────────────────────────────────────
-  'POST /api/v1/agents/:agentId/pause': 'agent.pause',
-  'POST /api/v1/admin/agents': 'agent.create',
-  /**
-   * ★ 改档案与改权限是两回事，后者还分扩大 / 收紧。
-   *   路由表只能判出「至少要能改档案」，权限维度的方向判定
-   *   在 updateAgent 里（见 agent-admin.ts 的 assertPermissionChange）。
-   */
-  'PATCH /api/v1/admin/agents/:id': 'agent.update',
-  'DELETE /api/v1/admin/agents/:id': 'agent.delete',
-  'POST /api/v1/admin/agents/:id/probe': 'agent.update',
-
-  // ── 组织配置 ──────────────────────────────────────────────────────
-  'POST /api/v1/admin/repositories': 'repository.manage',
-  'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
-  'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
-  'DELETE /api/v1/admin/repositories/:id': 'repository.manage',
-  /**
-   * ★ probe 也要 storage_target.manage，虽然它是只读的。
-   *   它会拿着登记里的凭证去连远端 —— 能触发一次带凭证的出网请求，
-   *   本身就是「管理存储目标」的一部分，不是一次普通的查询。
-   */
-  'POST /api/v1/admin/storage-targets': 'storage_target.manage',
-  'PATCH /api/v1/admin/storage-targets/:id': 'storage_target.manage',
-  'POST /api/v1/admin/storage-targets/:id/probe': 'storage_target.manage',
-  'DELETE /api/v1/admin/storage-targets/:id': 'storage_target.manage',
-  /**
-   * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
-   *   后者只在组织内部移动权限，前者错了是数据出了租户。
-   */
-  'POST /api/v1/admin/users': 'organization.members.manage',
-  'PATCH /api/v1/admin/users/:id/org-role': 'org.members.manage',
-  'POST /api/v1/admin/roles': 'org.roles.manage',
-  'PATCH /api/v1/admin/roles/:key': 'org.roles.manage',
-  'DELETE /api/v1/admin/roles/:key': 'org.roles.manage',
-  'POST /api/v1/projects/:id/conventions': 'convention.manage',
-  'PATCH /api/v1/conventions/:id': 'convention.manage',
-  'DELETE /api/v1/conventions/:id': 'convention.manage',
-
-  // ── 集成 ──────────────────────────────────────────────────────────
-  /**
-   * ★ 集成的写操作大多要看 body 才知道该判哪一档
-   *   （连接时带不带写 scope、改的是不是 SoT），
-   *   那些判定留在 handler 里（assertIntegration）。这里登记的是下限。
-   */
-  'POST /api/v1/projects/:id/integrations': 'integration.connect',
-  'PATCH /api/v1/integrations/:id/sync-mapping': 'integration.change_sot',
-  'POST /api/v1/integrations/:id/sync': 'integration.view',
-  'POST /api/v1/integrations/:id/ingest-ci': 'integration.view',
-  'POST /api/v1/integrations/:id/objects': 'integration.view',
-  'POST /api/v1/sync-conflicts/:id/resolve': 'integration.resolve_conflict',
-  'DELETE /api/v1/integrations/:id': 'integration.disconnect',
-  'PATCH /api/v1/integrations/:id/notifications': 'integration.configure_notification',
-};
 
 /**
  * 资源级角色的解析（§2.2 的 `agent_owner`）。
@@ -436,23 +297,14 @@ const ROLE_RANK: Record<string, number> = {
   tech_lead: 5,
 };
 
-const ROUTE_CONTEXT: Record<string, ContextResolver> = {
-  'POST /api/v1/agents/:agentId/pause': (req, ctx) =>
-    agentContext(ctx, (req.params as { agentId: string }).agentId),
-  'PATCH /api/v1/admin/agents/:id': (req, ctx) =>
-    agentContext(ctx, (req.params as { id: string }).id),
-  'DELETE /api/v1/admin/agents/:id': (req, ctx) =>
-    agentContext(ctx, (req.params as { id: string }).id),
-  'POST /api/v1/admin/agents/:id/probe': (req, ctx) =>
-    agentContext(ctx, (req.params as { id: string }).id),
-  /** Run 自带 projectId，成员关系闸门已经解析出项目角色，只差 owner */
-  'POST /api/v1/runs/:id/control': (req, ctx) =>
-    runOwnerContext(ctx, (req.params as { id: string }).id),
-  'GET /api/v1/runs/:id/events': (req, ctx) =>
-    runOwnerContext(ctx, (req.params as { id: string }).id),
-};
 
-async function agentContext(
+/**
+ * ★ 供路由声明使用：`config.auth.context` 里直接引用它。
+ *   Agent 是组织级资源，URL 里没有项目 id —— 光靠成员关系闸门解析不出
+ *   调用者的项目角色，于是「终止 Run 要 tech_lead / pm / agent_owner」
+ *   的前两个角色会落空，只剩 owner 与组织管理员能动。
+ */
+export async function agentContext(
   { db, userId }: { db: Database; userId: string },
   agentId: string,
 ): Promise<Partial<RbacActor>> {
@@ -467,7 +319,8 @@ async function agentContext(
   };
 }
 
-async function runOwnerContext(
+/** Run 自带 projectId，成员关系闸门已经解析出项目角色，只差 owner */
+export async function runOwnerContext(
   { db, userId }: { db: Database; userId: string },
   runId: string,
 ): Promise<Partial<RbacActor>> {
@@ -737,9 +590,9 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
     const path = req.url.split('?')[0] ?? '';
     if (isExempt(req.method, path)) return null;
 
-    const routePath = req.routeOptions?.url ?? path;
-    const required = permissionsForRoute(req.method, routePath, req);
-    const needsIdentity = required.length > 0 || isDeferred(req.method, routePath);
+    const auth = req.routeOptions?.config?.auth;
+    const required = permissionsOfAuth(auth, req);
+    const needsIdentity = required.length > 0 || isDeferredAuth(auth);
 
     let projectId: string | null = null;
     const inProject = PROJECT_SCOPED_URL.exec(path);
@@ -762,9 +615,8 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
 
     if (required.length === 0) return actor;
 
-    const context = ROUTE_CONTEXT[`${req.method} ${routePath}`];
-    const subject: RbacActor = context
-      ? { ...actor, ...(await context(req, { db, userId })) }
+    const subject: RbacActor = auth?.context
+      ? { ...actor, ...(await auth.context(req, { db, userId })) }
       : actor;
 
     for (const permission of required) assertPermission(subject, permission);
@@ -787,17 +639,18 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
 export type Rbac = ReturnType<typeof createRbac>;
 
 /**
- * 路由表里这条路由要什么权限。
- * 返回 `null` 表示这条路由不需要额外权限（成员关系闸门已经够了）。
+ * 这条路由此刻要哪几条权限。
+ *
+ * ★ 空数组表示「不需要额外权限」——成员关系闸门已经够了。
+ *   `deferred` 也返回空数组，但它与「不需要」不是一回事：见 {@link isDeferredAuth}。
  */
-export function permissionsForRoute(
-  method: string,
-  routePath: string,
+export function permissionsOfAuth(
+  auth: RouteAuth | undefined,
   req: FastifyRequest,
 ): Permission[] {
-  const rule = ROUTE_PERMISSIONS[`${method} ${routePath}`];
+  const rule = auth?.permission;
   if (rule === undefined) return [];
-  if (typeof rule === 'object') return []; // deferred：由 handler 逐个资源判
+  if (typeof rule === 'object' && !Array.isArray(rule)) return []; // deferred
   const resolved = typeof rule === 'function' ? rule(req) : rule;
   if (resolved === null) return [];
   return Array.isArray(resolved) ? resolved : [resolved];
@@ -809,9 +662,9 @@ export function permissionsForRoute(
  * ★ 闸门仍然要认出它们：不认的话，deferred 路由会变成
  *   「连身份都不要」的匿名端点 —— 那比不判权限严重得多。
  */
-export function isDeferred(method: string, routePath: string): boolean {
-  const rule = ROUTE_PERMISSIONS[`${method} ${routePath}`];
-  return typeof rule === 'object' && rule !== null && 'deferred' in rule;
+export function isDeferredAuth(auth: RouteAuth | undefined): boolean {
+  const rule = auth?.permission;
+  return typeof rule === 'object' && rule !== null && !Array.isArray(rule) && 'deferred' in rule;
 }
 
 export function isExempt(method: string, url: string): string | null {
@@ -830,29 +683,38 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 export function guardRouteCoverage(app: FastifyInstance) {
   const missing: string[] = [];
+  const declared: Array<{ method: string; url: string; auth: RouteAuth }> = [];
 
   app.addHook('onRoute', (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     for (const method of methods) {
+      if (route.config?.auth) declared.push({ method, url: route.url, auth: route.config.auth });
       if (!MUTATING.has(method)) continue;
       if (isExempt(method, route.url)) continue;
-      if (ROUTE_PERMISSIONS[`${method} ${route.url}`] === undefined) {
+      if (route.config?.auth?.permission === undefined) {
         missing.push(`${method} ${route.url}`);
       }
     }
   });
 
-  return function assertCovered() {
+  /**
+   * ★★ 声明清单从**注册时实际看到的**路由收集，不是另存一张表。
+   *
+   *   另存一张表就又回到了「两份真相」—— 而这次重构整件事就是为了消灭它。
+   *   测试拿它来钉住「哪条路由要哪条权限」：声明搬了家，那张对照表
+   *   仍然要有人看着，只是它现在是**断言**而不是运行时的第二个真相。
+   */
+  assertCovered.declarations = () =>
+    [...declared].sort((a, b) => `${a.method} ${a.url}`.localeCompare(`${b.method} ${b.url}`));
+
+  function assertCovered() {
     if (missing.length === 0) return;
     throw new Error(
-      `以下写路由没有在 apps/api/src/http/rbac.ts 的 ROUTE_PERMISSIONS 里登记权限，` +
-        `等于不设防：\n  ${missing.join('\n  ')}\n` +
-        `请登记所需权限；确实不需要鉴权的（如回调、探针）加进 EXEMPT 并写明理由。`,
+      `以下写路由没有声明 config.auth.permission，等于不设防：\n  ${missing.join('\n  ')}\n` +
+        `请在路由注册处补上 { config: { auth: { permission: … } } }；` +
+        `确实不需要鉴权的（如回调、探针）加进 apps/api/src/http/rbac.ts 的 EXEMPT 并写明理由。`,
     );
-  };
-}
+  }
 
-/** 供测试与文档使用：当前登记了哪些路由 */
-export function registeredRoutes(): string[] {
-  return Object.keys(ROUTE_PERMISSIONS).sort();
+  return assertCovered;
 }

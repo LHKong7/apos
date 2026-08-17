@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, agents, repositories } from '@apos/db';
+import { agentRuns, repositories } from '@apos/db';
 import type { ResourceScope } from '@apos/contracts';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
 import { createWorkItem, seedFixture, testDb, type Fixture } from '../../test/db';
@@ -76,11 +76,11 @@ describe('★ 项目级仓库的默认只读', () => {
   it('显式配的授权标成 explicit，与默认档在快照里分得开', async () => {
     await registerRepo();
     const registry = new RuntimeRegistry();
-    const agent = await seedAgent(db, fx, { registry });
-    await db
-      .update(agents)
-      .set({ resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }] })
-      .where(eq(agents.id, agent.agentId));
+    /** ★ 显式授权现在配在**项目**里，不再挂在组织级 Agent 上 */
+    const agent = await seedAgent(db, fx, {
+      registry,
+      grant: { resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }] },
+    });
 
     const scopes = await snapshotFor(agent.agentId, registry);
 

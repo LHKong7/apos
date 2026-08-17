@@ -1161,10 +1161,16 @@ export interface AgentAdminRow {
   model: string | null;
   skills: string[];
   applicableTypes: string[];
-  permissions: {
-    allowedTools: string[];
-    deniedTools: string[];
-    resourceScopes: { kind: string; ref: string; access: string }[];
+  /**
+   * ★★ 组织级记录只有**上限**，没有「它能做什么」。
+   *
+   *   后者是项目级的问题（同一个 Agent 在两个项目里可以是两套答案），
+   *   在这一页给一个数字等于给一个在任何具体项目里都不准的答案。
+   */
+  ceiling: {
+    /** null = 不设上限（沿用平台基线），不是「一条都不给」 */
+    capabilityCeiling: string[] | null;
+    deniedCapabilities: string[];
   };
   maxConcurrency: number;
   timeoutSeconds: number;
@@ -1462,4 +1468,88 @@ export interface ArtifactFileContent {
   /** 二进制或超大文件为 null，此时 reason 说明为什么 */
   preview: string | null;
   reason: string | null;
+}
+
+/**
+ * 项目级 Agent 生效权限。
+ *
+ * ★★ 界面拿到的是**已经算好、且已经翻译成人话**的结论，不是原始配置。
+ *
+ *   让前端自己按档案 + 上限 + 运行时算一遍，等于把求值器抄第二份 ——
+ *   而两份实现的分歧会表现为「界面显示它能推分支，实际派下去推不了」。
+ *   这里的每个字段都来自服务端那一次求值。
+ */
+export interface AgentAccessView {
+  agentId: string;
+  agentName: string;
+  runtimeKind: string;
+  profileKey: string;
+  profileVersion: number;
+  /** 没配过：界面要说「用的是默认档案」，而不是显示一份假配置 */
+  usingDefault: boolean;
+  /** 档案出了新版；只提示，不自动升级 */
+  profileOutdated: boolean;
+  capabilities: string[];
+  deniedCapabilities: string[];
+  resourceScopes: { kind: string; ref: string; access: string; origin?: string }[];
+  sources: { capability: string; source: string; denied: boolean }[];
+  /** 运行时兜不住的那部分，必须显示 */
+  warnings: string[];
+  explained: { capability: string; label: string; labelEn: string; risk: string }[];
+  profiles: {
+    key: string;
+    name: string;
+    nameEn: string;
+    description: string;
+    descriptionEn: string;
+  }[];
+}
+
+export interface AgentAccessPreview {
+  direction: 'loosen' | 'tighten' | 'neutral';
+  addedCapabilities: string[];
+  removedCapabilities: string[];
+  affectedResources: string[];
+  requiresReason: boolean;
+  warnings: string[];
+}
+
+export interface AgentAccessBody {
+  profileKey: string;
+  addCapabilities?: string[];
+  removeCapabilities?: string[];
+  resourceScopes?: { kind: string; ref: string; access: string }[];
+  reason?: string | null;
+}
+
+/**
+ * 角色改动的影响预览。
+ *
+ * ★★ 角色是**组织级**的：改一次可能同时改掉五个项目里十几个人的可做操作。
+ *   这件事在保存之后没有任何界面会告诉他，所以必须在保存之前说。
+ */
+export interface RolePreview {
+  direction: 'loosen' | 'tighten' | 'neutral';
+  added: { key: string; label: string }[];
+  removed: { key: string; label: string }[];
+  affectedHumans: number;
+  affectedAgents: number;
+  /** 给 Agent 也能担任的角色加 humanOnly 权限 —— 保存时会被拒，这里提前说 */
+  humanOnlyConflicts: { key: string; label: string }[];
+  builtin: boolean;
+  requiresReason: boolean;
+}
+
+/** 平台的语义能力目录。每一条都带上「授予它意味着什么」 */
+export interface CapabilityCatalog {
+  capabilities: {
+    key: string;
+    label: string;
+    labelEn: string;
+    consequence: string;
+    consequenceEn: string;
+    risk: string;
+    /** 平台底线：任何配置都授不出去 */
+    neverAutoGrant: boolean;
+  }[];
 }
