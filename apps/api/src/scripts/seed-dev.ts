@@ -15,6 +15,7 @@ import {
   createDatabase,
   organizationMembers,
   organizations,
+  projectAgentPermissions,
   projectMembers,
   projects,
   users,
@@ -30,6 +31,7 @@ import {
   runSync,
 } from '../http/integrations';
 import { humanActor } from '@apos/contracts';
+import { CODE_DEVELOPER, expandProfile } from '@apos/domain';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
 import { analyzeRequirement, approveRequirement } from '../modules/requirement/service';
 import { approvePlan, generatePlan } from '../modules/planning/service';
@@ -290,6 +292,36 @@ async function main() {
     { orgId, projectId, actorType: 'agent', actorId: codeAgent!.id, role: 'dev' },
     { orgId, projectId, actorType: 'agent', actorId: testAgent!.id, role: 'qa' },
   ]);
+
+  /**
+   * ★★ 项目级能力授权 —— 「同一个 Agent 在不同项目里可以是两套权限」
+   *   在种子数据里就该看得见。
+   *
+   *   code-agent-1 给 code_developer（能推分支、能开 PR，**不能合并**），
+   *   test-agent-1 给默认的 standard_executor（工作区里干活，出不去）。
+   *   这两档的差别正是这套模型要表达的东西：合并是 Agent 自主与
+   *   「人来点一下」之间唯一的那道闸。
+   *
+   * ★ 不给 test-agent-1 写授权行，是因为**「没配置」本身就是一种正确状态**：
+   *   它落到默认档案上，而默认档案安全且够用。种子数据里两种都出现一次，
+   *   界面上「用的是默认档案」那句提示才有东西可显示。
+   *
+   * Seed one explicit grant and one default so both states are visible: an
+   * agent configured as a developer (may push and open PRs, may not merge) and
+   * one left unconfigured, which lands on the safe default profile.
+   */
+  const developerGrant = expandProfile(CODE_DEVELOPER);
+  await db.insert(projectAgentPermissions).values({
+    orgId,
+    projectId,
+    agentId: codeAgent!.id,
+    profileKey: developerGrant.profileKey,
+    profileVersion: developerGrant.profileVersion,
+    allowedCapabilities: developerGrant.allowedCapabilities,
+    deniedCapabilities: developerGrant.deniedCapabilities,
+    resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }],
+    updatedBy: lead!.id,
+  });
 
   // ── 走真实链路：需求 → 计划 → 执行 ────────────────────────────────
   const provider = new StubPlanningProvider();

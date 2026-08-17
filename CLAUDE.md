@@ -70,8 +70,9 @@ Postgres 用 **5433** 不是 5432：5432 上常蹲着系统自带的实例，Doc
 
 ```
 packages/contracts/            前后端共享的类型与 Zod schema —— 唯一真相来源，零依赖
-packages/domain/               纯逻辑：状态机、Guard、Policy 求值、RBAC 目录、Analytics、恢复策略
-                               零 IO，能脱离数据库单测。改判定规则改这里，不是改 http/
+packages/domain/               纯逻辑：状态机、Guard、Policy 求值、RBAC 目录、Agent 能力目录与档案、
+                               Analytics、恢复策略。零 IO，能脱离数据库单测。
+                               改判定规则改这里，不是改 http/
 packages/db/                   Drizzle schema、迁移、连接串形态推断、RLS 审计
 packages/agent-runtimes/       Agent 运行时适配器（claude-code / codex / cli / mock）
 packages/workspace-providers/  工作区来源与交货（git / local / object-storage / empty）
@@ -100,7 +101,13 @@ apps/web/                      React 18 + Vite + TanStack Query + zustand + shad
 
 **Run 的状态活在库里不在内存**。进程重启后由 run-supervisor 按心跳超时接管孤儿 Run（`modules/agent/supervisor.ts`）。`dispatching` 这个中间态是必要的：没有它无法区分「还没派发」和「派发了但不知道结果」。
 
-**运行时与工作区都是接口**：新增 Agent 运行时实现 `AgentRuntimeAdapter`（`packages/agent-runtimes/src/adapter.ts`），新增工作区后端实现 `packages/workspace-providers/src/ports.ts` 里那几个口子（该包不 import `@apos/db`，宿主注入凭证解析与远端回查）。调用方不区分具体运行时。
+**运行时与工作区都是接口**：新增 Agent 运行时实现 `AgentRuntimeAdapter`（`packages/agent-runtimes/src/adapter.ts`），新增工作区后端实现 `packages/workspace-providers/src/ports.ts` 里那几个口子（该包不 import `@apos/db`，宿主注入凭证解析与远端回查）。调用方不区分具体运行时。**新增运行时还要实现 `CapabilityTranslator`**（`capability-translators.ts`）—— 认不出来的运行时回落到最粗那一档，而不是「不知道 = 都支持」。
+
+**Agent 权限说的是能力，不是工具名**。用户配的是 `workspace.write` / `repository.push` / `pull_request.merge` 这类语义能力（`AGENT_CAPABILITIES`），翻译成 `Read` / `Edit` / `Bash(npm test:*)` 是适配器的事。这三个词此前是一个 `repo:write`，而它们的风险差两个数量级 —— 「让 Agent 能改代码」顺手把「让 Agent 能合并代码」也授了出去。翻译不出来的部分必须作为降级警告显示，不能吞。
+
+**授权是项目级的，没配置 ≠ 没权限**。权限在 `project_agent_permissions(project_id, agent_id)`，同一个 Agent 在两个项目里可以是两套。没配过时落到默认档案 `standard_executor`（工作区里能干活，出不去），而不是空数组 —— 默认值不可用的系统里，真正的默认值是用户从别处抄来的那份配置。档案**展开后落库**：只存指针的话，平台改一次档案会让所有在跑的 Agent 一起变宽。
+
+**生效权限只有一个求值器**（`resolveEffectiveAgentAccess`）。调度器选候选、派发冻结快照、界面显示、保存前预览四处全走它。两份实现的代价不是重复代码，是两个对不上的答案 —— 「调度器说没有候选，手动派下去其实能跑」这种问题极难复现。改权限走 `executeGovernedMutation`：读状态 → 判方向 → 授权 → 校验原因 → 事务 → 审计，顺序不能换（先授权就不知道该要哪条权限，实现只能挑宽的那条，§2.3 的不对称设计当场作废）。
 
 **前端 SSE 补丁靠 query key 精确命中**。所有 key 走 `apps/web/src/lib/query/keys.ts` 的 `qk` 工厂，手写字符串数组迟早和读取处对不上，症状是「后端推了但界面不动」。切换身份或组织时整体作废缓存 —— 组织是多租户边界。React Hook 依赖漏项在 SSE 驱动的界面上是同一种症状，所以 `react-hooks/exhaustive-deps` 开着。
 
@@ -121,6 +128,8 @@ apps/web/                      React 18 + Vite + TanStack Query + zustand + shad
 | 变更内容 | 必须补的测试 |
 | --- | --- |
 | 状态机流转规则 | `machine.test.ts` 的穷举与可达性断言 |
+| Agent 能力目录 / 档案 | 展开的确定性、拒绝压过允许、项目授予不超上限、A 项目不渗进 B 项目 |
+| 新增运行时 | 翻译器要报出它兜不住的限制（降级警告），不能静默 |
 | Guard | 通过与失败两条路径，失败时 reason 要可读 |
 | Policy 条件/动作 | 求值测试；高风险操作补安全底线测试 |
 | 恢复策略 | 每个错误分类都要有明确决策 |

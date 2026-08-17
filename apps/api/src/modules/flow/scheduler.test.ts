@@ -53,7 +53,23 @@ describe('★ 阶段 1 闭环：调度 → 派发 → Agent 执行 → 自动流
     expect(run!.status).toBe('completed');
     expect(Number(run!.cost)).toBeGreaterThan(0);
     expect(run!.toolCallCount).toBe(3);
-    expect(run!.permissionSnapshot).toMatchObject({ deniedTools: ['merge_pr'] });
+    /**
+     * ★★ 派发时冻结的是**语义能力**，不只是工具名。
+     *
+     *   这个 Agent 在项目里没配过授权，于是走默认档案 —— 能在工作区里干活，
+     *   推不了、合不了。快照必须把这件事记下来：半年后翻审计的人问的是
+     *   「它当时被授权做什么」，而 `['read_file','write_file']` 回答不了，
+     *   因为同一串工具名在适配器改版前后不是一回事。
+     */
+    expect(run!.permissionSnapshot).toMatchObject({
+      version: 2,
+      profileKey: 'standard_executor',
+    });
+    const snapshot = run!.permissionSnapshot as { capabilities: string[]; deniedTools: string[] };
+    expect(snapshot.capabilities).toContain('workspace.write');
+    expect(snapshot.capabilities).not.toContain('pull_request.merge');
+    // 拒绝的能力落到运行时黑名单上 —— 合并在 mock 那边就叫 merge_pr
+    expect(snapshot.deniedTools).toContain('merge_pr');
 
     // 产物落库
     const arts = await db.select().from(artifacts).where(eq(artifacts.workItemId, item.id));

@@ -1463,3 +1463,73 @@ export interface ArtifactFileContent {
   preview: string | null;
   reason: string | null;
 }
+
+/**
+ * 项目级 Agent 生效权限。
+ *
+ * ★★ 界面拿到的是**已经算好、且已经翻译成人话**的结论，不是原始配置。
+ *
+ *   让前端自己按档案 + 上限 + 运行时算一遍，等于把求值器抄第二份 ——
+ *   而两份实现的分歧会表现为「界面显示它能推分支，实际派下去推不了」。
+ *   这里的每个字段都来自服务端那一次求值。
+ */
+export interface AgentAccessView {
+  agentId: string;
+  agentName: string;
+  runtimeKind: string;
+  profileKey: string;
+  profileVersion: number;
+  /** 没配过：界面要说「用的是默认档案」，而不是显示一份假配置 */
+  usingDefault: boolean;
+  /** 档案出了新版；只提示，不自动升级 */
+  profileOutdated: boolean;
+  capabilities: string[];
+  deniedCapabilities: string[];
+  resourceScopes: { kind: string; ref: string; access: string; origin?: string }[];
+  sources: { capability: string; source: string; denied: boolean }[];
+  /** 运行时兜不住的那部分，必须显示 */
+  warnings: string[];
+  explained: { capability: string; label: string; labelEn: string; risk: string }[];
+  profiles: {
+    key: string;
+    name: string;
+    nameEn: string;
+    description: string;
+    descriptionEn: string;
+  }[];
+}
+
+export interface AgentAccessPreview {
+  direction: 'loosen' | 'tighten' | 'neutral';
+  addedCapabilities: string[];
+  removedCapabilities: string[];
+  affectedResources: string[];
+  requiresReason: boolean;
+  warnings: string[];
+}
+
+export interface AgentAccessBody {
+  profileKey: string;
+  addCapabilities?: string[];
+  removeCapabilities?: string[];
+  resourceScopes?: { kind: string; ref: string; access: string }[];
+  reason?: string | null;
+}
+
+/**
+ * 角色改动的影响预览。
+ *
+ * ★★ 角色是**组织级**的：改一次可能同时改掉五个项目里十几个人的可做操作。
+ *   这件事在保存之后没有任何界面会告诉他，所以必须在保存之前说。
+ */
+export interface RolePreview {
+  direction: 'loosen' | 'tighten' | 'neutral';
+  added: { key: string; label: string }[];
+  removed: { key: string; label: string }[];
+  affectedHumans: number;
+  affectedAgents: number;
+  /** 给 Agent 也能担任的角色加 humanOnly 权限 —— 保存时会被拒，这里提前说 */
+  humanOnlyConflicts: { key: string; label: string }[];
+  builtin: boolean;
+  requiresReason: boolean;
+}

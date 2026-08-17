@@ -58,7 +58,23 @@ export function PoliciesPage() {
   const perms = usePermissions(projectId);
 
   const tab = (TABS.find((t) => t.key === params.get('tab'))?.key ?? 'rules') as 'rules' | 'test';
-  const [expandSummary, setExpandSummary] = useState(false);
+  /**
+   * ★★ 默认**展开**结果摘要。
+   *
+   *   这一页的第一屏该回答「Agent 现在能自己干什么、什么会停下来等我」，
+   *   而不是「规则怎么写」。收起来的时候，用户看到的第一屏是一张条件表达式
+   *   列表 —— 而那个答案在表达式里是**推**出来的：要同时考虑规则优先级、
+   *   自治等级和默认动作。让每个人自己在脑子里跑一遍求值器，出错是必然的，
+   *   而出错的方向是「以为拦着，其实没拦」。
+   *
+   *   摘要本身早就算好了（domain 的 auditPolicies），只是默认藏着。
+   *
+   *   The outcome summary is expanded by default: the first screen should answer
+   *   "what can an Agent do on its own", not "how is the rule written". Deriving
+   *   the former from a list of expressions requires mentally running the
+   *   evaluator, and that derivation errs towards "I thought that was gated".
+   */
+  const [expandSummary, setExpandSummary] = useState(true);
   const [editing, setEditing] = useState<PolicyRow | null>(null);
   const [template, setTemplate] = useState<PolicyTemplateRow | null>(null);
   const [creating, setCreating] = useState(false);

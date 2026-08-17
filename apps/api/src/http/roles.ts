@@ -238,6 +238,97 @@ export async function updateRole(
   return { role: serialize(row!) };
 }
 
+/**
+ * 「复制并改」—— 以某个角色为模板造一个新角色。
+ *
+ * ★★ 这是内置角色不可改（updateRole 里那条）的**另一半**。
+ *
+ *   只说「内置角色改不了」，用户的下一步是从零勾一遍权限 —— 而从零勾出来的
+ *   角色几乎一定和他想要的那个「tech_lead 再加一条」不一样，差在哪儿他自己
+ *   也说不清。给一条复制路径，「和 tech_lead 一样但不能批准计划」
+ *   就成了一次减法，而不是一次重新发明。
+ *
+ * ★★ 复制的是**权限快照**，不是继承关系。
+ *
+ *   `basedOn` 只是显示用的出处标签。做成动态继承的话，平台哪天调整内置角色，
+ *   所有派生角色会跟着变 —— 而那正是「权限累积」（§7）的发生方式，
+ *   与能力档案存展开结果是同一条理由。
+ *
+ * Copy-and-customise: the other half of "built-in roles are not editable".
+ * Without it the user's next step is prospecting a permission list from
+ * scratch. The copy is a snapshot, never dynamic inheritance — inheritance
+ * would let a platform-side edit widen every derived role at once.
+ */
+export async function cloneRole(db: Database, ctx: RoleWriteContext, key: string, input: unknown) {
+  const source = await load(db, ctx.orgId, key);
+
+  const def = RoleDefinition.parse({
+    // ★ 权限与适用身份默认整份带过来；调用方给了就用它给的
+    permissions: source.permissions,
+    appliesTo: source.appliesTo,
+    description: source.description,
+    ...(input as Record<string, unknown>),
+  });
+
+  const created = await createRole(db, ctx, def);
+  return { ...created, basedOn: { key: source.key, name: source.name } };
+}
+
+/**
+ * 保存前的影响预览。
+ *
+ * ★★ 与 Agent 权限那边同一条纪律：**预览与保存共用一份判定**。
+ *   这里算的是「加了什么、减了什么、会影响几个人几个 Agent、
+ *   是收紧还是放宽」，而 updateRole 拿同一批数字去要权限。
+ *
+ * ★ 「影响几个人」要在保存**之前**说。角色是组织级的，改一次可能同时改掉
+ *   五个项目里十几个人的可做操作 —— 而那件事在保存之后没有任何界面会告诉他。
+ */
+export async function previewRole(db: Database, orgId: string, key: string, input: unknown) {
+  const before = await load(db, orgId, key);
+  const def = RoleDefinition.parse({ ...(input as Record<string, unknown>), key });
+  /**
+   * ★ 先校验再比对。跳过校验的话，一个敲错的权限名会一路走到
+   *   PERMISSION_SPECS 的索引上，预览面板显示 undefined ——
+   *   而用户会以为「这条权限存在，只是没有说明」。
+   */
+  assertValid(def);
+  const next = def.permissions as Permission[];
+
+  const beforeSet = new Set(before.permissions as Permission[]);
+  const afterSet = new Set(next);
+
+  const added = next.filter((p) => !beforeSet.has(p));
+  const removed = (before.permissions as Permission[]).filter((p) => !afterSet.has(p));
+
+  const usage = (await roleUsage(db, orgId)).get(key) ?? { human: 0, agent: 0 };
+
+  /**
+   * ★ 把 humanOnly 的不兼容单独摘出来。
+   *   给一个 Agent 也能担任的角色加一条 humanOnly 权限，保存时会被
+   *   validateRoleDefinition 拒掉 —— 但那条报错出现在点保存之后，
+   *   而用户此刻正盯着勾选框。
+   */
+  const humanOnlyConflicts = added.filter(
+    (p) => PERMISSION_SPECS[p].humanOnly && def.appliesTo.includes('agent'),
+  );
+
+  return {
+    direction: added.length > 0 ? 'loosen' : removed.length > 0 ? 'tighten' : 'neutral',
+    added: added.map((p) => ({ key: p, label: PERMISSION_SPECS[p].label })),
+    removed: removed.map((p) => ({ key: p, label: PERMISSION_SPECS[p].label })),
+    affectedHumans: usage.human,
+    affectedAgents: usage.agent,
+    humanOnlyConflicts: humanOnlyConflicts.map((p) => ({
+      key: p,
+      label: PERMISSION_SPECS[p].label,
+    })),
+    /** 内置角色只能被复制，不能被改 —— 预览要提前说，而不是等保存时报 403 */
+    builtin: before.builtin,
+    requiresReason: false,
+  };
+}
+
 export async function deleteRole(db: Database, ctx: RoleWriteContext, key: string) {
   const before = await load(db, ctx.orgId, key);
 

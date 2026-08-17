@@ -89,7 +89,7 @@ import {
 } from '../modules/auth';
 import { ApiError, asClientInputError, notFound, sendError } from './errors';
 import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
-import { createRole, deleteRole, listRoles, updateRole } from './roles';
+import { cloneRole, createRole, deleteRole, listRoles, previewRole, updateRole } from './roles';
 import {
   createRbac,
   guardRouteCoverage,
@@ -157,6 +157,13 @@ import {
   setRequirementAuthorAgent,
 } from '../modules/requirement/service';
 import { BindingInput, listProjectAgents, setProjectAgent } from './project-agents';
+import {
+  AgentAccessInput,
+  getAgentAccess,
+  previewAgentAccess,
+  setAgentAccess,
+} from '../modules/agent/access';
+import { executeGovernedMutation } from './governed-mutation';
 import { listArtifactFiles, openArtifactFile, readArtifactFile } from './artifact-files';
 import { batchApprove, getDecisionInbox, type DecisionScope } from './decision-center';
 import { comparePlans, getPlanDetail, listRequirements } from './intake';
@@ -972,6 +979,33 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId, userId } = await callerOrg(req);
     const { key } = req.params as { key: string };
     return deleteRole(db, { orgId, actorId: userId, correlationId: corr(req) }, key);
+  });
+
+  /**
+   * ★★ 「复制并改」是内置角色不可改的另一半。只说「改不了」的话，
+   *   用户的下一步是从零勾一遍权限，而勾出来的东西和他想要的
+   *   「跟 tech_lead 一样但少一条」几乎一定不同。
+   */
+  app.post('/api/v1/admin/roles/:key/clone', async (req, reply) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    const result = await cloneRole(
+      db,
+      { orgId, actorId: userId, correlationId: corr(req) },
+      key,
+      req.body,
+    );
+    return reply.status(201).send(result);
+  });
+
+  /**
+   * ★ 保存前的影响预览。角色是**组织级**的：改一次可能同时改掉五个项目里
+   *   十几个人的可做操作，而那件事在保存之后没有任何界面会告诉他。
+   */
+  app.post('/api/v1/admin/roles/:key/preview', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { key } = req.params as { key: string };
+    return previewRole(db, orgId, key, req.body);
   });
 
   // ── 需求 ────────────────────────────────────────────────────────────
@@ -2141,6 +2175,94 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       payload: { role: result.role, agentId: result.agentId },
       correlationId: corr(req),
     });
+
+    return result;
+  });
+
+  /**
+   * ── 项目级 Agent 权限 ──────────────────────────────────────────────
+   *
+   * ★★ 「这个 Agent 在**这个项目**里能做什么」。与上面那组绑定路由的分工是：
+   *   绑定回答「谁干这个角色」，这里回答「它被授权做什么」。
+   *
+   * ★ 三条路由共用一个求值器（见 project-agent-access.ts）。预览与保存
+   *   给出不同结论是这类界面最难发现的一种失败，而唯一可靠的防法
+   *   是让它们没有第二份实现可用。
+   */
+  app.get('/api/v1/projects/:id/agents/:agentId/access', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id, agentId } = req.params as { id: string; agentId: string };
+    return getAgentAccess(db, { orgId, projectId: id }, agentId);
+  });
+
+  app.post('/api/v1/projects/:id/agents/:agentId/access/preview', async (req) => {
+    const { orgId } = await callerOrg(req);
+    const { id, agentId } = req.params as { id: string; agentId: string };
+    const body = AgentAccessInput.parse(req.body);
+    const { next: _expanded, ...preview } = await previewAgentAccess(
+      db,
+      { orgId, projectId: id },
+      agentId,
+      body,
+    );
+    return preview;
+  });
+
+  app.put('/api/v1/projects/:id/agents/:agentId/access', async (req) => {
+    const { orgId, userId } = await callerOrg(req);
+    const { id, agentId } = req.params as { id: string; agentId: string };
+    const body = AgentAccessInput.parse(req.body);
+
+    /**
+     * ★ 判定主体与 preHandler 用同一个（subjectForAgent）——
+     *   两边算出不同的角色会出现「闸门放行了、里层又拦下」这种
+     *   没人看得懂的 403。
+     */
+    const subject = await rbac.subjectForAgent(req, userId, agentId);
+
+    const result = await setAgentAccess(
+      db,
+      { orgId, projectId: id, userId },
+      agentId,
+      body,
+      ({ direction, reason, mutate }) =>
+        executeGovernedMutation({
+          assertPermission: (permission) =>
+            rbac.assertPermission(subject, permission, { agentId, projectId: id }),
+          direction,
+          permissionForDirection: {
+            loosen: 'agent.permissions.expand',
+            tighten: 'agent.permissions.restrict',
+            /**
+             * ★ 「什么都没变」也是一次写操作，按收紧那一档要权限。
+             *   放行掉的话，一次 neutral 请求会成为无需任何权限的写入口。
+             */
+            neutral: 'agent.permissions.restrict',
+          },
+          reason,
+          mutate,
+          audit: async (saved) => {
+            await emitAndPublish(db, {
+              orgId,
+              projectId: id,
+              type: 'agent.permissions_changed',
+              actor: humanActor(userId),
+              subjectType: 'agent',
+              subjectId: agentId,
+              payload: {
+                projectId: id,
+                direction: saved.direction,
+                profileKey: saved.profileKey,
+                profileVersion: saved.profileVersion,
+                addedCapabilities: saved.addedCapabilities,
+                removedCapabilities: saved.removedCapabilities,
+                reason,
+              },
+              correlationId: corr(req),
+            });
+          },
+        }),
+    );
 
     return result;
   });

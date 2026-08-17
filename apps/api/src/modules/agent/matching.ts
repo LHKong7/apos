@@ -2,13 +2,13 @@ import { and, count, eq, gte, inArray, ne, sql, sum } from 'drizzle-orm';
 import { agentRuns, agents, projectMembers, repositories, workItems, type Database } from '@apos/db';
 import { ACTIVE_RUN_STATUSES, ExecutionMode, type WorkItemType } from '@apos/contracts';
 import {
-  effectiveResourceScopes,
   matchExecutors,
   type AgentCandidate,
   type MatchResult,
   type MatchTarget,
 } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
+import { loadProjectGrants, resolveAgentAccess } from './access';
 
 type WorkItemRow = typeof workItems.$inferSelect;
 
@@ -100,9 +100,43 @@ export async function resolveExecutor(
     .groupBy(agentRuns.agentId);
   const spentMap = new Map(spent.map((s) => [s.agentId, Number(s.total ?? 0)]));
 
+  /**
+   * ★★ 候选的权限一律走求值器，与派发用**同一个**函数。
+   *
+   *   此前这里直接读 agents 表上的 allowedTools / resourceScopes，而派发
+   *   另算一遍。两条路径的分歧只在某些输入上出现，症状是「调度器说没有
+   *   候选，手动派下去其实能跑」—— 极难复现，因为要先猜到是哪条判定不同。
+   *
+   *   授权也从组织级变成了项目级：同一个 Agent 在 A 项目能推分支、在 B
+   *   项目只能改工作区，只有在这里按项目求值才看得出来。
+   */
+  const grants = await loadProjectGrants(
+    db,
+    item.projectId,
+    rows.map((a) => a.id),
+  );
+
+  const accessOf = new Map(
+    await Promise.all(
+      rows.map(
+        async (a) =>
+          [
+            a.id,
+            await resolveAgentAccess(db, a, {
+              orgId: item.orgId,
+              projectId: item.projectId,
+              repoRefs: projectRepoRefs,
+              grantOverride: grants.get(a.id) ?? null,
+            }),
+          ] as const,
+      ),
+    ),
+  );
+
   const meta = item.typeData;
   const candidates: AgentCandidate[] = rows.map((a) => {
     const stats = (a.stats ?? {}) as Record<string, unknown>;
+    const access = accessOf.get(a.id)!;
     return {
       id: a.id,
       name: a.name,
@@ -115,8 +149,9 @@ export async function resolveExecutor(
       currentLoad: loadMap.get(a.id) ?? 0,
       maxConcurrency: a.maxConcurrency,
       tokenLimitPerRun: a.tokenLimitPerRun ?? null,
-      allowedTools: a.allowedTools,
-      deniedTools: a.deniedTools,
+      capabilities: access.capabilities,
+      allowedTools: access.runtimePermissions.allowedTools,
+      deniedTools: access.runtimePermissions.deniedTools,
       contextAffinity: 0.5,
       status: a.status,
       inProject: members.has(a.id),
@@ -126,7 +161,7 @@ export async function resolveExecutor(
        *   会让「有没有替补」这个问题永远答否。
        */
       registered: opts.registry ? opts.registry.has(a.id) : true,
-      resourceRefs: effectiveResourceScopes({ explicit: a.resourceScopes, projectRepoRefs })
+      resourceRefs: access.runtimePermissions.resourceScopes
         .filter((s) => s.access !== 'none')
         .map((s) => s.ref),
       tokensToday: spentMap.get(a.id) ?? 0,
@@ -137,6 +172,9 @@ export async function resolveExecutor(
   const target: MatchTarget = {
     type: item.type,
     requiredSkills: Array.isArray(meta['requiredSkills']) ? (meta['requiredSkills'] as string[]) : [],
+    requiredCapabilities: Array.isArray(meta['requiredCapabilities'])
+      ? (meta['requiredCapabilities'] as string[])
+      : [],
     requiredTools: Array.isArray(meta['requiredTools']) ? (meta['requiredTools'] as string[]) : [],
     estimatedTokens: item.estimatedTokens ?? null,
     riskLevel: item.riskLevel,

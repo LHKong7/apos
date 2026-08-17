@@ -12,6 +12,8 @@ import type { AvailablePermission, Permission, RoleRow } from '../../lib/api/typ
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { qk } from '../../lib/query/keys';
+import { useOrgStore } from '../../stores/org';
 
 /**
  * 角色定义（docs/tech/09-security.md §2.2）。
@@ -56,6 +58,15 @@ interface Draft {
   permissions: Set<Permission>;
   agents: boolean;
   builtin: boolean;
+  /**
+   * 复制自哪个角色。
+   *
+   * ★★ **只是出处标签，不是继承关系。**
+   *   做成动态继承的话，平台哪天调整内置角色，所有派生角色会跟着变 ——
+   *   而那正是「权限累积」的发生方式。复制的是当时那份权限快照，
+   *   之后两者再无关系。
+   */
+  basedOn?: { key: string; name: string } | null;
 }
 
 const emptyDraft = (): Draft => ({
@@ -82,11 +93,13 @@ export function RolesPage() {
    *   他不会理解「为什么不行」，只会觉得这个功能坏了。
    */
   const canManage = perms.can('org.roles.manage');
+  /** ★ 角色是组织级的 —— 缓存键必须带组织，否则切组织后先看到上一个组织的角色 */
+  const orgId = useOrgStore((s) => s.orgId);
 
-  const roles = useQuery({ queryKey: ['roles'], queryFn: () => api.roles() });
+  const roles = useQuery({ queryKey: qk.roles(orgId), queryFn: () => api.roles() });
 
   const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ['roles'] });
+    void qc.invalidateQueries({ queryKey: qk.roles(orgId) });
     // 角色权限变了，所有人的权限清单跟着变
     void qc.invalidateQueries({ queryKey: ['permissions'] });
     void qc.invalidateQueries({ queryKey: ['members'] });
@@ -100,9 +113,20 @@ export function RolesPage() {
         permissions: [...d.permissions],
         appliesTo: (d.agents ? ['human', 'agent'] : ['human']) as ('human' | 'agent')[],
       };
-      return editingKey
-        ? api.updateRole(editingKey, body)
-        : api.createRole({ ...body, key: d.key });
+      if (editingKey) return api.updateRole(editingKey, body);
+      /**
+       * ★ 从模板复制走 clone 端点：它把「以谁为模板」写进审计。
+       *   走 createRole 的话，一个和 tech_lead 一模一样的新角色出现在
+       *   审计里，而没有任何记录说明它是从哪儿来的。
+       */
+      if (d.basedOn) {
+        return api.cloneRole(d.basedOn.key, {
+          key: d.key,
+          name: d.name,
+          description: d.description,
+        });
+      }
+      return api.createRole({ ...body, key: d.key });
     },
     onSuccess: () => {
       setEditing(null);
@@ -121,6 +145,29 @@ export function RolesPage() {
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : t('roles.deleteFailed')),
   });
+
+  /**
+   * 「复制并改」。
+   *
+   * ★★ 它是内置角色不可改的另一半。只说「改不了」的话，用户的下一步是
+   *   从零勾一遍权限 —— 而勾出来的角色和他想要的「跟 tech_lead 一样但
+   *   少一条」几乎一定不同，差在哪儿他自己也说不清。
+   *
+   * ★ 前端只是把源角色的权限**预填**进草稿；真正的复制在服务端
+   *   （cloneRole），因为「以谁为模板」这件事要进审计。
+   */
+  const openClone = (r: RoleRow) => {
+    setEditingKey(null);
+    setEditing({
+      key: '',
+      name: t('roles.copyOf', { name: r.name }),
+      description: r.description,
+      permissions: new Set(r.permissions),
+      agents: r.appliesTo.includes('agent'),
+      builtin: false,
+      basedOn: { key: r.key, name: r.name },
+    });
+  };
 
   const openEdit = (r: RoleRow) => {
     setEditingKey(r.key);
@@ -195,6 +242,7 @@ export function RolesPage() {
               roles={data.roles.filter((r) => r.builtin)}
               canManage={canManage}
               onEdit={openEdit}
+              onClone={openClone}
               onDelete={(k) => remove.mutate(k)}
             />
 
@@ -204,6 +252,7 @@ export function RolesPage() {
               roles={data.roles.filter((r) => !r.builtin)}
               canManage={canManage}
               onEdit={openEdit}
+              onClone={openClone}
               onDelete={(k) => remove.mutate(k)}
               empty={t('roles.customEmpty')}
             />
@@ -218,6 +267,7 @@ export function RolesPage() {
           <RoleEditor
             draft={editing}
             isNew={editingKey === null}
+            roles={data.roles}
             available={data.availablePermissions}
             readOnly={!canManage}
             pending={save.isPending}
@@ -238,6 +288,7 @@ function RoleSection({
   empty,
   canManage,
   onEdit,
+  onClone,
   onDelete,
 }: {
   title: string;
@@ -246,6 +297,7 @@ function RoleSection({
   empty?: string;
   canManage: boolean;
   onEdit: (r: RoleRow) => void;
+  onClone: (r: RoleRow) => void;
   onDelete: (key: string) => void;
 }) {
   const t = useT();
@@ -295,6 +347,17 @@ function RoleSection({
                   onClick={() => onEdit(r)}>
                   {r.builtin || !canManage ? t('roles.view') : t('common.edit')}
                 </Button>
+                {/*
+                  ★ 「复制并改」对内置角色尤其重要：它们的权限改不了，
+                    而这个按钮把「那我该怎么办」的答案放在了同一行上。
+                */}
+                <GatedButton
+                  permission="org.roles.manage"
+                  onClick={() => onClone(r)}
+                  className="rounded border border-slate-300 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50"
+                >
+                  {t('roles.clone')}
+                </GatedButton>
                 {!r.builtin && (
                   <GatedButton
                     permission="org.roles.manage"
@@ -316,6 +379,7 @@ function RoleSection({
 function RoleEditor({
   draft,
   isNew,
+  roles,
   available,
   readOnly,
   pending,
@@ -325,6 +389,8 @@ function RoleEditor({
 }: {
   draft: Draft;
   isNew: boolean;
+  /** 用来算差异：复制自哪个模板，或者改之前是什么样 */
+  roles: RoleRow[];
   available: AvailablePermission[];
   /** 内置角色、或调用者没有 org.roles.manage —— 表单变成一份可读的说明书 */
   readOnly: boolean;
@@ -444,6 +510,19 @@ function RoleEditor({
         )}
       </div>
 
+      {/*
+        ── 差异与影响 ──
+
+        ★★ 默认编辑器显示的是**差异**，不是一张 48 条权限的勾选表。
+          「跟项目成员比多了两条、少了一条」是用户脑子里的形状；
+          一张全量表让他自己去对比两遍，而对比错了没有任何提示。
+
+        ★★ 「影响几个人」必须在保存**之前**说。角色是组织级的，
+          改一次可能同时改掉五个项目里十几个人的可做操作 ——
+          而那件事在保存之后没有任何界面会告诉他。
+      */}
+      <RoleDiff draft={draft} roles={roles} available={available} />
+
       {/* ── 权限 ── */}
       <div className="mt-3">
         <p className="text-xs font-medium text-slate-700">
@@ -496,6 +575,114 @@ function RoleEditor({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 与模板（或改动前）的差异，外加保存前的影响。
+ *
+ * ★ 差异在前端算，影响向服务端要。
+ *
+ *   差异是纯集合运算，两边算不出分歧；而「影响几个人几个 Agent」要查
+ *   成员表，前端猜不出来 —— 更重要的是，`humanOnly` 那条不兼容必须由
+ *   服务端说，它是保存时真正会拒的那条判定。
+ */
+function RoleDiff({
+  draft,
+  roles,
+  available,
+}: {
+  draft: Draft;
+  roles: RoleRow[];
+  available: AvailablePermission[];
+}) {
+  const t = useT();
+
+  /** 比的对象：复制来的比模板，改已有的比它自己改之前 */
+  const baseline = draft.basedOn
+    ? roles.find((r) => r.key === draft.basedOn!.key)
+    : roles.find((r) => r.key === draft.key);
+
+  const label = (key: string) => available.find((a) => a.key === key)?.label ?? key;
+
+  const preview = useQuery({
+    queryKey: ['rolePreview', draft.key, [...draft.permissions].sort().join(','), draft.agents],
+    /** ★ 只有改已有角色时才问服务端 —— 新建的角色还没有人担任，影响恒为 0 */
+    enabled: Boolean(baseline) && !draft.basedOn,
+    queryFn: () =>
+      api.previewRole(draft.key, {
+        name: draft.name,
+        description: draft.description,
+        permissions: [...draft.permissions],
+        appliesTo: draft.agents ? ['human', 'agent'] : ['human'],
+      }),
+  });
+
+  if (!baseline) return null;
+
+  const before = new Set(baseline.permissions);
+  const added = [...draft.permissions].filter((p) => !before.has(p));
+  const removed = baseline.permissions.filter((p) => !draft.permissions.has(p));
+  const impact = preview.data;
+
+  return (
+    <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-xs font-medium text-slate-700">
+        {t('roles.diffTitle', { name: baseline.name })}
+      </p>
+
+      {draft.basedOn && (
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          {t('roles.basedOn', { name: draft.basedOn.name })}
+        </p>
+      )}
+
+      {added.length === 0 && removed.length === 0 ? (
+        <p className="mt-1 text-[11px] text-slate-500">{t('roles.diffSame')}</p>
+      ) : (
+        <div className="mt-1 space-y-0.5 text-[11px]">
+          {added.length > 0 && (
+            <p className="text-emerald-800">
+              {t('roles.diffAdded')}：{added.map(label).join('、')}
+            </p>
+          )}
+          {removed.length > 0 && (
+            <p className="text-rose-800">
+              {t('roles.diffRemoved')}：{removed.map(label).join('、')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {impact && (
+        <div className="mt-1.5 border-t border-slate-200 pt-1.5 text-[11px]">
+          <p className="text-slate-700">
+            {impact.direction === 'loosen'
+              ? t('roles.impact.loosen', { count: impact.added.length })
+              : impact.direction === 'tighten'
+                ? t('roles.impact.tighten', { count: impact.removed.length })
+                : t('roles.impact.neutral')}
+          </p>
+          <p className="text-slate-500">
+            {t('roles.impact.affects', {
+              humans: impact.affectedHumans,
+              agents: impact.affectedAgents,
+            })}
+          </p>
+          {/*
+            ★ 保存时真正会拒的那条判定，提前说出来。
+              等点了保存再报，用户此刻正盯着勾选框，那条报错指不回来。
+          */}
+          {impact.humanOnlyConflicts.length > 0 && (
+            <p className="mt-0.5 text-amber-800">
+              {t('roles.impact.humanOnly', {
+                permissions: impact.humanOnlyConflicts.map((c) => c.label).join('、'),
+              })}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

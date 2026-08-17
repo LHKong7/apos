@@ -367,8 +367,25 @@ const ROUTE_PERMISSIONS: Record<string, RouteEntry> = {
   'PATCH /api/v1/admin/agents/:id': 'agent.update',
   'DELETE /api/v1/admin/agents/:id': 'agent.delete',
   'POST /api/v1/admin/agents/:id/probe': 'agent.update',
+  /**
+   * ★★ 项目级授权同样只能判出「至少要能收紧」，方向判定在 handler 里
+   *   （executeGovernedMutation：先算方向，再要对应那条权限）。
+   *
+   *   这里登记的必须是**较严**的那一条吗 —— 不。登记 restrict 是因为
+   *   闸门只做粗筛，真正的判定在里层，而里层一定会再判一次；
+   *   登记 expand 反而会把「只想收紧」的 owner 挡在门外，
+   *   于是没人再去收紧（§2.3 不对称设计的原意正好相反）。
+   */
+  'PUT /api/v1/projects/:id/agents/:agentId/access': 'agent.permissions.restrict',
+  /** 预览是只读的：它算「如果保存会怎样」，不写任何东西 */
+  'POST /api/v1/projects/:id/agents/:agentId/access/preview': 'agent.view',
 
   // ── 组织配置 ──────────────────────────────────────────────────────
+  /** ★ 复制角色就是新建一个角色 —— 与 POST /admin/roles 同一条权限 */
+  'POST /api/v1/admin/roles/:key/clone': 'org.roles.manage',
+  /** 预览是只读的：它算「如果保存会影响谁」，不写任何东西 */
+  'POST /api/v1/admin/roles/:key/preview': 'project.view',
+
   'POST /api/v1/admin/repositories': 'repository.manage',
   'PATCH /api/v1/admin/repositories/:id': 'repository.manage',
   'POST /api/v1/admin/repositories/:id/probe': 'repository.manage',
@@ -445,6 +462,14 @@ const ROUTE_CONTEXT: Record<string, ContextResolver> = {
     agentContext(ctx, (req.params as { id: string }).id),
   'POST /api/v1/admin/agents/:id/probe': (req, ctx) =>
     agentContext(ctx, (req.params as { id: string }).id),
+  /**
+   * ★ 项目级授权要带上 agent_owner 这一维：收紧自己名下的 Agent
+   *   在项目里同样该放行，与组织级那条保持一致。
+   */
+  'PUT /api/v1/projects/:id/agents/:agentId/access': (req, ctx) =>
+    agentContext(ctx, (req.params as { agentId: string }).agentId),
+  'POST /api/v1/projects/:id/agents/:agentId/access/preview': (req, ctx) =>
+    agentContext(ctx, (req.params as { agentId: string }).agentId),
   /** Run 自带 projectId，成员关系闸门已经解析出项目角色，只差 owner */
   'POST /api/v1/runs/:id/control': (req, ctx) =>
     runOwnerContext(ctx, (req.params as { id: string }).id),

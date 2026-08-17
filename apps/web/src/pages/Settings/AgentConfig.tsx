@@ -20,6 +20,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
+import { ResourceScopeEditor, type ScopeRow } from '@/components/ResourceScopeEditor';
+import { AgentAccessPanel } from './AgentAccess';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
@@ -555,22 +557,20 @@ function AgentForm({
     (agent?.permissions.allowedTools ?? ['Read', 'Grep']).join(', '),
   );
   const [deniedTools, setDeniedTools] = useState((agent?.permissions.deniedTools ?? []).join(', '));
-  const [repoRef, setRepoRef] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.ref ?? '',
-  );
-  const [repoAccess, setRepoAccess] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'repo')?.access ?? 'read',
-  );
   /**
-   * ★ 数据集范围此前在界面上填不了 —— 而 storage_targets 那套后端
-   *   （对象存储 / 宿主机目录）全靠它解析。填不了的表现是：登记了存储目标，
-   *   却没有任何 Agent 能被授权用它。
+   * ★★ 资源范围是**一个列表**，不是「一个仓库 + 一个数据集」两格。
+   *
+   *   此前这里是两个 useState，保存时按这两格重建整个数组 —— 于是编辑一个
+   *   授权了三个仓库的 Agent，另外两条在保存时被静默删掉。数据模型一直
+   *   支持多条，只有表单不支持，而丢掉的是**授权**：撤销一条授权本该是
+   *   一个决定，在那个表单里它是打开页面点保存的副作用。
    */
-  const [datasetRef, setDatasetRef] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.ref ?? '',
-  );
-  const [datasetAccess, setDatasetAccess] = useState(
-    agent?.permissions.resourceScopes.find((s) => s.kind === 'dataset')?.access ?? 'read',
+  const [scopes, setScopes] = useState<ScopeRow[]>(
+    (agent?.permissions.resourceScopes ?? []).map((s) => ({
+      kind: s.kind,
+      ref: s.ref,
+      access: s.access,
+    })),
   );
   const [reason, setReason] = useState('');
   /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
@@ -624,12 +624,8 @@ function AgentForm({
         applicableTypes,
         allowedTools: splitList(allowedTools),
         deniedTools: splitList(deniedTools),
-        resourceScopes: [
-          ...(repoRef.trim() ? [{ kind: 'repo', ref: repoRef.trim(), access: repoAccess }] : []),
-          ...(datasetRef.trim()
-            ? [{ kind: 'dataset', ref: datasetRef.trim(), access: datasetAccess }]
-            : []),
-        ],
+        // ★ 原样送出，一条不丢；ref 为空的那条是用户刚点「新增」还没选，丢掉它
+        resourceScopes: scopes.filter((s) => s.ref.trim().length > 0),
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
@@ -881,47 +877,14 @@ function AgentForm({
               placeholder={t('agentCfg.form.deniedPlaceholder')}
               className="font-mono" />
           </Labeled>
-          <div className="grid grid-cols-2 gap-2">
-            <Labeled label={t('agentCfg.form.repo')} help={t('agentCfg.form.repoHelp')}>
-              <Input
-                value={repoRef}
-                onChange={(e) => setRepoRef(e.target.value)}
-                placeholder="order-service" />
-            </Labeled>
-            <Labeled label={t('agentCfg.form.repoAccess')}>
-              <select
-                value={repoAccess}
-                onChange={(e) => setRepoAccess(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                <option value="read">{t('agentCfg.form.readOnly')}</option>
-                <option value="write">{t('agentCfg.form.writable')}</option>
-              </select>
-            </Labeled>
-          </div>
           {/*
-            ★ 数据集与仓库并列而不是二选一：一次执行可以同时挂代码仓库与
-              数据集（前者是主挂载，后者是只读参考）。做成单选就表达不了
-              「读着数据集改代码」这种最常见的组合。
+            ★ 仓库与数据集在同一个列表里，而不是两组固定字段：一次执行可以
+              同时挂代码仓库与数据集（前者是主挂载，后者是只读参考），
+              而且各自可以有多条。
           */}
-          <div className="grid grid-cols-2 gap-2">
-            <Labeled label={t('agentCfg.dataset')} help={t('agentCfg.datasetHelp')}>
-              <Input
-                value={datasetRef}
-                onChange={(e) => setDatasetRef(e.target.value)}
-                placeholder="training-set" />
-            </Labeled>
-            <Labeled label={t('agentCfg.datasetAccess')}>
-              <select
-                value={datasetAccess}
-                onChange={(e) => setDatasetAccess(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                <option value="read">{t('agentCfg.readOnly')}</option>
-                <option value="write">{t('agentCfg.writable')}</option>
-              </select>
-            </Labeled>
-          </div>
+          <Labeled label={t('agentCfg.form.scopes')} help={t('agentCfg.form.scopesHelp')}>
+            <ResourceScopeEditor value={scopes} onChange={setScopes} />
+          </Labeled>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -1554,6 +1517,21 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
             <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">
               {save.error.message}
             </p>
+          )}
+
+          {/*
+            ★★ 绑定回答「谁干这个角色」，权限回答「它被授权做什么」——
+              两个问题，同一页上下相邻。
+              合成一格的话，「换一个规划 Agent」会顺手改到权限，
+              而那是两个不同的决定，需要的权限也不同。
+          */}
+          {data.available.length > 0 && (
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold text-slate-800">{t('access.title')}</h2>
+              {data.available.map((a) => (
+                <AgentAccessPanel key={a.agentId} projectId={projectId} agentId={a.agentId} />
+              ))}
+            </div>
           )}
         </div>
       )}
