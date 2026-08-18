@@ -189,7 +189,7 @@ function fixHref(projectId: string, fix: RejectionFix, list: RejectedCandidate[]
   const base = `/projects/${projectId}/settings`;
   switch (fix) {
     case 'add_project_member':
-      return `${base}/members?tab=agents`;
+      return `${base}/members?add=agent`;
     case 'grant_project_access':
       return `${base}/agents?tab=binding${only ? `&agent=${only}` : ''}`;
     case 'edit_agent':

@@ -1,6 +1,6 @@
 import { useT } from '../../lib/i18n';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
@@ -44,7 +44,16 @@ export function MembersPage() {
   const perms = usePermissions(projectId);
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState<'human' | 'agent' | null>(null);
+  /**
+   * ★ `?add=agent` 直接把「加 Agent」那一格打开。
+   *   看板上「把 refactor-agent 加进项目」那个按钮跳到这里，落地后
+   *   还要用户自己去找「添加 Agent」按钮的话，这条捷径就只省了一次导航
+   *   （问题记录 #12）。
+   */
+  const [params] = useSearchParams();
+  const [adding, setAdding] = useState<'human' | 'agent' | null>(
+    params.get('add') === 'agent' ? 'agent' : params.get('add') === 'human' ? 'human' : null,
+  );
 
   const members = useQuery({
     queryKey: qk.members(projectId!),

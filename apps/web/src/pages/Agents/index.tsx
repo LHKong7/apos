@@ -1,11 +1,11 @@
 import { useT } from '../../lib/i18n';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { tokens } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
+import { AgentLifecycleBadge, ProjectMembershipBadge } from '../../components/AgentStatus';
 import {
   Table,
   TableBody,
@@ -71,26 +71,42 @@ export function AgentListPage() {
               <Table className="w-full text-xs">
                 <TableHeader>
                   <TableRow className="border-b border-slate-200 text-left text-[11px] text-slate-500">
-                    <TableHead className="px-3 py-1.5 font-medium">{t('agents.col.name')}</TableHead>
-                    <TableHead className="px-2 py-1.5 font-medium">{t('agents.col.type')}</TableHead>
-                    <TableHead className="px-2 py-1.5 font-medium">{t('agents.col.status')}</TableHead>
+                    {/*
+                      ★★ 十列压到七列。
+                        「First-try success」「Human override」这种复合词在
+                        表头里一定会被截断，而截断之后剩下的半个词
+                        （「First-try」「Human」）读不出原意（问题记录 #48）。
+                        三个质量指标合成一栏「质量」，用 `a/b/c` 的写法排在一起 ——
+                        它们本来就是一起看的：成功率高但一次通过率低，
+                        说的是「它总能做完，但总要返工」。
+                      ★ 类型与型号并进名字那一栏（它们是这个 Agent 的属性，不是
+                        可比较的指标），负责人也一样。
+                      ★ 第一列 sticky：横向滚动时不能连「这是哪个 Agent」都看不见。
+                    */}
+                    <TableHead className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium">
+                      {t('agents.col.name')}
+                    </TableHead>
+                    <TableHead className="px-2 py-1.5 font-medium">
+                      {t('agents.col.lifecycle')}
+                    </TableHead>
+                    <TableHead className="px-2 py-1.5 font-medium">
+                      {t('agents.col.membership')}
+                    </TableHead>
                     <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.load')}</TableHead>
                     <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.runs')}</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.successRate')}</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right font-medium" title={t('agentTab.firstTryOnly')}>
-                      {t('agents.col.firstTry')}
-                    </TableHead>
-                    <TableHead className="px-2 py-1.5 text-right font-medium" title={t('agentTab.overrideHelp')}>
-                      {t('agents.col.override')}
+                    <TableHead
+                      className="px-2 py-1.5 text-right font-medium"
+                      title={t('agents.qualityHint')}
+                    >
+                      {t('agents.col.quality')}
                     </TableHead>
                     <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.tokens')}</TableHead>
-                    <TableHead className="px-3 py-1.5 font-medium">{t('agents.col.owner')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {list.data.agents.map((a) => (
                     <TableRow key={a.id} className="border-b border-slate-100 last:border-0">
-                      <TableCell className="px-3 py-1.5">
+                      <TableCell className="sticky left-0 z-10 bg-white px-3 py-1.5">
                         <Link
                           to={
                             projectId
@@ -99,32 +115,37 @@ export function AgentListPage() {
                           }
                           className="text-slate-800 underline-offset-2 hover:underline"
                         >
-                          🤖 {a.name}
+                          <span aria-hidden>🤖</span> {a.name}
                         </Link>
-                        {a.model && <span className="ml-1 text-[11px] text-slate-400">{a.model}</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 text-slate-500">{a.type}</TableCell>
-                      <TableCell className="px-2 py-1.5">
-                        <span
-                          className={clsx(
-                            a.status === 'paused' ? 'text-amber-700' : 'text-green-700',
-                          )}
-                          title={a.pausedReason ?? undefined}
-                        >
-                          ● {a.status === 'paused' ? t('agents.paused') : t('agents.normal')}
+                        <span className="block text-[11px] text-slate-400">
+                          {[a.type, a.model, a.ownerName].filter(Boolean).join(' · ')}
                         </span>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5">
+                        <AgentLifecycleBadge status={a.status} reason={a.pausedReason} />
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5">
+                        <ProjectMembershipBadge inProject={a.inProject} />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">
                         {a.load.running}/{a.load.max}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">{a.runs}</TableCell>
-                      <Cell value={a.successRate} warnBelow={0.8} />
-                      <Cell value={a.firstTrySuccessRate} warnBelow={0.6} />
-                      <Cell value={a.overrideRate} warnAbove={0.15} />
+                      <TableCell
+                        className="px-2 py-1.5 text-right"
+                        title={t('agents.qualityHint')}
+                      >
+                        <span className="tabular-nums">
+                          <Pct value={a.successRate} warnBelow={0.8} />
+                          <span className="text-slate-300"> / </span>
+                          <Pct value={a.firstTrySuccessRate} warnBelow={0.6} />
+                          <span className="text-slate-300"> / </span>
+                          <Pct value={a.overrideRate} warnAbove={0.15} />
+                        </span>
+                      </TableCell>
                       <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">
                         {tokens(a.tokens)}
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-slate-500">{a.ownerName}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -137,7 +158,14 @@ export function AgentListPage() {
   );
 }
 
-function Cell({
+/**
+ * 一个百分比。
+ *
+ * ★ 曾经是整个 `<TableCell>`，三个指标各占一列。合成一栏之后它只负责
+ *   那一个数字与它的警戒色 —— 「几号算不好」这条判据没变，
+ *   变的只是它们排在一起了。
+ */
+function Pct({
   value,
   warnBelow,
   warnAbove,
@@ -146,16 +174,13 @@ function Cell({
   warnBelow?: number;
   warnAbove?: number;
 }) {
-  if (value === null) {
-    return <TableCell className="px-2 py-1.5 text-right text-slate-300">—</TableCell>;
-  }
+  if (value === null) return <span className="text-slate-300">—</span>;
   const warn =
     (warnBelow !== undefined && value < warnBelow) ||
     (warnAbove !== undefined && value > warnAbove);
   return (
-    <TableCell className={clsx('px-2 py-1.5 text-right tabular-nums', warn ? 'text-amber-700' : 'text-slate-600')}>
-      {warn && <span aria-hidden>⚠ </span>}
+    <span className={warn ? 'font-medium text-amber-700' : 'text-slate-600'}>
       {Math.round(value * 100)}%
-    </TableCell>
+    </span>
   );
 }

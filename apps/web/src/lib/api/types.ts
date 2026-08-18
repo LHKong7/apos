@@ -720,8 +720,11 @@ export interface AgentListResponse {
     name: string;
     type: string;
     model: string | null;
+    /** 生命周期：active / paused / retired。与「是不是本项目成员」是两回事 */
     status: string;
     pausedReason: string | null;
+    /** 这个项目里的成员关系。组织级视图下为 null（那里没有「本项目」） */
+    inProject: boolean | null;
     load: { running: number; max: number };
     runs: number;
     successRate: number | null;

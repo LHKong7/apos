@@ -1138,6 +1138,25 @@ export const en = {
   'cost.noAnomalies': 'No runs with anomalous spend',
   'agents.title': 'Agent team',
   'agents.empty': 'No Agents registered yet',
+  // ── Agent 的两个状态 / Agent lifecycle vs membership ──────────────
+  'agentState.active': 'On duty',
+  'agentState.active.hint': 'Enabled and available for dispatch',
+  'agentState.paused': 'Paused',
+  'agentState.paused.hint': 'Temporarily not taking work. Nothing will be dispatched to it.',
+  'agentState.retired': 'Retired',
+  'agentState.retired.hint':
+    'Disabled for good; its history is kept. It will never be dispatched to again.',
+  'agentState.member': 'In this project',
+  'agentState.member.hint': 'A member of this project, so it can be dispatched work here',
+  'agentState.notMember': 'Not added here',
+  'agentState.notMember.hint':
+    'Exists in the organisation but has not been added to this project. Add it under Members & roles.',
+  'agents.col.lifecycle': 'State',
+  'agents.col.membership': 'This project',
+  'agents.col.quality': 'Quality',
+  'agents.qualityHint':
+    'Success rate · first-try success · human override. First-try success counts only runs that needed no retry; a high override rate means people keep correcting it.',
+
   'agents.col.name': 'Name',
   'agents.col.type': 'Type',
   'agents.col.status': 'Status',
@@ -1905,6 +1924,22 @@ export const en = {
   'agentCfg.form.namePlaceholder': 'e.g. refactor-agent',
   'agentCfg.form.type': 'Type',
   'agentCfg.form.description': 'Responsibilities',
+  'agentCfg.form.descriptionBadge': 'Goes into the prompt',
+  'agentCfg.form.useTemplate': 'Start from a template',
+  'agentCfg.form.descriptionTemplate':
+    'You own backend implementation on this project: writing code, refactoring, and the unit tests that go with it.\n\nHow you work:\n- Read the surrounding code before changing it, and match its conventions.\n- Keep changes to what the task asks for; raise anything else instead of fixing it silently.\n- Run the test suite before you report a task as done, and say so if it fails.\n\nWhen to stop and ask:\n- The task needs a schema or API change that other work depends on.\n- The acceptance criteria are ambiguous enough that two readings give different code.\n- Anything that touches production data, credentials, or deployment.',
+  'agentCfg.form.modeForm': 'Form',
+  'agentCfg.form.modeJson': 'JSON',
+  'agentCfg.form.modeJsonHint':
+    'Edit the raw object. Use this for keys this version of APOS does not know about — they are saved as-is.',
+  'agentCfg.form.customKeys': '{count} custom keys',
+  'agentCfg.form.customKeysHint': 'Keys APOS does not recognise, kept as-is: {keys}. Edit them in the JSON view.',
+  'agentCfg.form.showAdvanced': 'Advanced ({count})',
+  'agentCfg.form.hideAdvanced': 'Hide advanced',
+  'agentCfg.form.enabled': 'Enabled',
+  'agentCfg.form.commaSeparated': 'Comma-separated',
+  'agentCfg.form.editInJson': 'Edit this one in the JSON view',
+  'agentCfg.form.jsonFieldsHint': 'Table-shaped settings (environment variables) are edited in the JSON view.',
   'agentCfg.form.descriptionHelp': 'Goes into the prompt as a persona, helping the Agent judge whether a task is in its wheelhouse',
   'agentCfg.form.descriptionPlaceholder': 'Owns backend implementation, refactoring and unit tests',
   'agentCfg.form.runtime': 'Runtime',

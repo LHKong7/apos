@@ -1,6 +1,6 @@
 import { t, useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
 import { AgentAccessPanel } from './AgentAccess';
+import { RuntimeConfigForm } from './RuntimeConfigForm';
 
 /**
  * Agent 配置（页面文档 08 §5.5）。
@@ -96,7 +97,23 @@ const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
 export function AgentConfigPage() {
   const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
-  const [tab, setTab] = useState<Tab>('agents');
+  /**
+   * ★★ 标签页写进 URL。
+   *
+   *   看板上那条阻塞原因给的是「去给 main-agent 授权」这样的直达按钮 ——
+   *   它必须能落到**具体那一格**，而不是把人扔到这一页的第一个标签
+   *   让他自己找（问题记录 #12）。`?tab=` 同时也让这一页可收藏、可分享。
+   * ★ 认不出来的取值回落到默认格，不是白屏。
+   */
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = (['agents', 'binding', 'conventions'] as const).find(
+    (k) => k === params.get('tab'),
+  ) ?? 'agents';
+  const setTab = (next: Tab) => {
+    const q = new URLSearchParams(params);
+    q.set('tab', next);
+    setParams(q, { replace: true });
+  };
   const userId = useAuthStore((s) => s.userId);
 
   if (!projectId || !userId) return null;
@@ -580,8 +597,13 @@ function AgentForm({
     agent?.ceiling.deniedCapabilities ?? [],
   );
   const [reason, setReason] = useState('');
-  /** 「可配置项」说明书默认展开：JSON 框里没有标签，收起来就没人知道该写什么 */
-  const [showReference, setShowReference] = useState(true);
+  /**
+   * ★ 说明书默认**收起**。
+   *   它当初默认展开是因为 JSON 框里没有标签，收起来就没人知道该写什么；
+   *   现在默认是逐键表单，每个字段旁边自带说明与默认值 ——
+   *   再摆一份完整参照表只是重复，而重复的说明会让人怀疑哪份是新的。
+   */
+  const [showReference, setShowReference] = useState(false);
 
   const spec = kinds.find((k) => k.kind === kind);
 
@@ -704,17 +726,44 @@ function AgentForm({
           </Labeled>
         </div>
 
-        <Labeled
-          label={t('agentCfg.form.description')}
-          help={t('agentCfg.form.descriptionHelp')}
-        >
+        {/*
+          ★★ 职责说明单独成区，紧跟名字，而不是夹在「类型」和「运行时」中间。
+            它是这段配置里**唯一会进 prompt** 的东西 —— 换句话说，它决定
+            这个 Agent 干活时是什么样子。而它此前是两行高的一个输入框，
+            上下被凭证、端点、25 行 JSON 挤着，看起来像个可填可不填的备注
+            （问题记录 #17）。
+          ★ 空着时给一份可以照着改的样板，而不是一句「描述这个 Agent」。
+            「Do all tasks」这种回答不是用户偷懒，是问法太空 ——
+            给出样板之后，用户改的是内容，不是从零想一段话。
+        */}
+        <div className="rounded border border-brand/30 bg-brand/5 p-2">
+          <div className="mb-1 flex flex-wrap items-baseline gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-800">
+              {t('agentCfg.form.description')}
+            </span>
+            <span className="rounded bg-brand/10 px-1 text-[10px] text-brand">
+              {t('agentCfg.form.descriptionBadge')}
+            </span>
+          </div>
+          <p className="mb-1.5 text-[11px] text-slate-600">
+            {t('agentCfg.form.descriptionHelp')}
+          </p>
           <Textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={2}
+            rows={6}
             placeholder={t('agentCfg.form.descriptionPlaceholder')}
           />
-        </Labeled>
+          {!description.trim() && (
+            <Button
+              variant="link"
+              onClick={() => setDescription(t('agentCfg.form.descriptionTemplate'))}
+              className="mt-1 h-auto p-0 text-[11px] font-normal text-slate-500 underline hover:text-slate-700"
+            >
+              {t('agentCfg.form.useTemplate')}
+            </Button>
+          )}
+        </div>
 
         {/* ── 运行时 ── */}
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
@@ -781,6 +830,13 @@ function AgentForm({
               平台认识的键带着默认值先摆进去（用户才知道能配什么），
               自己加的键原样保存 —— 服务端不认识也照收，只在保存后提示一句。
           */}
+          {/*
+            ★★ 默认是**逐键的表单**，JSON 是逃生口 —— 此前正好反过来。
+              schema 里写着每个键的类型、取值范围、默认值和影响范围，
+              而界面把它们全降级成一个 25 行的文本框（问题记录 #18 / #46）。
+            ★ 逃生口不能封：平台不认识的键（新版 CLI 刚加的参数）只能从
+              那儿进来，而服务端本来就照收。
+          */}
           <Labeled
             label={t('agentCfg.form.runtimeConfig')}
             help={
@@ -790,17 +846,42 @@ function AgentForm({
               t('agentCfg.secretEcho')
             }
           >
-            <JsonInput
-              /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
-              key={kind}
-              errorKey="__config__"
-              value={withDefaults(spec, config)}
-              onChange={setConfig}
-              onError={setJsonError}
-              rows={14}
-            />
+            {spec ? (
+              <RuntimeConfigForm
+                key={kind}
+                spec={spec}
+                value={withDefaults(spec, config)}
+                onChange={setConfig}
+                renderJson={() => (
+                  <JsonInput
+                    /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
+                    key={kind}
+                    errorKey="__config__"
+                    value={withDefaults(spec, config)}
+                    onChange={setConfig}
+                    onError={setJsonError}
+                    rows={14}
+                  />
+                )}
+              />
+            ) : (
+              <JsonInput
+                key={kind}
+                errorKey="__config__"
+                value={config}
+                onChange={setConfig}
+                onError={setJsonError}
+                rows={14}
+              />
+            )}
           </Labeled>
 
+          {/*
+            ★ 说明书默认**收起**了。表单模式下每个字段旁边就带着自己的
+              说明、默认值与影响标记 —— 再摆一份完整的参照表是重复，
+              而重复的说明会让人怀疑哪一份是新的。切到 JSON 模式的人
+              仍然需要它，所以入口留着。
+          */}
           {spec && spec.fields.length > 0 && (
             <div className="mt-2">
               <Button
