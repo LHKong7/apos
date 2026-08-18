@@ -27,20 +27,36 @@ export interface MappedSandbox {
  * 映射方向刻意是**收紧**的：拿不准就降一级。
  * 沙箱模式选错的后果不对称 —— 选严了任务失败（看得见、可修），
  * 选松了 Agent 拿到了不该有的能力（看不见、修不回来）。
+ *
+ * `workspaceWritable` 是平台已备好的工作区给出的答案（`RunWorkspace.writable`），
+ * 给了就以它为准 —— 规划 Run 的 scratch 目录没有任何资源范围对应它，
+ * 光靠 scope 推导永远推不出「可写」。没给（没有工作区）才回落到 scope 推导。
+ *
+ * When the platform has already prepared a workspace it decides writability:
+ * planning scratch dirs have no matching scope, so scope inference alone can
+ * never call them writable. Scope inference remains the fallback.
  */
-export function mapSandbox(permissions: AgentPermissions): MappedSandbox {
+export function mapSandbox(
+  permissions: AgentPermissions,
+  workspaceWritable?: boolean,
+): MappedSandbox {
   const allowed = new Set(permissions.allowedTools.map(baseToolName));
   const deniedBare = new Set(
     permissions.deniedTools.filter((r) => !r.includes('(')).map(baseToolName),
   );
   const scopedDenies = permissions.deniedTools.filter((r) => r.includes('('));
 
-  const repoWritable = permissions.resourceScopes.some(
-    (s) => s.kind === 'repo' && s.access === 'write',
+  // ★ 与 claude-code 的 mapPermissions 同一条规则：repo 与 dataset 的 write 都算。
+  //   两个运行时给出不同答案的话，「换个运行时就能写了」会被当成玄学。
+  // Same rule as claude-code's mapPermissions — a write scope on a repo or a
+  // dataset counts. Divergence here reads as "it works on the other runtime".
+  const scopeWritable = permissions.resourceScopes.some(
+    (s) => s.access === 'write' && (s.kind === 'repo' || s.kind === 'dataset'),
   );
+  const effectiveWritable = workspaceWritable ?? scopeWritable;
   const wantsWrite = WRITE_TOOLS.some((t) => allowed.has(t) && !deniedBare.has(t));
 
-  const mode: SandboxMode = repoWritable && wantsWrite ? 'workspace-write' : 'read-only';
+  const mode: SandboxMode = effectiveWritable && wantsWrite ? 'workspace-write' : 'read-only';
 
   // 只有显式授予了联网类工具才开网；默认关闭
   const network = ['WebFetch', 'WebSearch'].some((t) => allowed.has(t) && !deniedBare.has(t));

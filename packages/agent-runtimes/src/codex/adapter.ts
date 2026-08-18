@@ -161,7 +161,7 @@ export class CodexRuntime implements AgentRuntimeAdapter {
       };
     }
 
-    const sandbox = mapSandbox(task.permissions);
+    const sandbox = mapSandbox(task.permissions, task.workspace.writable);
 
     this.runs.set(task.runId, {
       task,

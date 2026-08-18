@@ -442,7 +442,21 @@ APOS 的 `AgentPermissions` 映射到 SDK 的四个开关，组合出闭世界�
 两个额外约束：
 
 - **`settingSources: []`** —— 不加载 user / project / local 配置。否则仓库里的 `.claude/settings.json` 就能把 Policy 拒绝过的工具放回来，权限模型形同虚设。
-- **无 `repo:write` 范围时禁用全部写工具**（`Write` / `Edit` / `MultiEdit` / `NotebookEdit`）。只在 prompt 里写「请不要改文件」不是权限控制。
+- **判定不出可写时禁用全部写工具**（`Write` / `Edit` / `MultiEdit` / `NotebookEdit`）。只在 prompt 里写「请不要改文件」不是权限控制。
+
+「可写」按两层判，**平台的事实优先**：
+
+| 情况 | 判据 |
+| --- | --- |
+| 平台已备好工作区（`task.workspace`） | 直接用 `RunWorkspace.writable`，两个方向都覆盖 |
+| 没有工作区 | 回落到资源范围推导：存在 `access: 'write'` 的 **repo 或 dataset** 范围 |
+
+两条都不是可有可无的：
+
+- **dataset 也算可写**，与 §7.3 的主挂载规则（可写仓库 → 可写数据集）对齐。只认 repo 的话，被授了 dataset write 的 Agent 会挂上一个可写的工作区、写工具却全被禁 —— 授权界面写着 Write，Agent 说没有 Write 工具，两个子系统各自都「对」，没有任何一层报错。
+- **工作区的 `writable` 压过范围推导**。规划 Run 的 scratch 目录**没有任何资源范围对应它**，光靠范围推导永远推不出「可写」，于是平台给了可写目录、Agent 却写不出产物。反方向同样覆盖：只读挂载时显式收紧。
+
+覆盖只动「可写」这一个合取项，**放不出能力闸门没授的工具**：写工具是从 `allowedTools` 里挑回来的，`workspace.write` 没授予时它们本来就不在里面；显式黑名单同样不放回。沙箱级的运行时（Codex / 通用 CLI）走同一条判据，只是落到 `workspace-write` 与 `read-only` 两档上 —— 三个运行时给出不同答案的话，「换个运行时就能写了」会被当成玄学。
 
 #### 未授权工具 → 人工决策
 

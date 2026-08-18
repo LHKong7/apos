@@ -8,7 +8,12 @@ import { agentRuns, artifacts, repositories, storageTargets } from '@apos/db';
 import type { AgentPermissions } from '@apos/contracts';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent } from '../../test/agent-fixtures';
-import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
+import {
+  applyWorkspaceWritable,
+  mapPermissions,
+  MockRuntime,
+  RuntimeRegistry,
+} from '@apos/agent-runtimes';
 import { dispatchRun } from '../agent/dispatch';
 import { ingestRunEvent } from '../agent/ingest';
 import { git, probeGit } from '@apos/workspace-providers';
@@ -757,6 +762,82 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     const dispatched = runtime.dispatchedTask(res.runId);
     expect(dispatched?.workspace?.path).toContain(res.runId);
     expect(dispatched?.workspace?.vcs?.repoRef).toBe('order-service');
+  });
+
+  /**
+   * ★★ 供给层与适配器层必须对同一次派发给出同一个「可写」。
+   *
+   *   只授了 dataset write 的 Agent 曾经拿到一个可写的挂载，而适配器
+   *   （只认 repo 范围）把写工具全禁了 —— 授权界面写着 Write、Agent 说
+   *   没有 Write 工具，两个子系统各自都「对」，没有任何一层报错。
+   *   这条用例把两层串起来断言，任何一层单独改回去它都会红。
+   *
+   * The provisioning layer and the adapter layer must agree on writability for
+   * one and the same dispatch. A dataset-write-only agent used to get a
+   * writable mount with every write tool disabled — neither layer erroring.
+   */
+  it('★ 只授 dataset write 的 Agent：工作区可写，写工具也真的到得了运行时', async () => {
+    const hostDir = join(root, 'host', 'sales');
+    await mkdir(hostDir, { recursive: true });
+    await writeFile(join(hostDir, 'input.csv'), 'a,b\n1,2\n');
+
+    const p = new WorkspaceService(db, { root });
+    await db.insert(storageTargets).values({
+      orgId: fx.orgId,
+      ref: 'sales-data',
+      name: '销售数据',
+      kind: 'local',
+      rootPath: hostDir,
+      writable: true,
+      createdBy: fx.userId,
+    });
+
+    const runtime = new MockRuntime({}, { steps: ['一步'], stepDelayMs: 0 });
+    const registry = new RuntimeRegistry();
+    const agent = await seedAgent(db, fx, {
+      runtime,
+      registry,
+      grant: { resourceScopes: [{ kind: 'dataset', ref: 'sales-data', access: 'write' }] },
+    });
+
+    const item = await createWorkItem(db, fx, { status: 'ready' });
+    const res = await dispatchRun(
+      db,
+      registry,
+      { workItemId: item.id, agentId: agent.agentId, correlationId: randomUUID() },
+      { workspaces: p },
+    );
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const dispatched = runtime.dispatchedTask(res.runId)!;
+    // 供给层：数据集当主挂载，可写，且不是 git 工作区
+    expect(dispatched.workspace?.writable).toBe(true);
+    expect(dispatched.workspace?.vcs).toBeNull();
+    // 授权确实以 dataset write 的形态传到了运行时（没有被求值器降成只读）
+    expect(dispatched.permissions.resourceScopes).toContainEqual(
+      expect.objectContaining({ kind: 'dataset', ref: 'sales-data', access: 'write' }),
+    );
+
+    /**
+     * 适配器层：同一份资源范围，claude-code 的映射必须也判「可写」。
+     * 这里断言的是**判定**而不是具体工具名 —— 工具名由各运行时的
+     * CapabilityTranslator 决定（mock 是 `write_file`，不是 `Write`），
+     * 而两层对不上的那个 bug 出在判定上。
+     */
+    const mapped = mapPermissions(dispatched.permissions, () => null);
+    expect(mapped.writable).toBe(true);
+
+    // 再叠上工作区的可写性：写工具一个都不该被剥掉
+    const withWorkspace = applyWorkspaceWritable(
+      mapped,
+      dispatched.permissions,
+      dispatched.workspace!.writable,
+    );
+    expect(withWorkspace.writable).toBe(true);
+    expect(withWorkspace.tools).toEqual(mapped.tools);
+    expect(withWorkspace.disallowedTools).toEqual(mapped.disallowedTools);
   });
 
   it('git 不可用时给出可行动的报错，而不是留下半个工作区', async () => {
