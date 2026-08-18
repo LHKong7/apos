@@ -7,6 +7,7 @@ import { duration, sourceIcon, sourceLabel, statusLabel, tokens, typeIcon } from
 import { MOVE_HIGHLIGHT_MS, useBoardStore } from '../../stores/board';
 import type { BoardCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import { useBlockedSummary } from './BlockedReasons';
 
 export interface CardActions {
   onOpen: (card: Card) => void;
@@ -145,6 +146,7 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
 /** 按状态裁剪的卡片主体 —— 这个 switch 就是页面文档 05 §5.3 的表格 */
 function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
   const t = useT();
+  const summarize = useBlockedSummary();
   const executor = card.executor;
   const chip = executor ? (
     <AssigneeChip
@@ -191,8 +193,12 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
     return (
       <>
         <BlockedDuration minutes={card.blockedMinutes ?? 0} />
+        {/*
+          ★ 归并同类后的一句话，不是服务端拼好的那串分号（问题记录 #2 / #25）。
+            完整分项在详情抽屉里 —— 卡片只负责让人一眼看出「卡在哪一类」。
+        */}
         <p className="line-clamp-2 text-[11px] leading-4 text-slate-600">
-          {card.blockedReason ?? t('card.reasonNotRecorded')}
+          {summarize(card.blockedDetail, card.blockedReason)}
         </p>
         <div className="flex items-center justify-between gap-2">
           {card.owner ? (
@@ -204,7 +210,20 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
             {card.humanGateRef && (
               <CardButton onClick={() => actions.onRemind(card)}>{t('card.remind')}</CardButton>
             )}
-            <CardButton onClick={() => actions.onTakeover(card)}>{t('card.takeOver')}</CardButton>
+            {/*
+              ★★ 「接管」按钮只在真的接得了的时候出现。
+                此前它跟着 `blockedSince` 这个**标记**走，而标记可以挂在
+                status 仍是 ready 的卡片上 —— 卡片写着「已阻塞」，点下去
+                报「当前状态 ready 不支持该操作」，一句和按钮自己互相矛盾的话
+                （问题记录 #16 / #27）。状态是事实，标记只是注解。
+            */}
+            {canTakeOver(card) ? (
+              <CardButton onClick={() => actions.onTakeover(card)}>
+                {t('card.takeOver')}
+              </CardButton>
+            ) : (
+              <CardButton onClick={() => actions.onOpen(card)}>{t('card.howToFix')}</CardButton>
+            )}
           </div>
         </div>
       </>
@@ -225,7 +244,9 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
         <div className="flex gap-1">
           {card.runId && <CardButton onClick={() => actions.onViewRun(card)}>{t('card.viewLog')}</CardButton>}
           <CardButton onClick={() => actions.onRetry(card)}>{t('card.retry')}</CardButton>
-          <CardButton onClick={() => actions.onTakeover(card)}>{t('card.takeItOver')}</CardButton>
+          {canTakeOver(card) && (
+            <CardButton onClick={() => actions.onTakeover(card)}>{t('card.takeItOver')}</CardButton>
+          )}
         </div>
       </>
     );
@@ -310,6 +331,22 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       </div>
     </div>
   );
+}
+
+/**
+ * 这张卡现在接得了吗 / Can a human take this over right now?
+ *
+ * ★★ 与状态机保持一致，不与卡片长相保持一致。
+ *   `human_took_over` 只从 executing 出发，`escalated_to_human` 只从
+ *   blocked / failed 出发（work-item-machine.ts）—— 服务端会按当前状态
+ *   挑触发器，但**没有合法触发器的状态上根本不该出现这个按钮**。
+ *   一个点了必然报错的按钮，比没有这个按钮更伤：用户会以为自己点错了。
+ *
+ * Mirrors the state machine, not the card's appearance. A button that always
+ * fails is worse than no button — the user assumes they mis-clicked.
+ */
+function canTakeOver(card: Card): boolean {
+  return card.status === 'executing' || card.status === 'blocked' || card.status === 'failed';
 }
 
 /** 把「下一步会发生什么」讲清楚，而不是只说失败了几次 */

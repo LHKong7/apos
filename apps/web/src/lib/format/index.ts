@@ -1,4 +1,4 @@
-import { t, type MessageKey } from '../i18n';
+import { currentLocale, t, type MessageKey } from '../i18n';
 
 /**
  * token 用量。
@@ -74,11 +74,54 @@ export function deadline(minutes: number | null | undefined): {
   return { text: t('format.deadline.within', { time: duration(minutes) }), overdue: false };
 }
 
+/**
+ * 相对时间。
+ *
+ * ★★ 一分钟以内也要给出秒级刻度，而不是一律「刚刚」。
+ *
+ *   总览页那条「最近活动」上曾经十二条全是「刚刚」—— 十二条事件显然不在
+ *   同一秒发生，但界面上分不出先后，也看不出频次。而这一列的用途恰恰是
+ *   「刚才发生了什么、按什么顺序」：分辨率一丢，它就只剩「有事发生过」
+ *   这一点信息（问题记录 #1）。
+ *
+ *   门槛设在 5 秒：更细的刻度会让同一批事件在两次渲染之间跳动
+ *   （「3 秒前」→「7 秒前」），而那种抖动本身就是噪声。
+ *
+ * ★ 未来时间给「即将」而不是负数。时钟偏移下服务端时间比浏览器快几秒是常态，
+ *   而「-3 秒前」看起来像 bug。
+ *
+ * Sub-minute events need second-level granularity: a column of twelve
+ * "just now" rows carries no ordering and no frequency, which is precisely
+ * what a recent-activity list is for.
+ */
 export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return t('format.justNow');
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return '—';
+  const diff = Date.now() - ms;
+
+  if (diff < 0) return t('format.justNow');
+  if (diff < 5_000) return t('format.justNow');
+  if (diff < 60_000) return t('format.ago', { time: t('format.seconds', { n: Math.floor(diff / 1000) }) });
   return t('format.ago', { time: duration(diff / 60_000) });
+}
+
+/**
+ * 绝对时间，给 `title` 用。
+ *
+ * ★ 相对时间回答「多久以前」，绝对时间回答「几点」—— 排查问题时要的是后者，
+ *   而且要能和别人的日志对上。两者不是二选一：相对的在正文里，
+ *   绝对的挂在 hover 上（问题记录 #1）。
+ */
+export function absoluteTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  /**
+   * ★ 跟着界面语言走，不跟着浏览器走：整页已经是用户选定的那种语言，
+   *   时间戳突然换一种格式会让人以为它来自别处。
+   */
+  return d.toLocaleString(currentLocale() === 'zh' ? 'zh-CN' : 'en-GB');
 }
 
 const TYPE_ICONS: Record<string, string> = {

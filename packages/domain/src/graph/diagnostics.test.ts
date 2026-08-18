@@ -25,6 +25,7 @@ function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
     decisionDueInMinutes: null,
     blockedSince: null,
     blockedReason: null,
+    blockedDetail: null,
     blockedMinutes: null,
     parentId: null,
     ...overrides,

@@ -1,4 +1,4 @@
-import type { RiskLevel, WorkItemType } from '@apos/contracts';
+import type { RejectionCode, RejectionScope, RiskLevel, WorkItemType } from '@apos/contracts';
 import { formatTokens as fmtTokens } from '../format/tokens';
 
 /**
@@ -95,10 +95,30 @@ export interface MatchScore {
   reasons: string[];
 }
 
+/**
+ * ★★ 原因码与层级的定义在 `@apos/contracts`，不在这里。
+ *
+ *   它要被前端逐条翻译并据此渲染「一键修复」按钮 —— 定义留在 domain 里的话，
+ *   前端只能照抄一份枚举，而两份枚举迟早对不上（新增一个码，界面静默漏掉它）。
+ *
+ *   The codes live in contracts because the web app translates them and maps
+ *   them to fix actions. A second copy would silently drift.
+ */
+export type { RejectionCode, RejectionScope } from '@apos/contracts';
+
 export interface MatchRejection {
   agentId: string;
   agentName: string;
+  /**
+   * 中文兜底句 / Chinese fallback sentence.
+   *
+   * ★ 留着是因为日志、事件历史与老前端都在读它。新界面读 `code`。
+   */
   reason: string;
+  code: RejectionCode;
+  scope: RejectionScope;
+  /** 插值参数，键名与词条里的 `{name}` 一一对应 */
+  params?: Record<string, string | number>;
 }
 
 export interface MatchResult {
@@ -150,6 +170,8 @@ export function matchExecutors(
         agentId: c.id,
         agentName: c.name,
         reason: '该任务被指定为人工执行',
+        code: 'human_executor' as const,
+        scope: 'work_item' as const,
       })),
     };
   }
@@ -172,11 +194,20 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: '不是本项目成员 —— 先在「成员与角色」里把它加进这个项目',
+        code: 'not_project_member',
+        scope: 'project',
       });
       continue;
     }
     if (agent.status !== 'active') {
-      rejected.push({ agentId: agent.id, agentName: agent.name, reason: `Agent 状态为 ${agent.status}` });
+      rejected.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        reason: `Agent 状态为 ${agent.status}`,
+        code: 'agent_inactive',
+        scope: 'org',
+        params: { status: agent.status },
+      });
       continue;
     }
     /** ★ 没注册的运行时派下去不会开始执行，表现是任务卡在 executing 直到超时 */
@@ -185,6 +216,8 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: '运行时适配器没有在当前进程注册，派下去不会开始执行',
+        code: 'runtime_not_registered',
+        scope: 'platform',
       });
       continue;
     }
@@ -193,6 +226,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `不适用于 ${target.type} 类型任务`,
+        code: 'type_not_applicable',
+        scope: 'org',
+        params: { type: target.type },
       });
       continue;
     }
@@ -201,6 +237,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `已满载（${agent.currentLoad}/${agent.maxConcurrency}）`,
+        code: 'at_capacity',
+        scope: 'org',
+        params: { load: agent.currentLoad, max: agent.maxConcurrency },
       });
       continue;
     }
@@ -218,6 +257,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `在这个项目里没有所需能力：${missingCapabilities.join('、')}`,
+        code: 'missing_capabilities',
+        scope: 'project',
+        params: { items: missingCapabilities.join(', ') },
       });
       continue;
     }
@@ -230,6 +272,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `缺少所需工具权限：${missingTools.join('、')}`,
+        code: 'missing_tools',
+        scope: 'project',
+        params: { items: missingTools.join(', ') },
       });
       continue;
     }
@@ -249,6 +294,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `资源范围里没有：${missingResources.join('、')}`,
+        code: 'missing_resources',
+        scope: 'project',
+        params: { items: missingResources.join(', ') },
       });
       continue;
     }
@@ -263,6 +311,9 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `今日 token 额度已用尽（${fmtTokens(agent.tokensToday)}/${fmtTokens(agent.tokenLimitDaily)}）`,
+        code: 'daily_token_exhausted',
+        scope: 'org',
+        params: { used: fmtTokens(agent.tokensToday), limit: fmtTokens(agent.tokenLimitDaily) },
       });
       continue;
     }
@@ -276,6 +327,12 @@ export function matchExecutors(
         agentId: agent.id,
         agentName: agent.name,
         reason: `预估 ${fmtTokens(target.estimatedTokens)} token 超出该 Agent 单次上限 ${fmtTokens(agent.tokenLimitPerRun)}`,
+        code: 'per_run_token_exceeded',
+        scope: 'org',
+        params: {
+          estimated: fmtTokens(target.estimatedTokens),
+          limit: fmtTokens(agent.tokenLimitPerRun),
+        },
       });
       continue;
     }

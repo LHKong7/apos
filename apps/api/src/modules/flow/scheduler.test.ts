@@ -284,6 +284,76 @@ describe('执行主体匹配', () => {
     const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
     expect(after!.blockedReason).toContain('create_pr');
     expect(after!.blockedSince).toBeTruthy();
+
+    /**
+     * ★ 除了那句中文，逐个候选的原因码也要落库 —— 界面据此分层展示
+     *   并给出「去授权」的直达入口，而不是让用户读一行分号串起来的长句。
+     */
+    expect(after!.blockedDetail?.kind).toBe('no_matching_agent');
+    const rejected = after!.blockedDetail?.candidates ?? [];
+    expect(rejected.length).toBeGreaterThan(0);
+    expect(rejected[0]?.code).toBe('missing_tools');
+    expect(rejected[0]?.scope).toBe('project');
+  });
+
+  /**
+   * ★★ 调度器每轮都会重新推出同一个结论。无条件写的代价有两处：
+   *
+   *   1. Timeline 上堆出几十条一模一样的 `work_item.blocked`，
+   *      把真正的状态变更淹掉（问题记录 #43）；
+   *   2. `blockedSince` 每轮被刷新，于是卡片上的阻塞时长**恒等于 0m** ——
+   *      而那一栏本来是用来判断「卡了多久」的（问题记录 #2）。
+   *
+   *   两条都在这一个测试里钉住：跑三轮，事件只该有一条，起点不该动。
+   */
+  it('★ 原因没变时不重复记事件，也不重置阻塞起点', async () => {
+    const registry = new RuntimeRegistry();
+    await seedAgent(db, fx, { registry });
+    const item = await createWorkItem(db, fx, {
+      executorType: null,
+      executorId: null,
+      typeData: { requiredTools: ['create_pr'] },
+    });
+
+    await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
+    const [first] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    const firstBlockedAt = first!.blockedSince!.getTime();
+
+    await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
+    await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
+
+    const blockedEvents = await db
+      .select()
+      .from(events)
+      .where(eq(events.subjectId, item.id));
+    expect(blockedEvents.filter((e) => e.type === 'work_item.blocked')).toHaveLength(1);
+
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.blockedSince!.getTime()).toBe(firstBlockedAt);
+  });
+
+  /** ★ 原因**变了**仍然要记 —— 去重不能把「情况变了」也一起吞掉 */
+  it('★ 原因变化时重新记一条事件', async () => {
+    const registry = new RuntimeRegistry();
+    await seedAgent(db, fx, { registry });
+    const item = await createWorkItem(db, fx, {
+      executorType: null,
+      executorId: null,
+      typeData: { requiredTools: ['create_pr'] },
+    });
+
+    await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
+
+    // 换一个要求：拒绝理由随之改变
+    await db
+      .update(workItems)
+      .set({ typeData: { requiredTools: ['deploy_prod'] } })
+      .where(eq(workItems.id, item.id));
+
+    await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
+
+    const blockedEvents = await db.select().from(events).where(eq(events.subjectId, item.id));
+    expect(blockedEvents.filter((e) => e.type === 'work_item.blocked')).toHaveLength(2);
   });
 
   it('标记为需要人类经验的任务不分配给 Agent', async () => {

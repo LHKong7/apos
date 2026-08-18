@@ -32,6 +32,7 @@ import type {
   ResourceScope,
 } from '@apos/contracts';
 import { OrgRole } from '@apos/contracts';
+import type { BlockedDetail } from '@apos/contracts';
 
 /** 组织给某个 Agent 定的能力上限，落在权限变更审计里 */
 interface AgentCeilingSnapshot {
@@ -538,7 +539,8 @@ export const workItems = pgTable(
 
     blockedSince: timestamp({ withTimezone: true }),
     blockedReason: text(),
-    blockedDetail: jsonb().$type<Record<string, unknown>>(),
+    /** 结构化阻塞细节 —— 逐个候选为什么被淘汰，界面据此分层展示并给出修复入口 */
+    blockedDetail: jsonb().$type<BlockedDetail>(),
 
     /** 决策等待前的状态，支撑状态机的 $previous 机制 */
     previousStatus: workItemStatusEnum(),

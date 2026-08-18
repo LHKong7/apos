@@ -194,6 +194,56 @@ describe('执行主体匹配', () => {
     ).toContain('Bash');
   });
 
+  /**
+   * ★★ 每条拒绝都要带原因码与层级。
+   *
+   *   界面靠 `code` 翻译成用户选的那种语言，靠 `scope` 说清这条限制配在哪一层，
+   *   靠两者一起决定「一键修复」跳到哪一页。少了任何一栏，前端就只能回去
+   *   正则匹配那句中文 —— 而那句话是随时会改的。
+   */
+  it('★ 每条拒绝都带原因码与层级', () => {
+    const cases: [AgentCandidate, string, string][] = [
+      [agent({ inProject: false }), 'not_project_member', 'project'],
+      [agent({ status: 'retired' }), 'agent_inactive', 'org'],
+      [agent({ registered: false }), 'runtime_not_registered', 'platform'],
+      [agent({ applicableTypes: ['bug'] }), 'type_not_applicable', 'org'],
+      [agent({ currentLoad: 3, maxConcurrency: 3 }), 'at_capacity', 'org'],
+    ];
+    for (const [candidate, code, scope] of cases) {
+      const [r] = matchExecutors(target(), [candidate]).rejected;
+      expect(r?.code).toBe(code);
+      expect(r?.scope).toBe(scope);
+    }
+  });
+
+  /**
+   * ★ 项目级与组织级要分得开。
+   *   Agent 档案上写着「允许 write_file」而看板说「缺少 write_file」，
+   *   两句都对 —— 一个是组织级上限，一个是项目级授权。不标层级，
+   *   用户看到的就是系统在自打嘴巴，然后跑去改错地方（问题记录 #6）。
+   */
+  it('★ 权限类拒绝标成项目级，额度类标成组织级', () => {
+    const tools = matchExecutors(target({ requiredTools: ['Bash'] }), [
+      agent({ allowedTools: ['Read'] }),
+    ]).rejected[0];
+    expect(tools?.code).toBe('missing_tools');
+    expect(tools?.scope).toBe('project');
+    expect(tools?.params?.['items']).toContain('Bash');
+
+    const quota = matchExecutors(target(), [
+      agent({ tokensToday: 100, tokenLimitDaily: 100 }),
+    ]).rejected[0];
+    expect(quota?.code).toBe('daily_token_exhausted');
+    expect(quota?.scope).toBe('org');
+  });
+
+  /** ★ 人工执行的任务上，拒绝原因指向任务本身，而不是每个 Agent 的毛病 */
+  it('★ 指定人工执行时层级是任务级', () => {
+    const result = matchExecutors(target({ executionMode: 'human' }), [agent()]);
+    expect(result.rejected[0]?.code).toBe('human_executor');
+    expect(result.rejected[0]?.scope).toBe('work_item');
+  });
+
   it('★ 每个被拒的 Agent 都要有理由 —— 空理由等于没解释', () => {
     const all = matchExecutors(
       target({ requiredResources: ['x'], requiredTools: ['Bash'] }),
@@ -206,6 +256,11 @@ describe('执行主体匹配', () => {
       ],
     );
     expect(all.rejected).toHaveLength(5);
-    for (const r of all.rejected) expect(r.reason.trim()).not.toBe('');
+    for (const r of all.rejected) {
+      expect(r.reason.trim()).not.toBe('');
+      // ★ 码与层级也是「理由」的一部分：没有它们前端就只剩那句中文可读
+      expect(r.code).toBeTruthy();
+      expect(r.scope).toBeTruthy();
+    }
   });
 });

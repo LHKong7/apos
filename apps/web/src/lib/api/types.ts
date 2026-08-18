@@ -1,5 +1,6 @@
 import type { PlanDiff, Permission } from '@apos/domain';
 import type {
+  BlockedDetail,
   HumanGate,
   ProjectRole,
   RiskLevel,
@@ -34,6 +35,8 @@ export interface BoardCard {
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
+  /** 结构化阻塞细节 —— 界面优先读它；`blockedReason` 是老数据的兜底句 */
+  blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
   tokens: number;
@@ -260,6 +263,8 @@ export interface WorkItemDetail {
     priority: number;
     humanGate: HumanGate | null;
     blockedReason: string | null;
+    blockedDetail: BlockedDetail | null;
+    blockedSince: string | null;
     actualTokens: number;
     estimatedTokens: number | null;
     consecutiveFailures: number;
@@ -681,6 +686,7 @@ export interface OverviewResponse {
     id: string;
     title: string;
     reason: string | null;
+    detail: BlockedDetail | null;
     minutes: number | null;
     ownerName: string | null;
     humanGateRef: string | null;

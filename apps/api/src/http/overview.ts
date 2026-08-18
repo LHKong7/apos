@@ -192,6 +192,7 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       id: i.id,
       title: i.title,
       reason: i.blockedReason,
+      detail: i.blockedDetail ?? null,
       minutes: i.blockedSince ? Math.round((now - i.blockedSince.getTime()) / 60_000) : null,
       ownerName: i.ownerId ? (userName.get(i.ownerId) ?? '未知') : null,
       humanGateRef: i.humanGateRef,

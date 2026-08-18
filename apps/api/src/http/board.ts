@@ -17,6 +17,7 @@ import {
   HUMAN_GATE_PRIORITY,
   Stage,
   stageFor,
+  type BlockedDetail,
   type HumanGate,
   type Stage as StageT,
   type WorkItemStatus,
@@ -49,6 +50,8 @@ export interface BoardCard {
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
+  /** 结构化阻塞细节。界面优先读它，`blockedReason` 只是兜底句 */
+  blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
   tokens: number;
@@ -439,6 +442,7 @@ async function enrich(
         : null,
       blockedSince: r.blockedSince?.toISOString() ?? null,
       blockedReason: r.blockedReason,
+      blockedDetail: r.blockedDetail ?? null,
       blockedMinutes: r.blockedSince
         ? Math.round((now - r.blockedSince.getTime()) / 60_000)
         : null,

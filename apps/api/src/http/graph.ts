@@ -167,6 +167,7 @@ async function buildNodes(
         : null,
       blockedSince: item.blockedSince?.toISOString() ?? null,
       blockedReason: item.blockedReason,
+      blockedDetail: item.blockedDetail ?? null,
       blockedMinutes: item.blockedSince
         ? Math.round((now - item.blockedSince.getTime()) / 60_000)
         : null,
