@@ -15,6 +15,7 @@ import {
   statusLabel,
   tokens,
   typeIcon,
+  typeLabel,
 } from '../../lib/format';
 import { QueryBoundary } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
@@ -71,7 +72,8 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
           <div className="space-y-3 text-sm">
             <header>
               <div className="flex items-start gap-2">
-                <span aria-hidden>{typeIcon(item.type)}</span>
+                <span aria-hidden title={typeLabel(item.type)}>{typeIcon(item.type)}</span>
+                <span className="sr-only">{typeLabel(item.type)}</span>
                 <h3 className="flex-1 font-semibold text-slate-900">{item.title}</h3>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
@@ -160,8 +162,35 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                     <ul className="space-y-1">
                       {item.acceptanceCriteria.map((c) => (
                         <li key={c.id} className="flex items-start gap-1.5 text-xs">
-                          <span aria-hidden>
-                            {c.status === 'passed' ? '✅' : c.status === 'failed' ? '❌' : '⬜'}
+                          {/*
+                            ★★ 从 ✅ / ❌ / ⬜ 换成同一套描边记号。
+                              那三个 emoji 是三种不同来源的字符 —— 彩色方块、
+                              彩色叉、空心方框，粗细和基线各不一样，摆在一起
+                              不像一套设计语言（问题记录 #29）。
+                              现在是同粗细的 ✓ / ✕ / ○，颜色承担状态，
+                              形状承担色觉障碍下的可读性。
+                            ★ 语义由紧随其后的 sr-only 文字承担，读屏用户听到的是
+                              「已通过」，而不是「白色中等方块」（问题记录 #19）。
+                          */}
+                          <span
+                            aria-hidden
+                            className={clsx(
+                              'w-3 shrink-0 text-center font-medium',
+                              c.status === 'passed'
+                                ? 'text-emerald-600'
+                                : c.status === 'failed'
+                                  ? 'text-rose-600'
+                                  : 'text-slate-300',
+                            )}
+                          >
+                            {c.status === 'passed' ? '✓' : c.status === 'failed' ? '✕' : '○'}
+                          </span>
+                          <span className="sr-only">
+                            {c.status === 'passed'
+                              ? t('itemDrawer.criterion.passed')
+                              : c.status === 'failed'
+                                ? t('itemDrawer.criterion.failed')
+                                : t('itemDrawer.criterion.pending')}
                           </span>
                           <span className="flex-1 text-slate-700">{c.text}</span>
                           <span className="text-[10px] text-slate-400">{c.verification}</span>

@@ -3,14 +3,30 @@ import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { AssigneeChip, actorStateFrom } from '../../components/AssigneeChip';
 import { BlockedDuration, CostMeter, HumanGateBadge, PriorityBadge, RiskBadge } from '../../components/badges';
-import { duration, sourceIcon, sourceLabel, statusLabel, tokens, typeIcon } from '../../lib/format';
+import {
+  duration,
+  sourceIcon,
+  sourceLabel,
+  statusLabel,
+  tokens,
+  typeIcon,
+  typeLabel,
+} from '../../lib/format';
 import { MOVE_HIGHLIGHT_MS, useBoardStore } from '../../stores/board';
 import type { BoardCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { useBlockedSummary } from './BlockedReasons';
+import { DependencyChain } from './DependencyChain';
 
 export interface CardActions {
   onOpen: (card: Card) => void;
+  /**
+   * 按 id 打开另一张卡。
+   *
+   * ★ 与 `onOpen` 分开是因为依赖链上的目标**不在当前这一批卡片里** ——
+   *   它可能在别的列、被筛选掉了、甚至不在这一屏。只有 id 可用。
+   */
+  onOpenById: (id: string) => void;
   onHandleGate: (card: Card) => void;
   onRetry: (card: Card) => void;
   onRemind: (card: Card) => void;
@@ -113,9 +129,11 @@ export function BoardCard({ card, actions, moveDelayMs = 0, draggable, onDragSta
       )}
 
       <header className="flex items-start gap-1.5">
-        <span aria-hidden className="text-xs leading-5">
+        {/* ★ 图标只给眼睛，类型名给读屏 —— 「🔍」被读成「放大镜」而不是「调研」（#19） */}
+        <span aria-hidden className="text-xs leading-5" title={typeLabel(card.type)}>
           {typeIcon(card.type)}
         </span>
+        <span className="sr-only">{typeLabel(card.type)}</span>
         <PriorityBadge priority={card.priority} />
         <h3 className="line-clamp-2 flex-1 text-[13px] font-medium leading-5 text-slate-900">
           {card.title}
@@ -319,14 +337,12 @@ function StatusBody({ card, actions }: { card: Card; actions: CardActions }) {
       {chip}
       <div className="flex items-center gap-1.5">
         <RiskBadge risk={card.riskLevel} />
-        {card.unmetDependencies > 0 && (
-          <span
-            className="text-[11px] text-slate-500"
-            title={t('card.unmetDependencies', { count: card.unmetDependencies })}
-          >
-            🔗 {card.unmetDependencies}
-          </span>
-        )}
+        {/*
+          ★ 依赖徽标从一个死数字变成可展开的链条：
+            知道「有 1 条没完成」回答不了「先做哪个、等谁、催谁」
+            （问题记录 #21）。
+        */}
+        <DependencyChain card={card} onOpen={(id) => actions.onOpenById(id)} />
         <span className="text-[11px] text-slate-400">{statusLabel(card.status)}</span>
       </div>
     </div>

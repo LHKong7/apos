@@ -150,6 +150,7 @@ export function BoardPage() {
   const actions: CardActions = useMemo(
     () => ({
       onOpen: (card) => setOpenCard(card.id),
+      onOpenById: (id) => setOpenCard(id),
       onHandleGate: (card) => {
         if (card.humanGateRef) setOpenDecision(card.humanGateRef);
         else setOpenCard(card.id);

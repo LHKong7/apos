@@ -144,6 +144,28 @@ export function typeIcon(type: string): string {
   return TYPE_ICONS[type] ?? '🔧';
 }
 
+/**
+ * 任务类型的可读名。
+ *
+ * ★★ 每一处 `typeIcon()` 旁边都该有它。
+ *
+ *   emoji 在屏幕阅读器里被读成 Unicode 的官方名字 ——「🔍」是
+ *   "magnifying glass tilted left"，而它在这里表示的是「调研任务」。
+ *   两者毫无关系。图标同时也在小屏、灰度打印和高对比模式下失效
+ *   （问题记录 #19）。
+ *
+ *   做法一律是：emoji 加 `aria-hidden`，紧跟一段 `sr-only` 的这个名字。
+ *   看得见的人靠图标扫视，其余人拿到的是一个词。
+ *
+ * Emoji are announced by their Unicode names, which have nothing to do with
+ * what they mean here. Pair every icon with this, aria-hidden on the glyph.
+ */
+export function typeLabel(type: string): string {
+  const key = `workItemType.${type}` as MessageKey;
+  const label = t(key);
+  return label === key ? type : label;
+}
+
 /** 事件来源图标（页面文档 05 §5.5 的移动来源标注） */
 const SOURCE_ICONS: Record<string, string> = {
   system: '🔧',

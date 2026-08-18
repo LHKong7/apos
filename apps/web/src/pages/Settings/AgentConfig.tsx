@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
 import { AgentAccessPanel } from './AgentAccess';
+import { confirmClose, useUnsavedGuard } from '../../lib/useUnsavedGuard';
 import { RuntimeConfigForm } from './RuntimeConfigForm';
 
 /**
@@ -664,9 +665,31 @@ function AgentForm({
 
   const jsonProblem = Object.values(jsonErrors)[0] ?? null;
 
+  /**
+   * ★ 「和打开时不一样」才算改过。
+   *   这个表单有十几个字段，逐个和初始值比是唯一诚实的判据 ——
+   *   用「碰过表单」当判据的话，只是滚动一下也会触发确认，
+   *   而每次都弹的确认框等于没有确认框（问题记录 #26）。
+   */
+  const dirty =
+    name !== (agent?.name ?? '') ||
+    type !== (agent?.type ?? 'code') ||
+    description !== (agent?.description ?? '') ||
+    credential.trim() !== '' ||
+    endpoint !== (agent?.endpoint ?? '') ||
+    ownerId !== (agent?.ownerId ?? currentUser ?? '') ||
+    skills !== (agent?.skills ?? []).join(', ') ||
+    JSON.stringify(applicableTypes) !== JSON.stringify(agent?.applicableTypes ?? []) ||
+    JSON.stringify(config) !== JSON.stringify(agent?.runtimeConfig ?? {}) ||
+    kind !== (agent?.runtimeKind ?? kinds[0]?.kind ?? 'mock');
+  useUnsavedGuard(dirty);
+  const close = () => {
+    if (confirmClose(dirty)) onClose();
+  };
+
   return (
     <Modal
-      onClose={onClose}
+      onClose={close}
       title={t('agentCfg.title')}
       /* ★ 表单长，两栏也挤 —— JSON 文本框在 md 宽度下一行放不下几个字 */
       width="lg"
@@ -685,7 +708,7 @@ function AgentForm({
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={onClose}>
+            <Button variant="outline" size="sm" onClick={close}>
               {t('common.cancel')}
             </Button>
             <Button variant="neutral" size="sm"

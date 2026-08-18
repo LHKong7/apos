@@ -48,7 +48,21 @@ export interface BoardCard {
   latestNote: string | null;
   artifactCount: number;
   unmetDependencies: number;
+  /** 谁挡着这张卡（含已完成的，画整条链要用到） */
+  blockedBy: DependencyRef[];
+  /** 这张卡挡着谁 —— 「先做哪个」只有这一栏答得了 */
+  blocking: DependencyRef[];
   updatedAt: string;
+}
+
+/** 依赖链上的一个引用 */
+export interface DependencyRef {
+  id: string;
+  ref: string;
+  title: string;
+  status: string;
+  type: string | null;
+  met: boolean;
 }
 
 /**

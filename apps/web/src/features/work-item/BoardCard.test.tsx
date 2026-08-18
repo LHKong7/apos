@@ -9,6 +9,7 @@ import { useLocaleStore } from '../../lib/i18n';
 function actions(): CardActions {
   return {
     onOpen: vi.fn(),
+    onOpenById: vi.fn(),
     onHandleGate: vi.fn(),
     onRetry: vi.fn(),
     onRemind: vi.fn(),

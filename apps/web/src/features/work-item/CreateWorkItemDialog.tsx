@@ -1,5 +1,6 @@
 import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
+import { confirmClose, useUnsavedGuard } from '../../lib/useUnsavedGuard';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
@@ -62,6 +63,17 @@ export function CreateWorkItemDialog({
   const [type, setType] = useState('task');
   const [priority, setPriority] = useState(2);
   const [riskLevel, setRiskLevel] = useState('low');
+
+  /**
+   * ★ 「改过」= 用户真的写进去了东西，不是「打开过这个弹窗」。
+   *   下拉框的默认值不算改动 —— 拿它当改动的话，一个刚打开就想关掉的
+   *   弹窗也会弹确认，而用户三次之后就会条件反射地点确认（问题记录 #26）。
+   */
+  const dirty = title.trim().length > 0 || description.trim().length > 0;
+  useUnsavedGuard(dirty);
+  const close = () => {
+    if (confirmClose(dirty)) onClose();
+  };
   const qc = useQueryClient();
 
   const create = useMutation({
@@ -82,7 +94,7 @@ export function CreateWorkItemDialog({
   });
 
   return (
-    <Modal onClose={onClose} title={t('createItem.title')}>
+    <Modal onClose={close} title={t('createItem.title')}>
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{t('createItem.title')}</h2>
 
@@ -187,7 +199,7 @@ export function CreateWorkItemDialog({
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm"
-            onClick={onClose}>
+            onClick={close}>
             {t('common.cancel')}
           </Button>
           <Button variant="neutral" size="sm"

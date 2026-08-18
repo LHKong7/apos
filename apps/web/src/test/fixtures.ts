@@ -28,6 +28,8 @@ export function card(overrides: Partial<BoardCard> = {}): BoardCard {
     latestNote: null,
     artifactCount: 0,
     unmetDependencies: 0,
+    blockedBy: [],
+    blocking: [],
     updatedAt: new Date().toISOString(),
     ...overrides,
   };
