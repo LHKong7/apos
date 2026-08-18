@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import clsx from 'clsx';
 import { Label } from '@/components/ui/label';
 
@@ -109,4 +110,80 @@ export function Notice({
       {children}
     </div>
   );
+}
+
+/**
+ * 「这一页是干什么的」/ A three-sentence primer for a settings page.
+ *
+ * ★★ 设置区通篇是领域词汇：Policy、Agent capabilities、RBAC、RLS、审计日志。
+ *   这些词对写它的人是精确的，对一个产品经理或项目经理是一堵墙 ——
+ *   他打开这一页，第一件事是判断「这跟我有关系吗」，而页面上没有任何
+ *   一句话回答这个问题（问题记录 #42）。
+ *
+ * ★ 默认**展开**，一次性写清三件事：这是什么、什么时候需要动它、
+ *   不动会怎样。看过一次的人可以收起来，收起状态记在 localStorage 里 ——
+ *   否则每次进设置都要重新关一遍，那比不给更烦。
+ *
+ * ★ 不写「更多信息见文档」。真需要跳出去读文档才能懂的话，
+ *   这段话就没写好。
+ *
+ * Settings pages speak in Policy / RBAC / RLS. Those words are precise to
+ * whoever wrote them and a wall to a project manager, whose first question is
+ * "does this concern me at all" — a question the page never answered.
+ */
+export function WhatIsThis({
+  storageKey,
+  title,
+  children,
+}: {
+  /** 每页一个，用来记住「我已经读过了」 */
+  storageKey: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(() => readDismissed(storageKey) === false);
+
+  const toggle = () => {
+    setOpen((v) => {
+      writeDismissed(storageKey, v);
+      return !v;
+    });
+  };
+
+  return (
+    <section className="rounded border border-sky-200 bg-sky-50/60 px-3 py-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={toggle}
+        className="flex w-full items-center gap-1.5 text-left text-xs font-medium text-sky-900"
+      >
+        <span aria-hidden>{open ? '▾' : '▸'}</span>
+        {title}
+      </button>
+      {open && <div className="mt-1 space-y-1 text-[11px] leading-5 text-sky-900">{children}</div>}
+    </section>
+  );
+}
+
+/**
+ * ★ localStorage 读写都包一层 try —— 隐私模式下它会抛，
+ *   而「读不到偏好」绝不该把整页拖垮。读不到就当成没读过：
+ *   多显示一次说明的代价，远小于一个白屏。
+ */
+function readDismissed(key: string): boolean {
+  try {
+    return window.localStorage.getItem(`apos.whatIsThis.${key}`) === 'dismissed';
+  } catch {
+    return false;
+  }
+}
+
+function writeDismissed(key: string, dismissed: boolean): void {
+  try {
+    if (dismissed) window.localStorage.setItem(`apos.whatIsThis.${key}`, 'dismissed');
+    else window.localStorage.removeItem(`apos.whatIsThis.${key}`);
+  } catch {
+    /* 隐私模式下写不进去 —— 只是记不住，不影响功能 */
+  }
 }

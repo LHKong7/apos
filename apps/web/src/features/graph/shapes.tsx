@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useT, type MessageKey } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { NodeKind } from '@apos/domain';
@@ -135,38 +136,70 @@ function hexagonPoints(): string {
 }
 
 /** 图例。没有它，七种形状对第一次看图的人就是七种装饰 */
+/**
+ * 图例。
+ *
+ * ★★ 默认**收起**。
+ *
+ *   九个条目每个带一个形状加一段文字，摊开占掉页面下半部分好大一块 ——
+ *   而图例是「第一次看这张图」时才需要的东西，之后每一次打开都要为它
+ *   让出一条横带（问题记录 #37）。收起后只留一行按钮，展开状态记在这里，
+ *   同一次会话里不用反复展开。
+ *
+ * ★ 收起时仍然留一行最要紧的两条（关键路径 / 数据依赖）—— 它们解释的是
+ *   **线**，而线没有 tooltip 可点，图例是唯一的出处。节点那九种有 tooltip
+ *   兜着，可以收。
+ *
+ * Nine entries with a shape each ate the bottom band of the page on every
+ * visit, though a legend is only needed the first time. Edge styles stay
+ * visible because edges have no tooltip — the legend is their only explanation.
+ */
 export function Legend() {
   const t = useT();
+  const [open, setOpen] = useState(false);
+
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
-      {(Object.entries(KIND_META) as [NodeKind, { icon: string; labelKey: MessageKey }][]).map(
-        ([kind, meta]) => (
-          <span key={kind} className="inline-flex items-center gap-1">
-            <svg width={16} height={11} viewBox={`0 0 ${NODE_W} ${NODE_H}`} aria-hidden>
-              <NodeShape
-                kind={kind}
-                status="ready"
-                emphasized={false}
-                onCritical={false}
-                inBlockedChain={false}
-              />
-            </svg>
-            {meta.icon} {t(meta.labelKey)}
-          </span>
-        ),
-      )}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded border border-slate-200 px-1.5 py-0.5 text-slate-600 hover:bg-slate-100"
+      >
+        {open ? t('graph.legend.hide') : t('graph.legend.show')}
+      </button>
+
+      {/* ★ 线型常驻：线没有 tooltip，这里是它唯一的解释 */}
       <span className="inline-flex items-center gap-1">
         <svg width={20} height={6} aria-hidden>
           <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge-critical)" strokeWidth={3} />
         </svg>
         {t('graph.criticalPath')}
       </span>
-      <span className={clsx('inline-flex items-center gap-1')}>
+      <span className="inline-flex items-center gap-1">
         <svg width={20} height={6} aria-hidden>
           <line x1={0} y1={3} x2={20} y2={3} stroke="var(--graph-edge)" strokeWidth={1.5} strokeDasharray="4 2" />
         </svg>
         {t('graph.dataDependency')}
       </span>
+
+      {open &&
+        (Object.entries(KIND_META) as [NodeKind, { icon: string; labelKey: MessageKey }][]).map(
+          ([kind, meta]) => (
+            <span key={kind} className="inline-flex items-center gap-1">
+              <svg width={16} height={11} viewBox={`0 0 ${NODE_W} ${NODE_H}`} aria-hidden>
+                <NodeShape
+                  kind={kind}
+                  status="ready"
+                  emphasized={false}
+                  onCritical={false}
+                  inBlockedChain={false}
+                />
+              </svg>
+              <span aria-hidden>{meta.icon}</span> {t(meta.labelKey)}
+            </span>
+          ),
+        )}
     </div>
   );
 }

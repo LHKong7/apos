@@ -1,4 +1,4 @@
-import type { PlanDiff, Permission } from '@apos/domain';
+import type { Diagnostic, PlanDiff, Permission } from '@apos/domain';
 import type {
   BlockedDetail,
   DecisionReason,
@@ -732,6 +732,10 @@ export interface OverviewResponse {
     overdueDecisions: number;
   }[];
   trend: { wip: { day: string; value: number }[]; blocked: { day: string; value: number }[] };
+  /** 与执行图共用同一套判定，只给前三条 —— 总览是指挥台不是问题清单 */
+  diagnostics: Diagnostic[];
+  /** 延期归因那一行（「决策等待 5.6d」）；算不出来时为 null */
+  delayCause: string | null;
   recentActivity: { id: string; type: string; actorType: string; occurredAt: string; payload: Record<string, unknown> }[];
 }
 

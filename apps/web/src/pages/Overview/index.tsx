@@ -20,6 +20,7 @@ import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { BlockedReasons } from '../../features/work-item/BlockedReasons';
+import { DiagnosticsBanner } from '../../features/graph/DiagnosticsBanner';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
 import { useT } from '../../lib/i18n';
 import { Button } from '@/components/ui/button';
@@ -189,6 +190,21 @@ export function OverviewPage() {
               note={t('overview.delay.note')}
             />
           )}
+
+          {/*
+            ★★ 问题诊断搬到了总览。
+              执行图上每条问题都带着「改派 / 催办 / 调整 Policy」这类直达按钮 ——
+              而那是全站唯一「报了问题就顺手给解法」的地方。看板与总览上
+              看到一条阻塞任务时，用户手上一个动作按钮都没有（问题记录 #40）。
+              归因那一行同样搬过来（#38）。
+          */}
+          <DiagnosticsBanner
+            projectId={projectId}
+            diagnostics={d.diagnostics}
+            delayCause={d.delayCause}
+            onOpenCard={setOpenCard}
+            onRemind={(nodeId) => setOpenCard(nodeId)}
+          />
 
           {/* ── 需要你处理 ── */}
           <section className="rounded border border-slate-200 bg-white">

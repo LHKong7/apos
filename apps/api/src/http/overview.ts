@@ -24,6 +24,7 @@ import {
 import { notFound } from './errors';
 import { loadAnalyticsInput } from './analytics';
 import { serializeEvent } from './serialize';
+import { getProjectDiagnostics } from './graph';
 
 /**
  * 项目总览（页面文档 02）。
@@ -122,6 +123,15 @@ export async function getOverview(db: Database, projectId: string, userId: strin
     .select()
     .from(projectMembers)
     .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.actorType, 'human')));
+
+  /**
+   * ── 问题诊断 ──
+   *
+   * ★★ 「延期主因是决策等了 5.6 天」这类归因此前只在执行图那一页 ——
+   *   而它恰恰是「负责人该去解决什么」的浓缩，理应出现在他每天先看的这一页
+   *   （问题记录 #38 / #40）。与执行图共用同一套 domain 判定，跳过布局。
+   */
+  const { metrics: graphMetrics, diagnostics } = await getProjectDiagnostics(db, projectId);
 
   // ── 最近活动 ──
   const recent = await db
@@ -230,6 +240,13 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       wip: flow.wipTrend.slice(-7),
       blocked: flow.blockedTrend.slice(-7),
     },
+
+    /**
+     * ★ 只给前三条 —— 总览是指挥台不是问题清单。
+     *   看全的入口是执行图，那里每条都带着可执行按钮。
+     */
+    diagnostics: diagnostics.slice(0, 3),
+    delayCause: graphMetrics.primaryCause,
 
     recentActivity: recent.map(serializeEvent),
   };

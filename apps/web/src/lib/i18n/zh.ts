@@ -11,6 +11,37 @@ import type { en } from './en';
  */
 export const zh: Record<keyof typeof en, string> = {
   // ── 通用动作 ──────────────────────────────────────────────────────
+  // ── 「这一页是干什么的」/ Settings primers ────────────────────────
+  'whatIs.policies.title': '这一页是干什么的？',
+  'whatIs.policies.p1':
+    'Policy 是一条常设规则，说的是「什么情况下 APOS 必须停下来问人，而不是让 Agent 直接做」—— 比如「动生产库的事一律要 DBA 批」。',
+  'whatIs.policies.p2':
+    '你会来这儿，通常是因为同一类决策反复进你的收件箱（把它变成规则），或者 Agent 老被拦下来做你其实乐意让它做的事（放宽一条规则）。',
+  'whatIs.policies.p3':
+    '什么都不改也没关系：平台自带的规则照常生效。它们盖住了九类「做错了代价很大」的操作，而且关不掉。',
+
+  'whatIs.roles.title': '这一页是干什么的？',
+  'whatIs.roles.p1':
+    '角色是一组权限的名字。人和 Agent 都是被授予角色，而不是逐条授予权限 —— 这样「审核者能做什么」只有一个答案，而不是每个人一个。',
+  'whatIs.roles.p2':
+    '你会来这儿，是因为现有的角色对你们团队的实际分工来说太宽或太窄。一次性的例外不该改角色，那属于成员本身。',
+  'whatIs.roles.p3':
+    '什么都不改也没关系：大家沿用默认角色。删除一个正被人担任的角色会被拒绝 —— 没有人会静默地失去权限。',
+
+  'whatIs.integrations.title': '这一页是干什么的？',
+  'whatIs.integrations.p1':
+    '集成把 APOS 接到你们已经在用的系统上 —— GitHub、Jira、飞书 —— 让任务、PR 与通知自动对齐，不用谁手工来回抄。',
+  'whatIs.integrations.p2':
+    '你会来这儿，是要接一个系统、查同步为什么停了，或者处理一条两边都改了同一个字段的冲突。',
+  'whatIs.integrations.p3': '一个都不接也没关系，APOS 自己转得动 —— 只是那些抄写由你来做。',
+
+  'whatIs.members.title': '这一页是干什么的？',
+  'whatIs.members.p1':
+    '这里是「谁能在这个项目里干活」—— 人和 Agent 都在这张名单上，各自担任一个角色。组织里已经有的 Agent，在这一页加进来之前，仍然接不到这个项目的活。',
+  'whatIs.members.p2':
+    '你会来这儿，是有人新加入、有 Agent 被以「不是本项目成员」挡下来、或者某人的角色跟他实际在做的事对不上了。',
+  'whatIs.members.p3': '把人移出去只是让后续的活不再派给他，不会抹掉他已经做过的事。',
+
   'common.cancel': '取消',
   'common.confirm': '确认',
   'common.save': '保存',
@@ -808,6 +839,7 @@ export const zh: Record<keyof typeof en, string> = {
   'graph.remindFailed': '催办失败',
   'graph.title': '执行图',
   'graph.layout': '布局',
+  'graph.highlightHint': '只是高亮 —— 不会从图里去掉任何节点。没选中的会变灰。',
   'graph.highlight': '高亮',
   'graph.empty': '这个项目还没有任务',
   'graph.emptyHint': '计划批准后任务会出现在这里，依赖关系也会一并画出',
@@ -1364,6 +1396,8 @@ export const zh: Record<keyof typeof en, string> = {
   'graph.executorLine': '执行者：{name}',
   'graph.durationLine': '工期 {hours}h{estimated} · 成本 {cost}',
   'graph.defaultEstimate': '（默认估值）',
+  'graph.tooltipAction': '点击打开这个任务 · 右键看可做的操作',
+  'graph.tooltipDecision': '这条上有决策在等人处理',
   'graph.blockedLine': '阻塞：{reason}',
   'graph.decisionOverdue': '决策已超时 {hours}h',
   'graph.decisionLeft': '决策剩余 {hours}h',
@@ -1723,6 +1757,8 @@ export const zh: Record<keyof typeof en, string> = {
   'graph.primaryCause': '主因：{cause}',
   'graph.fewTasksHint': '任务较少且相互独立，看板可能比{graph}更合适',
   'graph.fitToWindow': '适应窗口',
+  'graph.legend.show': '这些形状是什么意思？',
+  'graph.legend.hide': '收起形状说明',
   'graph.criticalPath': '关键路径',
   'graph.dataDependency': '数据依赖',
   'graph.criticalPathHours': '关键路径 {total} · 剩余 {remaining}',
@@ -2161,6 +2197,10 @@ export const zh: Record<keyof typeof en, string> = {
   'workItemType.release': '发布',
   'workItemType.knowledge': '知识',
   'diag.noneFound': '💡 图中没有发现结构性问题',
+  'diag.seeAll': '去执行图看全部 →',
+  'diag.severity.critical': '严重：',
+  'diag.severity.warning': '警告：',
+  'diag.severity.info': '提示：',
   'diag.found': '💡 图中发现的问题（{count}）',
   'diag.locate': '在图中定位（影响 {count} 个节点）',
   'executor.title': '执行者',

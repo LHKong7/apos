@@ -20,6 +20,39 @@
  */
 export const en = {
   // ── Common actions / 通用动作 ──────────────────────────────────────
+  // ── 「这一页是干什么的」/ Settings primers ────────────────────────
+  'whatIs.policies.title': 'What is this page for?',
+  'whatIs.policies.p1':
+    'A policy is a standing rule about when APOS must stop and ask a person instead of letting an Agent proceed — for example “anything touching the production database needs DBA approval”.',
+  'whatIs.policies.p2':
+    'You come here when the same decision keeps landing in your inbox (turn it into a rule), or when Agents are being stopped for things you are happy to let them do (relax a rule).',
+  'whatIs.policies.p3':
+    'If you change nothing, the built-in rules still apply. They cover the nine operations that are expensive to get wrong, and they cannot be switched off.',
+
+  'whatIs.roles.title': 'What is this page for?',
+  'whatIs.roles.p1':
+    'A role is a named bundle of permissions. People and Agents are given roles rather than individual permissions, so “what can a reviewer do” has one answer instead of one per person.',
+  'whatIs.roles.p2':
+    'You come here when an existing role is too broad or too narrow for how your team actually works — not for one-off exceptions, which belong on the member instead.',
+  'whatIs.roles.p3':
+    'If you change nothing, everyone keeps the default roles. Deleting a role that people currently hold is refused, so nobody silently loses access.',
+
+  'whatIs.integrations.title': 'What is this page for?',
+  'whatIs.integrations.p1':
+    'An integration connects APOS to a system your team already uses — GitHub, Jira, Slack — so work items, pull requests and notifications stay in step without anyone copying them across.',
+  'whatIs.integrations.p2':
+    'You come here to connect a system, to check why a sync stopped, or to resolve a conflict where both sides changed the same field.',
+  'whatIs.integrations.p3':
+    'If you connect nothing, APOS works fine on its own — you just do the copying by hand.',
+
+  'whatIs.members.title': 'What is this page for?',
+  'whatIs.members.p1':
+    'This is who can work on this project — people and Agents alike, each holding a role. An Agent that exists in your organisation still cannot be given work here until it is added on this page.',
+  'whatIs.members.p2':
+    'You come here when someone new joins, when an Agent is being turned away with “not a member of this project”, or when a role no longer matches what someone actually does.',
+  'whatIs.members.p3':
+    'Removing someone stops future work reaching them; it does not erase what they already did.',
+
   'common.cancel': 'Cancel',
   'common.confirm': 'Confirm',
   'common.save': 'Save',
@@ -835,6 +868,7 @@ export const en = {
   'graph.remindFailed': 'Reminder failed',
   'graph.title': 'Execution graph',
   'graph.layout': 'Layout',
+  'graph.highlightHint': 'Highlights only — nothing is removed from the graph. What is not highlighted dims.',
   'graph.highlight': 'Highlight',
   'graph.empty': 'This project has no work items yet',
   'graph.emptyHint': 'Items appear here once a plan is approved, with their dependencies drawn in',
@@ -1396,6 +1430,8 @@ export const en = {
   'graph.executorLine': 'Executor: {name}',
   'graph.durationLine': 'Duration {hours}h{estimated} · cost {cost}',
   'graph.defaultEstimate': ' (default estimate)',
+  'graph.tooltipAction': 'Click to open this task · right-click for actions',
+  'graph.tooltipDecision': 'A decision on this one is waiting for a person',
   'graph.blockedLine': 'Blocked: {reason}',
   'graph.decisionOverdue': 'Decision overdue by {hours}h',
   'graph.decisionLeft': 'Decision due in {hours}h',
@@ -1761,6 +1797,8 @@ export const en = {
   'graph.primaryCause': 'Main cause: {cause}',
   'graph.fewTasksHint': 'Few and mostly independent work items — the board may suit this better than the {graph}',
   'graph.fitToWindow': 'Fit to window',
+  'graph.legend.show': 'What do the shapes mean?',
+  'graph.legend.hide': 'Hide the shape key',
   'graph.criticalPath': 'Critical path',
   'graph.dataDependency': 'Data dependency',
   'graph.criticalPathHours': 'Critical path {total} · {remaining} remaining',
@@ -2216,6 +2254,10 @@ export const en = {
   'workItemType.release': 'Release',
   'workItemType.knowledge': 'Knowledge',
   'diag.noneFound': '💡 No structural problems found in the graph',
+  'diag.seeAll': 'See all in the execution graph →',
+  'diag.severity.critical': 'Critical:',
+  'diag.severity.warning': 'Warning:',
+  'diag.severity.info': 'Note:',
   'diag.found': '💡 Problems found in the graph ({count})',
   'diag.locate': 'Locate in graph ({count} nodes affected)',
   'executor.title': 'Executor',
