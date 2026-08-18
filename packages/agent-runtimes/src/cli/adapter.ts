@@ -179,7 +179,7 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
 
     this.runs.set(task.runId, {
       task,
-      sandbox: mapSandbox(task.permissions),
+      sandbox: mapSandbox(task.permissions, task.workspace.writable),
       translator: new CliOutputTranslator({ format: this.profile.output, kind: this.profile.label }),
       child: null,
       status: 'queued',

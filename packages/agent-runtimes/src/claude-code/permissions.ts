@@ -60,7 +60,27 @@ export function mapPermissions(
 
   const repoScopes = permissions.resourceScopes.filter((s) => s.kind === 'repo');
   const readable = repoScopes.filter((s) => s.access !== 'none');
-  const writable = repoScopes.some((s) => s.access === 'write');
+
+  /**
+   * ★ 与 acquire() 的主挂载规则对齐：repo 与 dataset 的 write 都算可写。
+   *
+   *   只认 repo 的话，被授了 dataset write 的 Agent 会挂上一个可写的工作区、
+   *   写工具却全被禁 —— 平台说可写、适配器说不可写，两个子系统给出两个答案，
+   *   现场表现是「授权界面写着 Write，Agent 说没有 Write 工具」。
+   *
+   *   readable/dirs 仍然只从 repo scope 来：目录解析要有平台背书，
+   *   dataset 的路径经 task.workspace.additionalPaths 下发，混进来会让
+   *   cwd 兜底逻辑产生一个没人准备过的路径。
+   *
+   * Align with acquire()'s primary-mount rule: a write scope on either a repo
+   * or a dataset counts as writable. Repo-only left dataset-write agents with
+   * a writable mount and no write tools — two subsystems, two answers.
+   * Directory resolution stays repo-only; dataset paths arrive through
+   * task.workspace.additionalPaths.
+   */
+  const writable = permissions.resourceScopes.some(
+    (s) => s.access === 'write' && (s.kind === 'repo' || s.kind === 'dataset'),
+  );
 
   if (!writable) {
     for (const t of WRITE_TOOLS) {
@@ -89,6 +109,76 @@ export function mapPermissions(
     otherScopes: permissions.resourceScopes.filter(
       (s) => s.kind !== 'repo' && s.access !== 'none',
     ),
+  };
+}
+
+/** 是否是写类工具的裸名 */
+function isWriteTool(tool: string): boolean {
+  return (WRITE_TOOLS as readonly string[]).includes(tool);
+}
+
+/**
+ * 用平台已准备好的工作区，覆盖由资源范围推导出来的「可写」。
+ *
+ * ★★ 两个方向都覆盖，因为两个方向的错法都真实发生过：
+ *
+ *   - writable=true —— 规划 Run 的 scratch 目录**没有任何 scope 对应它**，
+ *     scope 推导永远推不出可写，于是平台给了可写目录、Agent 却写不出产物。
+ *     dataset 主挂载同理。
+ *   - writable=false —— 只读挂载时显式收紧，兑现 RunWorkspace.writable
+ *     那句「适配器据此再收一道写工具」的契约注释。
+ *
+ *   能力闸门不在这一层，也放不出它没授的东西：写工具是从
+ *   `permissions.allowedTools` 里挑回来的，`workspace.write` 没授予时
+ *   它们本来就不在里面。显式黑名单（deniedTools 里的裸条目）同样不放回来 ——
+ *   黑名单优先级高于白名单是全系统的约定。
+ *
+ * The prepared workspace's truth overrides scope-derived writability in both
+ * directions: planning scratch dirs have no scope at all (so scope inference
+ * can never say "writable"), and a read-only mount must clamp write tools shut.
+ * This cannot widen past the capability gate — restored tools are re-picked
+ * from permissions.allowedTools, and explicit denies stay denied.
+ */
+export function applyWorkspaceWritable(
+  base: MappedPermissions,
+  permissions: AgentPermissions,
+  writable: boolean,
+): MappedPermissions {
+  const explicitBare = new Set(
+    permissions.deniedTools.filter(isBareRule).map(baseToolName),
+  );
+
+  // 先摘掉 mapPermissions 因 scope 推导而追加的写工具禁令，
+  // 管理员/Policy 显式写下的那份原样留着
+  const disallowedTools = base.disallowedTools.filter(
+    (rule) =>
+      !(
+        isBareRule(rule) &&
+        isWriteTool(baseToolName(rule)) &&
+        !explicitBare.has(baseToolName(rule))
+      ),
+  );
+
+  if (!writable) {
+    const bare = new Set(disallowedTools.filter(isBareRule).map(baseToolName));
+    for (const t of WRITE_TOOLS) {
+      if (!bare.has(t)) {
+        disallowedTools.push(t);
+        bare.add(t);
+      }
+    }
+  }
+
+  const deniedBare = new Set(disallowedTools.filter(isBareRule).map(baseToolName));
+
+  return {
+    ...base,
+    tools: [...new Set(permissions.allowedTools.map(baseToolName))].filter(
+      (t) => t.length > 0 && !deniedBare.has(t),
+    ),
+    allowedTools: permissions.allowedTools.filter((r) => !deniedBare.has(baseToolName(r))),
+    disallowedTools,
+    writable,
   };
 }
 

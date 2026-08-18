@@ -24,13 +24,25 @@ afterEach(cleanup);
  *   resulting stack points into user-event internals rather than at the missing
  *   API, so these stubs live in the global setup.
  */
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-if (!Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = () => {};
+/**
+ * ★ setupFiles 是**全局**的，而 environment 是按 glob 匹配的：这份 setup
+ *   同样会在 node 环境的后端测试里执行，那里没有 `Element`。不判存在就是
+ *   `ReferenceError: Element is not defined`，整个 packages/ 与 apps/api
+ *   的测试**一条都收集不起来** —— 报错还指着一个前端文件。
+ *
+ * setupFiles run for every project while `environment` is glob-matched, so
+ * this file also executes under the node environment, where `Element` does not
+ * exist. Without the guard every backend test file fails to collect.
+ */
+if (typeof Element !== 'undefined') {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.setPointerCapture = () => {};
+    Element.prototype.releasePointerCapture = () => {};
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
 }
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {

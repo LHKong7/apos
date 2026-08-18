@@ -21,7 +21,12 @@ import {
   type RuntimeStatus,
   type Unsubscribe,
 } from '../adapter';
-import { isExplicitlyDenied, mapPermissions, type MappedPermissions } from './permissions';
+import {
+  applyWorkspaceWritable,
+  isExplicitlyDenied,
+  mapPermissions,
+  type MappedPermissions,
+} from './permissions';
 import { buildPrompt, buildSystemAppend } from './prompt';
 import { EventTranslator } from './translate';
 import { classifyThrown } from './errors';
@@ -204,10 +209,17 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
      *   在此之前 cwd 来自一个全局的 workspaceRoot，所有 Agent、所有并发 Run
      *   共用同一个目录 —— 两个任务同时跑就在同一份工作树上互相覆盖。
      *   现在由 WorkspaceService 按 runId 挂独立工作树，这里只负责认路径。
+     *
+     *   「可写」同样以工作区为准（applyWorkspaceWritable）：路径认了、
+     *   可写性却还按资源范围猜，就会出现平台挂了可写目录而写工具全被禁。
+     *
+     * The prepared workspace is the source of truth for the path *and* for
+     * writability — taking one and inferring the other is how a writable mount
+     * ended up with every write tool disabled.
      */
     const mapped: MappedPermissions = task.workspace
       ? {
-          ...base,
+          ...applyWorkspaceWritable(base, task.permissions, task.workspace.writable),
           cwd: task.workspace.path,
           additionalDirectories: task.workspace.additionalPaths,
         }

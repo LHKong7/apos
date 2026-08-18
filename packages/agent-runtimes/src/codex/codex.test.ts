@@ -109,6 +109,27 @@ describe('权限映射：沙箱级 vs 工具级', () => {
     expect(m.mode).toBe('read-only');
   });
 
+  /**
+   * ★ 真值表：三个运行时对「可写」必须给出同一个答案。
+   *   codex 只认 repo 的那版，会让「换个运行时就能写了」看起来像玄学。
+   */
+  it('★ dataset 的 write 与工作区可写性都算数', () => {
+    const dataset = perms({ resourceScopes: [{ kind: 'dataset', ref: 'ds-1', access: 'write' }] });
+    expect(mapSandbox(dataset).mode).toBe('workspace-write');
+
+    const noScope = perms({ resourceScopes: [] });
+    // 没有工作区时回落到 scope 推导 —— 推不出可写就收紧
+    expect(mapSandbox(noScope).mode).toBe('read-only');
+    // 平台给了可写工作区（规划 Run 的 scratch 目录）时以它为准
+    expect(mapSandbox(noScope, true).mode).toBe('workspace-write');
+
+    // 工作区只读时压过 scope 推导，方向是收紧
+    expect(mapSandbox(perms(), false).mode).toBe('read-only');
+
+    // 可写但没要写工具，仍然是 read-only —— 两个条件都要满足
+    expect(mapSandbox(perms({ allowedTools: ['Read'] }), true).mode).toBe('read-only');
+  });
+
   it('未授予联网工具时不开网', () => {
     expect(mapSandbox(perms()).network).toBe(false);
     expect(mapSandbox(perms({ allowedTools: ['Read', 'WebSearch'] })).network).toBe(true);

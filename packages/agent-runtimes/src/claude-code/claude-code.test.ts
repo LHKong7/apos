@@ -3,7 +3,12 @@ import { totalTokens, type RunEvent, type TaskDispatch } from '@apos/contracts';
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeCodeRuntime, PromptStream, type QueryFn } from './adapter';
 import { UnsupportedFeatureError } from '../adapter';
-import { baseToolName, mapPermissions, WRITE_TOOLS } from './permissions';
+import {
+  applyWorkspaceWritable,
+  baseToolName,
+  mapPermissions,
+  WRITE_TOOLS,
+} from './permissions';
 import { buildPrompt, buildSystemAppend } from './prompt';
 import { estimateCostUsd, hasPricing } from './cost';
 import { classifyAssistantError, classifyResultError, classifyThrown } from './errors';
@@ -232,7 +237,10 @@ describe('权限映射', () => {
     const mapped = mapPermissions(
       {
         ...task().permissions,
-        resourceScopes: [{ kind: 'repo', ref: 'org/app', access: 'read' }],
+        resourceScopes: [
+          { kind: 'repo', ref: 'org/app', access: 'read' },
+          { kind: 'dataset', ref: 'ds-1', access: 'read' },
+        ],
       },
       () => '/repo',
     );
@@ -240,6 +248,125 @@ describe('权限映射', () => {
     expect(mapped.writable).toBe(false);
     for (const t of WRITE_TOOLS) expect(mapped.disallowedTools).toContain(t);
     expect(mapped.tools).not.toContain('Edit');
+  });
+
+  /**
+   * ★ 可写性的判定要和平台的主挂载规则（workspace/index.ts 的 acquire）
+   *   对齐。只认 repo 的那版，被授了 dataset write 的 Agent 会挂上可写工作区
+   *   却拿不到任何写工具 —— 授权界面写着 Write，Agent 说没有 Write。
+   */
+  it('★ dataset 的 write 范围同样算可写 —— 与平台主挂载规则对齐', () => {
+    const mapped = mapPermissions(
+      {
+        ...task().permissions,
+        resourceScopes: [{ kind: 'dataset', ref: 'ds-1', access: 'write' }],
+      },
+      () => null,
+    );
+
+    expect(mapped.writable).toBe(true);
+    for (const t of WRITE_TOOLS) expect(mapped.disallowedTools).not.toContain(t);
+    expect(mapped.tools).toContain('Edit');
+  });
+
+  it('repo 只读 + dataset 可写时仍判可写', () => {
+    const mapped = mapPermissions(
+      {
+        ...task().permissions,
+        resourceScopes: [
+          { kind: 'repo', ref: 'org/app', access: 'read' },
+          { kind: 'dataset', ref: 'ds-1', access: 'write' },
+        ],
+      },
+      () => '/repo',
+    );
+
+    expect(mapped.writable).toBe(true);
+    // 目录解析仍然只从 repo scope 来，dataset 路径由工作区的 additionalPaths 下发
+    expect(mapped.cwd).toBe('/repo');
+  });
+});
+
+describe('工作区可写性覆盖资源范围推导', () => {
+  const readOnlyScopes = [{ kind: 'repo' as const, ref: 'org/app', access: 'read' as const }];
+
+  it('工作区可写但没有任何资源范围时放回写工具 —— 规划 Run 的 scratch 目录', () => {
+    const permissions = { allowedTools: ['Read', 'Write'], deniedTools: [], resourceScopes: [] };
+    const base = mapPermissions(permissions, () => null);
+    expect(base.writable).toBe(false);
+
+    const mapped = applyWorkspaceWritable(base, permissions, true);
+
+    expect(mapped.writable).toBe(true);
+    expect(mapped.tools).toContain('Write');
+    expect(mapped.disallowedTools).not.toContain('Write');
+  });
+
+  it('工作区只读时收紧写工具，即使资源范围说可写', () => {
+    const permissions = task().permissions;
+    const base = mapPermissions(permissions, () => '/repo');
+    expect(base.writable).toBe(true);
+
+    const mapped = applyWorkspaceWritable(base, permissions, false);
+
+    expect(mapped.writable).toBe(false);
+    for (const t of WRITE_TOOLS) expect(mapped.disallowedTools).toContain(t);
+    expect(mapped.tools).not.toContain('Edit');
+  });
+
+  /**
+   * ★★ 安全底线：工作区可写是**新增的一条放行来源**，它必须放不出
+   *   能力闸门没授予的工具。`workspace.write` 没授予时写工具根本不在
+   *   allowedTools 里（capability-map.ts 的映射），这里只能从 allowedTools
+   *   里挑，挑不出来就是没有。这条红了说明能力授权可以被工作区绕过。
+   *
+   * Safety floor: workspace writability is a new source of permissiveness and
+   * must never hand out a tool the capability gate withheld.
+   */
+  it('★ 工作区可写也放不出没授予的写工具 —— 能力闸门不可绕过', () => {
+    const permissions = {
+      allowedTools: ['Read', 'Grep'], // 没有 workspace.write ⇒ 没有写工具
+      deniedTools: [],
+      resourceScopes: [],
+    };
+    const mapped = applyWorkspaceWritable(
+      mapPermissions(permissions, () => null),
+      permissions,
+      true,
+    );
+
+    expect(mapped.writable).toBe(true);
+    for (const t of WRITE_TOOLS) expect(mapped.tools).not.toContain(t);
+  });
+
+  it('★ 显式黑名单压过工作区可写 —— 黑名单优先级高于白名单', () => {
+    const permissions = {
+      allowedTools: ['Read', 'Write', 'Edit'],
+      deniedTools: ['Write'],
+      resourceScopes: readOnlyScopes,
+    };
+    const mapped = applyWorkspaceWritable(
+      mapPermissions(permissions, () => '/repo'),
+      permissions,
+      true,
+    );
+
+    expect(mapped.tools).not.toContain('Write');
+    expect(mapped.disallowedTools).toContain('Write');
+    // 没被点名的写工具照常放回
+    expect(mapped.tools).toContain('Edit');
+  });
+
+  it('带参数的黑名单不受影响', () => {
+    const permissions = task().permissions;
+    const mapped = applyWorkspaceWritable(
+      mapPermissions(permissions, () => '/repo'),
+      permissions,
+      true,
+    );
+
+    expect(mapped.disallowedTools).toContain('Bash(rm *)');
+    expect(mapped.allowedTools).toContain('Bash(npm test:*)');
   });
 
   it('非仓库资源单列出来，用于写进 prompt', () => {
@@ -661,6 +788,55 @@ describe('ClaudeCodeRuntime 执行', () => {
     // 运行时侧硬预算
     expect(opts.maxBudgetUsd).toBe(5);
     expect(opts.cwd).toBe('/tmp/workspace');
+  });
+
+  /**
+   * ★ 这是线上真实失败过的那条链路：规划 Run 拿到一个平台准备好的可写
+   *   scratch 目录（没有任何资源范围对应它），Agent 却写不出 apos-output.json。
+   */
+  it('★ 平台给了可写工作区时，写工具进得了 SDK 选项', async () => {
+    const h = harness();
+    const rt = runtime(h);
+    const t = task({
+      permissions: { allowedTools: ['Read', 'Write'], deniedTools: [], resourceScopes: [] },
+      workspace: {
+        path: '/tmp/apos-workspaces/planning/run-1',
+        writable: true,
+        additionalPaths: [],
+        vcs: null,
+      },
+    });
+    const c = collector();
+
+    const ack = await rt.dispatch(t);
+    expect(ack.accepted).toBe(true);
+
+    await rt.subscribe(t.runId, c.onEvent);
+    h.channel.push(resultMsg());
+    await c.ended;
+
+    const opts = h.captured.options!;
+    expect(opts.tools).toContain('Write');
+    expect(opts.disallowedTools ?? []).not.toContain('Write');
+    expect(opts.cwd).toBe('/tmp/apos-workspaces/planning/run-1');
+  });
+
+  it('工作区只读时写工具进不了 SDK 选项，即使资源范围说可写', async () => {
+    const h = harness();
+    const rt = runtime(h);
+    const t = task({
+      workspace: { path: '/tmp/ws/ro', writable: false, additionalPaths: [], vcs: null },
+    });
+    const c = collector();
+
+    await rt.dispatch(t);
+    await rt.subscribe(t.runId, c.onEvent);
+    h.channel.push(resultMsg());
+    await c.ended;
+
+    const opts = h.captured.options!;
+    expect(opts.tools).not.toContain('Edit');
+    for (const tool of WRITE_TOOLS) expect(opts.disallowedTools).toContain(tool);
   });
 
   it('子进程环境只给最小集合，不泄漏平台密钥', async () => {
