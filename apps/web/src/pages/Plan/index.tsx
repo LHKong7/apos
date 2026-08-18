@@ -5,7 +5,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { money, riskLabel, tokens, typeIcon } from '../../lib/format';
+import {
+  absoluteTime,
+  money,
+  relativeTime,
+  riskLabel,
+  tokens,
+  typeIcon,
+} from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -283,13 +290,16 @@ export function PlanPage() {
             </div>
           )}
 
-          {approved && (
-            <p className="rounded border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-900">
-              {t('plan.approvedNotice', {
-                by: d.plan.approvedBy.length > 0 ? `（${d.plan.approvedBy.join('、')}）` : '',
-              })}
-            </p>
-          )}
+          {/*
+            ★★ 批准之后这一页此前只剩一句「已批准，任务已进入看板」，
+              而下方那块红字仍写着「批准后会自动发生…」—— 一个已完成的事实
+              和一句将来时的警告同屏，用户读不出「现在到底跑到哪了」
+              （问题记录 #15）。
+            ★ 补上「谁批的、什么时候、批完之后发生了什么」：批准状态本身
+              信息量太低，从一行「Plan approved · 24m ago」推不出任何东西
+              （问题记录 #31）。
+          */}
+          {approved && <ApprovedSummary detail={d} projectId={projectId!} />}
         </div>
       </div>
 
@@ -363,6 +373,92 @@ export function PlanPage() {
  *   同时给出按当前规则重算的边界，两者不一致时明确提示 ——
  *   静默用新规则替换掉快照，等于事后修改了用户签过字的东西。
  */
+/**
+ * 已批准之后这一页该说什么。
+ *
+ * ★★ 此前只有一行「已批准（超级管理员）；任务已进入看板并开始推进」——
+ *   而同屏下方那块红字还写着「批准后会自动发生…」。一个已完成的事实
+ *   和一句将来时的警告并排，用户读不出「现在到底跑到哪了」
+ *   （问题记录 #15）。
+ *
+ * ★★ 「Plan approved · 24m ago」这一条信息量太低：推不出谁批的、
+ *   离交付还有多远、有没有卡住的（问题记录 #31）。这里把这份计划
+ *   生出来的任务按状态数一遍 —— 那才是「批准之后发生了什么」。
+ *
+ * ★ 不新加接口：任务状态本来就在 `detail.tasks` 里。为「进度」再要一个
+ *   端点，代价是它和看板各算一套，而两套数迟早对不上。
+ */
+function ApprovedSummary({ detail: d, projectId }: { detail: PlanDetail; projectId: string }) {
+  const t = useT();
+
+  const done = d.tasks.filter((x) => DONE_STATUSES.has(x.status)).length;
+  const running = d.tasks.filter((x) => RUNNING_STATUSES.has(x.status)).length;
+  const stuck = d.tasks.filter((x) => STUCK_STATUSES.has(x.status)).length;
+  const waiting = d.tasks.length - done - running - stuck;
+
+  return (
+    <section className="rounded border border-green-200 bg-green-50 px-3 py-2">
+      <p className="text-xs text-green-900">
+        {t('plan.approvedNotice', {
+          by: d.plan.approvedBy.length > 0 ? `（${d.plan.approvedBy.join('、')}）` : '',
+        })}
+      </p>
+      {d.plan.approvedAt && (
+        <p className="mt-0.5 text-[11px] text-green-800" title={absoluteTime(d.plan.approvedAt)}>
+          {t('plan.approvedAt', { time: relativeTime(d.plan.approvedAt) })}
+        </p>
+      )}
+
+      {/* ── 批准之后跑到哪了 ── */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+        <span className="text-slate-700">
+          {t('plan.progress', { done, total: d.tasks.length })}
+        </span>
+        {running > 0 && <span className="text-sky-700">{t('plan.progress.running', { count: running })}</span>}
+        {waiting > 0 && <span className="text-slate-500">{t('plan.progress.waiting', { count: waiting })}</span>}
+        {/* ★ 卡住的单独标红并且直接给入口 —— 它是这一行里唯一需要人动手的部分 */}
+        {stuck > 0 && (
+          <Link
+            to={`/projects/${projectId}/board?blocked=1`}
+            className="font-medium text-red-700 underline-offset-2 hover:underline"
+          >
+            {t('plan.progress.stuck', { count: stuck })}
+          </Link>
+        )}
+      </div>
+
+      {/*
+        ★★ 「现在还能改什么」。
+          已批准的计划**不能**重新规划（服务端明确拒绝：改一份已经在跑的
+          计划等于让看板上的任务和它的来源对不上）。所以这里不摆一排
+          点了会报错的按钮，而是说清真正可走的两条路（问题记录 #32）。
+      */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 border-t border-green-200 pt-1.5 text-[11px]">
+        <span className="text-green-900">{t('plan.whatNow')}</span>
+        <Link
+          to={`/projects/${projectId}/board`}
+          className="text-slate-600 underline-offset-2 hover:underline"
+        >
+          {t('plan.whatNow.board')}
+        </Link>
+        {d.plan.requirementId && (
+          <Link
+            to={`/projects/${projectId}/requirements/${d.plan.requirementId}`}
+            className="text-slate-600 underline-offset-2 hover:underline"
+          >
+            {t('plan.whatNow.requirement')}
+          </Link>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** 任务状态归三档。与看板同一口径，改这里要跟着改 KanbanView */
+const DONE_STATUSES = new Set(['done', 'released', 'acceptance', 'cancelled']);
+const RUNNING_STATUSES = new Set(['executing', 'reviewing', 'releasing']);
+const STUCK_STATUSES = new Set(['blocked', 'failed', 'changes_requested', 'awaiting_decision']);
+
 function AutoActions({ detail: d }: { detail: PlanDetail }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
@@ -388,13 +484,39 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
             {t('plan.noAutoActions')}
           </li>
         )}
+        {/*
+          ★★ 估算与动作分开画。
+            两者此前混在一串项目符号里，于是「预计消耗 …」旁边挂着一个
+            「不可逆」标记 —— 读起来像「这笔用量一批就没了、退不回来」。
+            估算既不是动作也不会「逆」，它只是一个上界（问题记录 #13）。
+          ★ 「不可逆」用红底徽标而不是一行小红字：它是这一段里最该被看见的
+            东西，而一行和正文同粗的小字会被当成脚注扫过去。
+        */}
         {d.autoActions.map((a, i) => (
-          <li key={i} className="text-xs leading-5 text-amber-900">
-            · {a.description}
-            {a.externalVisible && (
-              <span className="ml-1 text-[11px] text-amber-700">{t('plan.externallyVisible')}</span>
+          <li key={i} className="flex flex-wrap items-baseline gap-1 text-xs leading-5 text-amber-900">
+            <span aria-hidden>{a.kind === 'estimate' ? '≈' : '·'}</span>
+            <span className="min-w-0">{a.description}</span>
+            {a.kind === 'estimate' && (
+              <span
+                className="rounded bg-white/70 px-1 text-[10px] text-amber-800"
+                title={t('plan.estimateHint')}
+              >
+                {t('plan.estimate')}
+              </span>
             )}
-            {!a.reversible && <span className="ml-1 text-[11px] text-red-700">{t('plan.irreversible')}</span>}
+            {a.externalVisible && (
+              <span className="rounded bg-amber-200/60 px-1 text-[10px] text-amber-900">
+                {t('plan.externallyVisible')}
+              </span>
+            )}
+            {!a.reversible && a.kind === 'action' && (
+              <span
+                className="rounded bg-red-600 px-1 text-[10px] font-medium text-white"
+                title={t('plan.irreversibleHint')}
+              >
+                {t('plan.irreversible')}
+              </span>
+            )}
           </li>
         ))}
       </ul>

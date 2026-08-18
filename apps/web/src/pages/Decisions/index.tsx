@@ -89,6 +89,30 @@ export function DecisionsPage() {
 
   const stats = inbox.data?.stats;
 
+  /**
+   * 按项目分组，组内保持服务端给的紧迫度顺序。
+   *
+   * ★ 单项目页面上只会有一组，下面的标题因此不渲染 —— 一个只有一组的
+   *   分组标题是纯噪声。
+   */
+  const groups = useMemo(() => {
+    const byProject = new Map<string, { projectId: string; projectName: string; cards: typeof cards }>();
+    for (const c of cards) {
+      const g = byProject.get(c.projectId) ?? {
+        projectId: c.projectId,
+        projectName: c.projectName,
+        cards: [],
+      };
+      g.cards.push(c);
+      byProject.set(c.projectId, g);
+    }
+    // ★ cards 已按紧迫度排好，所以第一个出现的项目就是最急的那个 —— 顺序天然正确
+    return [...byProject.values()].map((g) => ({
+      ...g,
+      overdue: g.cards.filter((c) => c.overdueMinutes !== null).length,
+    }));
+  }, [cards]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
@@ -103,13 +127,11 @@ export function DecisionsPage() {
             </Link>
           )}
           <div className="ml-auto flex gap-1">
-            <Tab active={scope === 'mine'} onClick={() => setScope('mine')}>
+            <Tab active={scope === 'mine'} onClick={() => setScope('mine')} count={stats?.mine}>
               {t('decisions.tab.mine')}
-              {stats ? ` ${stats.mine}` : ''}
             </Tab>
-            <Tab active={scope === 'all'} onClick={() => setScope('all')}>
+            <Tab active={scope === 'all'} onClick={() => setScope('all')} count={stats?.total}>
               {t('decisions.tab.all')}
-              {stats ? ` ${stats.total}` : ''}
             </Tab>
           </div>
         </div>
@@ -226,18 +248,52 @@ export function DecisionsPage() {
             </Label>
           )}
 
-          {cards.length > 0 && (
-            <ul className="space-y-2">
-              {cards.map((c) => (
-                <DecisionCardView
-                  key={c.id}
-                  card={c}
-                  selected={picked.has(c.id)}
-                  showSelectColumn={batchable.length > 0}
-                  onSelect={isBatchable(c) ? (next) => toggle(c.id, next) : null}
-                />
+          {/*
+            ★★ 跨项目时按项目分组，只看一个项目时不分。
+              组织级收件箱里八条决策来自四个项目，不分组的话用户得逐条读
+              项目名才知道自己在哪儿（问题记录 #36）。
+            ★ 但**组内顺序一动不动**：排序（超时 → 剩余时间 → 风险）是这一页
+              「5 分钟清空队列」的全部依据，按项目重排等于把优先级交还给用户。
+              分组只是在同一串卡片上加了几条分隔线，先后关系没变。
+            ★ 组的顺序也跟着紧迫度走：哪个项目里躺着最急的一条，哪个项目排前面。
+              按名字排会把一条超时的决策压到第三组去。
+          */}
+          {groups.length > 0 && (
+            <div className="space-y-3">
+              {groups.map((g) => (
+                <section key={g.projectId}>
+                  {groups.length > 1 && (
+                    <h2 className="mb-1 flex items-baseline gap-1.5 px-1">
+                      <Link
+                        to={`/projects/${g.projectId}/decisions`}
+                        className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline"
+                      >
+                        {g.projectName}
+                      </Link>
+                      <span className="text-[11px] tabular-nums text-slate-400">
+                        {t('decisions.groupCount', { count: g.cards.length })}
+                      </span>
+                      {g.overdue > 0 && (
+                        <span className="text-[11px] font-medium text-red-700">
+                          {t('decisions.groupOverdue', { count: g.overdue })}
+                        </span>
+                      )}
+                    </h2>
+                  )}
+                  <ul className="space-y-2">
+                    {g.cards.map((c) => (
+                      <DecisionCardView
+                        key={c.id}
+                        card={c}
+                        selected={picked.has(c.id)}
+                        showSelectColumn={batchable.length > 0}
+                        onSelect={isBatchable(c) ? (next) => toggle(c.id, next) : null}
+                      />
+                    ))}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>
@@ -245,25 +301,52 @@ export function DecisionsPage() {
   );
 }
 
-/** 可批量 = 我有权处理 + 可逆 + 非高风险。三个条件缺一不可。 */
+/**
+ * 范围切换。
+ *
+ * ★★ 数字是**徽标**，不是标签文字的一部分。
+ *
+ *   「Needs me 2 | All 2」这种把计数直接接在标签后面的写法，看起来像
+ *   四个控件而不是一对二选一的标签页 —— 尤其两个数字相同的时候
+ *   （问题记录 #33）。徽标有自己的底色和圆角，一眼就能看出
+ *   「这是它的数量」而不是「这是它名字的一部分」。
+ *
+ * ★ 计数为 0 时不给徽标：一个印着 0 的圆点是噪声。
+ */
 function Tab({
   active,
   onClick,
+  count,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  count?: number;
   children: React.ReactNode;
 }) {
   return (
-    <Button variant="ghost"
+    <Button
+      variant="ghost"
       onClick={onClick}
-      className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
-        'rounded px-2 py-0.5 text-xs',
-        active ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-600',
+      aria-pressed={active}
+      className={clsx(
+        'h-auto gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-normal',
+        active
+          ? 'bg-slate-900 text-white hover:bg-slate-700 hover:text-white'
+          : 'border border-slate-300 text-slate-600 hover:bg-slate-100',
       )}
     >
       {children}
+      {count !== undefined && count > 0 && (
+        <span
+          className={clsx(
+            'rounded-full px-1.5 text-[10px] font-semibold tabular-nums',
+            active ? 'bg-white/20' : 'bg-slate-200 text-slate-700',
+          )}
+        >
+          {count}
+        </span>
+      )}
     </Button>
   );
 }

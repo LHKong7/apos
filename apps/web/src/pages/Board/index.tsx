@@ -3,7 +3,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Stage, WorkItemStatus } from '@apos/contracts';
-import { ApiError, api, type BoardFilters } from '../../lib/api/client';
+import { api, type BoardFilters } from '../../lib/api/client';
+import { apiErrorMessage } from '../../lib/api/errors';
 import { qk } from '../../lib/query/keys';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useBoardStore, type BoardView } from '../../stores/board';
@@ -114,7 +115,7 @@ export function BoardPage() {
   const remind = useMutation({
     mutationFn: (decisionId: string) => api.remindDecision(decisionId),
     onSuccess: () => setToast(t('board.reminded')),
-    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.remindFailed')),
+    onError: (e) => setToast(apiErrorMessage(e, t('board.remindFailed'))),
   });
 
   const retry = useMutation({
@@ -123,7 +124,7 @@ export function BoardPage() {
       setToast(t('board.redispatched', { count: r.length }));
       invalidateBoard();
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.retryFailed')),
+    onError: (e) => setToast(apiErrorMessage(e, t('board.retryFailed'))),
   });
 
   const takeover = useMutation({
@@ -132,12 +133,24 @@ export function BoardPage() {
       setToast(t('board.takenOver'));
       invalidateBoard();
     },
-    onError: (e) => setToast(e instanceof ApiError ? e.message : t('board.takeoverFailed')),
+    /**
+     * ★★ 状态冲突时**顺手刷新看板**，而不是只弹一句错。
+     *
+     *   409 几乎总是「界面上这张卡过期了」：别人刚动过它，或者调度器
+     *   刚把它推走了。不刷新的话用户会照着同一张过期卡片再点一次，
+     *   拿到同一句错 —— 而那句错说的是一个界面上从没出现过的状态名
+     *   （问题记录 #16 / #27）。
+     */
+    onError: (e) => {
+      setToast(apiErrorMessage(e, t('board.takeoverFailed')));
+      invalidateBoard();
+    },
   });
 
   const actions: CardActions = useMemo(
     () => ({
       onOpen: (card) => setOpenCard(card.id),
+      onOpenById: (id) => setOpenCard(id),
       onHandleGate: (card) => {
         if (card.humanGateRef) setOpenDecision(card.humanGateRef);
         else setOpenCard(card.id);
@@ -224,6 +237,8 @@ export function BoardPage() {
            *   那是 04 计划批准页一整页的事，塞进侧栏抽屉放不下。
            */
           onOpenPlan={(plan) => navigate(`/projects/${projectId}/plans/${plan.id}`)}
+          /* ★ 列头那个超时计数点下去就筛出「在等人」的那批，而不是只报个数 */
+          onFilterOverdue={() => setFilters({ humanGate: true })}
         />
       )}
 
@@ -267,13 +282,7 @@ export function BoardPage() {
           toStatus={pendingMove.toStatus}
           toStage={pendingMove.toStage}
           pending={manualMove.isPending}
-          error={
-            manualMove.error instanceof ApiError
-              ? manualMove.error.message
-              : manualMove.error
-                ? t('board.actionFailed')
-                : null
-          }
+          error={manualMove.error ? apiErrorMessage(manualMove.error, t('board.actionFailed')) : null}
           onCancel={() => {
             manualMove.reset();
             setPendingMove(null);

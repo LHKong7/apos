@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WhatIsThis } from './primitives';
 
 const CATEGORY_ICONS: Record<string, string> = {
   code: '💻',
@@ -88,6 +89,16 @@ export function IntegrationsPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
         <div className="mx-auto max-w-4xl space-y-3">
+            {/*
+              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
+                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
+                「这跟我有关系吗」（问题记录 #42）。
+            */}
+            <WhatIsThis storageKey="integrations" title={t('whatIs.integrations.title')}>
+              <p>{t('whatIs.integrations.p1')}</p>
+              <p>{t('whatIs.integrations.p2')}</p>
+              <p>{t('whatIs.integrations.p3')}</p>
+            </WhatIsThis>
           {q.isPending && <CardSkeleton />}
           {q.isError && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
 

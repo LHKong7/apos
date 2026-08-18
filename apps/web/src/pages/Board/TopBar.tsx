@@ -17,12 +17,25 @@ import {
   toSelectValue,
 } from '@/components/ui/select';
 
-/** ★ Kanban / List 两种语言写法一样，直接给字面量；另两个走词条 */
+/**
+ * 显示模式。
+ *
+ * ★★ 「待决策」不在这一组里。
+ *
+ *   四个标签并排时它们看起来是同一个维度的四个取值，而实际上
+ *   Kanban / List / Agent 回答的是「同一批卡怎么排」，「待决策」
+ *   回答的是「只看哪一批卡」—— 后者是筛选，混进来之后用户会以为
+ *   切过去是换个排法，结果卡片少了一大半（问题记录 #23）。
+ *
+ *   它拆出去单独站一格，并且带上待办数 —— 那正是它和另外三个
+ *   最大的不同：它是个有数量的收件箱。
+ *
+ * ★ Kanban / List 两种语言写法一样，直接给字面量；Agent 走词条。
+ */
 const VIEWS: { key: BoardView; label?: string; labelKey?: MessageKey }[] = [
   { key: 'kanban', label: 'Kanban' },
   { key: 'list', label: 'List' },
   { key: 'agent', labelKey: 'board.view.agent' },
-  { key: 'decision', labelKey: 'board.view.decisions' },
 ];
 
 interface Props {
@@ -105,6 +118,31 @@ export function TopBar({
           ))}
         </div>
 
+        {/*
+          ★ 待决策单独站一格，和上面那组之间留出空隙 ——
+            它是「只看等我拍板的那些」，不是第四种排法（问题记录 #23）。
+            带数字，而且超时时变红：一个收件箱最该说清的是「有几件、急不急」。
+        */}
+        <Button
+          variant="outline"
+          onClick={() => onView('decision')}
+          aria-pressed={view === 'decision'}
+          title={t('board.view.decisionsHint')}
+          className={clsx(
+            'h-auto shrink-0 gap-1.5 rounded-lg px-2.5 py-1 text-xs shadow-none',
+            view === 'decision'
+              ? 'border-slate-900 bg-slate-900 font-medium text-white hover:bg-slate-700 hover:text-white'
+              : (summary?.overdueDecisions ?? 0) > 0
+                ? 'border-red-300/60 bg-red-50 font-normal text-red-700 hover:bg-red-100'
+                : 'border-slate-200 bg-slate-100/50 font-normal text-slate-600 hover:border-slate-300',
+          )}
+        >
+          {t('board.view.decisions')}
+          {(summary?.pendingDecisions ?? 0) > 0 && (
+            <span className="font-semibold tabular-nums">{summary?.pendingDecisions}</span>
+          )}
+        </Button>
+
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {/*
             ★★ 在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解）。
@@ -168,6 +206,32 @@ export function TopBar({
           <span className="text-red-700">{t('board.failedCount', { count: summary?.failed ?? 0 })}</span>
         )}
 
+        {/*
+          ★★ 这两个开关挪到了左边，和三个数字药丸挨着。
+            它们此前紧贴右边那两个下拉框 —— 看起来像是同一组「选一个值」的
+            控件，而实际上它们和左边那三个是同一类：**只看某一批卡**
+            （问题记录 #22）。下拉框回答「哪一种执行者 / 哪一档风险」，
+            开关回答「要不要只留这一批」，两种是不同的操作。
+        */}
+        <FilterToggle
+          active={Boolean(filters.onlyMine)}
+          onClick={() => onFilters({ onlyMine: !filters.onlyMine })}
+        >
+          {t('board.onlyMine')}
+        </FilterToggle>
+
+        {/*
+          ★ 待认领：标为人工执行但没人接的任务。批准计划时可以确认放行它们，
+            没有这个入口的话，它们在看板上和别的卡片长得一模一样，
+            而调度器又永远不会碰它们。
+        */}
+        <FilterToggle
+          active={Boolean(filters.unclaimed)}
+          onClick={() => onFilters({ unclaimed: !filters.unclaimed })}
+        >
+          {t('board.unclaimed')}
+        </FilterToggle>
+
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Select
             value={toSelectValue(filters.executorType)}
@@ -208,30 +272,6 @@ export function TopBar({
             </SelectContent>
           </Select>
 
-          {/*
-            ★ 从复选框改成开关药丸：它和左边三个数字是同一类东西（都是
-              「只看某一批卡」），长得一样才看得出是一类。复选框 + 一行标签
-              还比药丸宽出一截，正是这行挤的原因之一。
-          */}
-          <FilterToggle
-            active={Boolean(filters.onlyMine)}
-            onClick={() => onFilters({ onlyMine: !filters.onlyMine })}
-          >
-            {t('board.onlyMine')}
-          </FilterToggle>
-
-          {/*
-            ★ 待认领：标为人工执行但没人接的任务。批准计划时可以确认放行它们，
-              没有这个入口的话，它们在看板上和别的卡片长得一模一样，
-              而调度器又永远不会碰它们。
-          */}
-          <FilterToggle
-            active={Boolean(filters.unclaimed)}
-            onClick={() => onFilters({ unclaimed: !filters.unclaimed })}
-          >
-            {t('board.unclaimed')}
-          </FilterToggle>
-
           {hasFilters && (
             <Button
               variant="ghost"
@@ -259,12 +299,24 @@ export function TopBar({
  */
 function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void }) {
   const t = useT();
+  /**
+   * ★★ 两个状态各有各的说明。
+   *
+   *   此前不论开关，tooltip 都是同一句「安静模式：更新数据但不播放卡片
+   *   移动动画」—— 它描述的是**开着**时的行为，于是关着的时候那句话是错的，
+   *   而用户点它之前看到的恰恰是关着的状态（问题记录 #20 / #47）。
+   *
+   *   两句话都点明「这只影响动效，不影响数据」——「卡片怎么不动了」
+   *   是这个开关最常被误报成的 bug。
+   */
+  const label = quiet ? t('board.quietMode.on') : t('board.quietMode.off');
   return (
     <Button
       variant="outline"
       onClick={onToggle}
       aria-pressed={quiet}
-      title={t('board.quietMode')}
+      aria-label={label}
+      title={label}
       className={clsx(
         'h-auto gap-1.5 px-2 py-1 text-xs shadow-none',
         quiet

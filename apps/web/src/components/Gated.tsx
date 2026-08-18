@@ -96,17 +96,56 @@ export function Gated({
 }
 
 /** 当前身份在这个项目里的角色，放在页头让人一眼知道自己是谁 */
-export function RoleBadge({ projectId }: { projectId?: string }) {
+export function RoleBadge({
+  projectId,
+  compact,
+  onClick,
+}: {
+  projectId?: string;
+  /**
+   * 侧栏收窄时的形态。
+   *
+   * ★★ 收窄时**不能整个藏起来**。这个徽标回答的是「为什么那个按钮是灰的」，
+   *   而灰按钮在每一页都可能出现 —— 藏掉它等于把那个问题的唯一答案
+   *   连同侧栏一起折走了（问题记录 #5）。
+   *
+   * ★ 也不缩写成一个字：「技」这个字比不显示更糟，用户得先猜它是什么。
+   *   收窄形态是一个中性的人形轮廓 + 完整角色名的 tooltip，
+   *   点它就展开侧栏 —— 徽标本身成了「展开」这件事的入口，
+   *   而这正是它和折叠按钮该有的关联。
+   */
+  compact?: boolean;
+  onClick?: () => void;
+}) {
   const t = useT();
   const perms = usePermissions(projectId);
   if (!perms.projectRole) return null;
 
+  const label = ROLE_KEYS[perms.projectRole]
+    ? t(ROLE_KEYS[perms.projectRole]!)
+    : perms.projectRole;
+  const title = t('gated.roleTitle', { role: label });
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={title}
+        aria-label={title}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+      >
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+          <circle cx="8" cy="5" r="3" />
+          <path d="M2.5 14c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5z" />
+        </svg>
+      </button>
+    );
+  }
+
   return (
-    <span
-      className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
-      title={t('gated.roleTitle', { role: perms.projectRole ?? '' })}
-    >
-      {ROLE_KEYS[perms.projectRole] ? t(ROLE_KEYS[perms.projectRole]!) : perms.projectRole}
+    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600" title={title}>
+      {label}
     </span>
   );
 }

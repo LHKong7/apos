@@ -3,6 +3,7 @@ import {
   agentPermissionChanges,
   agentRuns,
   agents,
+  projectMembers,
   projects,
   users,
   workItems,
@@ -26,7 +27,8 @@ import { loadAnalyticsInput } from './analytics';
 
 export async function listAgents(db: Database, projectId: string | null, orgId: string) {
   // ★ 没有 projectId 时也必须按组织收窄 —— 否则花名册会列出别的组织的 Agent
-  const rows = projectId
+  /** ★ 组织级视图里没有「本项目」这个概念，membership 为 null 而不是 false */
+  const rows: (typeof agents.$inferSelect & { inProject?: boolean })[] = projectId
     ? await agentsOfProject(db, projectId)
     : await db.select().from(agents).where(eq(agents.orgId, orgId));
 
@@ -49,8 +51,18 @@ export async function listAgents(db: Database, projectId: string | null, orgId: 
       name: a.name,
       type: a.type,
       model: a.model,
+      /**
+       * ★★ 两个互不相干的状态，分两栏说。
+       *
+       *   `status` 是**生命周期**（在岗 / 暂停 / 已停用），
+       *   `inProject` 是**这个项目里的成员关系**。此前界面只显示前者，
+       *   而且把 retired 和 active 一起画成绿色的「正常」——
+       *   一个已停用的 Agent 在花名册上显示「● 正常」，
+       *   同时在看板上被标成「状态为 retired」（问题记录 #10 / #11）。
+       */
       status: a.status,
       pausedReason: a.pausedReason,
+      inProject: a.inProject ?? null,
       /** 负载：进行中的 Run / 并发上限 */
       load: { running, max: a.maxConcurrency },
       runs: p?.runs ?? 0,
@@ -337,10 +349,34 @@ const FEATURE_LABELS: Record<FeatureKey, string> = {
 
 void DEGRADATION_MATRIX;
 
+/**
+ * 项目花名册。
+ *
+ * ★★ 这里刻意**列出整个组织的 Agent**，而不是只列项目成员 ——
+ *   「组织里有它但这个项目还没加」正是用户最需要在这一页看到的状态，
+ *   只列成员的话那些 Agent 就从花名册上消失了，而看板上还在说
+ *   「refactor-agent 不是本项目成员」。
+ *
+ * ★★ 但必须**标出来**。此前这一列全都显示成一样，于是花名册说
+ *   refactor-agent 一切正常、看板说它不在这个项目里 ——
+ *   两句都对，用户看到的是系统在自相矛盾（问题记录 #10）。
+ *
+ * Deliberately lists every agent in the org, because "exists but not added to
+ * this project" is the state the user needs to see here — but each row must
+ * say which it is, otherwise the roster and the board contradict each other.
+ */
 async function agentsOfProject(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!project) throw notFound('项目');
-  return db.select().from(agents).where(eq(agents.orgId, project.orgId));
+
+  const rows = await db.select().from(agents).where(eq(agents.orgId, project.orgId));
+  const members = await db
+    .select({ actorId: projectMembers.actorId })
+    .from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.actorType, 'agent')));
+  const memberIds = new Set(members.map((m) => m.actorId));
+
+  return rows.map((a) => ({ ...a, inProject: memberIds.has(a.id) }));
 }
 
 /** 效能口径与 Analytics 完全一致 —— 两处各算一套迟早对不上 */

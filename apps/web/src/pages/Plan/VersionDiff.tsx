@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -246,7 +246,25 @@ function TaskSection({
         {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
         {visible.map((row) => (
           <li key={`${row.kind}-${row.title}`} className="text-[11px]">
-            <span className={clsx('mr-1', MARK_TONE[row.kind])}>{MARK[row.kind]}</span>
+            {/*
+              ★★ 记号是**带底色的方块**，不是一个裸字符。
+                `+` 和 `−` 在正文字号下宽度只差一点、笔画只差一竖，
+                灰度打印、低分屏、以及任何读屏路径上都区分不出来
+                （问题记录 #14）。加了底色之后，绿块与红块在余光里就分得开，
+                而形状仍然保留 —— 色觉障碍的人靠形状，其余人靠颜色。
+              ★ 记号本身 aria-hidden，语义交给紧随其后的 sr-only 文字：
+                屏幕阅读器读到的是「新增」，不是「加号」。
+            */}
+            <span
+              aria-hidden
+              className={clsx(
+                'mr-1 inline-flex h-4 w-4 items-center justify-center rounded font-mono font-semibold leading-none',
+                MARK_TONE[row.kind],
+              )}
+            >
+              {MARK[row.kind]}
+            </span>
+            <span className="sr-only">{t(MARK_LABEL[row.kind])} </span>
             <span
               className={clsx(
                 row.kind === 'removed' ? 'text-slate-400 line-through' : 'text-slate-700',
@@ -282,8 +300,16 @@ const MARK: Record<TaskDiff['kind'], string> = {
 };
 
 const MARK_TONE: Record<TaskDiff['kind'], string> = {
-  added: 'text-green-700',
-  removed: 'text-red-700',
-  changed: 'text-amber-700',
-  unchanged: 'text-slate-400',
+  added: 'bg-emerald-100 text-emerald-800',
+  removed: 'bg-rose-100 text-rose-800',
+  changed: 'bg-amber-100 text-amber-800',
+  unchanged: 'bg-slate-100 text-slate-400',
+};
+
+/** ★ 读屏用的说法。记号本身是给眼睛的，这一份是给耳朵的 */
+const MARK_LABEL: Record<TaskDiff['kind'], MessageKey> = {
+  added: 'planDiff.mark.added',
+  removed: 'planDiff.mark.removed',
+  changed: 'planDiff.mark.changed',
+  unchanged: 'planDiff.mark.unchanged',
 };

@@ -281,6 +281,18 @@ async function escalate(
         .join('\n'),
       whyHuman: spec.whyHuman,
       consequence: '不处理则该任务停留在失败状态，其下游任务无法开始',
+      /**
+       * ★ 结构化副本。带上**恢复动作**（`action`）而不是那句中文 ——
+       *   界面据此挑一句本地化的说法，认不出来时再回落到 `whyHuman`。
+       *   带中文过去只是把同一个问题挪个位置。
+       */
+      reasonDetail: {
+        whyHuman: {
+          code: 'recovery_escalated' as const,
+          params: { action, fallback: spec.whyHuman },
+        },
+        consequence: { code: 'stuck_failed' as const },
+      },
       impact: { runId: run.id, errorClass: run.errorClass, recoveryAction: action },
       dueAt: new Date(Date.now() + spec.dueHours * 3600_000),
     })

@@ -1,5 +1,7 @@
-import type { PlanDiff, Permission } from '@apos/domain';
+import type { Diagnostic, PlanDiff, Permission } from '@apos/domain';
 import type {
+  BlockedDetail,
+  DecisionReason,
   HumanGate,
   ProjectRole,
   RiskLevel,
@@ -34,6 +36,8 @@ export interface BoardCard {
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
+  /** 结构化阻塞细节 —— 界面优先读它；`blockedReason` 是老数据的兜底句 */
+  blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
   tokens: number;
@@ -44,7 +48,21 @@ export interface BoardCard {
   latestNote: string | null;
   artifactCount: number;
   unmetDependencies: number;
+  /** 谁挡着这张卡（含已完成的，画整条链要用到） */
+  blockedBy: DependencyRef[];
+  /** 这张卡挡着谁 —— 「先做哪个」只有这一栏答得了 */
+  blocking: DependencyRef[];
   updatedAt: string;
+}
+
+/** 依赖链上的一个引用 */
+export interface DependencyRef {
+  id: string;
+  ref: string;
+  title: string;
+  status: string;
+  type: string | null;
+  met: boolean;
 }
 
 /**
@@ -260,6 +278,8 @@ export interface WorkItemDetail {
     priority: number;
     humanGate: HumanGate | null;
     blockedReason: string | null;
+    blockedDetail: BlockedDetail | null;
+    blockedSince: string | null;
     actualTokens: number;
     estimatedTokens: number | null;
     consecutiveFailures: number;
@@ -620,7 +640,14 @@ export interface PlanDetail {
     humanGateCount: number;
     highRiskTasks: number;
   };
-  autoActions: { description: string; policyName: string | null; reversible: boolean; externalVisible: boolean }[];
+  autoActions: {
+    description: string;
+    policyName: string | null;
+    reversible: boolean;
+    externalVisible: boolean;
+    /** action = 批准后真的会发生；estimate = 只是个数，不是动作也不会「逆」 */
+    kind: 'action' | 'estimate';
+  }[];
   humanGates: {
     taskTitle: string;
     /** execution = 这活得人干；approval = 干完要人批。两者判断完全不同 */
@@ -681,6 +708,7 @@ export interface OverviewResponse {
     id: string;
     title: string;
     reason: string | null;
+    detail: BlockedDetail | null;
     minutes: number | null;
     ownerName: string | null;
     humanGateRef: string | null;
@@ -704,6 +732,10 @@ export interface OverviewResponse {
     overdueDecisions: number;
   }[];
   trend: { wip: { day: string; value: number }[]; blocked: { day: string; value: number }[] };
+  /** 与执行图共用同一套判定，只给前三条 —— 总览是指挥台不是问题清单 */
+  diagnostics: Diagnostic[];
+  /** 延期归因那一行（「决策等待 5.6d」）；算不出来时为 null */
+  delayCause: string | null;
   recentActivity: { id: string; type: string; actorType: string; occurredAt: string; payload: Record<string, unknown> }[];
 }
 
@@ -713,8 +745,11 @@ export interface AgentListResponse {
     name: string;
     type: string;
     model: string | null;
+    /** 生命周期：active / paused / retired。与「是不是本项目成员」是两回事 */
     status: string;
     pausedReason: string | null;
+    /** 这个项目里的成员关系。组织级视图下为 null（那里没有「本项目」） */
+    inProject: boolean | null;
     load: { running: number; max: number };
     runs: number;
     successRate: number | null;
@@ -808,6 +843,8 @@ export interface DecisionCard {
   title: string;
   consequence: string | null;
   whyHuman: string;
+  /** ★ 结构化理由。界面优先读它，上面两句中文是存量数据的兜底 */
+  reasonDetail: DecisionReason | null;
   riskLevel: string;
   reversible: boolean;
   assigneeId: string | null;
@@ -833,7 +870,15 @@ export interface DecisionCard {
 }
 
 export interface DecisionInbox {
-  stats: { total: number; mine: number; overdue: number; dueSoon: number; actionable: number };
+  stats: {
+    total: number;
+    mine: number;
+    overdue: number;
+    dueSoon: number;
+    actionable: number;
+    /** 按项目拆的计数 —— 顶栏那个跨项目的数字要能说清「其中这个项目几条」 */
+    byProject: Record<string, { mine: number; overdue: number }>;
+  };
   repeated: { type: string; label: string; count: number }[];
   decisions: DecisionCard[];
 }

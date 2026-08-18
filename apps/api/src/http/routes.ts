@@ -32,6 +32,7 @@ import {
   NotificationConfig,
   OrgRole,
   ProjectRole,
+  STATUS_LABELS,
   SyncMapping,
   WorkItemStatus,
   type PolicyContext,
@@ -4173,9 +4174,37 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         })
         .parse(req.body);
 
+      /**
+       * ★★ 「接管」是一个**意图**，不是一个状态机触发器。
+       *
+       *   它此前恒等于 `human_took_over`，而那个触发器只在 executing 上成立。
+       *   于是看板上一张 blocked / failed 的卡片，按钮点下去拿到的是
+       *   「当前状态 ready 不支持该操作」—— 一句既没说清为什么、
+       *   也和按钮出现的条件互相矛盾的话（问题记录 #16 / #27）。
+       *
+       *   同一个意图在不同状态下有不同的合法触发器：跑着的活是「换成我来跑」，
+       *   卡住或失败的活是「升级给人处理」。两者的效果都是
+       *   switchExecutorToHuman，用户看到的也该是同一个按钮。
+       *
+       *   "Take over" is an intent, not a trigger. It used to map to
+       *   `human_took_over`, which is only legal from `executing`; on a blocked
+       *   or failed card the button therefore always failed with a message that
+       *   contradicted its own visibility.
+       */
+      const [current] = await db
+        .select({ status: workItems.status })
+        .from(workItems)
+        .where(eq(workItems.id, id));
+      if (!current) throw notFound('任务');
+
+      const trigger =
+        current.status === 'executing'
+          ? ('human_took_over' as const)
+          : ('escalated_to_human' as const);
+
       const result = await transition(db, {
         workItemId: id,
-        trigger: 'human_took_over',
+        trigger,
         actor,
         reason: body.reason,
         correlationId: corr(req),
@@ -4736,10 +4765,21 @@ function mapTransitionError(result: Extract<Awaited<ReturnType<typeof transition
     case 'NOT_FOUND':
       throw notFound('任务');
     case 'INVALID_TRANSITION':
-      throw new ApiError('INVALID_TRANSITION', `当前状态 ${result.from} 不支持该操作`, {
-        from: result.from,
-        allowedTriggers: result.allowedTriggers,
-      });
+      /**
+       * ★ `from` 用状态**标签**而不是枚举值。
+       *   界面上那张卡片写着「已阻塞」，报错却说「当前状态 ready 不支持」——
+       *   两个词指的是同一件事，但用户没有办法知道（问题记录 #16）。
+       *   detail 里仍然带原始枚举，前端要判断时读那一栏。
+       */
+      throw new ApiError(
+        'INVALID_TRANSITION',
+        `当前状态「${STATUS_LABELS[result.from] ?? result.from}」不支持该操作`,
+        {
+          from: result.from,
+          fromLabel: STATUS_LABELS[result.from] ?? result.from,
+          allowedTriggers: result.allowedTriggers,
+        },
+      );
     case 'GUARD_FAILED':
       throw new ApiError('GUARD_FAILED', result.failures.map((f) => f.reason).join('；'), {
         failures: result.failures,

@@ -269,6 +269,11 @@ async function awaitHuman(
       background: reason,
       whyHuman: reason,
       consequence: '不处理则该任务停在评审阶段，其下游任务无法开始',
+      /** ★ 结构化副本，界面读它（见 contracts/work-item/decision-reason.ts） */
+      reasonDetail: {
+        whyHuman: { code: 'review_required' as const },
+        consequence: { code: 'stuck_in_review' as const },
+      },
       impact: { workItemId: item.id, stage: 'review' },
       dueAt: new Date(Date.now() + 8 * 3600_000),
     })

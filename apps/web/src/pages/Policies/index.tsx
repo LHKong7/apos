@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { WhatIsThis } from '../Settings/primitives';
 
 const AUTONOMY: { value: AutonomyLevel; label: string; descKey: MessageKey }[] = [
   { value: 'human_led', label: 'Human-led', descKey: 'policy.autonomy.assisted' },
@@ -207,6 +208,16 @@ export function PoliciesPage() {
       {data && (
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
           <div className="mx-auto max-w-4xl space-y-3">
+            {/*
+              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
+                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
+                「这跟我有关系吗」（问题记录 #42）。
+            */}
+            <WhatIsThis storageKey="policies" title={t('whatIs.policies.title')}>
+              <p>{t('whatIs.policies.p1')}</p>
+              <p>{t('whatIs.policies.p2')}</p>
+              <p>{t('whatIs.policies.p3')}</p>
+            </WhatIsThis>
             {/* ── 摘要：全页最重要的一行 ── */}
             <section className="rounded border border-slate-200 bg-white px-3 py-2">
               <p className="text-xs text-slate-700">

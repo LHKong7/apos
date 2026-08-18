@@ -16,7 +16,14 @@ import {
   SYSTEM_ACTOR,
   type PolicyContext,
 } from '@apos/contracts';
-import { BASELINE_POLICIES, compile, evaluate, explainAction, requiresHuman } from '@apos/domain';
+import {
+  BASELINE_POLICIES,
+  compile,
+  evaluate,
+  explainAction,
+  formatTokens,
+  requiresHuman,
+} from '@apos/domain';
 import { executionModeOf } from '../agent/matching';
 import { emitAndPublish } from '../event/bus';
 import { allocateNumbers } from '../work-item/numbering';
@@ -29,6 +36,19 @@ export interface AutoAction {
   policyName: string | null;
   reversible: boolean;
   externalVisible: boolean;
+  /**
+   * 这一条是**会发生的动作**还是**一个估算**。
+   *
+   * ★★ 两者此前混在同一个列表里，而「不可逆」这个标记只对前者成立。
+   *   于是计划页上出现了「预计消耗 …（不可逆）」—— 一个估算被标成
+   *   不可逆，读起来像是「这笔钱一批就没了、退不回来」。用量估算本来就
+   *   既不是动作也不会「逆」，它只是一个上界（问题记录 #13）。
+   *
+   * An estimate is not an action, and "irreversible" only makes sense for
+   * actions. Tagging the usage forecast irreversible read as "this money is
+   * gone the moment you approve".
+   */
+  kind: 'action' | 'estimate';
 }
 
 export interface HumanGateEntry {
@@ -437,18 +457,31 @@ function predictPolicyOutcomes(
       policyName: null,
       reversible: true,
       externalVisible: false,
+      kind: 'action',
     });
   }
 
   const totalTokens = plan.tasks.reduce((s, t) => s + (t.estimatedTokens ?? 0), 0);
   if (totalTokens > 0) {
     const pct = ctx.budget ? ((totalTokens / ctx.budget) * 100).toFixed(1) : null;
+    /**
+     * ★★ 这里曾经是 `$${totalTokens.toFixed(2)}` —— 把一个 **token 数**
+     *   印成了金额。33 万 token 于是显示为「$330000.00」，而它旁边还挂着
+     *   「不可逆」：用户看到的是「批一下就要花三十三万美元，而且退不了」
+     *   （问题记录 #13）。
+     *
+     *   记账单位本来就是 token，不是金额（见 CLAUDE.md 与 format/tokens）——
+     *   单价会随官方调价漂移，token 数不会。
+     *
+     * ★ 而且它是**估算**不是动作：`kind: 'estimate'`，不再标不可逆。
+     */
     autoActions.push({
-      description: `预计消耗 $${totalTokens.toFixed(2)}${pct ? `（占预算 ${pct}%）` : ''}`,
+      description: `预计消耗 ${formatTokens(totalTokens)} token${pct ? `（约占预算 ${pct}%）` : ''}，实际用量以运行结果为准`,
       policyId: null,
       policyName: null,
-      reversible: false,
+      reversible: true,
       externalVisible: false,
+      kind: 'estimate',
     });
   }
 
@@ -459,6 +492,7 @@ function predictPolicyOutcomes(
       policyName: null,
       reversible: true,
       externalVisible: true,
+      kind: 'action',
     });
   }
 

@@ -76,6 +76,52 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
   };
 }
 
+/**
+ * 只要诊断与归因，不要布局。
+ *
+ * ★★ 「问题诊断」此前只在执行图那一页看得见 —— 那里的每条问题都带着
+ *   「改派 / 催办 / 调整 Policy」这类可执行按钮，而这恰恰是全站最有用的
+ *   一块（问题记录 #38 / #40）。看板与总览上看到一条阻塞任务时，
+ *   用户能做的只有点开它自己想办法。
+ *
+ * ★ 与 `getGraph` 共用同一套 domain 函数，不另写一份判定 ——
+ *   两份实现的代价不是重复代码，是两个对不上的答案。
+ *
+ * ★ 跳过 `layoutGraph`：布局是这一整套里最贵的一步，而总览上不画图。
+ *
+ * Shares the same domain functions as getGraph so the two never disagree, and
+ * skips layout — the expensive step — because the overview draws no graph.
+ */
+export async function getProjectDiagnostics(db: Database, projectId: string) {
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!project) throw notFound('项目');
+
+  const all = await db
+    .select()
+    .from(workItems)
+    .where(and(eq(workItems.projectId, projectId), isNull(workItems.deletedAt)))
+    .orderBy(workItems.position);
+
+  const deps = await db
+    .select()
+    .from(workItemDependencies)
+    .where(eq(workItemDependencies.projectId, projectId));
+
+  const items = inFlight(all, deps);
+  if (items.length === 0) {
+    return { metrics: { totalHours: 0, remainingHours: 0, delayRisk: 0, primaryCause: null, criticalPaths: [] }, diagnostics: [] };
+  }
+
+  const ids = items.map((i) => i.id);
+  const nodes = await buildNodes(db, items, project.identifier);
+  const edges: GraphEdge[] = deps
+    .filter((d) => ids.includes(d.fromId) && ids.includes(d.toId))
+    .map((d) => ({ from: d.fromId, to: d.toId, type: d.type, lagMinutes: d.lagMinutes }));
+
+  const cp = computeCriticalPath(nodes, edges);
+  return { metrics: computeMetrics(nodes, edges, cp), diagnostics: diagnose(nodes, edges, cp) };
+}
+
 type ItemRow = typeof workItems.$inferSelect;
 
 /** 各类型任务缺少估时时的兜底工期（小时） */
@@ -167,6 +213,7 @@ async function buildNodes(
         : null,
       blockedSince: item.blockedSince?.toISOString() ?? null,
       blockedReason: item.blockedReason,
+      blockedDetail: item.blockedDetail ?? null,
       blockedMinutes: item.blockedSince
         ? Math.round((now - item.blockedSince.getTime()) / 60_000)
         : null,

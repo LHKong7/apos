@@ -1,6 +1,6 @@
 import { useT } from '../../lib/i18n';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { WhatIsThis } from './primitives';
 
 /**
  * 项目成员与角色（docs/tech/09-security.md §2.2）。
@@ -44,7 +45,16 @@ export function MembersPage() {
   const perms = usePermissions(projectId);
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState<'human' | 'agent' | null>(null);
+  /**
+   * ★ `?add=agent` 直接把「加 Agent」那一格打开。
+   *   看板上「把 refactor-agent 加进项目」那个按钮跳到这里，落地后
+   *   还要用户自己去找「添加 Agent」按钮的话，这条捷径就只省了一次导航
+   *   （问题记录 #12）。
+   */
+  const [params] = useSearchParams();
+  const [adding, setAdding] = useState<'human' | 'agent' | null>(
+    params.get('add') === 'agent' ? 'agent' : params.get('add') === 'human' ? 'human' : null,
+  );
 
   const members = useQuery({
     queryKey: qk.members(projectId!),
@@ -179,6 +189,16 @@ export function MembersPage() {
       {data && (
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
           <div className="mx-auto max-w-3xl space-y-3">
+            {/*
+              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
+                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
+                「这跟我有关系吗」（问题记录 #42）。
+            */}
+            <WhatIsThis storageKey="members" title={t('whatIs.members.title')}>
+              <p>{t('whatIs.members.p1')}</p>
+              <p>{t('whatIs.members.p2')}</p>
+              <p>{t('whatIs.members.p3')}</p>
+            </WhatIsThis>
             {error && (
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}

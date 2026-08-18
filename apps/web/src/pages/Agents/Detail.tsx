@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { duration, relativeTime, riskLabel, statusLabel, tokens } from '../../lib/format';
+import { AgentLifecycleBadge } from '../../components/AgentStatus';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CapabilityPanel } from './CapabilityPanel';
@@ -77,24 +78,42 @@ export function AgentDetailPage() {
             {a.type}
           </span>
           {a.model && <span className="text-[11px] text-slate-400">{a.model}</span>}
-          <span className={clsx('text-[11px]', paused ? 'text-amber-700' : 'text-green-700')}>
-            ● {paused ? t('agentDetail.paused') : t('agentDetail.normal')}
-          </span>
+          {/*
+            ★★ 徽标跟着真实状态走，三种状态三种画法。
+              此前这里只分「暂停」与「其余」—— 一个 retired 的 Agent
+              在这儿是绿色的「正常」，而它的 tooltip 写着「已停用：<原因>」，
+              颜色、文字和它自己的提示三者互相打架（问题记录 #11）。
+            ★ 原因作为 tooltip 的**补充**，不能反过来推翻徽标本体。
+          */}
+          <AgentLifecycleBadge status={a.status} reason={a.pausedReason} />
           <Link
             to={projectId ? `/projects/${projectId}/agents` : '/agents'}
             className="text-xs text-slate-500 hover:text-slate-700"
           >
             {t('agentDetail.backToTeam')}
           </Link>
-          <Button variant="outline" size="sm"
-            onClick={() => (paused ? pause.mutate({ paused: false }) : setPausing(true))}
-            className="ml-auto">
-            {paused ? t('agentDetail.resume') : t('agentDetail.pause')}
-          </Button>
+          {/*
+            ★ 已停用的 Agent 不给「暂停」按钮 —— 它已经不接活了，
+              点下去只会拿到一句「它已经是这个状态」。
+          */}
+          {a.status !== 'retired' && (
+            <Button variant="outline" size="sm"
+              onClick={() => (paused ? pause.mutate({ paused: false }) : setPausing(true))}
+              className="ml-auto">
+              {paused ? t('agentDetail.resume') : t('agentDetail.pause')}
+            </Button>
+          )}
         </div>
         {a.description && <p className="mt-0.5 text-xs text-slate-500">{a.description}</p>}
-        {paused && a.pausedReason && (
-          <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+        {/* ★ 停用与暂停都要把原因摆出来，不只是暂停 —— 「为什么它不干活了」
+            在两种状态下同样是用户第一个要问的问题 */}
+        {a.status !== 'active' && a.pausedReason && (
+          <p
+            className={clsx(
+              'mt-1 rounded px-2 py-1 text-[11px]',
+              paused ? 'bg-amber-50 text-amber-900' : 'bg-slate-100 text-slate-600',
+            )}
+          >
             {t('agentDetail.pausedReason', { reason: a.pausedReason })}
           </p>
         )}

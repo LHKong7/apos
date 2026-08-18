@@ -17,6 +17,7 @@ export function card(overrides: Partial<BoardCard> = {}): BoardCard {
     decisionDueInMinutes: null,
     blockedSince: null,
     blockedReason: null,
+    blockedDetail: null,
     blockedMinutes: null,
     progress: null,
     tokens: 0,
@@ -27,6 +28,8 @@ export function card(overrides: Partial<BoardCard> = {}): BoardCard {
     latestNote: null,
     artifactCount: 0,
     unmetDependencies: 0,
+    blockedBy: [],
+    blocking: [],
     updatedAt: new Date().toISOString(),
     ...overrides,
   };

@@ -1,6 +1,6 @@
 import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { projects, workItemDependencies, workItems, type Database } from '@apos/db';
-import { SYSTEM_ACTOR } from '@apos/contracts';
+import { SYSTEM_ACTOR, sameBlockedDetail, type BlockedDetail } from '@apos/contracts';
 import { formatTokens, isDependencyMet } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { emitAndPublish } from '../event/bus';
@@ -133,7 +133,23 @@ async function scheduleOne(
       const why = match.rejected.length
         ? `无匹配 Agent：${match.rejected.map((r) => `${r.agentName}（${r.reason}）`).join('；')}`
         : '项目中没有可用 Agent';
-      await markBlocked(db, item, why, correlationId);
+      /**
+       * ★ 除了那句中文，把**逐个候选为什么被淘汰**也落库。
+       *   界面拿到的是 (agentId, code, scope)，才能按层级分组、
+       *   给出「把它加进项目」这种直达按钮，而不是让用户去读一行
+       *   六个分号串起来的长句（问题记录 #2 / #12）。
+       */
+      await markBlocked(db, item, why, correlationId, {
+        kind: match.rejected.length ? 'no_matching_agent' : 'no_agents_in_project',
+        candidates: match.rejected.map((r) => ({
+          agentId: r.agentId,
+          agentName: r.agentName,
+          code: r.code,
+          scope: r.scope,
+          params: r.params,
+        })),
+        detail: null,
+      });
       return { ...base, action: 'skipped', reason: why };
     }
     const best = match.candidates[0]!;
@@ -168,7 +184,11 @@ async function scheduleOne(
      */
     if (result.code === 'WORKSPACE_UNAVAILABLE') {
       const why = (result.detail as { reason?: string })?.reason ?? '工作区不可用';
-      await markBlocked(db, item, why, correlationId);
+      await markBlocked(db, item, why, correlationId, {
+        kind: 'workspace_unavailable',
+        candidates: [],
+        detail: why,
+      });
       return { ...base, action: 'skipped', reason: why, agentId: agentId! };
     }
     return { ...base, action: 'skipped', reason: `派发失败：${result.code}`, agentId: agentId! };
@@ -232,10 +252,46 @@ async function checkBudget(
   return { ok: true };
 }
 
-async function markBlocked(db: Database, item: WorkItemRow, reason: string, correlationId: string) {
+/**
+ * 标记阻塞。
+ *
+ * ★★ 只在**首次阻塞或原因变化**时写库与发事件。
+ *
+ *   调度器每轮都会重新推出同一个结论（Agent 还是没被加进项目），
+ *   无条件写的代价是两处：Timeline 上堆出几十条一模一样的
+ *   `work_item.blocked`，把真正的状态变更淹掉；以及 `blockedSince`
+ *   每轮刷新一次，于是卡片上的阻塞时长**永远显示 0m** ——
+ *   那一栏本来是用来判断「卡了多久」的，刷新之后它恒等于「刚刚」。
+ *   （问题记录 #43 / #2）
+ *
+ *   Only write on first block or when the reason actually changes. The
+ *   scheduler re-derives the same verdict every tick; writing unconditionally
+ *   floods the timeline and keeps resetting `blockedSince`, so the card
+ *   permanently reads "blocked 0m".
+ */
+async function markBlocked(
+  db: Database,
+  item: WorkItemRow,
+  reason: string,
+  correlationId: string,
+  detail: Omit<BlockedDetail, 'at'>,
+) {
+  const previous = item.blockedDetail as BlockedDetail | null;
+  const unchanged =
+    item.blockedSince !== null &&
+    item.blockedReason === reason &&
+    sameBlockedDetail(previous, detail);
+
+  if (unchanged) return;
+
   await db
     .update(workItems)
-    .set({ blockedSince: new Date(), blockedReason: reason })
+    .set({
+      // ★ 已在阻塞中就保留原来的起点 —— 它衡量的是「卡了多久」，不是「上次扫到是什么时候」
+      blockedSince: item.blockedSince ?? new Date(),
+      blockedReason: reason,
+      blockedDetail: { ...detail, at: new Date().toISOString() },
+    })
     .where(eq(workItems.id, item.id));
 
   await emitAndPublish(db, {
@@ -245,7 +301,7 @@ async function markBlocked(db: Database, item: WorkItemRow, reason: string, corr
     actor: SYSTEM_ACTOR,
     subjectType: 'work_item',
     subjectId: item.id,
-    payload: { reason },
+    payload: { reason, detail },
     correlationId,
   });
 }

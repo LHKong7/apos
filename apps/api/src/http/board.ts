@@ -17,6 +17,7 @@ import {
   HUMAN_GATE_PRIORITY,
   Stage,
   stageFor,
+  type BlockedDetail,
   type HumanGate,
   type Stage as StageT,
   type WorkItemStatus,
@@ -26,6 +27,20 @@ import {
  * 看板卡片。字段对应页面文档 05 §5.3 —— 卡片按状态决定显示什么，
  * 因此这里把各状态需要的字段都查出来，由前端按状态取用。
  */
+/** 依赖链上的一个引用 —— 够画出「谁挡谁」，不够的部分点进卡片再看 */
+export interface DependencyRef {
+  id: string;
+  ref: string;
+  title: string;
+  status: string;
+  /** 依赖类型（finish_to_start 等）；反向那一栏不带，避免误读成对称关系 */
+  type: string | null;
+  met: boolean;
+}
+
+/** 「这条依赖算满足了」的状态集。与 domain 的 isDependencyMet 同口径 */
+const MET_STATUSES = ['done', 'released', 'acceptance'];
+
 export interface BoardCard {
   id: string;
   /**
@@ -49,6 +64,8 @@ export interface BoardCard {
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
+  /** 结构化阻塞细节。界面优先读它，`blockedReason` 只是兜底句 */
+  blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
   tokens: number;
@@ -59,6 +76,10 @@ export interface BoardCard {
   latestNote: string | null;
   artifactCount: number;
   unmetDependencies: number;
+  /** 谁挡着这张卡 —— 含已完成的，界面要能画出整条链而不只是没完成那截 */
+  blockedBy: DependencyRef[];
+  /** 这张卡挡着谁。「先做哪个」只有这一栏答得了 */
+  blocking: DependencyRef[];
   updatedAt: string;
 }
 
@@ -383,18 +404,75 @@ async function enrich(
     artifactCount.set(a.workItemId, (artifactCount.get(a.workItemId) ?? 0) + 1);
   }
 
-  const deps = await db
+  /**
+   * 依赖。
+   *
+   * ★★ 除了「有几条没完成」，还要说清**是哪几条**。
+   *
+   *   卡片上此前只有一个「🔗 1」，用户知道自己被挡着，但不知道被谁挡着 ——
+   *   要弄清「TEST-11 卡着 TEST-12」得挨个点开五张卡去拼拓扑
+   *   （问题记录 #21）。数字回答不了任何一个后续问题。
+   *
+   * ★ 两个方向都带：上游（谁挡着我）与下游（我挡着谁）。只给上游的话，
+   *   「先做哪个」这个问题仍然答不了 —— 挡住五个人的那条才该先做。
+   */
+  const depRows = await db
     .select({
       toId: workItemDependencies.toId,
+      fromId: workItemDependencies.fromId,
+      type: workItemDependencies.type,
       fromStatus: workItems.status,
+      fromTitle: workItems.title,
+      fromNumber: workItems.number,
     })
     .from(workItemDependencies)
     .innerJoin(workItems, eq(workItems.id, workItemDependencies.fromId))
     .where(inArray(workItemDependencies.toId, ids));
+
+  /** 我挡着谁 —— 反方向查一次，`from` 在 ids 里的那些 */
+  const blockingRows = await db
+    .select({
+      fromId: workItemDependencies.fromId,
+      toId: workItemDependencies.toId,
+      toStatus: workItems.status,
+      toTitle: workItems.title,
+      toNumber: workItems.number,
+    })
+    .from(workItemDependencies)
+    .innerJoin(workItems, eq(workItems.id, workItemDependencies.toId))
+    .where(inArray(workItemDependencies.fromId, ids));
+
   const unmetDeps = new Map<string, number>();
-  for (const d of deps) {
-    if (['done', 'released', 'acceptance'].includes(d.fromStatus)) continue;
-    unmetDeps.set(d.toId, (unmetDeps.get(d.toId) ?? 0) + 1);
+  const blockedBy = new Map<string, DependencyRef[]>();
+  for (const d of depRows) {
+    const met = MET_STATUSES.includes(d.fromStatus);
+    if (!met) unmetDeps.set(d.toId, (unmetDeps.get(d.toId) ?? 0) + 1);
+    blockedBy.set(d.toId, [
+      ...(blockedBy.get(d.toId) ?? []),
+      {
+        id: d.fromId,
+        ref: formatRef(identifier, d.fromNumber),
+        title: d.fromTitle,
+        status: d.fromStatus,
+        type: d.type,
+        met,
+      },
+    ]);
+  }
+
+  const blocking = new Map<string, DependencyRef[]>();
+  for (const d of blockingRows) {
+    blocking.set(d.fromId, [
+      ...(blocking.get(d.fromId) ?? []),
+      {
+        id: d.toId,
+        ref: formatRef(identifier, d.toNumber),
+        title: d.toTitle,
+        status: d.toStatus,
+        type: null,
+        met: MET_STATUSES.includes(d.toStatus),
+      },
+    ]);
   }
 
   const now = Date.now();
@@ -439,6 +517,7 @@ async function enrich(
         : null,
       blockedSince: r.blockedSince?.toISOString() ?? null,
       blockedReason: r.blockedReason,
+      blockedDetail: r.blockedDetail ?? null,
       blockedMinutes: r.blockedSince
         ? Math.round((now - r.blockedSince.getTime()) / 60_000)
         : null,
@@ -454,6 +533,8 @@ async function enrich(
       latestNote: run?.progressNote ?? null,
       artifactCount: artifactCount.get(r.id) ?? 0,
       unmetDependencies: unmetDeps.get(r.id) ?? 0,
+      blockedBy: blockedBy.get(r.id) ?? [],
+      blocking: blocking.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };
   });

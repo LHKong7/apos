@@ -1,0 +1,74 @@
+import { z } from 'zod';
+
+/**
+ * 决策卡片上那两句话的结构化形态 / Structured decision rationale.
+ *
+ * ★★ 决策中心上「为什么需要你」与「不处理会怎样」此前是服务端拼好的中文。
+ *   英文界面上于是长成这样：
+ *
+ *     If ignored: 任务无法进入「待执行」（无下游任务受影响）
+ *
+ *   —— 英文的前缀套着中文的正文，中间还夹着中文引号。半句翻译比不翻译更糟：
+ *   它让人以为这是没做完的功能，而不是「这段是原始数据」（问题记录 #34）。
+ *
+ * ★ 这里只结构化**系统生成**的那部分。用户自己起的 Policy 名、
+ *   Agent 自己写的求助理由是用户数据，不翻译也不该翻译 ——
+ *   它们作为 `params` 原样带过去。
+ *
+ * Half-translated sentences are worse than untranslated ones: they read as a
+ * broken feature rather than as raw data. Only system-generated prose is coded
+ * here; user-authored policy names travel through as params.
+ */
+
+export const WhyHumanCode = z.enum([
+  /** 命中了某条 Policy，它要求人工介入 */
+  'policy_requires_human',
+  /** 没命中具体 Policy，是项目自治等级对这个风险档位的要求 */
+  'autonomy_requires_human',
+  /** Agent 自己举手求助 */
+  'agent_requested_help',
+  /** 产出需要人评审 */
+  'review_required',
+  /** 恢复策略把这类失败升级给人 */
+  'recovery_escalated',
+]);
+export type WhyHumanCode = z.infer<typeof WhyHumanCode>;
+
+export const ConsequenceCode = z.enum([
+  /** 卡在这里，还有 N 个下游任务跟着等 */
+  'stalled_with_downstream',
+  /** 卡在这里，没有下游受影响 */
+  'stalled_alone',
+  /** 停在评审阶段 */
+  'stuck_in_review',
+  /** 停在失败状态 */
+  'stuck_failed',
+]);
+export type ConsequenceCode = z.infer<typeof ConsequenceCode>;
+
+const Coded = <T extends z.ZodTypeAny>(code: T) =>
+  z.object({
+    code,
+    params: z.record(z.union([z.string(), z.number()])).optional(),
+  });
+
+export const DecisionReason = z.object({
+  whyHuman: Coded(WhyHumanCode).nullable().default(null),
+  consequence: Coded(ConsequenceCode).nullable().default(null),
+});
+export type DecisionReason = z.infer<typeof DecisionReason>;
+
+/**
+ * 基线 Policy 的 id → 词条键后缀。
+ *
+ * ★★ 只有**基线**规则的名字是平台写的，因此可以翻译；项目自己建的规则
+ *   名字是用户数据，一律原样显示。分不清这两者的下场是要么把用户起的名
+ *   硬翻成别的话，要么让平台自带的九条规则永远只有中文名。
+ *
+ * Only baseline policy names are platform-authored and therefore translatable;
+ * project-authored names are user data and must be shown verbatim.
+ */
+export function baselinePolicyKey(policyId: string | null | undefined): string | null {
+  if (!policyId || !policyId.startsWith('baseline-')) return null;
+  return policyId;
+}

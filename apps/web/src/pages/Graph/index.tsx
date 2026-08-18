@@ -21,9 +21,7 @@ import {
 } from '../../features/graph/highlight';
 import { resolveDiagnosticAction } from '../../features/graph/diagnostic-actions';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -140,18 +138,39 @@ export function GraphPage() {
             </SelectContent>
           </Select>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-slate-400">{t('graph.highlight')}</span>
-            {HIGHLIGHT_MODES.map((mode) => (
-              <Label key={mode} className="flex cursor-pointer items-center gap-1 text-xs text-slate-600">
-                <Checkbox
-                  tone="neutral"
-                  checked={modes.includes(mode)}
-                  onCheckedChange={() => toggleMode(mode)}
-                />
-                {t(MODE_KEYS[mode])}
-              </Label>
-            ))}
+          {/*
+            ★★ 从复选框改成开关药丸。
+              复选框在这套界面里到处都表示「筛掉一部分」，而这四个做的是
+              **高亮**：勾上的变亮、没勾的变灰，一个节点都不会消失。
+              长得像筛选器的东西做着高亮的事，用户会一直在
+              「怎么它还在图里」这个疑问上打转（问题记录 #41）。
+            ★ 组标签直说「只是高亮，不会藏起任何节点」，把这件事写死在界面上
+              而不是留给用户去试。
+          */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-slate-400" title={t('graph.highlightHint')}>
+              {t('graph.highlight')}
+            </span>
+            {HIGHLIGHT_MODES.map((mode) => {
+              const on = modes.includes(mode);
+              return (
+                <Button
+                  key={mode}
+                  variant="outline"
+                  aria-pressed={on}
+                  onClick={() => toggleMode(mode)}
+                  title={t('graph.highlightHint')}
+                  className={clsx(
+                    'h-auto rounded-full px-2.5 py-1 text-xs shadow-none',
+                    on
+                      ? 'border-brand/50 bg-brand/10 font-medium text-brand hover:bg-brand/10 hover:text-brand'
+                      : 'border-slate-200 bg-slate-100/50 font-normal text-slate-500 hover:border-slate-300 hover:text-slate-800',
+                  )}
+                >
+                  {t(MODE_KEYS[mode])}
+                </Button>
+              );
+            })}
           </div>
         </div>
 

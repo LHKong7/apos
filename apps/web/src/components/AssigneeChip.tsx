@@ -28,7 +28,26 @@ export function AssigneeChip({ actor, state = 'idle', size = 'md', onClick }: Pr
   return (
     <Wrapper
       type={onClick ? 'button' : undefined}
-      onClick={onClick}
+      /**
+       * ★★ 必须挡住冒泡。
+       *
+       *   这个 chip 嵌在看板卡片里，而卡片外层挂着「点开详情」。不挡的话
+       *   点一次 chip 会同时触发两个 handler：跳去 Run 详情，同时把详情抽屉
+       *   也打开 —— 两个动作互相抵消或叠加，用户体感是「点了没反应」或者
+       *   「点错了」（问题记录 #30 记的正是这一类：子元素事件默认冒泡，
+       *   父元素的 handler 也会跟着跑）。
+       *
+       *   Nested inside a card whose own onClick opens the drawer. Without
+       *   this, one click fires both handlers.
+       */
+      onClick={
+        onClick
+          ? (e: React.MouseEvent) => {
+              e.stopPropagation();
+              onClick();
+            }
+          : undefined
+      }
       title={t('chip.agentOrHuman', { kind: isAgent ? 'Agent' : t('chip.human'), name: actor.name })}
       className={clsx(
         'inline-flex max-w-full items-center gap-1 truncate align-middle transition',

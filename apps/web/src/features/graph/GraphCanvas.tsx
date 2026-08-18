@@ -415,5 +415,17 @@ function tooltipOf(node: GraphNode): string {
         : t('graph.decisionLeft', { hours: Math.round(node.decisionDueInMinutes / 60) }),
     );
   }
+  /**
+   * ★★ 最后一行说清「点了会发生什么」。
+   *
+   *   tooltip 此前把节点的属性列得很全，但一个字都没说这个节点点不点得动 ——
+   *   而图上确实有点得动的和点不动的（问题记录 #39）。用户的做法只能是
+   *   挨个试，试到第三个不响应的就不再点了，于是那些点得动的也白做了。
+   *
+   * The tooltip listed everything about the node except whether clicking it
+   * does anything — so users try, hit two dead ones, and stop trying.
+   */
+  lines.push('', t('graph.tooltipAction'));
+  if (node.humanGateRef) lines.push(t('graph.tooltipDecision'));
   return lines.join('\n');
 }

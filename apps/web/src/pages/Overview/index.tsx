@@ -5,11 +5,22 @@ import clsx from 'clsx';
 import type { Contribution } from '@apos/domain';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, eventLabel, relativeTime, riskLabel, tokens } from '../../lib/format';
+import {
+  absoluteTime,
+  duration,
+  eventLabel,
+  relativeTime,
+  riskLabel,
+  sourceIcon,
+  sourceLabel,
+  tokens,
+} from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { useProjectStream } from '../../lib/sse/useProjectStream';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
+import { BlockedReasons } from '../../features/work-item/BlockedReasons';
+import { DiagnosticsBanner } from '../../features/graph/DiagnosticsBanner';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
 import { useT } from '../../lib/i18n';
 import { Button } from '@/components/ui/button';
@@ -180,6 +191,21 @@ export function OverviewPage() {
             />
           )}
 
+          {/*
+            ★★ 问题诊断搬到了总览。
+              执行图上每条问题都带着「改派 / 催办 / 调整 Policy」这类直达按钮 ——
+              而那是全站唯一「报了问题就顺手给解法」的地方。看板与总览上
+              看到一条阻塞任务时，用户手上一个动作按钮都没有（问题记录 #40）。
+              归因那一行同样搬过来（#38）。
+          */}
+          <DiagnosticsBanner
+            projectId={projectId}
+            diagnostics={d.diagnostics}
+            delayCause={d.delayCause}
+            onOpenCard={setOpenCard}
+            onRemind={(nodeId) => setOpenCard(nodeId)}
+          />
+
           {/* ── 需要你处理 ── */}
           <section className="rounded border border-slate-200 bg-white">
             <h2 className="border-b border-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
@@ -236,24 +262,38 @@ export function OverviewPage() {
               ) : (
                 <ul>
                   {d.blocked.map((b) => (
-                    <li key={b.id} className="border-b border-slate-100 px-3 py-1.5 last:border-0">
-                      <Button variant="ghost"
+                    <li key={b.id} className="border-b border-slate-100 px-3 py-2 last:border-0">
+                      {/*
+                        ★★ 标题一行、原因分项、修复入口一行 —— 三层，不是一行。
+                          此前六条阻塞原因连同六条建议被压成一个字符串塞进这里，
+                          中英标点混着走，真正的下一步动作埋在第三个分号后面
+                          （问题记录 #2 / #12 / #25）。
+                        ★ 标题仍然可点（开卡片详情），但**修复按钮不在这个可点区里** ——
+                          嵌套的可点区域会同时触发两个 handler，用户体感是「点了没反应」
+                          （问题记录 #30 的同一类坑）。
+                      */}
+                      <Button
+                        variant="ghost"
                         onClick={() => setOpenCard(b.id)}
-                        className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start w-full text-left text-xs"
+                        className="h-auto w-full justify-start p-0 text-left text-xs font-normal whitespace-normal hover:bg-transparent"
                       >
-                        <span className="text-red-700">
-                          ⛔ {b.minutes === null ? '—' : duration(b.minutes)}
+                        <span className="text-red-700" title={t('overview.blockedFor')}>
+                          <span aria-hidden>⛔</span>{' '}
+                          {b.minutes === null ? '—' : duration(b.minutes)}
                         </span>
                         <span className="ml-2 text-slate-800">{b.title}</span>
-                        {b.reason && (
-                          <span className="mt-0.5 block text-[11px] text-slate-500">{b.reason}</span>
-                        )}
                         {b.ownerName && (
-                          <span className="text-[11px] text-slate-400">
+                          <span className="ml-2 text-[11px] text-slate-400">
                             {t('overview.item.owner', { name: b.ownerName })}
                           </span>
                         )}
                       </Button>
+                      <BlockedReasons
+                        projectId={projectId}
+                        detail={b.detail}
+                        fallback={b.reason}
+                        className="mt-1 pl-1"
+                      />
                     </li>
                   ))}
                 </ul>
@@ -354,10 +394,12 @@ export function OverviewPage() {
             <ul className="mt-1 space-y-0.5">
               {d.recentActivity.map((e) => (
                 <li key={e.id} className="flex items-baseline gap-2 text-[11px]">
-                  <span className="text-slate-400">{relativeTime(e.occurredAt)}</span>
-                  <span aria-hidden>
-                    {e.actorType === 'human' ? '👤' : e.actorType === 'agent' ? '🤖' : '🔧'}
+                  {/* ★ hover 给绝对时间：相对时间答「多久以前」，绝对时间答「几点」（#1） */}
+                  <span className="shrink-0 text-slate-400" title={absoluteTime(e.occurredAt)}>
+                    {relativeTime(e.occurredAt)}
                   </span>
+                  <span aria-hidden>{sourceIcon(e.actorType)}</span>
+                  <span className="sr-only">{sourceLabel(e.actorType)}</span>
                   <span className="min-w-0 flex-1 truncate text-slate-600">
                     {eventLabel(e.type)}
                   </span>
@@ -409,6 +451,14 @@ function MetricCard({
   return (
     <Button variant="ghost"
       onClick={onClick}
+      /*
+        ★ 帮助文案挂在 title 上，不进按钮正文（问题记录 #4）。
+          「点开看看是哪些项扣了分」和「55 / 一般」挤在同一个按钮里时，
+          扫五张卡的人先读到的是那句解释，而这一排卡的用途是**比较数字**。
+          按钮本体只留标签、数值、一行状态；解释交给 hover 与展开区。
+      */
+      title={hint}
+      aria-label={hint ? `${label} ${value}${sub ? ` ${sub}` : ''} — ${hint}` : undefined}
       className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start', 
         'lift relative overflow-hidden rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm hover:shadow-md',
         // 指标卡的色调只体现在**顶边那道线**上，不给整块上色 ——
@@ -445,7 +495,15 @@ function MetricCard({
         {value}
       </p>
       {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
-      {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
+      {/*
+        ★ 有帮助文案的卡片给一个「可展开」的暗示，而不是把那句话印出来。
+          没有任何暗示的话，可点这件事只能靠碰运气发现。
+      */}
+      {hint && (
+        <p aria-hidden className="text-[11px] text-slate-300">
+          ⌄
+        </p>
+      )}
     </Button>
   );
 }

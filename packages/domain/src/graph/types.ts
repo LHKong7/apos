@@ -1,4 +1,10 @@
-import type { DependencyType, RiskLevel, Stage, WorkItemStatus } from '@apos/contracts';
+import type {
+  BlockedDetail,
+  DependencyType,
+  RiskLevel,
+  Stage,
+  WorkItemStatus,
+} from '@apos/contracts';
 
 /**
  * 节点类型（页面文档 07 §5.1）。
@@ -41,6 +47,8 @@ export interface GraphNode {
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
+  /** 结构化阻塞细节，供 tooltip 分层展示 */
+  blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   parentId: string | null;
 }
