@@ -101,6 +101,82 @@ describe('卡片按状态裁剪内容', () => {
     expect(a.onRemind).toHaveBeenCalled();
   });
 
+  /**
+   * ★★ 报出来的那个 bug：卡片顶上写着「⛔ 阻塞」，按钮写着「接管」，
+   *   点下去弹「当前状态 ready 不支持该操作」。
+   *
+   *   根因是按钮跟着 `blockedSince` 这个**标记**走，而标记可以挂在
+   *   status 仍是 ready 的卡片上 —— 状态是事实，标记只是注解
+   *   （问题记录 #16 / #27）。一个点了必然报错的按钮比没有更伤：
+   *   用户会以为自己点错了。
+   */
+  it('★ 只挂了阻塞标记但状态仍是 ready：不给「接管」，给「怎么解开」', () => {
+    const a = actions();
+    render(
+      <BoardCard
+        card={card({
+          status: 'ready',
+          blockedSince: new Date().toISOString(),
+          blockedMinutes: 30,
+          blockedReason: '无匹配 Agent',
+        })}
+        actions={a}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: '接管' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '怎么解开' })).toBeInTheDocument();
+  });
+
+  it('★ 状态真的是 blocked 时才给「接管」', () => {
+    render(
+      <BoardCard
+        card={card({
+          status: 'blocked',
+          blockedSince: new Date().toISOString(),
+          blockedMinutes: 30,
+          blockedReason: '无匹配 Agent',
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '接管' })).toBeInTheDocument();
+  });
+
+  /**
+   * ★ 结构化原因取代那句由服务端拼好的长句：逐条一行、标出这条限制
+   *   配在哪一层、同类归并成一个修复按钮（问题记录 #2 / #6 / #12）。
+   */
+  it('★ 结构化阻塞原因：卡片上只印归并后的主因', () => {
+    render(
+      <BoardCard
+        card={card({
+          status: 'blocked',
+          blockedSince: new Date().toISOString(),
+          blockedMinutes: 30,
+          blockedReason: '无匹配 Agent：a（不是本项目成员）；b（不是本项目成员）',
+          blockedDetail: {
+            kind: 'no_matching_agent',
+            detail: null,
+            candidates: [
+              { agentId: 'a1', agentName: 'refactor-agent', code: 'not_project_member', scope: 'project' },
+              { agentId: 'a2', agentName: 'review-agent-1', code: 'not_project_member', scope: 'project' },
+              { agentId: 'a3', agentName: 'main-agent', code: 'missing_tools', scope: 'project', params: { items: 'write_file' } },
+            ],
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    // 两个同因的 Agent 归并成一句，剩下的收进「另有 N 条」
+    expect(screen.getByText(/2 个 Agent：不是本项目成员/)).toBeInTheDocument();
+    expect(screen.getByText(/另有 1 条原因/)).toBeInTheDocument();
+    // 服务端那句分号长句不再出现在卡片上
+    expect(screen.queryByText(/无匹配 Agent：a（/)).not.toBeInTheDocument();
+  });
+
   it('失败：讲清下一步会发生什么，而不是只报次数', () => {
     render(<BoardCard card={card({ status: 'failed', consecutiveFailures: 2 })} actions={actions()} />);
 

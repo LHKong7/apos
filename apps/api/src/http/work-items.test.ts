@@ -10,6 +10,7 @@ import { allocateNumbers, suggestIdentifier } from '../modules/work-item/numberi
 import {
   auth as authFor,
   createMember,
+  createWorkItem,
   integrationRegistry,
   resetDb,
   seedFixture,
@@ -256,5 +257,83 @@ describe('手工建任务', () => {
   it('不填负责人时默认记在创建者名下 —— 问责链条不能断', async () => {
     const res = await create({ title: '没指定负责人' });
     expect(res.json().item.ownerId).toBe(fx.userId);
+  });
+});
+
+/**
+ * 接管。
+ *
+ * ★★ 「接管」是一个**意图**，不是一个状态机触发器。
+ *
+ *   它此前恒等于 `human_took_over`，而那个触发器只从 executing 出发。
+ *   于是看板上一张 blocked 或 failed 的卡片，「接管」按钮点下去拿到的是
+ *   409 +「当前状态 … 不支持该操作」—— 一句既没说清为什么、又和按钮
+ *   自己出现的条件互相矛盾的话（问题记录 #16 / #27）。
+ *
+ * Takeover is an intent, not a trigger: `human_took_over` is only legal from
+ * `executing`, so the button on a blocked or failed card always 409'd.
+ */
+describe('★ 接管：同一个按钮在不同状态下走不同的触发器', () => {
+  const takeover = (id: string, userId = fx.userId) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/work-items/${id}/takeover`,
+      headers: as(userId),
+      payload: { reason: '我来接手' },
+    });
+
+  it('executing 的任务：接管后仍在执行，执行主体换成人', async () => {
+    const item = await createWorkItem(db, fx, { status: 'executing' });
+    const res = await takeover(item.id);
+
+    expect(res.statusCode).toBe(200);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('executing');
+    expect(after!.executorType).toBe('human');
+  });
+
+  /** ★ 这一条正是报出来的那个 bug：卡片写着「已阻塞」，点接管却报状态不对 */
+  it('★ blocked 的任务：接管走升级路径，而不是报「状态不支持」', async () => {
+    const item = await createWorkItem(db, fx, {
+      status: 'blocked',
+      blockedSince: new Date(),
+      blockedReason: '无匹配 Agent',
+    });
+    const res = await takeover(item.id);
+
+    expect(res.statusCode).toBe(200);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('executing');
+    expect(after!.executorType).toBe('human');
+    // ★ 升级路径带 clearBlocked —— 接管完还挂着阻塞标记等于没接管
+    expect(after!.blockedSince).toBeNull();
+  });
+
+  it('★ failed 的任务：同样接得下来', async () => {
+    const item = await createWorkItem(db, fx, { status: 'failed' });
+    const res = await takeover(item.id);
+
+    expect(res.statusCode).toBe(200);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('executing');
+    expect(after!.executorType).toBe('human');
+  });
+
+  /**
+   * ★ 真的接不了的状态仍然要拒，而且报错里要带上**状态标签**。
+   *   「当前状态 ready 不支持」这句话里的 `ready` 界面上从没出现过 ——
+   *   用户看到的是卡片上的中文标签，两个名字对不上就等于没解释。
+   */
+  it('★ 接不了的状态给出带标签的报错，并附上这时能做什么', async () => {
+    const item = await createWorkItem(db, fx, { status: 'draft' });
+    const res = await takeover(item.id);
+
+    expect(res.statusCode).toBe(409);
+    const body = res.json();
+    expect(body.error.code).toBe('INVALID_TRANSITION');
+    expect(body.error.details.from).toBe('draft');
+    expect(body.error.details.fromLabel).toBeTruthy();
+    expect(body.error.details.fromLabel).not.toBe('draft');
+    expect(Array.isArray(body.error.details.allowedTriggers)).toBe(true);
   });
 });

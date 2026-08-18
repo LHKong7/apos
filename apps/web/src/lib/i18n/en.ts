@@ -35,6 +35,12 @@ export const en = {
   'common.back': 'Back',
 
   // ── Formatting & events / 格式化与事件 ─────────────────────────
+  'error.invalidTransition':
+    'This item is now “{status}”, which does not allow that. The board was out of date — it has been refreshed.',
+  'error.invalidTransitionUnknown':
+    'This item has moved on since the board was drawn, so that action no longer applies. It has been refreshed.',
+  'error.forbidden': 'Your role does not allow that.',
+  'error.conflict': 'Someone changed this at the same time. It has been refreshed — try again.',
   'format.deadline.overdue': 'Overdue by {time}',
   'format.deadline.within': 'within {time}',
   'format.justNow': 'just now',

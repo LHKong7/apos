@@ -26,6 +26,12 @@ export const zh: Record<keyof typeof en, string> = {
   'common.back': '返回',
 
   // ── 格式化与事件 ─────────────────────────────────────────────────
+  'error.invalidTransition':
+    '这个任务现在是「{status}」，做不了这个操作。看板上的数据过期了，已经刷新。',
+  'error.invalidTransitionUnknown':
+    '这个任务在看板画出来之后已经变了，这个操作不再适用。已经刷新。',
+  'error.forbidden': '你的角色不允许这个操作。',
+  'error.conflict': '有人同时改了这条，已经刷新，再试一次。',
   'format.deadline.overdue': '超时 {time}',
   'format.deadline.within': '{time} 内',
   'format.justNow': '刚刚',
