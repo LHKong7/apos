@@ -241,6 +241,10 @@ export const en = {
   'identity.checking': 'Confirming your identity…',
   'shell.backToProjects': 'Back to project list',
   'shell.signOut': 'Sign out',
+  'shell.decisionsHere': '· {count} in this project',
+  'shell.decisionHint': 'Decisions waiting on you, across every project you are in',
+  'shell.decisionScopeHint':
+    '{here} of these {total} are in the project you are looking at. The rest are in your other projects.',
   'shell.pendingDecisions': '{count} awaiting your decision',
   'shell.overdue': '· {count} overdue',
   'org.label': 'Organisation',
@@ -937,6 +941,10 @@ export const en = {
   'board.riskHigh': 'High',
   'board.riskMedium': 'Medium',
   'board.riskLow': 'Low',
+  'board.view.decisionsHint':
+    'Only the cards waiting on a person — this filters the board, it is not another layout.',
+  'board.quietMode.on': 'Quiet mode is on: cards jump straight to their new column without animating. Data is still live.',
+  'board.quietMode.off': 'Quiet mode is off: cards animate as they move. This only affects the animation, never the data.',
   'board.quietMode': 'Quiet mode: update the data without animating card movement',
   'project.autonomy.humanLed': 'Human-led',
   'project.autonomy.agentApproval': 'Agent-led + approval',
@@ -1106,6 +1114,8 @@ export const en = {
   'decDrawer.constraintPlaceholder': 'e.g. run only outside business hours',
   'decDrawer.approveAndContinue': 'Approve and continue',
   'decDrawer.rejectReason': 'Reason for rejection (required)',
+  'decDrawer.rejectShort': 'Reject',
+  'decision.rejectEffect': 'Rejecting cancels the work item.',
   'decDrawer.reject': 'Reject (the work item will be cancelled)',
   'cost.totalInWindow': 'Total cost in window',
   'cost.totalHelp': 'Total cost of every Agent run started within the window.',
@@ -1513,6 +1523,8 @@ export const en = {
   'kanban.noMatch': 'No matches',
   'kanban.clearFilters': 'Clear filters',
   'kanban.expandRest': '⋯ Show {count} more',
+  'decisions.groupCount': '{count} waiting',
+  'decisions.groupOverdue': '{count} overdue',
   'decisions.overdueCount': '{count} overdue · ',
   'decisions.dueSoon': '{count} due within 4 hours · ',
   'decisions.mustConfirmOne': ' · {count} of them are irreversible or high-risk and must be confirmed individually',
@@ -1528,6 +1540,41 @@ export const en = {
   'decisions.selectAllBatchable': 'Select all {count} batchable (low risk and reversible)',
   'decision.selectOne': 'Select “{title}”',
   'decision.assignee': ' · owner {name}',
+  // ── 决策理由 / Decision rationale ────────────────────────────────
+  'decision.why.policy': 'Policy “{policy}” requires a person to weigh in',
+  'decision.why.autonomy_requires_human':
+    'This project’s autonomy level requires a person to confirm {risk} operations',
+  'decision.why.agent_requested_help': 'The Agent asked for help: {reason}',
+  'decision.why.review_required': 'The output needs a person to review it',
+  'decision.why.recovery.request_decision':
+    'Retrying does not help with this class of error — someone needs to supply what is missing or change the approach',
+  'decision.why.recovery.pause_and_escalate':
+    'Three failures in a row is rarely chance; retrying further just keeps spending',
+  'decision.why.recovery.split_task':
+    'Splitting it means redrawing acceptance criteria and dependencies — that is a plan change, not something the system may do on its own',
+  'decision.why.recovery.downgrade_model':
+    'A cheaper model changes output quality; someone has to accept that trade-off',
+  'decision.why.recovery.terminate': 'Terminating means this work stops for good — a person has to call it',
+  'decision.consequence.stalled_with_downstream':
+    'If ignored: it cannot move into “{status}”, and {count} downstream tasks wait with it',
+  'decision.consequence.stalled_alone':
+    'If ignored: it cannot move into “{status}”. Nothing downstream is affected.',
+  'decision.consequence.stuck_in_review': 'If ignored: it stays in review and nothing downstream can start',
+  'decision.consequence.stuck_failed': 'If ignored: it stays failed and nothing downstream can start',
+
+  // 平台自带的基线规则 —— 名字是平台文案，可以翻译。
+  // 项目自建规则的名字是用户数据，一律原样显示。
+  'policyName.baseline-payment': 'Payments need multiple approvers',
+  'policyName.baseline-permission-change': 'Permission changes need an org admin',
+  'policyName.baseline-delete-resource': 'Deleting a resource needs multiple approvers',
+  'policyName.baseline-security-policy': 'Security policy changes need an org admin',
+  'policyName.baseline-prod-db': 'Production database changes need DBA approval',
+  'policyName.baseline-sensitive-data': 'Restricted data needs the data owner’s approval',
+  'policyName.baseline-send-external': 'Sending anything outward needs a person to confirm',
+  'policyName.baseline-prod-deploy': 'Production releases need the release owner’s approval',
+  'policyName.baseline-budget-exceeded': 'Going over budget needs the sponsor',
+  'policyName.baseline-consecutive-failures': 'Three Agent failures in a row go to a person',
+
   'decision.consequence': 'If ignored: {consequence}',
   'decision.rationale': 'Rationale: {rationale}',
   'decision.cannotDelegate': '{name} owns this decision and it cannot be made on their behalf — you can only view it',

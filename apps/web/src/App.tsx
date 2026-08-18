@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api, ApiError } from './lib/api/client';
@@ -421,9 +429,23 @@ function OrgSwitcher() {
  *   只算「指名给我的」会让无人认领的决策永远静默，
  *   而无人认领恰恰是最该被看见的一类。
  */
+/**
+ * 顶栏的待决策徽标。
+ *
+ * ★★ 这个数字是**跨项目**的，而看板上那个「待决策 N」只数当前项目。
+ *   两个数字并排出现在同一屏、中间没有任何东西说明它们范围不同的时候，
+ *   用户看到的是系统在自相矛盾 —— 而且是往吓人的方向矛盾
+ *   （顶栏 8、看板 2，问题记录 #24）。所以在项目内的页面上，
+ *   徽标要自己说清「8 条里这个项目 2 条」。
+ *
+ * ★ 超时与未超时视觉上分开：一个既没图标也不变色的长条，
+ *   「有 8 件事要做」和「有 8 件事已经晚了」长得一模一样（#3）。
+ *   超时用红 + 会扩散的圆点，未超时用琥珀 + 静止圆点。
+ */
 function DecisionBadge() {
   const t = useT();
   const userId = useAuthStore((s) => s.userId);
+  const { pathname } = useLocation();
   const inbox = useQuery({
     queryKey: qk.decisionInbox('mine'),
     queryFn: () => api.decisionInbox('mine'),
@@ -435,9 +457,23 @@ function DecisionBadge() {
 
   const overdue = stats.overdue > 0;
 
+  /**
+   * ★ 从路径里取项目 id —— TopNav 在 <Routes> 之外，拿不到 useParams。
+   *   取不到就退回纯跨项目的说法，不猜。
+   */
+  const projectId = /^\/projects\/([0-9a-f-]{36})/i.exec(pathname)?.[1] ?? null;
+  const here = projectId ? stats.byProject[projectId] : undefined;
+  /** ★ 只有在「这个项目的数 ≠ 全部」时才说范围。相等时那句话是废话 */
+  const showScope = here !== undefined && here.mine !== stats.mine;
+
   return (
     <Link
-      to="/decisions"
+      to={projectId ? `/projects/${projectId}/decisions` : '/decisions'}
+      title={
+        showScope
+          ? t('shell.decisionScopeHint', { here: here.mine, total: stats.mine })
+          : t('shell.decisionHint')
+      }
       className={clsx(
         'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition',
         overdue
@@ -446,14 +482,12 @@ function DecisionBadge() {
       )}
     >
       {/* 会扩散的圆点：它替代了「⏰」那个 emoji —— 一个真的在动的东西
-          比一个画着时钟的字符更像「现在正有事等着你」 */}
+          比一个画着时钟的字符更像「现在正有事等着你」。
+          ★ 只有超时的才扩散：不停跳动的东西一多就等于没有重点 */}
       <span aria-hidden className="relative flex h-1.5 w-1.5 shrink-0">
-        <span
-          className={clsx(
-            'absolute inset-0 rounded-full animate-ping-soft',
-            overdue ? 'bg-overdue' : 'bg-gate',
-          )}
-        />
+        {overdue && (
+          <span className="absolute inset-0 rounded-full bg-overdue animate-ping-soft" />
+        )}
         <span
           className={clsx('relative h-1.5 w-1.5 rounded-full', overdue ? 'bg-overdue' : 'bg-gate')}
         />
@@ -464,6 +498,11 @@ function DecisionBadge() {
       {overdue && (
         <span className="font-medium tabular-nums">
           {t('shell.overdue', { count: stats.overdue })}
+        </span>
+      )}
+      {showScope && (
+        <span className="tabular-nums opacity-70">
+          {t('shell.decisionsHere', { count: here.mine })}
         </span>
       )}
     </Link>

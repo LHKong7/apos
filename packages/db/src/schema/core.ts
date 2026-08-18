@@ -32,7 +32,7 @@ import type {
   ResourceScope,
 } from '@apos/contracts';
 import { OrgRole } from '@apos/contracts';
-import type { BlockedDetail } from '@apos/contracts';
+import type { BlockedDetail, DecisionReason } from '@apos/contracts';
 
 /** 组织给某个 Agent 定的能力上限，落在权限变更审计里 */
 interface AgentCeilingSnapshot {
@@ -1309,6 +1309,14 @@ export const decisions = pgTable(
     whyHuman: text().notNull(),
     /** ★ 不处理会怎样 —— 把紧迫性从抽象的「高优先级」变成具体的「阻塞 5 个任务」 */
     consequence: text(),
+    /**
+     * 上面两句话的结构化形态（原因码 + 插值参数）。
+     *
+     * ★ 上面两栏保留为兜底：存量数据里只有它们，而且日志、通知里
+     *   拼一句现成的话仍然更省事。界面优先读这一栏 —— 英文界面上
+     *   「If ignored: 任务无法进入…」那种半句翻译比不翻译更糟。
+     */
+    reasonDetail: jsonb().$type<DecisionReason>(),
     impact: jsonb().$type<Record<string, unknown>>().notNull().default({}),
 
     triggeredByPolicy: uuid(),

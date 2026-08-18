@@ -536,6 +536,20 @@ async function promote(
                 request.urgency === 'blocking'
                   ? '不处理则该任务无法继续'
                   : '不处理则该任务只能降级完成',
+              /**
+               * ★ 结构化副本。Agent 写的求助理由是它自己的话，
+               *   原样作为参数带过去 —— 那不是平台文案，不该被翻译。
+               */
+              reasonDetail: {
+                whyHuman: {
+                  code: 'agent_requested_help' as const,
+                  params: { reason: request.reason },
+                },
+                consequence:
+                  request.urgency === 'blocking'
+                    ? { code: 'stalled_alone' as const, params: { status: 'executing' } }
+                    : { code: 'stuck_failed' as const },
+              },
               impact: { runId: run.id, reason: request.reason, urgency: request.urgency },
               dueAt: new Date(Date.now() + (request.urgency === 'blocking' ? 2 : 8) * 3600_000),
             })

@@ -10,6 +10,7 @@ import type { DecisionCard as Card } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { useDecisionReason } from '../../features/decision/reason';
 
 /**
  * 决策卡片 —— 就地拍板，不跳详情页。
@@ -32,6 +33,7 @@ export function DecisionCardView({
   showSelectColumn: boolean;
 }) {
   const t = useT();
+  const explain = useDecisionReason();
   const qc = useQueryClient();
   const [mode, setMode] = useState<null | 'approve' | 'reject'>(null);
   const [note, setNote] = useState('');
@@ -152,10 +154,19 @@ export function DecisionCardView({
             {card.assigneeName && <>{t('decision.assignee', { name: card.assigneeName })}</>}
           </p>
 
-          {/* 为什么需要人 —— 指明触发的规则，而不是「系统要求」 */}
-          <p className="mt-1 text-xs text-slate-700">{card.whyHuman}</p>
-          {card.consequence && (
-            <p className="mt-0.5 text-xs text-amber-800">{t('decision.consequence', { consequence: card.consequence })}</p>
+          {/*
+            为什么需要人 —— 指明触发的规则，而不是「系统要求」。
+            ★ 走结构化理由：此前这两句是服务端拼好的中文，英文界面上
+              长成「If ignored: 任务无法进入「待执行」」，英文前缀套中文正文
+              （问题记录 #34）。认不出码时回落到服务端那句话，不留空。
+          */}
+          <p className="mt-1 text-xs text-slate-700">
+            {explain.whyHuman(card.reasonDetail, card.whyHuman)}
+          </p>
+          {explain.consequence(card.reasonDetail, card.consequence) && (
+            <p className="mt-0.5 text-xs text-amber-800">
+              {explain.consequence(card.reasonDetail, card.consequence)}
+            </p>
           )}
           {card.agentSelfReport && (
             <p className="mt-0.5 text-[11px] text-slate-500">
@@ -213,9 +224,22 @@ export function DecisionCardView({
               >
                 {t('decDrawer.approve')}
               </Button>
-              <Button variant="outline" size="sm"
-                onClick={() => setMode('reject')}>
-                {t('decDrawer.reject')}
+              {/*
+                ★ 副作用写在 tooltip 里，不写进按钮正文。
+                  「驳回（任务将被取消）」这种写法有两个问题：按钮被撑得比
+                  「批准」宽出一倍，两个本该并排比较的选项失去了对称；
+                  而那句括号里的话正因为它在按钮里，反而会被当成按钮名字的一部分
+                  一眼扫过去（问题记录 #35）。
+                ★ 驳回本来就是两步（要填原因），所以真正的确认时刻在下一屏 ——
+                  那里再明说一次后果，比塞在按钮里管用。
+              */}
+              <Button
+                variant="outline"
+                size="sm"
+                title={t('decision.rejectEffect')}
+                onClick={() => setMode('reject')}
+              >
+                {t('decDrawer.rejectShort')}
               </Button>
             </div>
           ) : mode === 'approve' ? (
@@ -245,6 +269,8 @@ export function DecisionCardView({
             <div className="mt-1.5 space-y-1">
               {/* ★ 驳回必须写原因 —— 「每次覆盖都要留下为什么」是这个系统的底线，
                   也是 Analytics 里「重复决策能不能变成规则」的唯一数据来源 */}
+              {/* ★ 后果在这一屏明说：这里才是真正要按下去的那一刻 */}
+              <p className="text-[11px] text-amber-800">{t('decision.rejectEffect')}</p>
               <Input
                 type="text"
                 value={reason}

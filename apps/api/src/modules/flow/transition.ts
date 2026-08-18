@@ -406,6 +406,32 @@ async function createDecisionFor(
       whyHuman: verdict.matchedPolicyName
         ? `Policy「${verdict.matchedPolicyName}」要求人工介入`
         : `项目自治等级要求该风险级别的操作需人工确认`,
+      /**
+       * ★ 同一件事再说一遍，但这次说给界面听。
+       *   上面那两句中文留给日志、通知与存量客户端；界面读这一栏，
+       *   才能在英文界面上给出一句完整的英文，而不是
+       *   「If ignored: 任务无法进入…」那种半句翻译（问题记录 #34）。
+       * ★ Policy 名字作为参数原样带过去 —— 用户自己起的名不该被翻译，
+       *   平台自带的九条基线规则由前端按 id 认领词条。
+       */
+      reasonDetail: {
+        whyHuman: verdict.matchedPolicyName
+          ? {
+              code: 'policy_requires_human' as const,
+              params: {
+                policy: verdict.matchedPolicyName,
+                policyId: verdict.matchedPolicyId ?? '',
+              },
+            }
+          : { code: 'autonomy_requires_human' as const, params: { risk: item.riskLevel } },
+        consequence:
+          snapshot.impactTaskCount > 0
+            ? {
+                code: 'stalled_with_downstream' as const,
+                params: { status: intendedStatus, count: snapshot.impactTaskCount },
+              }
+            : { code: 'stalled_alone' as const, params: { status: intendedStatus } },
+      },
       impact: { intendedStatus },
       triggeredByPolicy: isUuid(verdict.matchedPolicyId) ? verdict.matchedPolicyId : null,
       policyTrace: verdict.trace,

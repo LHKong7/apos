@@ -109,6 +109,8 @@ export async function getDecisionInbox(
       /** ★ 不处理会怎样 —— 把紧迫性从抽象的「高优先级」变成具体的后果 */
       consequence: d.consequence,
       whyHuman: d.whyHuman,
+      /** ★ 界面优先读这份结构化的，读不到才回落到上面那句中文 */
+      reasonDetail: d.reasonDetail ?? null,
       riskLevel: d.riskLevel,
       reversible: d.reversible,
       assigneeId: d.assigneeId,
@@ -165,6 +167,26 @@ export async function getDecisionInbox(
     .map(([type, count]) => ({ type, label: decisionLabel(type), count }))
     .sort((a, b) => b.count - a.count);
 
+  /**
+   * ★★ 按项目拆一份计数。
+   *
+   *   顶栏那个「8 条待你决策」是**跨项目**的（收件箱本来就是跨项目的收件箱），
+   *   而看板上那个「待决策 2」只数当前项目。两个数字并排出现在同一屏上，
+   *   中间没有任何东西说明它们的范围不同 —— 用户看到的是系统在自相矛盾，
+   *   而且是往吓人的方向矛盾（问题记录 #24）。
+   *
+   *   拆出来之后顶栏就能说「8 条，其中这个项目 2 条」。
+   *
+   *   The header badge counts across projects, the board counts one. Two
+   *   numbers on one screen with nothing naming their scope reads as a bug.
+   */
+  const byProject: Record<string, { mine: number; overdue: number }> = {};
+  for (const d of mine) {
+    const bucket = (byProject[d.projectId] ??= { mine: 0, overdue: 0 });
+    bucket.mine += 1;
+    if (d.dueAt && d.dueAt.getTime() < now) bucket.overdue += 1;
+  }
+
   return {
     stats: {
       total: rows.length,
@@ -172,6 +194,7 @@ export async function getDecisionInbox(
       overdue: cards.filter((c) => c.overdueMinutes !== null).length,
       dueSoon: cards.filter((c) => c.dueInMinutes !== null && c.dueInMinutes <= 240).length,
       actionable: cards.filter((c) => c.canAct).length,
+      byProject,
     },
     repeated,
     decisions: cards,
@@ -181,7 +204,7 @@ export async function getDecisionInbox(
 /** 一个项目都看不到时的空收件箱。形状必须与正常返回一致，前端不做特判 */
 function emptyInbox() {
   return {
-    stats: { total: 0, mine: 0, overdue: 0, dueSoon: 0, actionable: 0 },
+    stats: { total: 0, mine: 0, overdue: 0, dueSoon: 0, actionable: 0, byProject: {} },
     repeated: [],
     decisions: [],
   };

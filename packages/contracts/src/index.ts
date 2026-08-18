@@ -10,3 +10,4 @@ export * from './workspace/index';
 export * from './events/index';
 export * from './integration/index';
 export * from './work-item/blocked';
+export * from './work-item/decision-reason';

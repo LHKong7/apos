@@ -1,6 +1,7 @@
 import type { PlanDiff, Permission } from '@apos/domain';
 import type {
   BlockedDetail,
+  DecisionReason,
   HumanGate,
   ProjectRole,
   RiskLevel,
@@ -814,6 +815,8 @@ export interface DecisionCard {
   title: string;
   consequence: string | null;
   whyHuman: string;
+  /** ★ 结构化理由。界面优先读它，上面两句中文是存量数据的兜底 */
+  reasonDetail: DecisionReason | null;
   riskLevel: string;
   reversible: boolean;
   assigneeId: string | null;
@@ -839,7 +842,15 @@ export interface DecisionCard {
 }
 
 export interface DecisionInbox {
-  stats: { total: number; mine: number; overdue: number; dueSoon: number; actionable: number };
+  stats: {
+    total: number;
+    mine: number;
+    overdue: number;
+    dueSoon: number;
+    actionable: number;
+    /** 按项目拆的计数 —— 顶栏那个跨项目的数字要能说清「其中这个项目几条」 */
+    byProject: Record<string, { mine: number; overdue: number }>;
+  };
   repeated: { type: string; label: string; count: number }[];
   decisions: DecisionCard[];
 }
