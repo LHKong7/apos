@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useT, type MessageKey } from '../../lib/i18n';
-import clsx from 'clsx';
 import type { NodeKind } from '@apos/domain';
 import { NODE_H, NODE_W } from './geometry';
 

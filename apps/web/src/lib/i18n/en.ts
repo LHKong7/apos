@@ -1602,6 +1602,7 @@ export const en = {
   'roles.orgPermissionsNote': 'Organization-level permissions (identity management, defining roles, exporting audit logs…) are not here — they belong to org admins only, and delegating them would let “the role that can create roles” become an admin in one step.',
   'roles.humanOnlyTag': 'human only',
   'kanban.wipReached': 'WIP limit reached; the Flow Engine has paused scheduling into this column',
+  'kanban.overdueInColumn': '{count} overdue in this column — show everything waiting on a person',
   'kanban.wipLimit': 'WIP limit {n}',
   'kanban.waitingUpstream': 'Waiting on upstream work',
   'kanban.planningEmpty': 'Once a requirement is approved, the generated plan waits here for approval',

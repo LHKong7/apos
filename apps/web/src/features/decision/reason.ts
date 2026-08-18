@@ -41,12 +41,14 @@ export function useDecisionReason(): {
         return t('decision.why.policy', { policy: name });
       }
       if (w.code === 'recovery_escalated') {
+        /**
+         * ★ 三档回落：本地化的说法 → 服务端带过来的那句 → 存量数据里的整句。
+         *   `||` 而不是 `??` —— 中间那一档取不到时是**空串**不是 null，
+         *   而空串必须继续往下落，否则界面上会出现一句空的解释。
+         */
         const action = String(w.params?.['action'] ?? '');
-        return (
-          tryKey(`decision.why.recovery.${action}`) ??
-          String(w.params?.['fallback'] ?? '') ??
-          fallback
-        );
+        const carried = String(w.params?.['fallback'] ?? '');
+        return tryKey(`decision.why.recovery.${action}`) || carried || fallback;
       }
       return tryKey(`decision.why.${w.code}`, w.params) ?? fallback;
     },

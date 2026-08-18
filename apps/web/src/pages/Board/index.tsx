@@ -237,6 +237,8 @@ export function BoardPage() {
            *   那是 04 计划批准页一整页的事，塞进侧栏抽屉放不下。
            */
           onOpenPlan={(plan) => navigate(`/projects/${projectId}/plans/${plan.id}`)}
+          /* ★ 列头那个超时计数点下去就筛出「在等人」的那批，而不是只报个数 */
+          onFilterOverdue={() => setFilters({ humanGate: true })}
         />
       )}
 

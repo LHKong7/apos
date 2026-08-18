@@ -1568,6 +1568,7 @@ export const zh: Record<keyof typeof en, string> = {
   'roles.orgPermissionsNote': '组织级权限（身份管理、定义角色、导出审计…）不在这里 —— 它们只属于组织管理员，下放会让「能创建角色的角色」一步走到管理员',
   'roles.humanOnlyTag': '仅人类',
   'kanban.wipReached': '已达 WIP 上限，Flow Engine 暂停向该列调度新任务',
+  'kanban.overdueInColumn': '这一列有 {count} 条已超时 —— 点开只看在等人的那批',
   'kanban.wipLimit': 'WIP 上限 {n}',
   'kanban.waitingUpstream': '等待上游任务完成',
   'kanban.planningEmpty': '需求批准后，生成的计划会在这里等待批准',

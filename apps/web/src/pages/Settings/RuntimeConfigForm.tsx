@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import clsx from 'clsx';
 import type { ConfigField, RuntimeKindSpec } from '@apos/contracts';
 import { useT, useSpecText } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';

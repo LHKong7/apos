@@ -169,10 +169,17 @@ export function ProjectSidebar() {
         {/*
           ★ 角色徽标从总览页搬到这里。它回答的是「为什么那个按钮是灰的」，
             而灰按钮在每一页都可能出现 —— 只在总览看得到就等于没有。
-          ★ 收窄时藏起来：「技术负责人」四个字塞不进 40px，缩写成一个字
-            比不显示更糟 —— 用户得先猜那个字是什么意思。
+          ★★ 收窄时**换形态而不是藏起来**（问题记录 #5）。
+            此前它整个消失，于是「我是什么角色」这个问题的唯一答案
+            跟着侧栏一起被折走了。收窄形态是一个人形轮廓 + 完整角色名的
+            tooltip，点它就展开 —— 徽标由此成了「展开」的入口，
+            而这正是它和旁边那个折叠按钮该有的关联。
         */}
-        {!collapsed && <RoleBadge projectId={projectId} />}
+        <RoleBadge
+          projectId={projectId}
+          compact={collapsed}
+          onClick={() => setManual(false)}
+        />
         <Button
           variant="ghost"
           size="icon-sm"

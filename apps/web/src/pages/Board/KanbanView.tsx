@@ -29,6 +29,8 @@ interface Props {
   onClearFilters: () => void;
   onExpandDone: () => void;
   doneExpanded: boolean;
+  /** 列头那个超时计数点下去要有去处 —— 一个只显示数字的红点只会制造焦虑 */
+  onFilterOverdue: () => void;
 }
 
 export function KanbanView({
@@ -40,6 +42,7 @@ export function KanbanView({
   onClearFilters,
   onExpandDone,
   doneExpanded,
+  onFilterOverdue,
 }: Props) {
   const [dragging, setDragging] = useState<Card | null>(null);
   const setDraggingId = useBoardStore((s) => s.setDragging);
@@ -76,6 +79,7 @@ export function KanbanView({
             const target = manualTargetForStage(card.status, toStage);
             if (target) onManualMove(card, target.status, toStage);
           }}
+          onFilterOverdue={onFilterOverdue}
         />
       ))}
     </div>
@@ -94,6 +98,7 @@ function Column({
   onDragStart,
   onDragEnd,
   onDrop,
+  onFilterOverdue,
 }: {
   column: BoardColumn;
   actions: CardActions;
@@ -106,9 +111,15 @@ function Column({
   onDragStart: (card: Card) => void;
   onDragEnd: () => void;
   onDrop: (card: Card, toStage: Stage) => void;
+  onFilterOverdue: () => void;
 }) {
   const t = useT();
   const [over, setOver] = useState(false);
+
+  /** ★ 「超时」= 决策已过期。它是这一列里唯一「越晚越贵」的东西 */
+  const overdueCount = column.items.filter(
+    (c) => c.decisionDueInMinutes !== null && c.decisionDueInMinutes < 0,
+  ).length;
 
   const drop = dragging ? evaluateDrop(dragging, column.key) : null;
   const wipExceeded = column.wipLimit !== null && column.count >= column.wipLimit;
@@ -139,6 +150,27 @@ function Column({
         <span className="rounded-full bg-slate-200/70 px-1.5 text-[11px] tabular-nums text-slate-500">
           {column.count}
         </span>
+        {/*
+          ★★ 列头写出「这一列里有几条超时」。
+            超时的卡片本身会发光，但那只在它出现在视口里时成立 ——
+            一列二十张卡的时候，超时的那张可能在下面第十四位，
+            用户滚不到就等于不存在（问题记录 #7）。列头是这一列唯一
+            始终可见的地方，所以计数放这儿。
+          ★ 点它就把看板筛到「等我处理」那一批 —— 数字必须是入口，
+            不能只是一个让人焦虑的红点。
+        */}
+        {overdueCount > 0 && (
+          <button
+            type="button"
+            onClick={onFilterOverdue}
+            title={t('kanban.overdueInColumn', { count: overdueCount })}
+            className="rounded-full bg-red-100 px-1.5 text-[11px] font-medium tabular-nums text-red-700 hover:bg-red-200"
+          >
+            {overdueCount}
+            <span className="sr-only"> {t('kanban.overdueInColumn', { count: overdueCount })}</span>
+            <span aria-hidden> ⏰</span>
+          </button>
+        )}
         {column.wipLimit !== null && (
           <span
             className={clsx(
