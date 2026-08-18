@@ -8,7 +8,7 @@ import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
-import { relativeTime } from '../../lib/format';
+import { absoluteTime, relativeTime } from '../../lib/format';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
@@ -29,6 +29,30 @@ const STATUS_KEYS: Record<string, MessageKey> = {
   approved: 'requirement.status.approved',
   rejected: 'requirement.status.rejected',
   on_hold: 'requirement.status.on_hold',
+};
+
+/**
+ * 每个状态的「下一步是什么」。
+ *
+ * ★★ 状态名说的是**系统在哪**，用户要问的是**我该干什么**。
+ *   「待审批」这三个字里既看不出该谁批、也看不出要不要等 ——
+ *   一个新人看到它，唯一能做的是猜（问题记录 #9）。
+ *
+ * ★ 「已批准」这一档也要有说法：批准之后系统会自己往下走，
+ *   而「不用你做什么」同样是一条要说出来的信息 —— 不说的话，
+ *   用户会一直守着它等一个不存在的下一步。
+ *
+ * A status names where the system is; the user is asking what they should do.
+ * "Approved — nothing for you to do" is itself an answer worth printing.
+ */
+const NEXT_STEP_KEYS: Record<string, MessageKey> = {
+  draft: 'requirement.next.draft',
+  analyzing: 'requirement.next.analyzing',
+  clarifying: 'requirement.next.clarifying',
+  awaiting_approval: 'requirement.next.awaiting_approval',
+  approved: 'requirement.next.approved',
+  rejected: 'requirement.next.rejected',
+  on_hold: 'requirement.next.on_hold',
 };
 
 /**
@@ -130,6 +154,9 @@ export function RequirementListPage() {
 
   if (!projectId) return null;
 
+  /** 两个按钮为什么灰着 —— 只有这一个原因，所以直接命名它 */
+  const empty = draft.trim().length === 0;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
@@ -157,17 +184,34 @@ export function RequirementListPage() {
               placeholder={t('requirement.compose.placeholder')}
               className="mt-1.5"
             />
+            {/*
+              ★★ 灰按钮必须说清为什么是灰的。
+                这两个按钮在文本框空着时禁用，而禁用的按钮不响应 hover、
+                原生 `title` 在 disabled 元素上大多数浏览器也不弹 ——
+                于是用户面对两个没有任何解释的灰按钮（问题记录 #8）。
+                做法是把说明放在**按钮外面**，跟着禁用条件一起出现：
+                永远看得见，也不依赖 hover。
+              ★ 同时给按钮加 aria-disabled 与 aria-describedby：读屏用户
+                听到的是「不可用 —— 先写点什么」，而不是只有「不可用」。
+            */}
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <Button variant="neutral" size="sm"
                 onClick={() => create.mutate('ai')}
-                disabled={draft.trim().length === 0 || create.isPending}>
+                aria-describedby={empty ? 'compose-disabled-why' : undefined}
+                disabled={empty || create.isPending}>
                 {create.isPending ? t('requirement.compose.creating') : t('requirement.compose.toAi')}
               </Button>
               <Button variant="outline" size="sm"
                 onClick={() => create.mutate('manual')}
-                disabled={draft.trim().length === 0 || create.isPending}>
+                aria-describedby={empty ? 'compose-disabled-why' : undefined}
+                disabled={empty || create.isPending}>
                 {t('requirement.compose.manual')}
               </Button>
+              {empty && (
+                <span id="compose-disabled-why" className="text-[11px] text-slate-500">
+                  {t('requirement.compose.needText')}
+                </span>
+              )}
               {/* ★ 不阻止短输入，只如实说明后果 */}
               {draft.trim().length > 0 && draft.trim().length < 20 && (
                 <span className="text-[11px] text-amber-700">
@@ -287,6 +331,13 @@ export function RequirementListPage() {
                       >
                         {STATUS_KEYS[r.status] ? t(STATUS_KEYS[r.status]!) : r.status}
                       </span>
+                      {/* ★ 下一步就写在状态旁边，不藏进 tooltip —— 它是新人
+                          在这一页最需要的一句话，藏起来等于没写 */}
+                      {NEXT_STEP_KEYS[r.status] && (
+                        <span className="text-[11px] text-slate-500">
+                          {t(NEXT_STEP_KEYS[r.status]!)}
+                        </span>
+                      )}
                       {r.latestPlanId && (
                         <span className="text-[11px] text-slate-500">
                           {r.latestPlanStatus === 'approved'
@@ -294,7 +345,7 @@ export function RequirementListPage() {
                             : t('requirement.list.planPending')}
                         </span>
                       )}
-                      <span className="text-[11px] text-slate-400">
+                      <span className="text-[11px] text-slate-400" title={absoluteTime(r.createdAt)}>
                         {relativeTime(r.createdAt)}
                       </span>
                     </Button>

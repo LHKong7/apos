@@ -626,7 +626,14 @@ export interface PlanDetail {
     humanGateCount: number;
     highRiskTasks: number;
   };
-  autoActions: { description: string; policyName: string | null; reversible: boolean; externalVisible: boolean }[];
+  autoActions: {
+    description: string;
+    policyName: string | null;
+    reversible: boolean;
+    externalVisible: boolean;
+    /** action = 批准后真的会发生；estimate = 只是个数，不是动作也不会「逆」 */
+    kind: 'action' | 'estimate';
+  }[];
   humanGates: {
     taskTitle: string;
     /** execution = 这活得人干；approval = 干完要人批。两者判断完全不同 */
