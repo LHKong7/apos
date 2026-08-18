@@ -8,6 +8,14 @@ import { duration, relativeTime, riskLabel } from '../../lib/format';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 /** 操作类型 / 环境 → 词条键。模块级常量存键不存译文 */
 const OPERATION_KEYS: Record<string, MessageKey> = {
@@ -118,32 +126,32 @@ export function HitsPanel({
                 {t('hits.none30d')}
               </p>
             ) : (
-              <table className="mt-2 w-full text-[11px]">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left text-slate-500">
-                    <th className="py-1 font-medium">{t('policy.hits.time')}</th>
-                    <th className="py-1 font-medium">{t('policy.hits.workItem')}</th>
-                    <th className="py-1 font-medium">{t('policy.hits.context')}</th>
-                    <th className="py-1 font-medium">{t('policy.hits.verdict')}</th>
+              <Table className="mt-2 w-full text-[11px]">
+                <TableHeader>
+                  <TableRow className="border-b border-slate-200 text-left text-slate-500">
+                    <TableHead className="py-1 font-medium">{t('policy.hits.time')}</TableHead>
+                    <TableHead className="py-1 font-medium">{t('policy.hits.workItem')}</TableHead>
+                    <TableHead className="py-1 font-medium">{t('policy.hits.context')}</TableHead>
+                    <TableHead className="py-1 font-medium">{t('policy.hits.verdict')}</TableHead>
                     {/* ★ 结局是主列，不是附注 —— 这一页的结论全靠它 */}
-                    <th className="py-1 font-medium">{t('policy.hits.outcome')}</th>
-                  </tr>
-                </thead>
-                <tbody>
+                    <TableHead className="py-1 font-medium">{t('policy.hits.outcome')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {q.data.hits.map((h) => (
-                    <tr key={h.eventId} className="border-b border-slate-100 last:border-0">
-                      <td className="py-1 pr-2 text-slate-400" title={h.at}>
+                    <TableRow key={h.eventId} className="border-b border-slate-100 last:border-0">
+                      <TableCell className="py-1 pr-2 text-slate-400" title={h.at}>
                         {relativeTime(h.at)}
-                      </td>
-                      <td className="py-1 pr-2">
+                      </TableCell>
+                      <TableCell className="py-1 pr-2">
                         <Link
                           to={`/projects/${projectId}/board?item=${h.workItemId}`}
                           className="text-slate-700 underline-offset-2 hover:underline"
                         >
                           {h.workItemTitle}
                         </Link>
-                      </td>
-                      <td className="py-1 pr-2 text-slate-500">
+                      </TableCell>
+                      <TableCell className="py-1 pr-2 text-slate-500">
                         {h.context ? (
                           <>
                             {OPERATION_KEYS[h.context.operationType]
@@ -164,9 +172,9 @@ export function HitsPanel({
                           // 没有快照的历史事件，如实说而不是留空让人以为没触发条件
                           <span className="text-slate-400">{t('policy.hits.noContext')}</span>
                         )}
-                      </td>
-                      <td className="py-1 pr-2 text-slate-600">{h.actionLabel}</td>
-                      <td className="py-1">
+                      </TableCell>
+                      <TableCell className="py-1 pr-2 text-slate-600">{h.actionLabel}</TableCell>
+                      <TableCell className="py-1">
                         {!h.decision ? (
                           <span className="text-slate-300">—</span>
                         ) : (
@@ -190,11 +198,11 @@ export function HitsPanel({
                             )}
                           </span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
 
             {q.data.truncated && (

@@ -5,6 +5,14 @@ import clsx from 'clsx';
 import type { PlanDiff, TaskDiff } from '@apos/domain';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 
 /**
  * 计划版本对比（页面文档 04）。
@@ -47,18 +55,25 @@ export function VersionDiff({ planId }: { planId: string }) {
           {t('planDiff.against', { version: q.data.against?.version ?? '—' })}
         </h2>
         {others.length > 1 && (
-          <select
-            value={against ?? q.data.against?.version ?? ''}
-            onChange={(e) => setAgainst(Number(e.target.value))}
-            aria-label={t('planDiff.compareVersion')}
-            className="rounded border border-slate-300 px-1 py-0.5 text-[11px]"
+          <Select
+            value={String(against ?? q.data.against?.version ?? '')}
+            onValueChange={(v) => setAgainst(Number(v))}
           >
-            {others.map((v) => (
-              <option key={v.id} value={v.version}>
-                v{v.version}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              className="h-6 w-auto px-1.5 text-[11px]"
+              aria-label={t('planDiff.compareVersion')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {/* ★ Radix 的 value 只认字符串，版本号是 number —— 两边都要显式转 */}
+              {others.map((v) => (
+                <SelectItem key={v.id} value={String(v.version)}>
+                  v{v.version}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         <span className="text-[11px] text-slate-400">
           {t('planDiff.versionCount', {
@@ -217,13 +232,13 @@ function TaskSection({
           {t('planDiff.taskChanges', { count: changed.length })}
         </p>
         {unchangedCount > 0 && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             onClick={() => onToggle(!showUnchanged)}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
+            className="h-auto p-0 text-[11px] font-normal text-slate-500 hover:bg-transparent hover:text-slate-700"
           >
             {t('planDiff.unchangedCount', { action: showUnchanged ? t('planDiff.hide') : t('planDiff.show'), count: unchangedCount })}
-          </button>
+          </Button>
         )}
       </div>
 

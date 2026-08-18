@@ -11,6 +11,14 @@ import { useOrgStore } from '../../stores/org';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const AUTONOMY_KEYS: Record<string, MessageKey> = {
   human_led: 'project.autonomy.humanLed',
@@ -41,13 +49,12 @@ export function ProjectListPage() {
             但界面上没有任何入口，空态提示是「先跑一遍 seed」——
             也就是说建项目这件事只有开发者做得到。
         */}
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={() => setCreating(true)}
-          className="ml-auto self-start rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:brightness-110"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-auto self-start rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:brightness-110"
         >
           + {t('project.new')}
-        </button>
+        </Button>
       </div>
 
       <QueryBoundary
@@ -137,16 +144,16 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           {t('project.newHint')}
         </p>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('project.name')}</span>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('project.namePlaceholder')}
             className="mt-1" />
-        </label>
+        </Label>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             {t('project.goal')}
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
@@ -158,21 +165,24 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
             placeholder={t('project.goalPlaceholder')}
             className="mt-1"
           />
-        </label>
+        </Label>
 
-        <label className="block">
-          <span className="text-xs font-medium text-slate-700">{t('project.autonomyLevel')}</span>
-          <select
-            value={autonomyLevel}
-            onChange={(e) => setAutonomyLevel(e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-          >
-            {Object.entries(AUTONOMY_KEYS).map(([value, labelKey]) => (
-              <option key={value} value={value}>
-                {t(labelKey)}
-              </option>
-            ))}
-          </select>
+        <div className="block">
+          <Label htmlFor="new-project-autonomy" className="text-slate-700">
+            {t('project.autonomyLevel')}
+          </Label>
+          <Select value={autonomyLevel} onValueChange={setAutonomyLevel}>
+            <SelectTrigger id="new-project-autonomy" className="mt-1 bg-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(AUTONOMY_KEYS).map(([value, labelKey]) => (
+                <SelectItem key={value} value={value}>
+                  {t(labelKey)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {/*
             ★ 这一项决定「哪些事 Agent 可以自己做」，是项目里最该被
               一眼看见的设置。默认取中间那档，而不是最自主的那档。
@@ -180,9 +190,9 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           <p className="mt-1 text-[11px] text-slate-500">
             {t('project.autonomyHint')}
           </p>
-        </label>
+        </div>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             {t('project.budgetCap')}
             <span className="ml-1 font-normal text-slate-400">{t('project.budgetHint')}</span>
@@ -193,7 +203,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
             placeholder="500.00"
             inputMode="decimal"
             className="mt-1" />
-        </label>
+        </Label>
 
         {create.error instanceof ApiError && (
           <p className="text-xs text-rose-600">{create.error.message}</p>

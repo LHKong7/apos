@@ -22,6 +22,15 @@ import {
 import { resolveDiagnosticAction } from '../../features/graph/diagnostic-actions';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const LAYOUT_KEYS: Record<LayoutKind, MessageKey> = {
   layered: 'graph.layout.layered',
@@ -118,30 +127,30 @@ export function GraphPage() {
             {t('nav.backToBoard')}
           </Link>
 
-          <select
-            value={layout}
-            onChange={(e) => setParam('layout', e.target.value)}
-            className="ml-2 rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label={t('graph.layout')}
-          >
-            {LAYOUTS.map((l) => (
-              <option key={l} value={l}>
-                {t(LAYOUT_KEYS[l])}
-              </option>
-            ))}
-          </select>
+          <Select value={layout} onValueChange={(v) => setParam('layout', v)}>
+            <SelectTrigger className="ml-2 w-auto" aria-label={t('graph.layout')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LAYOUTS.map((l) => (
+                <SelectItem key={l} value={l}>
+                  {t(LAYOUT_KEYS[l])}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-slate-400">{t('graph.highlight')}</span>
             {HIGHLIGHT_MODES.map((mode) => (
-              <label key={mode} className="flex cursor-pointer items-center gap-1 text-xs text-slate-600">
+              <Label key={mode} className="flex cursor-pointer items-center gap-1 text-xs text-slate-600">
                 <Checkbox
                   tone="neutral"
                   checked={modes.includes(mode)}
                   onCheckedChange={() => toggleMode(mode)}
                 />
                 {t(MODE_KEYS[mode])}
-              </label>
+              </Label>
             ))}
           </div>
         </div>
@@ -268,10 +277,9 @@ export function GraphPage() {
 
       {menu && (
         <>
-          <button
-            type="button"
+          <Button variant="ghost"
             aria-label={t('graph.closeMenu')}
-            className="fixed inset-0 z-40 cursor-default"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent fixed inset-0 z-40 cursor-default"
             onClick={() => setMenu(null)}
           />
           <div
@@ -331,13 +339,12 @@ export function GraphPage() {
       {toast && (
         <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
           {toast}
-          <button
-            type="button"
-            className="pointer-events-auto ml-2 underline"
+          <Button variant="ghost"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
             {t('common.gotIt')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -367,12 +374,11 @@ export function GraphPage() {
 
 function MenuItem({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={onClick}
-      className="block w-full px-3 py-1 text-left text-slate-700 hover:bg-slate-100"
+      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start block w-full px-3 py-1 text-left text-slate-700 hover:bg-slate-100"
     >
       {children}
-    </button>
+    </Button>
   );
 }

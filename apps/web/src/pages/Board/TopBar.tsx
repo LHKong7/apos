@@ -5,6 +5,17 @@ import type { BoardView } from '../../stores/board';
 import { useBoardStore } from '../../stores/board';
 import type { BoardFilters } from '../../lib/api/client';
 import { GatedButton } from '../../components/Gated';
+import { Button } from '@/components/ui/button';
+import {
+  SELECT_EMPTY,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  fromSelectValue,
+  toSelectValue,
+} from '@/components/ui/select';
 
 /** ★ Kanban / List 两种语言写法一样，直接给字面量；另两个走词条 */
 const VIEWS: { key: BoardView; label?: string; labelKey?: MessageKey }[] = [
@@ -77,20 +88,20 @@ export function TopBar({
 
         <div className="flex min-w-0 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100/60 p-0.5">
           {VIEWS.map((v) => (
-            <button
+            <Button
               key={v.key}
-              type="button"
+              variant="ghost"
               onClick={() => onView(v.key)}
               aria-pressed={view === v.key}
               className={clsx(
-                'shrink-0 rounded-md px-3 py-1 text-xs transition',
+                'h-auto shrink-0 px-3 py-1 text-xs',
                 view === v.key
-                  ? 'bg-white font-medium text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800',
+                  ? 'bg-white font-medium text-slate-900 shadow-sm hover:bg-white'
+                  : 'font-normal text-slate-500 hover:bg-transparent hover:text-slate-800',
               )}
             >
               {v.labelKey ? t(v.labelKey) : v.label}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -158,29 +169,44 @@ export function TopBar({
         )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <select
-            value={filters.executorType ?? ''}
-            onChange={(e) => onFilters({ executorType: e.target.value || undefined })}
-            className="rounded-full border border-slate-200 bg-slate-100/50 px-2.5 py-1 text-xs text-slate-600"
-            aria-label={t('board.executor')}
+          <Select
+            value={toSelectValue(filters.executorType)}
+            onValueChange={(v) => onFilters({ executorType: fromSelectValue(v) || undefined })}
           >
-            <option value="">{t('board.allExecutors')}</option>
-            <option value="agent">{t('board.agentsOnly')}</option>
-            <option value="human">{t('board.humansOnly')}</option>
-          </select>
+            <SelectTrigger
+              className="h-auto w-auto rounded-full border-slate-200 bg-slate-100/50 px-2.5 py-1 text-slate-600"
+              aria-label={t('board.executor')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SELECT_EMPTY}>{t('board.allExecutors')}</SelectItem>
+              <SelectItem value="agent">{t('board.agentsOnly')}</SelectItem>
+              <SelectItem value="human">{t('board.humansOnly')}</SelectItem>
+            </SelectContent>
+          </Select>
 
-          <select
-            value={filters.risk?.[0] ?? ''}
-            onChange={(e) => onFilters({ risk: e.target.value ? [e.target.value] : [] })}
-            className="rounded-full border border-slate-200 bg-slate-100/50 px-2.5 py-1 text-xs text-slate-600"
-            aria-label={t('board.risk')}
+          <Select
+            value={toSelectValue(filters.risk?.[0])}
+            onValueChange={(v) => {
+              const risk = fromSelectValue(v);
+              onFilters({ risk: risk ? [risk] : [] });
+            }}
           >
-            <option value="">{t('board.allRisks')}</option>
-            <option value="critical">{t('board.riskCritical')}</option>
-            <option value="high">{t('board.riskHigh')}</option>
-            <option value="medium">{t('board.riskMedium')}</option>
-            <option value="low">{t('board.riskLow')}</option>
-          </select>
+            <SelectTrigger
+              className="h-auto w-auto rounded-full border-slate-200 bg-slate-100/50 px-2.5 py-1 text-slate-600"
+              aria-label={t('board.risk')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SELECT_EMPTY}>{t('board.allRisks')}</SelectItem>
+              <SelectItem value="critical">{t('board.riskCritical')}</SelectItem>
+              <SelectItem value="high">{t('board.riskHigh')}</SelectItem>
+              <SelectItem value="medium">{t('board.riskMedium')}</SelectItem>
+              <SelectItem value="low">{t('board.riskLow')}</SelectItem>
+            </SelectContent>
+          </Select>
 
           {/*
             ★ 从复选框改成开关药丸：它和左边三个数字是同一类东西（都是
@@ -207,13 +233,13 @@ export function TopBar({
           </FilterToggle>
 
           {hasFilters && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={onClearFilters}
-              className="rounded-full px-2 py-1 text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+              className="h-auto rounded-full px-2 py-1 font-normal text-slate-500 underline decoration-slate-300 underline-offset-2 hover:bg-transparent hover:text-slate-800"
             >
               {t('kanban.clearFilters')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -234,16 +260,16 @@ export function TopBar({
 function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void }) {
   const t = useT();
   return (
-    <button
-      type="button"
+    <Button
+      variant="outline"
       onClick={onToggle}
       aria-pressed={quiet}
       title={t('board.quietMode')}
       className={clsx(
-        'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition',
+        'h-auto gap-1.5 px-2 py-1 text-xs shadow-none',
         quiet
-          ? 'border-brand/50 bg-brand/10 font-medium text-brand'
-          : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800',
+          ? 'border-brand/50 bg-brand/10 font-medium text-brand hover:bg-brand/10 hover:text-brand'
+          : 'border-slate-200 font-normal text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800',
       )}
     >
       <svg
@@ -260,7 +286,7 @@ function QuietToggle({ quiet, onToggle }: { quiet: boolean; onToggle: () => void
         {quiet && <path d="M13.5 3.5l-11 9" />}
       </svg>
       {t('board.quietMode')}
-    </button>
+    </Button>
   );
 }
 
@@ -275,19 +301,19 @@ function FilterToggle({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="outline"
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        'rounded-full border px-2.5 py-1 transition',
+        'h-auto rounded-full px-2.5 py-1 text-inherit shadow-none',
         active
-          ? 'border-brand/50 bg-brand/10 font-medium text-brand'
-          : 'border-slate-200 bg-slate-100/50 text-slate-500 hover:border-slate-300 hover:text-slate-800',
+          ? 'border-brand/50 bg-brand/10 font-medium text-brand hover:bg-brand/10 hover:text-brand'
+          : 'border-slate-200 bg-slate-100/50 font-normal text-slate-500 hover:border-slate-300 hover:bg-slate-100/50 hover:text-slate-800',
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -307,14 +333,14 @@ function SummaryStat({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="outline"
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition',
+        'h-auto gap-1.5 rounded-full px-2.5 py-1 text-inherit font-normal shadow-none',
         active
-          ? 'border-slate-900 bg-slate-900 text-white'
+          ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-700 hover:text-white'
           : 'border-slate-200 bg-slate-100/50 hover:border-slate-300 hover:bg-slate-100',
         !active && tone === 'danger' && count > 0 && 'border-red-300/50 bg-red-50 text-red-700',
         !active && tone === 'warn' && count > 0 && 'border-amber-300/40 bg-amber-50 text-amber-700',
@@ -327,6 +353,6 @@ function SummaryStat({
       </span>
       <span className="font-semibold tabular-nums">{count}</span>
       <span className="opacity-80">{label}</span>
-    </button>
+    </Button>
   );
 }

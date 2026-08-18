@@ -11,6 +11,14 @@ import { GatedButton, RoleBadge } from '../../components/Gated';
 import { usePermissions } from '../../lib/permissions/usePermissions';
 import { useAuthStore } from '../../stores/auth';
 import type { AssignableRole } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 项目成员与角色（docs/tech/09-security.md §2.2）。
@@ -174,9 +182,9 @@ export function MembersPage() {
             {error && (
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}
-                <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
+                <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setError(null)}>
                   {t('common.gotIt')}
-                </button>
+                </Button>
               </p>
             )}
 
@@ -209,33 +217,52 @@ export function MembersPage() {
                           下拉框对 Agent 仍然留着 —— 它是**覆盖**，不是前置条件。
                       */}
                       {adding === 'agent' && (
-                        <button
-                          type="button"
+                        <Button variant="ghost"
                           disabled={setRole.isPending}
                           onClick={() => setRole.mutate({ id: c.id, role: null, actorType: 'agent' })}
-                          className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                         >
                           {t('members.addAsExecutor')}
-                        </button>
+                        </Button>
                       )}
-                      <select
-                        defaultValue=""
-                        onChange={(e) =>
-                          e.target.value &&
-                          setRole.mutate({ id: c.id, role: e.target.value, actorType: adding })
+                      {/*
+                        ★ 这个下拉是「挑一个角色把人加进来」，不是在显示当前值 ——
+                          原来靠 defaultValue="" 保持在占位项上。Radix 没有
+                          defaultValue 空串这一招（空串是它的「未选中」），
+                          所以改成受控地钉在 undefined：选完就发请求，
+                          列表随之刷新，这一项本来也不该留下选中痕迹。
+
+                          This picker chooses a role to add someone with; it never
+                          displays a current value. Radix reserves the empty
+                          string, so instead of defaultValue="" it stays
+                          value={undefined} and fires on pick.
+                      */}
+                      <Select
+                        value={undefined}
+                        onValueChange={(v) =>
+                          v && setRole.mutate({ id: c.id, role: v, actorType: adding })
                         }
-                        className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px]"
-                        aria-label={t('members.roleOf', { name: c.name })}
                       >
-                        <option value="">
-                          {adding === 'agent' ? t('members.orChooseRole') : t('members.chooseRole')}
-                        </option>
-                        {rolesFor(adding).map((r) => (
-                          <option key={r.role} value={r.role}>
-                            {r.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="h-auto w-auto px-1.5 py-0.5 text-[11px]"
+                          aria-label={t('members.roleOf', { name: c.name })}
+                        >
+                          <SelectValue
+                            placeholder={
+                              adding === 'agent'
+                                ? t('members.orChooseRole')
+                                : t('members.chooseRole')
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {rolesFor(adding).map((r) => (
+                            <SelectItem key={r.role} value={r.role}>
+                              {r.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </li>
                   ))}
                   {directory.isPending && <li className="text-xs text-slate-400">{t('common.loading')}</li>}
@@ -247,13 +274,12 @@ export function MembersPage() {
                     </li>
                   )}
                 </ul>
-                <button
-                  type="button"
+                <Button variant="ghost"
                   onClick={() => setAdding(null)}
-                  className="mt-1.5 text-[11px] text-slate-500 underline"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mt-1.5 text-[11px] text-slate-500 underline"
                 >
                   {t('members.collapse')}
-                </button>
+                </Button>
               </section>
             )}
 
@@ -368,30 +394,41 @@ function MemberTable({
                     「批准计划、放宽规则」才是他要判断的东西 —— 授权的后果
                     要在授权的那一刻可见。
                 */}
-                <select
+                <Select
                   value={m.role}
                   disabled={!canManage}
-                  title={canManage ? role?.description : denyReason}
-                  onChange={(e) => onChange(m.actorId, e.target.value)}
-                  className={clsx(
-                    'rounded border border-slate-300 px-1.5 py-0.5 text-[11px]',
-                    !canManage && 'cursor-not-allowed opacity-60',
-                  )}
-                  aria-label={t('members.roleOf', { name: m.name ?? m.actorId })}
+                  onValueChange={(v) => onChange(m.actorId, v)}
                 >
-                  {/* 当前角色可能已不适用于这一类担任者（角色被改窄了），仍要显示出来 */}
-                  {!roles.some((r) => r.role === m.role) && (
-                    <option value={m.role}>
-                      {t('members.roleNoLongerApplies', { label: m.roleLabel })}
-                    </option>
-                  )}
-                  {roles.map((r) => (
-                    <option key={r.role} value={r.role}>
-                      {r.label}
-                      {r.builtin ? '' : t('members.customRole')}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    className={clsx(
+                      'h-auto w-auto px-1.5 py-0.5 text-[11px]',
+                      !canManage && 'cursor-not-allowed opacity-60',
+                    )}
+                    title={canManage ? role?.description : denyReason}
+                    aria-label={t('members.roleOf', { name: m.name ?? m.actorId })}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/*
+                      当前角色可能已不适用于这一类担任者（角色被改窄了），仍要显示出来。
+                      ★ 多一道 `m.role &&`：原生 select 对 value="" 无所谓，
+                        Radix 会**抛错**（空串是它的「未选中」保留值）——
+                        一条角色为空的成员记录会让整页白屏，而不是少一个选项。
+                    */}
+                    {m.role && !roles.some((r) => r.role === m.role) && (
+                      <SelectItem value={m.role}>
+                        {t('members.roleNoLongerApplies', { label: m.roleLabel })}
+                      </SelectItem>
+                    )}
+                    {roles.map((r) => (
+                      <SelectItem key={r.role} value={r.role}>
+                        {r.label}
+                        {r.builtin ? '' : t('members.customRole')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
                 <span className="hidden w-52 shrink-0 truncate text-[11px] text-slate-400 md:block">
                   {role?.description ?? t('members.permissionCount', { count: m.permissionCount })}

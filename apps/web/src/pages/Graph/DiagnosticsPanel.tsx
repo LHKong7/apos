@@ -49,13 +49,12 @@ export function DiagnosticsPanel({
           {t('diag.found', { count: diagnostics.length })}
         </h2>
         {diagnostics.length > COLLAPSED && (
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setExpanded((v) => !v)}
-            className="text-[11px] text-slate-500 underline"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline"
           >
             {expanded ? t('timeline.collapse') : t('graph.expandRest', { count: diagnostics.length - COLLAPSED })}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -78,13 +77,12 @@ export function DiagnosticsPanel({
                     </Button>
                   ))}
                   {d.affectedNodes[0] && (
-                    <button
-                      type="button"
+                    <Button variant="ghost"
                       onClick={() => onFocus(d.affectedNodes[0]!)}
-                      className="text-[11px] text-slate-400 underline hover:text-slate-600"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-400 underline hover:text-slate-600"
                     >
                       {t('diag.locate', { count: d.affectedNodes.length })}
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>

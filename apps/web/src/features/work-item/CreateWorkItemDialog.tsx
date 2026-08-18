@@ -7,6 +7,14 @@ import { Modal } from './ManualMoveDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 手工建任务。
@@ -78,61 +86,80 @@ export function CreateWorkItemDialog({
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{t('createItem.title')}</h2>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('createItem.titleField')}</span>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t('createItem.titlePlaceholder')}
             className="mt-1" />
-        </label>
+        </Label>
 
+        {/*
+          ★ 三个下拉用 htmlFor 关联而不是包在 label 里：Radix 的触发器是
+            <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent">，包起来点标签文字打不开下拉（同 Settings/primitives 里
+            那条注释）。文本框那两格仍然是包着的 —— 原生控件包着才对。
+
+            The three dropdowns associate by htmlFor rather than wrapping: a
+            Radix trigger is a button, and a wrapping label would leave the
+            label text dead. The text fields stay wrapped.
+        */}
         <div className="grid grid-cols-3 gap-2">
-          <label className="block">
-            <span className="text-xs font-medium text-slate-700">{t('createItem.type')}</span>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-            >
-              {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
-              {TYPES.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.labelKey)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-700">{t('createItem.priority')}</span>
-            <select
-              value={priority}
-              onChange={(e) => setPriority(Number(e.target.value))}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-            >
-              {PRIORITIES.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.labelKey)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-700">{t('createItem.risk')}</span>
-            <select
-              value={riskLevel}
-              onChange={(e) => setRiskLevel(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
-            >
-              <option value="low">{t('createItem.riskLow')}</option>
-              <option value="medium">{t('createItem.riskMedium')}</option>
-              <option value="high">{t('createItem.riskHigh')}</option>
-              <option value="critical">{t('createItem.riskCritical')}</option>
-            </select>
-          </label>
+          <div>
+            <Label htmlFor="new-item-type" className="text-slate-700">
+              {t('createItem.type')}
+            </Label>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger id="new-item-type" className="mt-1 bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
+                {TYPES.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {t(opt.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="new-item-priority" className="text-slate-700">
+              {t('createItem.priority')}
+            </Label>
+            {/* ★ 优先级是 number，Radix 的 value 只认字符串 —— 两边都显式转 */}
+            <Select value={String(priority)} onValueChange={(v) => setPriority(Number(v))}>
+              <SelectTrigger id="new-item-priority" className="mt-1 bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PRIORITIES.map((opt) => (
+                  <SelectItem key={opt.value} value={String(opt.value)}>
+                    {t(opt.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="new-item-risk" className="text-slate-700">
+              {t('createItem.risk')}
+            </Label>
+            <Select value={riskLevel} onValueChange={setRiskLevel}>
+              <SelectTrigger id="new-item-risk" className="mt-1 bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">{t('createItem.riskLow')}</SelectItem>
+                <SelectItem value="medium">{t('createItem.riskMedium')}</SelectItem>
+                <SelectItem value="high">{t('createItem.riskHigh')}</SelectItem>
+                <SelectItem value="critical">{t('createItem.riskCritical')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             {t('createItem.description')}
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
@@ -143,7 +170,7 @@ export function CreateWorkItemDialog({
             rows={3}
             className="mt-1"
           />
-        </label>
+        </Label>
 
         {/*
           ★★ 这句话不是提示，是这个入口能存在的**条件**。

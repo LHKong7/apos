@@ -15,6 +15,8 @@ import { useRunEvents } from '../../features/run/useRunEvents';
 import { ArtifactsTab, CostTab, ErrorTab, InputTab } from '../../features/run/tabs';
 import type { RunDetail } from '../../lib/api/types';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 const ACTIVE = ['queued', 'dispatching', 'running', 'paused'];
 
@@ -132,10 +134,10 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
 
           <div className="ml-auto flex items-center gap-2">
             {/* ★ 本页最重要的开关：两类用户，两种深度（页面文档 09 §2） */}
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+            <Label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
               <Checkbox tone="neutral" checked={detailed} onCheckedChange={setDetailed} />
               {t('runDetail.detailedMode')}
-            </label>
+            </Label>
           </div>
         </div>
 
@@ -206,11 +208,10 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
         <div className="flex min-h-0 flex-1 flex-col px-4 py-2">
           <nav className="flex shrink-0 gap-1 border-b border-slate-200">
             {TABS.filter((t) => !t.hidden).map((t) => (
-              <button
+              <Button variant="ghost"
                 key={t.key}
-                type="button"
                 onClick={() => setTab(t.key)}
-                className={clsx(
+                className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                   'px-2 py-1 text-xs',
                   tab === t.key
                     ? 'border-b-2 border-brand font-medium text-slate-900'
@@ -219,7 +220,7 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
                 )}
               >
                 {t.label}
-              </button>
+              </Button>
             ))}
           </nav>
 
@@ -279,13 +280,12 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
       {toast && (
         <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 animate-fade-in-up rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-800 shadow-lg glass-strong">
           {toast}
-          <button
-            type="button"
-            className="pointer-events-auto ml-2 underline"
+          <Button variant="ghost"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
             {t('common.gotIt')}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -326,10 +326,9 @@ function HeaderButton({
   tone?: 'danger';
 }) {
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={onClick}
-      className={clsx(
+      className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
         'rounded border px-2 py-0.5 text-[11px]',
         tone === 'danger'
           ? 'border-red-300 text-red-700 hover:bg-red-50'
@@ -337,7 +336,7 @@ function HeaderButton({
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

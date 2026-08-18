@@ -34,6 +34,14 @@ import { useThemeStore } from './stores/theme';
 import { useLocaleStore, useT } from './lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * ★ 外层用 h-screen 而不是 min-h-screen。
@@ -239,10 +247,9 @@ function TopNav() {
     <header className="relative z-30 shrink-0 border-b border-slate-200/80 glass">
       <div aria-hidden className="hairline-brand absolute inset-x-0 top-0 h-px" />
       <div className="flex items-center gap-2.5 px-4 py-2">
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={() => navigate('/')}
-          className="group flex items-center gap-2 rounded-md py-0.5 pr-1"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent group flex items-center gap-2 rounded-md py-0.5 pr-1"
           title={t('shell.backToProjects')}
         >
           <BrandMark className="h-6 w-6 transition group-hover:scale-105" />
@@ -251,7 +258,7 @@ function TopNav() {
           <span className="hidden text-[11px] text-slate-400 lg:inline">
             Autonomous&nbsp;Project&nbsp;OS
           </span>
-        </button>
+        </Button>
 
         <OrgSwitcher />
 
@@ -299,17 +306,16 @@ function ThemeToggle() {
   const label = theme === 'dark' ? t('theme.switchToLight') : t('theme.switchToDark');
 
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={toggle}
       aria-label={label}
       title={label}
-      className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-brand/50 hover:text-brand"
+      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-brand/50 hover:text-brand"
     >
       <span aria-hidden className="text-[13px] leading-none">
         {theme === 'dark' ? '☾' : '☀'}
       </span>
-    </button>
+    </Button>
   );
 }
 
@@ -335,15 +341,14 @@ function LocaleToggle() {
   const label = locale === 'en' ? t('locale.switchToZh') : t('locale.switchToEn');
 
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={toggle}
       aria-label={label}
       title={label}
-      className="flex h-7 items-center justify-center rounded-full border border-slate-200 px-2 text-[11px] font-medium text-slate-500 transition hover:border-brand/50 hover:text-brand"
+      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent flex h-7 items-center justify-center rounded-full border border-slate-200 px-2 text-[11px] font-medium text-slate-500 transition hover:border-brand/50 hover:text-brand"
     >
       {locale === 'en' ? '中文' : 'EN'}
-    </button>
+    </Button>
   );
 }
 
@@ -369,26 +374,32 @@ function OrgSwitcher() {
     <>
       <div className="ml-1 flex items-center gap-1.5 border-l border-slate-200 pl-3">
         <span className="hidden text-[11px] text-slate-400 sm:inline">{t('org.label')}</span>
-        <select
-          aria-label={t('org.switch')}
+        <Select
           value={orgId ?? ''}
-          onChange={(e) => {
-            if (e.target.value === '__new__') {
+          onValueChange={(v) => {
+            if (v === '__new__') {
               setCreating(true);
               return;
             }
-            switchOrg(e.target.value);
+            switchOrg(v);
             navigate('/');
           }}
-          className="rounded-md border border-slate-200 bg-slate-100/60 px-2 py-1 text-xs font-medium text-slate-700"
         >
-          {organizations.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-          <option value="__new__">{t('org.new')}</option>
-        </select>
+          <SelectTrigger
+            className="h-auto w-auto border-slate-200 bg-slate-100/60 px-2 py-1 font-medium text-slate-700"
+            aria-label={t('org.switch')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {organizations.map((o) => (
+              <SelectItem key={o.id} value={o.id}>
+                {o.name}
+              </SelectItem>
+            ))}
+            <SelectItem value="__new__">{t('org.new')}</SelectItem>
+          </SelectContent>
+        </Select>
         {org && (
           <code className="hidden font-mono text-[10px] text-slate-400 md:inline">{org.slug}</code>
         )}
@@ -494,16 +505,16 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
         <h2 className="text-sm font-semibold text-slate-900">{t('org.create.title')}</h2>
         <p className="text-[11px] text-slate-500">{t('org.create.intro')}</p>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('org.create.name')}</span>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('org.create.namePlaceholder')}
             className="mt-1" />
-        </label>
+        </Label>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             slug
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
@@ -514,7 +525,7 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
             placeholder={slugPreview(name)}
             className="mt-1 font-mono" />
           <p className="mt-1 text-[11px] text-slate-500">{t('org.create.slugHint')}</p>
-        </label>
+        </Label>
 
         {create.error instanceof ApiError && (
           <p className="text-xs text-rose-600">{create.error.message}</p>

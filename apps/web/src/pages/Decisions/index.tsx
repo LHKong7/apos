@@ -10,6 +10,8 @@ import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { useAuthStore } from '../../stores/auth';
 import { DecisionCardView } from './Card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 /**
  * 决策中心（页面文档 10）。
@@ -172,21 +174,19 @@ export function DecisionsPage() {
           {selected.length > 0 && (
             <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs text-white">
               <span>{t('decisions.selectedCount', { count: selected.length })}</span>
-              <button
-                type="button"
+              <Button variant="ghost"
                 disabled={batch.isPending}
                 onClick={() => batch.mutate(selected)}
-                className="rounded bg-emerald-600 px-2 py-0.5 hover:bg-emerald-700 disabled:opacity-40"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded bg-emerald-600 px-2 py-0.5 hover:bg-emerald-700 disabled:opacity-40"
               >
                 {batch.isPending ? t('decisions.processing') : t('decisions.bulkApprove')}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button variant="ghost"
                 onClick={() => setPicked(new Set())}
-                className="text-slate-300 hover:text-white"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-slate-300 hover:text-white"
               >
                 {t('list.clearSelection')}
-              </button>
+              </Button>
               {/* ★ 没有「批量驳回」：驳回必须写原因，而每条的原因各不相同。
                   批量驳回要么逼用户写一句放之四海皆准的废话，要么干脆不写。 */}
               <span className="ml-auto text-[11px] text-slate-400">{t('decisions.rejectNeedsReason')}</span>
@@ -217,13 +217,13 @@ export function DecisionsPage() {
           )}
 
           {batchable.length > 1 && (
-            <label className="flex items-center gap-1.5 px-1 text-[11px] text-slate-500">
+            <Label className="flex items-center gap-1.5 px-1 text-[11px] text-slate-500">
               <Checkbox
                 checked={selected.length === batchable.length}
                 onCheckedChange={(v) => setPicked(v ? new Set(batchableIds) : new Set())}
               />
               {t('decisions.selectAllBatchable', { count: batchable.length })}
-            </label>
+            </Label>
           )}
 
           {cards.length > 0 && (
@@ -256,15 +256,14 @@ function Tab({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={onClick}
-      className={clsx(
+      className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
         'rounded px-2 py-0.5 text-xs',
         active ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-600',
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }

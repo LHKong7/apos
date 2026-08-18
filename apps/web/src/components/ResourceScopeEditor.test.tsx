@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useLocaleStore } from '../lib/i18n';
+import { selectOption } from '../test/select';
 import { ResourceScopeEditor, type ScopeRow } from './ResourceScopeEditor';
 
 /**
@@ -81,7 +82,7 @@ describe('★ 编辑不丢授权', () => {
       />,
     );
 
-    await user.selectOptions(screen.getAllByLabelText('访问级别')[1]!, 'write');
+    await selectOption(user, screen.getAllByLabelText('访问级别')[1]!, '可写');
 
     const after = state();
     expect(after).toHaveLength(3);
@@ -124,7 +125,15 @@ describe('★ ref 从登记表里选', () => {
    *   而报错说的是「挂载失败」—— 它不指向「你写的这个仓库不存在」。
    */
   it('仓库这一格列出已登记的仓库', async () => {
+    const user = userEvent.setup();
     render(<Host initial={[{ kind: 'repo', ref: '', access: 'read' }]} />);
+
+    /**
+     * ★ 等 combobox 而不是等 findByLabelText('资源')：登记表还在加载时，
+     *   这一格渲染的是**输入框**（没有登记表的类型走手填），
+     *   两者的 aria-label 一样。等到 role=combobox 才说明下拉已经就位。
+     */
+    await user.click(await screen.findByRole('combobox', { name: '资源' }));
 
     expect(await screen.findByRole('option', { name: /Order Service/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /Payment Service/ })).toBeTruthy();
@@ -136,7 +145,10 @@ describe('★ ref 从登记表里选', () => {
    *   而那正是这个组件要修的那个 bug 的另一种形态。
    */
   it('登记表里查不到的 ref 保留，并标明未登记', async () => {
+    const user = userEvent.setup();
     render(<Host initial={[{ kind: 'repo', ref: 'legacy-repo', access: 'read' }]} />);
+
+    await user.click(await screen.findByRole('combobox', { name: '资源' }));
 
     expect(await screen.findByRole('option', { name: /legacy-repo（未登记）/ })).toBeTruthy();
     expect(state()[0]!.ref).toBe('legacy-repo');
@@ -162,7 +174,7 @@ describe('★ 撤销一条默认授权', () => {
     const user = userEvent.setup();
     render(<Host initial={[{ kind: 'repo', ref: 'order-service', access: 'read' }]} />);
 
-    await user.selectOptions(screen.getByLabelText('访问级别'), 'none');
+    await selectOption(user, screen.getByLabelText('访问级别'), '禁止');
     expect(state()[0]!.access).toBe('none');
   });
 });

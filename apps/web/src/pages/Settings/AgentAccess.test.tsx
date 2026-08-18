@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useLocaleStore } from '../../lib/i18n';
+import { selectOption } from '../../test/select';
 import type { AgentAccessPreview, AgentAccessView } from '../../lib/api/types';
 import { AgentAccessPanel } from './AgentAccess';
 
@@ -171,7 +172,8 @@ describe('★ 改动前先看影响', () => {
     renderPanel();
 
     await user.click(await screen.findByRole('button', { name: '修改' }));
-    await user.selectOptions(await screen.findByLabelText('能力档案'), 'code_developer');
+    // ★ 按可见文案选，不再按 option 的 value（'code_developer'）—— Radix 没有 value 可点
+    await selectOption(user, await screen.findByRole('combobox'), '代码开发者');
 
     // ★ 说的是后果（「离开平台的控制范围」），不是配置差异（「+repository.push」）
     expect(await screen.findByText(/离开平台的控制范围/)).toBeTruthy();

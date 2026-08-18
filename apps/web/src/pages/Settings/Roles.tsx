@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { qk } from '../../lib/query/keys';
 import { useOrgStore } from '../../stores/org';
+import { Label } from '@/components/ui/label';
 
 /**
  * 角色定义（docs/tech/09-security.md §2.2）。
@@ -230,9 +231,9 @@ export function RolesPage() {
             {error && (
               <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                 {error}
-                <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
+                <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setError(null)}>
                   {t('common.gotIt')}
-                </button>
+                </Button>
               </p>
             )}
 
@@ -451,7 +452,7 @@ function RoleEditor({
       )}
 
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-        <label className="flex flex-col gap-1">
+        <Label className="flex flex-col gap-1">
           <span className="text-slate-600">{t('roles.displayName')}</span>
           <Input
             value={draft.name}
@@ -459,8 +460,8 @@ function RoleEditor({
             onChange={(e) => onChange({ ...draft, name: e.target.value })}
             placeholder={t('roles.displayNamePlaceholder')}
             className="disabled:bg-slate-50 disabled:text-slate-500" />
-        </label>
-        <label className="flex flex-col gap-1">
+        </Label>
+        <Label className="flex flex-col gap-1">
           <span className="text-slate-600">
             {t('roles.key')}
             <span className="ml-1 text-[11px] text-slate-400">{t('roles.referencedByPolicy')}</span>
@@ -471,10 +472,10 @@ function RoleEditor({
             onChange={(e) => onChange({ ...draft, key: e.target.value })}
             placeholder="dev"
             className="disabled:bg-slate-50 disabled:text-slate-400" />
-        </label>
+        </Label>
       </div>
 
-      <label className="mt-2 flex flex-col gap-1 text-xs">
+      <Label className="mt-2 flex flex-col gap-1 text-xs">
         <span className="text-slate-600">{t('roles.whatFor')}</span>
         <Input
           value={draft.description}
@@ -482,12 +483,12 @@ function RoleEditor({
           onChange={(e) => onChange({ ...draft, description: e.target.value })}
           placeholder={t('roles.whatForPlaceholder')}
           className="disabled:bg-slate-50 disabled:text-slate-500" />
-      </label>
+      </Label>
 
       {/* ── 谁来担任 ── */}
       <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
         <p className="text-xs font-medium text-slate-700">{t('roles.whoHolds')}</p>
-        <label className="mt-1 flex items-start gap-2 text-xs">
+        <Label className="mt-1 flex items-start gap-2 text-xs">
           <Checkbox
             checked={draft.agents && agentAllowed}
             disabled={!agentAllowed || locked}
@@ -498,7 +499,7 @@ function RoleEditor({
             {t('roles.allowAgents')}
             <span className="ml-1 text-[11px] text-slate-400">{t('roles.humansAlways')}</span>
           </span>
-        </label>
+        </Label>
         {!agentAllowed && (
           <p className="mt-1 text-[11px] text-amber-800">
             {t('roles.humanOnlyBlocking', {
@@ -537,7 +538,7 @@ function RoleEditor({
               <legend className="px-1 text-[11px] text-slate-500">{groupLabel(group, t)}</legend>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                 {items.map((p) => (
-                  <label key={p.key} className="flex items-start gap-1.5 text-[11px]">
+                  <Label key={p.key} className="flex items-start gap-1.5 text-[11px]">
                     <Checkbox
                       checked={draft.permissions.has(p.key)}
                       disabled={locked}
@@ -555,7 +556,7 @@ function RoleEditor({
                         </span>
                       )}
                     </span>
-                  </label>
+                  </Label>
                 ))}
               </div>
             </fieldset>
@@ -564,9 +565,9 @@ function RoleEditor({
       </div>
 
       <div className="mt-3 flex items-center justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {locked ? t('roles.close') : t('common.cancel')}
-        </button>
+        </Button>
         {!locked && (
           <Button variant="neutral" size="sm"
             onClick={onSave}

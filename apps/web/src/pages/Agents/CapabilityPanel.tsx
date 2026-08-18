@@ -2,6 +2,7 @@ import { useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { CapabilityReport } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /**
  * 运行时能力报告（页面文档 08 §5 / 14 §5.4）。
@@ -129,16 +130,15 @@ export function CapabilityPanel({
             「它能不能删东西 / 能不能碰外部系统」，不是为了查字典。 */}
       {report.tools.length > 0 && (
         <div className="border-t border-slate-100 px-3 py-1.5">
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setShowTools((v) => !v)}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 hover:text-slate-700"
           >
             {showTools ? '▾' : '▸'} {t('cap.toolsProvided', { count: report.tools.length })}
             {!showTools && riskyCount(report) > 0 && (
               <span className="ml-1 text-amber-700">{t('cap.riskyTools', { count: riskyCount(report) })}</span>
             )}
-          </button>
+          </Button>
           {showTools && (
             <ul className="mt-1 space-y-0.5">
               {[...report.tools]

@@ -73,13 +73,12 @@ export function InsightsPanel({
                       「决策等待占 34%」这种结论，用户第一反应是「真的吗，怎么算的」。
                       答不上来，他就不会照着它做任何事；这一页也就白做了。
                   */}
-                  <button
-                    type="button"
+                  <Button variant="ghost"
                     onClick={() => setOpenEvidence(openEvidence === i ? null : i)}
-                    className="text-[11px] text-slate-400 underline hover:text-slate-600"
+                    className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-400 underline hover:text-slate-600"
                   >
                     {openEvidence === i ? t('insights.hideEvidence') : t('insights.showEvidence')}
-                  </button>
+                  </Button>
                 </div>
 
                 {openEvidence === i && (

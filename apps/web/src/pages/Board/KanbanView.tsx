@@ -189,9 +189,9 @@ function Column({
             {hasFilters ? (
               <>
                 {t('kanban.noMatch')}{' '}
-                <button type="button" onClick={onClearFilters} className="underline">
+                <Button variant="ghost" onClick={onClearFilters} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent underline">
                   {t('kanban.clearFilters')}
-                </button>
+                </Button>
               </>
             ) : column.key === 'execution' ? (
               t('kanban.waitingUpstream')

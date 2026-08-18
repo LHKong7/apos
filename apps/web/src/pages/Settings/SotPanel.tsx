@@ -6,6 +6,19 @@ import { ApiError, api } from '../../lib/api/client';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from '@/components/ui/table';
 
 /**
  * SoT 取值 → 显示。
@@ -107,12 +120,11 @@ export function SotPanel({
       {canEdit && (
         <div className="mt-1 flex flex-wrap gap-1">
           {meta.presets.map((p) => (
-            <button
+            <Button variant="ghost"
               key={p.key}
-              type="button"
               title={sx(p.description, p.descriptionEn)}
               onClick={() => applyPreset(p.key)}
-              className={clsx(
+              className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                 'rounded px-1.5 py-0.5 text-[11px]',
                 integration.sotPreset === p.key && !draft
                   ? 'bg-slate-900 text-white'
@@ -120,55 +132,61 @@ export function SotPanel({
               )}
             >
               {sx(p.label, p.labelEn)}
-            </button>
+            </Button>
           ))}
         </div>
       )}
 
-      <table className="mt-1.5 w-full text-[11px]">
-        <tbody>
+      <Table className="mt-1.5 w-full text-[11px]">
+        <TableBody>
           {integration.syncMappings.map((m) => {
             const changed = value[m.field] !== m.sourceOfTruth;
             return (
-              <tr key={m.field} className="border-b border-slate-50 last:border-0">
-                <td className="w-20 py-1 text-slate-700">{sx(m.fieldLabel, m.fieldLabelEn)}</td>
-                <td className="w-28 py-1">
+              <TableRow key={m.field} className="border-b border-slate-50 last:border-0">
+                <TableCell className="w-20 py-1 text-slate-700">{sx(m.fieldLabel, m.fieldLabelEn)}</TableCell>
+                <TableCell className="w-28 py-1">
                   {canEdit ? (
-                    <select
+                    <Select
                       value={value[m.field] ?? m.sourceOfTruth}
-                      onChange={(e) => setField(m.field, e.target.value)}
-                      aria-label={t('sot.fieldAria', { field: sx(m.fieldLabel, m.fieldLabelEn) })}
-                      className={clsx(
-                        'w-full rounded border px-1 py-0.5 text-[11px]',
-                        changed ? 'border-amber-400 bg-amber-50' : 'border-slate-300',
-                      )}
+                      onValueChange={(v) => setField(m.field, v)}
                     >
-                      {m.options.map((o) => (
-                        <option key={o} value={o}>
-                          {sotLabel(o, t)}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger
+                        aria-label={t('sot.fieldAria', { field: sx(m.fieldLabel, m.fieldLabelEn) })}
+                        className={clsx(
+                          'h-auto w-full px-1 py-0.5 text-[11px]',
+                          changed ? 'border-amber-400 bg-amber-50' : 'border-slate-300',
+                        )}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {m.options.map((o) => (
+                          <SelectItem key={o} value={o}>
+                            {sotLabel(o, t)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <span className="text-slate-700">{sotLabel(m.sourceOfTruth, t)}</span>
                   )}
-                </td>
+                </TableCell>
                 {/* ★ 每格都说明为什么默认是这个。看不懂默认值道理的用户
                     只会照抄或乱改 —— 两种都通向「哪边数据都不敢信」 */}
-                <td className="py-1 text-slate-400">{sx(m.why, m.whyEn)}</td>
-                <td className="w-24 py-1 text-right text-slate-500" title={t('sot.onNonSotEdit')}>
+                <TableCell className="py-1 text-slate-400">{sx(m.why, m.whyEn)}</TableCell>
+                <TableCell className="w-24 py-1 text-right text-slate-500" title={t('sot.onNonSotEdit')}>
                   {sx(m.strategyLabel, m.strategyLabelEn)}
-                </td>
+                </TableCell>
                 {m.customized && (
-                  <td className="w-8 py-1 text-right text-[10px] text-amber-700" title={t('sot.deviated')}>
+                  <TableCell className="w-8 py-1 text-right text-[10px] text-amber-700" title={t('sot.deviated')}>
                     {t('sot.customized')}
-                  </td>
+                  </TableCell>
                 )}
-              </tr>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
 
       {integration.autoRules.length > 0 && (
         <p className="mt-1 text-[11px] text-slate-500">
@@ -188,13 +206,12 @@ export function SotPanel({
             onClick={() => setConfirming(true)}>
             {t('sot.saveCount', { count: dirty.length })}
           </Button>
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setDraft(null)}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 hover:text-slate-700"
           >
             {t('sot.revert')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -239,13 +256,12 @@ export function SotPanel({
               onClick={() => save.mutate()}>
               {save.isPending ? t('sot.saving') : t('sot.confirm')}
             </Button>
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setConfirming(false)}
-              className="text-xs text-slate-500 hover:text-slate-700"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-700"
             >
               {t('common.cancel')}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

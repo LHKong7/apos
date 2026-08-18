@@ -20,6 +20,7 @@ import { ListView } from './ListView';
 import { AgentView } from './AgentView';
 import { DecisionView } from './DecisionView';
 import { MovedToast } from './MovedToast';
+import { Button } from '@/components/ui/button';
 
 export function BoardPage() {
   const t = useT();
@@ -247,13 +248,12 @@ export function BoardPage() {
       {toast && (
         <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded bg-slate-900 px-3 py-1.5 text-xs text-white shadow-lg">
           {toast}
-          <button
-            type="button"
-            className="pointer-events-auto ml-2 underline"
+          <Button variant="ghost"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent pointer-events-auto ml-2 underline"
             onClick={() => setToast(null)}
           >
             {t('common.gotIt')}
-          </button>
+          </Button>
         </div>
       )}
 

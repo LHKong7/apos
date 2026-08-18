@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { Label } from '@/components/ui/label';
 
 /**
  * 设置区各页共用的排版小件。
@@ -28,15 +29,29 @@ export function Labeled({
   badge?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  /**
+   * ★ 仍然是「包起来」而不是 htmlFor：这个小件不认识子元素的 id，
+   *   加一个必填的 id 参数要改几十个调用点。
+   *   代价是子元素为 Radix Select 时，点标签文字只把焦点给到触发器、
+   *   不展开下拉（Radix 在 pointerdown 上展开，而 label 转发的是 click）——
+   *   聚焦后空格/回车/下箭头照常展开，所以不是死路。
+   *
+   *   Still wraps rather than associating by htmlFor: this atom does not know
+   *   its child's id, and adding a required id would touch dozens of call
+   *   sites. The cost is that when the child is a Radix Select, clicking the
+   *   label text focuses the trigger without opening it — Radix opens on
+   *   pointerdown and a label only forwards a click. Space/Enter/ArrowDown
+   *   still open it from there.
+   */
   return (
-    <label className="mt-2 block first:mt-0">
+    <Label className="mt-2 block font-normal first:mt-0">
       <span className="flex items-center gap-1 text-xs font-medium text-slate-700">
         {label}
         {badge}
       </span>
       <div className="mt-1">{children}</div>
       {help && <p className="mt-1 text-[11px] text-slate-500">{help}</p>}
-    </label>
+    </Label>
   );
 }
 

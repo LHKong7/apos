@@ -105,9 +105,9 @@ export function AgentDetailPage() {
           {error && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
-              <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
+              <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setError(null)}>
                 {t('common.gotIt')}
-              </button>
+              </Button>
             </p>
           )}
 
@@ -287,10 +287,9 @@ export function AgentDetailPage() {
               <ul>
                 {d.recentRuns.map((r) => (
                   <li key={r.id} className="border-b border-slate-100 last:border-0">
-                    <button
-                      type="button"
+                    <Button variant="ghost"
                       onClick={() => navigate(`/runs/${r.id}`)}
-                      className="flex w-full flex-wrap items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start flex w-full flex-wrap items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50"
                     >
                       <span
                         className={clsx(
@@ -327,7 +326,7 @@ export function AgentDetailPage() {
                       <span className="text-[11px] text-slate-400">
                         {r.startedAt ? relativeTime(r.startedAt) : '—'}
                       </span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -410,9 +409,9 @@ function PauseDialog({
         className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
           disabled={!reason.trim() || pending}>

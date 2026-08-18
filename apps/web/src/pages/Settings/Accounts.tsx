@@ -8,6 +8,14 @@ import { GatedButton } from '../../components/Gated';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 账号管理（09-security §2.2「org_admin：身份管理」）。
@@ -114,13 +122,12 @@ export function AccountsPage() {
                 <p className="mt-1.5 text-[11px] text-emerald-700">
                   {t('accounts.passwordOnce')}
                 </p>
-                <button
-                  type="button"
-                  className="mt-1 text-[11px] text-emerald-800 underline"
+                <Button variant="ghost"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mt-1 text-[11px] text-emerald-800 underline"
                   onClick={() => setCreated(null)}
                 >
                   {t('accounts.handedOver')}
-                </button>
+                </Button>
               </section>
             )}
 
@@ -151,17 +158,23 @@ export function AccountsPage() {
                       value={form.password}
                       onChange={(password) => setForm((f) => ({ ...f, password }))}
                     />
-                    <label className="block">
-                      <span className="text-[11px] text-slate-500">{t('accounts.orgRole')}</span>
-                      <select
+                    <div className="block">
+                      <Label htmlFor="new-account-org-role" className="font-normal text-slate-500">
+                        {t('accounts.orgRole')}
+                      </Label>
+                      <Select
                         value={form.orgRole}
-                        onChange={(e) => setForm((f) => ({ ...f, orgRole: e.target.value }))}
-                        className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                        onValueChange={(v) => setForm((f) => ({ ...f, orgRole: v }))}
                       >
-                        <option value="member">{t('accounts.member')}</option>
-                        <option value="org_admin">{t('accounts.orgAdmin')}</option>
-                      </select>
-                    </label>
+                        <SelectTrigger id="new-account-org-role" className="mt-0.5">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="member">{t('accounts.member')}</SelectItem>
+                          <SelectItem value="org_admin">{t('accounts.orgAdmin')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   {error && <p className="text-[11px] text-rose-600">{error}</p>}
@@ -212,7 +225,7 @@ function Field({
   type?: string;
 }) {
   return (
-    <label className="block">
+    <Label className="block">
       <span className="text-[11px] text-slate-500">{label}</span>
       <Input
         type={type}
@@ -220,6 +233,6 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="mt-0.5" />
-    </label>
+    </Label>
   );
 }

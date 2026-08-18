@@ -80,13 +80,12 @@ export function Clarifications({
           <span className="text-[11px] text-red-700">{t('clarify.unanswered', { count: unanswered })}</span>
         )}
         {resolved.length > 0 && (
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setExpandResolved((v) => !v)}
-            className="ml-auto text-[11px] text-slate-500 underline"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-auto text-[11px] text-slate-500 underline"
           >
             {expandResolved ? t('clarify.collapse') : t('clarify.autoResolvedCount', { count: resolved.length })}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -175,15 +174,14 @@ function Question({
           {options.map((o, i) => {
             const text = o.label ?? o.value ?? String(o);
             return (
-              <button
+              <Button variant="ghost"
                 key={`${text}-${i}`}
-                type="button"
                 disabled={pending}
                 onClick={() => onAnswer(c.id, text, false)}
-                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 {text}
-              </button>
+              </Button>
             );
           })}
           <Input
@@ -195,14 +193,13 @@ function Question({
             placeholder={t('clarify.writeYourOwn')}
             className="w-40" />
           {custom.trim() && (
-            <button
-              type="button"
+            <Button variant="ghost"
               disabled={pending}
               onClick={() => onAnswer(c.id, custom.trim(), false)}
-              className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700"
             >
               {t('clarify.submit')}
-            </button>
+            </Button>
           )}
         </div>
       )}

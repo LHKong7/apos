@@ -6,6 +6,7 @@ import { api } from '../lib/api/client';
 import { qk } from '../lib/query/keys';
 import { sidebarCollapsed, useSidebarStore } from '../stores/sidebar';
 import { useT, type MessageKey } from '../lib/i18n';
+import { Button } from '@/components/ui/button';
 import { RoleBadge } from './Gated';
 
 /**
@@ -172,20 +173,21 @@ export function ProjectSidebar() {
             比不显示更糟 —— 用户得先猜那个字是什么意思。
         */}
         {!collapsed && <RoleBadge projectId={projectId} />}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={() => setManual(!collapsed)}
           aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
           title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
           className={clsx(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700',
+            'h-6 w-6 shrink-0 text-slate-400 hover:bg-slate-100 hover:text-slate-700',
             !collapsed && 'ml-auto',
           )}
         >
           <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d={collapsed ? 'M6 3l5 5-5 5' : 'M10 3L5 8l5 5'} />
           </svg>
-        </button>
+        </Button>
       </div>
     </aside>
   );

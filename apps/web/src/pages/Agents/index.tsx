@@ -6,6 +6,14 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { tokens } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 /**
  * Agent 列表（页面文档 08 §4.1）。
@@ -60,29 +68,29 @@ export function AgentListPage() {
 
           {list.data && list.data.agents.length > 0 && (
             <section className="overflow-x-auto rounded border border-slate-200 bg-white">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left text-[11px] text-slate-500">
-                    <th className="px-3 py-1.5 font-medium">{t('agents.col.name')}</th>
-                    <th className="px-2 py-1.5 font-medium">{t('agents.col.type')}</th>
-                    <th className="px-2 py-1.5 font-medium">{t('agents.col.status')}</th>
-                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.load')}</th>
-                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.runs')}</th>
-                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.successRate')}</th>
-                    <th className="px-2 py-1.5 text-right font-medium" title={t('agentTab.firstTryOnly')}>
+              <Table className="w-full text-xs">
+                <TableHeader>
+                  <TableRow className="border-b border-slate-200 text-left text-[11px] text-slate-500">
+                    <TableHead className="px-3 py-1.5 font-medium">{t('agents.col.name')}</TableHead>
+                    <TableHead className="px-2 py-1.5 font-medium">{t('agents.col.type')}</TableHead>
+                    <TableHead className="px-2 py-1.5 font-medium">{t('agents.col.status')}</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.load')}</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.runs')}</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.successRate')}</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium" title={t('agentTab.firstTryOnly')}>
                       {t('agents.col.firstTry')}
-                    </th>
-                    <th className="px-2 py-1.5 text-right font-medium" title={t('agentTab.overrideHelp')}>
+                    </TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium" title={t('agentTab.overrideHelp')}>
                       {t('agents.col.override')}
-                    </th>
-                    <th className="px-2 py-1.5 text-right font-medium">{t('agents.col.tokens')}</th>
-                    <th className="px-3 py-1.5 font-medium">{t('agents.col.owner')}</th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </TableHead>
+                    <TableHead className="px-2 py-1.5 text-right font-medium">{t('agents.col.tokens')}</TableHead>
+                    <TableHead className="px-3 py-1.5 font-medium">{t('agents.col.owner')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {list.data.agents.map((a) => (
-                    <tr key={a.id} className="border-b border-slate-100 last:border-0">
-                      <td className="px-3 py-1.5">
+                    <TableRow key={a.id} className="border-b border-slate-100 last:border-0">
+                      <TableCell className="px-3 py-1.5">
                         <Link
                           to={
                             projectId
@@ -94,9 +102,9 @@ export function AgentListPage() {
                           🤖 {a.name}
                         </Link>
                         {a.model && <span className="ml-1 text-[11px] text-slate-400">{a.model}</span>}
-                      </td>
-                      <td className="px-2 py-1.5 text-slate-500">{a.type}</td>
-                      <td className="px-2 py-1.5">
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 text-slate-500">{a.type}</TableCell>
+                      <TableCell className="px-2 py-1.5">
                         <span
                           className={clsx(
                             a.status === 'paused' ? 'text-amber-700' : 'text-green-700',
@@ -105,22 +113,22 @@ export function AgentListPage() {
                         >
                           ● {a.status === 'paused' ? t('agents.paused') : t('agents.normal')}
                         </span>
-                      </td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">
                         {a.load.running}/{a.load.max}
-                      </td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">{a.runs}</td>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">{a.runs}</TableCell>
                       <Cell value={a.successRate} warnBelow={0.8} />
                       <Cell value={a.firstTrySuccessRate} warnBelow={0.6} />
                       <Cell value={a.overrideRate} warnAbove={0.15} />
-                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
+                      <TableCell className="px-2 py-1.5 text-right tabular-nums text-slate-600">
                         {tokens(a.tokens)}
-                      </td>
-                      <td className="px-3 py-1.5 text-slate-500">{a.ownerName}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5 text-slate-500">{a.ownerName}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </section>
           )}
         </div>
@@ -139,15 +147,15 @@ function Cell({
   warnAbove?: number;
 }) {
   if (value === null) {
-    return <td className="px-2 py-1.5 text-right text-slate-300">—</td>;
+    return <TableCell className="px-2 py-1.5 text-right text-slate-300">—</TableCell>;
   }
   const warn =
     (warnBelow !== undefined && value < warnBelow) ||
     (warnAbove !== undefined && value > warnAbove);
   return (
-    <td className={clsx('px-2 py-1.5 text-right tabular-nums', warn ? 'text-amber-700' : 'text-slate-600')}>
+    <TableCell className={clsx('px-2 py-1.5 text-right tabular-nums', warn ? 'text-amber-700' : 'text-slate-600')}>
       {warn && <span aria-hidden>⚠ </span>}
       {Math.round(value * 100)}%
-    </td>
+    </TableCell>
   );
 }

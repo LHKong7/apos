@@ -3,6 +3,17 @@ import { api } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
 import { useT } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SELECT_EMPTY,
+  toSelectValue,
+  fromSelectValue,
+} from '@/components/ui/select';
 
 /**
  * 资源范围编辑器 —— 可增删的多条，来源是**已登记的**资源。
@@ -83,18 +94,21 @@ export function ResourceScopeEditor({
          *   顺序不会变，下标在这里是稳定身份。
          */
         <div key={i} className="flex items-center gap-1">
-          <select
+          <Select
             value={row.kind}
-            onChange={(e) => update(i, { kind: e.target.value, ref: '' })}
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            aria-label={t('scopes.kind')}
+            onValueChange={(v) => update(i, { kind: v, ref: '' })}
           >
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {t(`scopes.kind.${k}` as Parameters<typeof t>[0])}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-auto" aria-label={t('scopes.kind')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {KINDS.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {t(`scopes.kind.${k}` as Parameters<typeof t>[0])}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/*
             ★ 有登记表的类型给下拉，没有的给输入框。
@@ -102,48 +116,53 @@ export function ResourceScopeEditor({
               外部服务这类还没有登记表的资源根本填不进去。
           */}
           {known[row.kind] ? (
-            <select
-              value={row.ref}
-              onChange={(e) => update(i, { ref: e.target.value })}
-              className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5 text-sm"
-              aria-label={t('scopes.ref')}
+            <Select
+              value={toSelectValue(row.ref)}
+              onValueChange={(v) => update(i, { ref: fromSelectValue(v) })}
             >
-              <option value="">{t('scopes.choose')}</option>
-              {known[row.kind]!.map((r) => (
-                <option key={r.ref} value={r.ref}>
-                  {r.name}（{r.ref}）
-                </option>
-              ))}
-              {/* ★ 保留库里已有但登记表里查不到的 ref：不保留的话，
-                  打开表单就把它清空了，而那正是这个组件要修的那个 bug */}
-              {row.ref && !known[row.kind]!.some((r) => r.ref === row.ref) && (
-                <option value={row.ref}>{t('scopes.unregistered', { ref: row.ref })}</option>
-              )}
-            </select>
+              <SelectTrigger className="min-w-0 flex-1" aria-label={t('scopes.ref')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SELECT_EMPTY}>{t('scopes.choose')}</SelectItem>
+                {known[row.kind]!.map((r) => (
+                  <SelectItem key={r.ref} value={r.ref}>
+                    {r.name}（{r.ref}）
+                  </SelectItem>
+                ))}
+                {/* ★ 保留库里已有但登记表里查不到的 ref：不保留的话，
+                    打开表单就把它清空了，而那正是这个组件要修的那个 bug */}
+                {row.ref && !known[row.kind]!.some((r) => r.ref === row.ref) && (
+                  <SelectItem value={row.ref}>
+                    {t('scopes.unregistered', { ref: row.ref })}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           ) : (
-            <input
+            <Input
               value={row.ref}
               onChange={(e) => update(i, { ref: e.target.value })}
-              className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="min-w-0 flex-1"
               aria-label={t('scopes.ref')}
             />
           )}
 
-          <select
-            value={row.access}
-            onChange={(e) => update(i, { access: e.target.value })}
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            aria-label={t('scopes.access')}
-          >
-            <option value="read">{t('scopes.access.read')}</option>
-            <option value="write">{t('scopes.access.write')}</option>
+          <Select value={row.access} onValueChange={(v) => update(i, { access: v })}>
+            <SelectTrigger className="w-auto" aria-label={t('scopes.access')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="read">{t('scopes.access.read')}</SelectItem>
+              <SelectItem value="write">{t('scopes.access.write')}</SelectItem>
             {/*
               ★ `none` 要能选中。删掉一条等于回落到「项目仓库默认只读」，
                 而 none 是显式的「这个不给」—— 撤销一条默认授权只有这一种写法
                 （见 domain 的 effectiveResourceScopes）。
             */}
-            <option value="none">{t('scopes.access.none')}</option>
-          </select>
+              <SelectItem value="none">{t('scopes.access.none')}</SelectItem>
+            </SelectContent>
+          </Select>
 
           <Button
             variant="outline"

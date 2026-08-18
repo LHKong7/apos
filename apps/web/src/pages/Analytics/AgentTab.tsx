@@ -4,6 +4,14 @@ import type { Analytics, AgentPerf } from '@apos/domain';
 import { BarChart, StatTile } from '../../features/analytics/charts';
 import { tokens } from '../../lib/format';
 import { Card } from './Card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 /**
  * Agent 效能（页面文档 12 §5.4）。
@@ -52,30 +60,30 @@ export function AgentTab({ data }: { data: Analytics }) {
 
       <Card title={t('agentTab.comparison')} subtitle={t('agentTab.comparisonHint')}>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-[11px] text-slate-500">
-                <th className="py-1 pr-2 font-medium">Agent</th>
-                <th className="py-1 px-2 text-right font-medium">{t('agentTab.runs')}</th>
-                <th className="py-1 px-2 text-right font-medium">{t('agentTab.successRate')}</th>
-                <th className="py-1 px-2 text-right font-medium" title={t('agentTab.firstTryOnly')}>
+          <Table className="w-full text-xs">
+            <TableHeader>
+              <TableRow className="border-b border-slate-200 text-left text-[11px] text-slate-500">
+                <TableHead className="py-1 pr-2 font-medium">Agent</TableHead>
+                <TableHead className="py-1 px-2 text-right font-medium">{t('agentTab.runs')}</TableHead>
+                <TableHead className="py-1 px-2 text-right font-medium">{t('agentTab.successRate')}</TableHead>
+                <TableHead className="py-1 px-2 text-right font-medium" title={t('agentTab.firstTryOnly')}>
                   {t('agents.col.firstTry')}
-                </th>
-                <th className="py-1 px-2 text-right font-medium" title={t('agentTab.overrideHelp')}>
+                </TableHead>
+                <TableHead className="py-1 px-2 text-right font-medium" title={t('agentTab.overrideHelp')}>
                   {t('agents.col.override')}
-                </th>
-                <th className="py-1 px-2 text-right font-medium">{t('agentTab.avgTokensShort')}</th>
-                <th className="py-1 pl-2 text-right font-medium">{t('agentTab.avgDuration')}</th>
-              </tr>
-            </thead>
-            <tbody>
+                </TableHead>
+                <TableHead className="py-1 px-2 text-right font-medium">{t('agentTab.avgTokensShort')}</TableHead>
+                <TableHead className="py-1 pl-2 text-right font-medium">{t('agentTab.avgDuration')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {agent.agents.map((a) => (
-                <tr key={a.agentId} className="border-b border-slate-100">
-                  <td className="py-1 pr-2">
+                <TableRow key={a.agentId} className="border-b border-slate-100">
+                  <TableCell className="py-1 pr-2">
                     <span className="text-slate-800">{a.name}</span>
                     {a.model && <span className="ml-1 text-[11px] text-slate-400">{a.model}</span>}
-                  </td>
-                  <td className="py-1 px-2 text-right tabular-nums text-slate-600">{a.runs}</td>
+                  </TableCell>
+                  <TableCell className="py-1 px-2 text-right tabular-nums text-slate-600">{a.runs}</TableCell>
                   <Cell value={`${Math.round(a.successRate * 100)}%`} best={best.successRate.has(a.agentId)} warn={a.successRate < 0.8} />
                   <Cell
                     value={`${Math.round(a.firstTrySuccessRate * 100)}%`}
@@ -92,10 +100,10 @@ export function AgentTab({ data }: { data: Analytics }) {
                     value={a.avgMinutes === null ? '—' : `${a.avgMinutes}m`}
                     best={best.avgMinutes.has(a.agentId)}
                   />
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
 
         {agent.dominance && (
@@ -125,7 +133,7 @@ export function AgentTab({ data }: { data: Analytics }) {
 
 function Cell({ value, best, warn }: { value: string; best?: boolean; warn?: boolean }) {
   return (
-    <td
+    <TableCell
       className={clsx(
         'py-1 px-2 text-right tabular-nums',
         best ? 'font-semibold text-slate-900' : warn ? 'text-amber-700' : 'text-slate-600',
@@ -133,7 +141,7 @@ function Cell({ value, best, warn }: { value: string; best?: boolean; warn?: boo
     >
       {warn && <span aria-hidden>⚠ </span>}
       {value}
-    </td>
+    </TableCell>
   );
 }
 

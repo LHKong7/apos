@@ -8,6 +8,14 @@ import type { PolicyRow, PolicyTemplateRow, SimulationResponse } from '../../lib
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 规则编辑（页面文档 13 §4.2 / §5.7）。
@@ -115,15 +123,15 @@ export function RuleEditor({
         </h2>
         {template && <p className="mt-0.5 text-xs text-slate-500">{template.purpose}</p>}
 
-        <label className="mt-3 block text-xs text-slate-600">
+        <Label className="mt-3 block text-xs text-slate-600">
           {t('rule.name')}
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="mt-0.5" />
-        </label>
+        </Label>
 
-        <label className="mt-2 block text-xs text-slate-600">
+        <Label className="mt-2 block text-xs text-slate-600">
           {t('rule.priority')}
           <Input
             type="number"
@@ -133,14 +141,14 @@ export function RuleEditor({
           <span className="ml-2 text-[11px] text-slate-400">
             {t('rule.priorityHint')}
           </span>
-        </label>
+        </Label>
 
         {params.length > 0 && (
           <fieldset className="mt-3 rounded border border-slate-200 p-2">
             <legend className="px-1 text-xs font-medium text-slate-700">{t('rule.params')}</legend>
             <div className="space-y-2">
               {params.map((p) => (
-                <label key={p.key} className="block text-xs text-slate-600">
+                <Label key={p.key} className="block text-xs text-slate-600">
                   {p.label}
                   {p.hint && <span className="ml-1 text-[11px] text-slate-400">{p.hint}</span>}
                   {p.type === 'number' ? (
@@ -153,19 +161,23 @@ export function RuleEditor({
                       {p.suffix && <span className="text-[11px] text-slate-400">{p.suffix}</span>}
                     </span>
                   ) : (
-                    <select
+                    <Select
                       value={String(values[p.key] ?? p.default)}
-                      onChange={(e) => setValues((v) => ({ ...v, [p.key]: e.target.value }))}
-                      className="mt-0.5 block w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                      onValueChange={(v) => setValues((prev) => ({ ...prev, [p.key]: v }))}
                     >
-                      {p.options?.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="mt-0.5 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {p.options?.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   )}
-                </label>
+                </Label>
               ))}
             </div>
           </fieldset>
@@ -213,9 +225,9 @@ export function RuleEditor({
         )}
 
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-800">
+          <Button variant="ghost" onClick={onClose} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-800">
             {t('common.cancel')}
-          </button>
+          </Button>
           <Button variant="neutral" size="sm"
             onClick={() => save.mutate(needsAck)}
             disabled={!name || save.isPending || !draft}>

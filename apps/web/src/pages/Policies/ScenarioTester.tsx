@@ -8,6 +8,17 @@ import { ApiError, api } from '../../lib/api/client';
 import type { ScenarioTestResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  SELECT_EMPTY,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  fromSelectValue,
+  toSelectValue,
+} from '@/components/ui/select';
 
 const RISKS: { value: string; labelKey: MessageKey }[] = [
   { value: 'low', labelKey: 'scenario.riskLow' },
@@ -58,46 +69,55 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
 
         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
           <Field label={t('scenario.operationType')}>
-            <select
+            <Select
               value={String(ctx.operationType)}
-              onChange={(e) => set('operationType', e.target.value)}
-              className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
+              onValueChange={(v) => set('operationType', v)}
             >
-              {Object.entries(OPERATION_LABELS).map(([v, l]) => (
-                <option key={v} value={v}>
-                  {l}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(OPERATION_LABELS).map(([v, l]) => (
+                  <SelectItem key={v} value={v}>
+                    {l}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field label={t('scenario.riskLevel')}>
-            <select
-              value={String(ctx.riskLevel)}
-              onChange={(e) => set('riskLevel', e.target.value)}
-              className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
-            >
-              {RISKS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {t(r.labelKey)}
-                </option>
-              ))}
-            </select>
+            <Select value={String(ctx.riskLevel)} onValueChange={(v) => set('riskLevel', v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RISKS.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {t(r.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field label={t('scenario.environment')}>
-            <select
-              value={String(ctx.environment ?? '')}
-              onChange={(e) => set('environment', e.target.value || null)}
-              className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
+            <Select
+              value={toSelectValue(ctx.environment == null ? '' : String(ctx.environment))}
+              onValueChange={(v) => set('environment', fromSelectValue(v) || null)}
             >
-              <option value="">{t('scenario.notApplicable')}</option>
-              {['dev', 'test', 'staging', 'production'].map((v) => (
-                <option key={v} value={v}>
-                  {ENV_LABELS[v] ?? v}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SELECT_EMPTY}>{t('scenario.notApplicable')}</SelectItem>
+                {['dev', 'test', 'staging', 'production'].map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {ENV_LABELS[v] ?? v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field label={t('scenario.tokens')}>
@@ -202,9 +222,9 @@ function Result({ result }: { result: ScenarioTestResponse }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block text-[11px] text-slate-600">
+    <Label className="block text-[11px] text-slate-600">
       {label}
       <span className="mt-0.5 block">{children}</span>
-    </label>
+    </Label>
   );
 }

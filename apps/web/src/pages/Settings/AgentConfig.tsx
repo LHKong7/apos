@@ -20,6 +20,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SELECT_EMPTY,
+  toSelectValue,
+  fromSelectValue,
+} from '@/components/ui/select';
 import { Field, Labeled, Notice, StatusDot } from './primitives';
 import { AgentAccessPanel } from './AgentAccess';
 
@@ -101,20 +112,18 @@ export function AgentConfigPage() {
         </div>
         <div className="mt-2 flex gap-1">
           {TABS.map((item) => (
-            <button
+            <Button
               key={item.key}
-              type="button"
+              variant={tab === item.key ? 'neutral' : 'ghost'}
               onClick={() => setTab(item.key)}
               title={t(item.hintKey)}
               className={clsx(
-                'rounded px-3 py-1 text-xs font-medium',
-                tab === item.key
-                  ? 'bg-slate-900 text-white'
-                  : 'text-slate-600 hover:bg-slate-100',
+                'h-auto px-3 py-1 text-xs',
+                tab !== item.key && 'text-slate-600 hover:bg-slate-100',
               )}
             >
               {t(item.labelKey)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -472,13 +481,13 @@ function AgentCard({
 
       {agent.capability && (
         <div className="mt-2">
-          <button
-            type="button"
+          <Button
+            variant="link"
             onClick={() => setShowCaps((v) => !v)}
-            className="text-[11px] text-slate-500 underline hover:text-slate-700"
+            className="h-auto p-0 text-[11px] font-normal text-slate-500 underline hover:text-slate-700"
           >
             {showCaps ? t('agentCfg.collapseCapabilities') : t('agentCfg.capabilityList', { count: agent.capability.missing.length })}
-          </button>
+          </Button>
           {showCaps && (
             <div className="mt-2 space-y-1">
               {/*
@@ -679,17 +688,19 @@ function AgentForm({
               placeholder={t('agentCfg.form.namePlaceholder')} />
           </Labeled>
           <Labeled label={t('agentCfg.form.type')}>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            >
-              {['code', 'test', 'review', 'research', 'ops'].map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* ★ 参数别叫 t —— 这个文件里 t 是 i18n 函数，遮蔽掉它下次改这段会很意外 */}
+                {['code', 'test', 'review', 'research', 'ops'].map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Labeled>
         </div>
 
@@ -712,17 +723,18 @@ function AgentForm({
           </p>
 
           <Labeled label="Headless CLI">
-            <select
-              value={kind}
-              onChange={(e) => switchKind(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-            >
-              {kinds.map((k) => (
-                <option key={k.kind} value={k.kind}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
+            <Select value={kind} onValueChange={switchKind}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {kinds.map((k) => (
+                  <SelectItem key={k.kind} value={k.kind}>
+                    {k.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {spec && (
               <p className="mt-1 text-[11px] text-slate-500">
                 {sx(spec.description, spec.descriptionEn)}
@@ -791,15 +803,15 @@ function AgentForm({
 
           {spec && spec.fields.length > 0 && (
             <div className="mt-2">
-              <button
-                type="button"
+              <Button
+                variant="link"
                 onClick={() => setShowReference((v) => !v)}
-                className="text-[11px] text-slate-500 underline hover:text-slate-700"
+                className="h-auto p-0 text-[11px] font-normal text-slate-500 underline hover:text-slate-700"
               >
                 {showReference
                   ? t('agentCfg.form.collapseOptions')
                   : t('agentCfg.form.optionsCount', { count: spec.fields.length })}
-              </button>
+              </Button>
               {showReference && <ConfigReference fields={spec.fields} />}
             </div>
           )}
@@ -833,9 +845,9 @@ function AgentForm({
             {WORK_ITEM_TYPES.map(([value, labelKey]) => {
               const on = applicableTypes.includes(value);
               return (
-                <button
+                <Button
                   key={value}
-                  type="button"
+                  variant="outline"
                   aria-pressed={on}
                   onClick={() =>
                     setApplicableTypes((prev) =>
@@ -843,14 +855,14 @@ function AgentForm({
                     )
                   }
                   className={clsx(
-                    'rounded border px-2 py-0.5 text-[11px]',
+                    'h-auto rounded border px-2 py-0.5 text-[11px] font-normal shadow-none',
                     on
-                      ? 'border-slate-900 bg-slate-900 text-white'
+                      ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-700 hover:text-white'
                       : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
                   )}
                 >
                   {t(labelKey)}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -867,7 +879,7 @@ function AgentForm({
               当成了项目级授权用。现在：上限在这一页，实际授权在项目里
               选档案（项目设置 → 项目 Agent → 生效权限）。
           */}
-          <label className="flex items-start gap-2 text-xs">
+          <Label className="flex items-start gap-2 text-xs font-normal">
             <Checkbox
               checked={limited}
               onCheckedChange={(v) => setLimited(Boolean(v))}
@@ -879,7 +891,7 @@ function AgentForm({
                 {t('agentCfg.form.limitCeilingHint')}
               </span>
             </span>
-          </label>
+          </Label>
 
           {limited && (
             <Labeled label={t('agentCfg.form.ceiling')} help={t('agentCfg.form.ceilingHelp')}>
@@ -897,18 +909,22 @@ function AgentForm({
 
         <div className="grid grid-cols-2 gap-2">
           <Labeled label={t('agentCfg.form.owner')} help={t('agentCfg.form.ownerHelp')}>
-            <select
-              value={ownerId}
-              onChange={(e) => setOwnerId(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            <Select
+              value={toSelectValue(ownerId)}
+              onValueChange={(v) => setOwnerId(fromSelectValue(v))}
             >
-              <option value="">{t('agentCfg.form.choose')}</option>
-              {(users.data?.users ?? []).map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SELECT_EMPTY}>{t('agentCfg.form.choose')}</SelectItem>
+                {(users.data?.users ?? []).map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Labeled>
           <Labeled label={t('agentCfg.form.skills')} help={t('agentCfg.form.skillsHelp')}>
             <Input
@@ -1367,16 +1383,16 @@ function ConventionForm({
     >
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-900">{row ? t('agentCfg.conv.edit') : t('agentCfg.conv.add')}</h2>
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.titleField')}</span>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t('agentCfg.conv.titlePlaceholder')}
             className="mt-1" />
-        </label>
+        </Label>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.content')}</span>
           <Textarea
             value={content}
@@ -1385,19 +1401,33 @@ function ConventionForm({
             placeholder={t('agentCfg.conv.contentPlaceholder')}
             className="mt-1 font-mono"
           />
-        </label>
+        </Label>
 
-        <label className="block">
-          <span className="text-xs font-medium text-slate-700">{t('agentCfg.conv.priority')}</span>
-          <select
-            value={priority}
-            onChange={(e) => setPriority(e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="must_read">{t('agentCfg.conv.mustReadOption')}</option>
-            <option value="reference">{t('agentCfg.conv.referenceOption')}</option>
-          </select>
-        </label>
+        {/*
+          ★ 这一格不像上面两格那样把控件包在 label 里，而是 htmlFor 关联。
+            Radix 的 Select 触发器是 <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent">，包进 label 之后点标签文字
+            不会打开下拉（Radix 在 pointerdown 上开，label 转发的是 click）。
+            htmlFor 两边都成立。
+
+            Unlike the two fields above, this one associates by htmlFor instead
+            of wrapping: the Radix trigger is a button that opens on pointerdown,
+            and a label only forwards a click, so wrapping would make the label
+            text dead.
+        */}
+        <div>
+          <Label htmlFor="conv-priority" className="text-slate-700">
+            {t('agentCfg.conv.priority')}
+          </Label>
+          <Select value={priority} onValueChange={setPriority}>
+            <SelectTrigger id="conv-priority" className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="must_read">{t('agentCfg.conv.mustReadOption')}</SelectItem>
+              <SelectItem value="reference">{t('agentCfg.conv.referenceOption')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     </Modal>
   );
@@ -1460,23 +1490,26 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
                         {bound.runtimeKind}
                       </span>
                     )}
-                    <select
-                      value={bound?.agentId ?? ''}
+                    <Select
+                      value={toSelectValue(bound?.agentId)}
                       disabled={save.isPending}
-                      onChange={(e) =>
-                        save.mutate({ role, agentId: e.target.value || null, priority: 0 })
+                      onValueChange={(v) =>
+                        save.mutate({ role, agentId: fromSelectValue(v) || null, priority: 0 })
                       }
-                      className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
-                      aria-label={t(labelKey)}
                     >
-                      {/* ★ 解绑不是「没配」，是显式回到「按项目成员自动挑」 */}
-                      <option value="">{t('binding.unbound')}</option>
-                      {data.available.map((a) => (
-                        <option key={a.agentId} value={a.agentId}>
-                          {a.name} · {a.runtimeKind}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="ml-auto w-56" aria-label={t(labelKey)}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* ★ 解绑不是「没配」，是显式回到「按项目成员自动挑」 */}
+                        <SelectItem value={SELECT_EMPTY}>{t('binding.unbound')}</SelectItem>
+                        {data.available.map((a) => (
+                          <SelectItem key={a.agentId} value={a.agentId}>
+                            {a.name} · {a.runtimeKind}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {/*
@@ -1487,25 +1520,28 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
                   {bound && (
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span className="text-[11px] text-slate-500">{t('binding.fallback')}</span>
-                      <select
-                        value={fallback?.agentId ?? ''}
+                      <Select
+                        value={toSelectValue(fallback?.agentId)}
                         disabled={save.isPending}
-                        onChange={(e) =>
-                          save.mutate({ role, agentId: e.target.value || null, priority: 1 })
+                        onValueChange={(v) =>
+                          save.mutate({ role, agentId: fromSelectValue(v) || null, priority: 1 })
                         }
-                        className="ml-auto w-56 rounded border border-slate-300 px-1.5 py-1 text-xs"
-                        aria-label={t('binding.fallback')}
                       >
-                        <option value="">{t('binding.noFallback')}</option>
-                        {data.available
-                          // ★ 主 Agent 不能同时当自己的备选
-                          .filter((a) => a.agentId !== bound.agentId)
-                          .map((a) => (
-                            <option key={a.agentId} value={a.agentId}>
-                              {a.name} · {a.runtimeKind}
-                            </option>
-                          ))}
-                      </select>
+                        <SelectTrigger className="ml-auto w-56" aria-label={t('binding.fallback')}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={SELECT_EMPTY}>{t('binding.noFallback')}</SelectItem>
+                          {data.available
+                            // ★ 主 Agent 不能同时当自己的备选
+                            .filter((a) => a.agentId !== bound.agentId)
+                            .map((a) => (
+                              <SelectItem key={a.agentId} value={a.agentId}>
+                                {a.name} · {a.runtimeKind}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
 
@@ -1592,11 +1628,10 @@ function CapabilityPicker({
   return (
     <div className="space-y-1">
       {items.map((c) => (
-        <label key={c.key} className="flex items-start gap-1.5 text-[11px]">
-          <input
-            type="checkbox"
+        <Label key={c.key} className="flex items-start gap-1.5 text-[11px] font-normal">
+          <Checkbox
             checked={value.includes(c.key)}
-            onChange={() => toggle(c.key)}
+            onCheckedChange={() => toggle(c.key)}
             /**
              * ★ 平台底线里的能力永远勾不上（改权限、改 Policy）。
              *   给一个能勾但存不进去的选项，等于让人白填一遍再被拒。
@@ -1611,7 +1646,7 @@ function CapabilityPicker({
               <span className="ml-1 text-amber-700">{t('agentCfg.form.neverGrant')}</span>
             )}
           </span>
-        </label>
+        </Label>
       ))}
     </div>
   );

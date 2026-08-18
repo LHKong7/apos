@@ -4,6 +4,7 @@ import { Modal } from '../work-item/ManualMoveDialog';
 import type { RunControlAction } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 interface Props {
   action: Extract<RunControlAction, 'terminate' | 'add_constraint'>;
@@ -49,7 +50,7 @@ export function RunControlDialog({
           : t('runCtl.constraintWarning', { runtime: runtimeName })}
       </p>
 
-      <label className="mt-3 block">
+      <Label className="mt-3 block">
         <span className="mb-0.5 block text-[11px] text-slate-500">
           {isTerminate ? t('runCtl.terminateReason') : t('runCtl.constraintLabel')}
         </span>
@@ -61,7 +62,7 @@ export function RunControlDialog({
             isTerminate ? t('runCtl.terminatePlaceholder') : t('runCtl.constraintPlaceholder')
           }
         />
-      </label>
+      </Label>
 
       {error && (
         <div className="mt-3 rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
@@ -76,20 +77,21 @@ export function RunControlDialog({
           onClick={onCancel}>
           {t('common.cancel')}
         </Button>
-        <button
-          type="button"
+        {/*
+          ★ 终止走 destructive、下发约束走 neutral —— 这两档正好对上原来那两串
+            手写配色（红 / 反色），所以这里用变体而不是继续贴 className。
+        */}
+        <Button
+          variant={isTerminate ? 'destructive' : 'neutral'}
+          size="sm"
           disabled={!canSubmit}
           onClick={() =>
             onConfirm(isTerminate ? { reason: text.trim() } : { constraint: text.trim() })
           }
-          className={
-            isTerminate
-              ? 'rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-40'
-              : 'rounded bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40'
-          }
+          className="disabled:opacity-40"
         >
           {pending ? t('decision.submitting') : isTerminate ? t('runCtl.confirmTerminate') : t('runCtl.send')}
-        </button>
+        </Button>
       </div>
     </Modal>
   );

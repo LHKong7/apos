@@ -8,6 +8,7 @@ import type { BoardCard } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 /** 原因分类进 Analytics 的「人工覆盖率」，自由文本没法聚合 */
 const REASONS = [
@@ -71,7 +72,7 @@ export function ManualMoveDialog({
       <fieldset className="mt-3 space-y-1.5">
         <legend className="text-xs font-medium text-slate-700">{t('move.reason')}</legend>
         {REASONS.map((r) => (
-          <label key={r.value} className="flex items-center gap-2 text-xs text-slate-700">
+          <Label key={r.value} className="flex items-center gap-2 text-xs text-slate-700">
             <Input
               type="radio"
               name="reason"
@@ -92,15 +93,15 @@ export function ManualMoveDialog({
                 placeholder={t('move.explain')}
                 className="ml-1 flex-1" />
             )}
-          </label>
+          </Label>
         ))}
       </fieldset>
 
       {hasRunningRun && (
-        <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
+        <Label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
           <Checkbox tone="neutral" checked={terminateRun} onCheckedChange={setTerminateRun} />
           {t('move.terminateRun')}
-        </label>
+        </Label>
       )}
 
       {error && (

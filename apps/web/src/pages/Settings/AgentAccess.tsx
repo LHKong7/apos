@@ -10,6 +10,13 @@ import { CardSkeleton, ErrorState } from '@/components/states';
 import { ResourceScopeEditor, type ScopeRow } from '@/components/ResourceScopeEditor';
 import { Labeled, Notice } from './primitives';
 import type { AgentAccessBody, AgentAccessPreview, AgentAccessView } from '@/lib/api/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 项目里某个 Agent 的生效权限。
@@ -223,24 +230,26 @@ function AccessForm({
   return (
     <div className="mt-2 space-y-2 border-t border-slate-200 pt-2">
       <Labeled label={t('access.profile')}>
-        <select
-          value={profileKey}
-          onChange={(e) => setProfileKey(e.target.value)}
-          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-        >
-          {current.profiles.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.name}
-            </option>
-          ))}
-          {/*
-            ★ 迁移进来的授权（legacy_import）不是内置档案，选项里没有它。
-              保留当前值，否则打开表单就把它换成了别的档案。
-          */}
-          {!current.profiles.some((p) => p.key === profileKey) && (
-            <option value={profileKey}>{profileKey}</option>
-          )}
-        </select>
+        <Select value={profileKey} onValueChange={setProfileKey}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {current.profiles.map((p) => (
+              <SelectItem key={p.key} value={p.key}>
+                {p.name}
+              </SelectItem>
+            ))}
+            {/*
+              ★ 迁移进来的授权（legacy_import）不是内置档案，选项里没有它。
+                保留当前值，否则打开表单就把它换成了别的档案。
+            */}
+            {/* ★ `profileKey &&` 同 Members 那处：空串会让 Radix 抛错，不是少一项 */}
+            {profileKey && !current.profiles.some((p) => p.key === profileKey) && (
+              <SelectItem value={profileKey}>{profileKey}</SelectItem>
+            )}
+          </SelectContent>
+        </Select>
       </Labeled>
       <p className="text-[11px] text-slate-500">
         {current.profiles.find((p) => p.key === profileKey)?.description}

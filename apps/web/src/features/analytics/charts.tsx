@@ -3,6 +3,13 @@ import { useId, useState } from 'react';
 import clsx from 'clsx';
 import type { Point } from '@apos/domain';
 import { CHROME, MARK, SERIES, type STATUS } from './palette';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from '@/components/ui/table';
 
 /**
  * 本页用到的四种图形。刻意手写 SVG 而不是引图表库：
@@ -257,29 +264,28 @@ export function TrendChart({
       </div>
 
       {/* ★ tooltip 不能是读到数字的唯一途径 */}
-      <button
-        type="button"
+      <Button variant="ghost"
         onClick={() => setTable((v) => !v)}
-        className="mt-0.5 text-[11px] text-slate-400 underline hover:text-slate-600"
+        className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mt-0.5 text-[11px] text-slate-400 underline hover:text-slate-600"
       >
         {table ? t('chart.hideData') : t('chart.showData')}
-      </button>
+      </Button>
       {table && (
         <div className="mt-1 max-h-32 overflow-y-auto">
-          <table className="w-full text-[11px]">
-            <tbody>
+          <Table className="w-full text-[11px]">
+            <TableBody>
               {points
                 .filter((p) => p.value !== 0)
                 .map((p) => (
-                  <tr key={p.day} className="border-b border-slate-100">
-                    <td className="py-0.5 text-slate-500">{p.day}</td>
-                    <td className="py-0.5 text-right tabular-nums text-slate-700">
+                  <TableRow key={p.day} className="border-b border-slate-100">
+                    <TableCell className="py-0.5 text-slate-500">{p.day}</TableCell>
+                    <TableCell className="py-0.5 text-right tabular-nums text-slate-700">
                       {format(p.value)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

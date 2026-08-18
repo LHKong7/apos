@@ -26,6 +26,14 @@ import { QualityTab } from './QualityTab';
 import { BenefitTab } from './BenefitTab';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const RANGE_KEYS: Record<AnalyticsRange, MessageKey> = {
   '7d': 'analytics.last7d',
@@ -166,28 +174,28 @@ export function AnalyticsPage() {
             {t('nav.backToBoard')}
           </Link>
 
-          <select
-            value={range}
-            onChange={(e) => setParam('range', e.target.value)}
-            className="ml-2 rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label={t('analytics.timeRange')}
-          >
-            {ANALYTICS_RANGES.map((r) => (
-              <option key={r} value={r}>
-                {t(RANGE_KEYS[r])}
-              </option>
-            ))}
-          </select>
+          <Select value={range} onValueChange={(v) => setParam('range', v)}>
+            <SelectTrigger className="ml-2 w-auto" aria-label={t('analytics.timeRange')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ANALYTICS_RANGES.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {t(RANGE_KEYS[r])}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/* ★ 默认开启：绝对值不重要，趋势才重要（页面文档 §5.8） */}
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+          <Label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
             <Checkbox
               tone="neutral"
               checked={compare}
               onCheckedChange={(v) => setParam('compare', String(v))}
             />
             {t('analytics.comparePrevious')}
-          </label>
+          </Label>
 
           {data && (
             <span className="ml-auto text-[11px] text-slate-400">
@@ -199,17 +207,16 @@ export function AnalyticsPage() {
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
           {ANALYTICS_TABS.map((key) => (
-            <button
+            <Button variant="ghost"
               key={key}
-              type="button"
               onClick={() => setParam('tab', key)}
-              className={clsx(
+              className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                 'rounded px-2 py-0.5 text-xs',
                 tab === key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
               {tabLabel(key, t)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -280,13 +287,12 @@ export function AnalyticsPage() {
         <aside className="fixed inset-y-0 right-0 z-40 flex w-[28rem] max-w-full flex-col border-l border-slate-200 bg-white shadow-xl">
           <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             <h2 className="text-sm font-medium text-slate-800">{t(DRILL_KEYS[drill])}</h2>
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setDrill(null)}
-              className="text-xs text-slate-500 hover:text-slate-800"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-800"
             >
               {t('common.close')}
-            </button>
+            </Button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {drillItems.isPending && <CardSkeleton />}
@@ -315,9 +321,9 @@ export function AnalyticsPage() {
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
           {toast}
-          <button type="button" className="ml-2 underline" onClick={() => setToast(null)}>
+          <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setToast(null)}>
             {t('common.gotIt')}
-          </button>
+          </Button>
         </div>
       )}
 

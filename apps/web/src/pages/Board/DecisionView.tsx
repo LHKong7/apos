@@ -61,13 +61,12 @@ export function DecisionView({
           >
             <span aria-hidden>{typeIcon(card.type)}</span>
             <div className="min-w-0 flex-1">
-              <button
-                type="button"
+              <Button variant="ghost"
                 onClick={() => actions.onOpen(card)}
-                className="block truncate text-left text-sm font-medium text-slate-900 hover:underline"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start block truncate text-left text-sm font-medium text-slate-900 hover:underline"
               >
                 {card.title}
-              </button>
+              </Button>
               <div className="mt-0.5 flex flex-wrap items-center gap-2">
                 <HumanGateBadge
                   gate={card.humanGate!}

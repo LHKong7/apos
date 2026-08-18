@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Field, Notice } from './primitives';
 import { DeliveryTargetPicker } from './StorageTargets';
+import { Label } from '@/components/ui/label';
 
 /**
  * 代码仓库登记 —— 工作区来源的一种。
@@ -383,7 +384,7 @@ export function RepositoryForm({
         <h2 className="text-sm font-semibold text-slate-900">
           {isEdit ? t('agentCfg.repo.editing', { name: existing!.name }) : t('agentCfg.repo.formTitle')}
         </h2>
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.ref')}</span>
           <Input
             value={form.ref}
@@ -394,17 +395,17 @@ export function RepositoryForm({
           <p className="mt-1 text-[11px] text-slate-500">
             {t('agentCfg.repo.refHint')}
           </p>
-        </label>
+        </Label>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.displayName')}</span>
           <Input
             value={form.name}
             onChange={(e) => set('name', e.target.value)}
             className="mt-1" />
-        </label>
+        </Label>
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.gitUrl')}</span>
           <Input
             value={form.remoteUrl}
@@ -415,27 +416,27 @@ export function RepositoryForm({
           <p className="mt-1 text-[11px] text-slate-500">
             {t('agentCfg.repo.authSwitchHint')}
           </p>
-        </label>
+        </Label>
 
         <div className="grid grid-cols-2 gap-2">
-          <label className="block">
+          <Label className="block">
             <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.defaultBranch')}</span>
             <Input
               value={form.defaultBranch}
               onChange={(e) => set('defaultBranch', e.target.value)}
               className="mt-1" />
-          </label>
-          <label className="block">
+          </Label>
+          <Label className="block">
             <span className="text-xs font-medium text-slate-700">{t('agentCfg.repo.branchPrefix')}</span>
             <Input
               value={form.branchPrefix}
               onChange={(e) => set('branchPrefix', e.target.value)}
               className="mt-1" />
-          </label>
+          </Label>
         </div>
 
         {!isSsh && (
-          <label className="block">
+          <Label className="block">
             <span className="text-xs font-medium text-slate-700">
               {t('agentCfg.repo.authUsernamePlaceholder')}
               <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
@@ -454,11 +455,11 @@ export function RepositoryForm({
               {t('agentCfg.repo.authUsernameHint')}
               <span className="text-amber-700">{t('agentCfg.repo.gitlabNote')}</span>
             </p>
-          </label>
+          </Label>
         )}
 
         {isSsh && (
-          <label className="block">
+          <Label className="block">
             <span className="text-xs font-medium text-slate-700">
               {t('agentCfg.repo.hostPublicKey')}
               <span className="ml-1 font-normal text-slate-400">{t('agentCfg.repo.knownHostsHint')}</span>
@@ -481,10 +482,10 @@ export function RepositoryForm({
               {t('agentCfg.repo.strictAfterFirst')}
               <span className="text-amber-700">{t('agentCfg.repo.publicInfo')}</span>
             </p>
-          </label>
+          </Label>
         )}
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             {t('agentCfg.repo.checkCommand')}
             <span className="ml-1 font-normal text-slate-400">{t('login.field.optional')}</span>
@@ -500,7 +501,7 @@ export function RepositoryForm({
           <p className="mt-1 text-[11px] text-slate-500">
             {t('agentCfg.repo.checkHint')}
           </p>
-        </label>
+        </Label>
 
         <DeliveryTargetPicker
           value={deliveryTargetId}
@@ -509,7 +510,7 @@ export function RepositoryForm({
           defaultLabel={t('agentCfg.repo.defaultDelivery')}
         />
 
-        <label className="block">
+        <Label className="block">
           <span className="text-xs font-medium text-slate-700">
             {isSsh ? t('agentCfg.repo.sshKey') : t('agentCfg.repo.accessToken')}
           </span>
@@ -549,12 +550,12 @@ export function RepositoryForm({
               t('agentCfg.repo.credentialRequired')
             )}
           </p>
-        </label>
+        </Label>
 
-        <label className="flex items-center gap-2 text-xs text-slate-700">
+        <Label className="flex items-center gap-2 text-xs text-slate-700">
           <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
           {t('agentCfg.orgWide')}
-        </label>
+        </Label>
       </div>
     </Modal>
   );

@@ -15,6 +15,7 @@ import type { PlanDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 /**
  * 项目计划确认（页面文档 04）。
@@ -128,9 +129,9 @@ export function PlanPage() {
           {error && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
-              <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
+              <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setError(null)}>
                 {t('common.gotIt')}
-              </button>
+              </Button>
             </p>
           )}
 
@@ -320,13 +321,12 @@ export function PlanPage() {
           </ul>
           <p className="mt-1.5 text-[11px] text-amber-800">{t('plan.unassignedWhy')}</p>
           <div className="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setUnassigned(null)}
-              className="text-xs text-slate-500"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500"
             >
               {t('plan.unassignedGoAssign')}
-            </button>
+            </Button>
             <Button
               variant="neutral"
               size="sm"
@@ -374,13 +374,12 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
         <h2 className="text-xs font-medium text-amber-900">
           {t('plan.autoAfterApproval')}
         </h2>
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={() => setExpanded((v) => !v)}
-          className="ml-auto text-[11px] text-amber-800 underline"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-auto text-[11px] text-amber-800 underline"
         >
           {expanded ? t('plan.collapse') : t('plan.viewEach')}
-        </button>
+        </Button>
       </div>
 
       <ul className="mt-1 space-y-0.5">
@@ -522,7 +521,7 @@ function ApproveDialog({
         </div>
 
         {needsAck && (
-          <label className="mt-2 flex cursor-pointer items-start gap-1.5 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
+          <Label className="mt-2 flex cursor-pointer items-start gap-1.5 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
             <Checkbox
               tone="destructive"
               checked={acknowledged}
@@ -530,13 +529,13 @@ function ApproveDialog({
               className="mt-0.5"
             />
             {t('plan.acknowledgeOverBudget')}
-          </label>
+          </Label>
         )}
 
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+          <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
             {t('common.back')}
-          </button>
+          </Button>
           <Button variant="neutral" size="sm"
             onClick={onConfirm}
             disabled={pending || (needsAck && !acknowledged)}>
@@ -573,9 +572,9 @@ function ReviseDialog({
         className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(feedback.trim())}
           disabled={!feedback.trim() || pending}>

@@ -304,15 +304,14 @@ function KindPicker({
     <Modal title={t('ws.pickKind')} onClose={onClose}>
       <div className="space-y-2">
         {(Object.keys(KIND_KEYS) as SourceKind[]).map((kind) => (
-          <button
+          <Button variant="ghost"
             key={kind}
-            type="button"
             onClick={() => onPick(kind)}
-            className="w-full rounded-lg border border-slate-200 p-3 text-left hover:border-slate-400 hover:bg-slate-50"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start w-full rounded-lg border border-slate-200 p-3 text-left hover:border-slate-400 hover:bg-slate-50"
           >
             <div className="text-sm font-medium text-slate-900">{t(KIND_KEYS[kind].label)}</div>
             <div className="mt-0.5 text-[11px] text-slate-500">{t(KIND_KEYS[kind].hint)}</div>
-          </button>
+          </Button>
         ))}
       </div>
     </Modal>

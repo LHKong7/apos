@@ -2,6 +2,18 @@ import { useT } from '../../lib/i18n';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+  SELECT_EMPTY,
+  toSelectValue,
+  fromSelectValue,
+} from '@/components/ui/select';
 
 /**
  * 计划页上的逐任务执行者预分配。
@@ -56,11 +68,11 @@ export function TaskAssignee({
         : '';
 
   return (
-    <select
-      value={current}
+    <Select
+      value={toSelectValue(current)}
       disabled={disabled || save.isPending}
-      onChange={(e) => {
-        const [kind, id] = e.target.value.split(':');
+      onValueChange={(v) => {
+        const [kind, id] = fromSelectValue(v).split(':');
         save.mutate(
           kind === 'agent'
             ? { agentId: id, userId: null }
@@ -69,34 +81,41 @@ export function TaskAssignee({
               : { agentId: null, userId: null },
         );
       }}
-      className="w-40 shrink-0 rounded border border-slate-300 px-1 py-0.5 text-[11px]"
-      aria-label={t('plan.assignTask')}
-      title={save.error instanceof ApiError ? save.error.message : undefined}
     >
-      <option value="">{t('executor.autoAssign')}</option>
-      {d.agents.eligible.map((a) => (
-        <option key={a.agentId} value={`agent:${a.agentId}`}>
-          🤖 {a.name}
-        </option>
-      ))}
-      {d.humans.map((h) => (
-        <option key={h.userId} value={`human:${h.userId}`}>
-          👤 {h.name}
-        </option>
-      ))}
-      {/*
-        ★ 不可选的也列出来（禁用），与抽屉里同一条理由：删掉的话
-          「我明明配了那个 Agent」无从解释。
-      */}
-      {d.agents.ineligible.length > 0 && (
-        <optgroup label={t('executor.unavailable')}>
-          {d.agents.ineligible.map((a) => (
-            <option key={a.agentId} value={`agent:${a.agentId}`} disabled>
-              {a.name} —— {a.reason}
-            </option>
-          ))}
-        </optgroup>
-      )}
-    </select>
+      <SelectTrigger
+        className="h-6 w-40 shrink-0 px-1.5 text-[11px]"
+        aria-label={t('plan.assignTask')}
+        title={save.error instanceof ApiError ? save.error.message : undefined}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={SELECT_EMPTY}>{t('executor.autoAssign')}</SelectItem>
+        {d.agents.eligible.map((a) => (
+          <SelectItem key={a.agentId} value={`agent:${a.agentId}`}>
+            🤖 {a.name}
+          </SelectItem>
+        ))}
+        {d.humans.map((h) => (
+          <SelectItem key={h.userId} value={`human:${h.userId}`}>
+            👤 {h.name}
+          </SelectItem>
+        ))}
+        {/*
+          ★ 不可选的也列出来（禁用），与抽屉里同一条理由：删掉的话
+            「我明明配了那个 Agent」无从解释。
+        */}
+        {d.agents.ineligible.length > 0 && (
+          <SelectGroup>
+            <SelectLabel>{t('executor.unavailable')}</SelectLabel>
+            {d.agents.ineligible.map((a) => (
+              <SelectItem key={a.agentId} value={`agent:${a.agentId}`} disabled>
+                {a.name} —— {a.reason}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        )}
+      </SelectContent>
+    </Select>
   );
 }

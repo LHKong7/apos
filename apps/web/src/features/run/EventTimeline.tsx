@@ -5,6 +5,7 @@ import { eventIcon, groupEvents, isNoise, type TimelineEntry } from './group-eve
 import { useFollowTail } from './useFollowTail';
 import { tokens } from '../../lib/format';
 import type { RunEventRow } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   events: RunEventRow[];
@@ -37,13 +38,12 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {failureIndex > -1 && onJumpToFailure && (
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={onJumpToFailure}
-          className="mb-1 self-start text-[11px] text-red-700 underline"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mb-1 self-start text-[11px] text-red-700 underline"
         >
           {t('timeline.jumpToFailure')}
-        </button>
+        </Button>
       )}
 
       <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -74,13 +74,12 @@ export function EventTimeline({ events, detailed, live, onJumpToFailure }: Props
 
       {/* ★ 不自动滚动去追新事件，改为提示（页面文档 09 §5.3） */}
       {unseen > 0 && (
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={scrollToBottom}
-          className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-fade-in-up rounded-full border border-brand/40 px-3 py-1 text-[11px] font-medium text-brand shadow-lg glass-strong hover:border-brand"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent absolute bottom-2 left-1/2 -translate-x-1/2 animate-fade-in-up rounded-full border border-brand/40 px-3 py-1 text-[11px] font-medium text-brand shadow-lg glass-strong hover:border-brand"
         >
           {t('timeline.newEvents', { count: unseen })}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -134,13 +133,12 @@ function Entry({
             </span>
           )}
           {expandable && (
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setOpen((v) => !v)}
-              className="shrink-0 text-[10px] text-slate-400 hover:text-slate-600"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent shrink-0 text-[10px] text-slate-400 hover:text-slate-600"
             >
               {open ? t('timeline.collapse') : t('timeline.expand')}
-            </button>
+            </Button>
           )}
         </div>
 

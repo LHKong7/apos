@@ -17,6 +17,14 @@ import { ScenarioTester } from './ScenarioTester';
 import { HitsPanel } from './HitsPanel';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const AUTONOMY: { value: AutonomyLevel; label: string; descKey: MessageKey }[] = [
   { value: 'human_led', label: 'Human-led', descKey: 'policy.autonomy.assisted' },
@@ -128,46 +136,58 @@ export function PoliciesPage() {
           <RoleBadge projectId={projectId} />
 
           {/* ★ 自治等级是 Policy 的总开关，放在最显眼处 */}
-          <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600">
-            {t('policy.autonomyLevel')}
-            <select
+          {/*
+            ★ 从「label 包着 select」改成 htmlFor 关联：Radix 的触发器是
+              <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent">，包起来点标签文字打不开下拉。
+          */}
+          <div className="ml-auto flex items-center gap-1.5 text-xs text-slate-600">
+            <Label htmlFor="autonomy-level" className="font-normal text-slate-600">
+              {t('policy.autonomyLevel')}
+            </Label>
+            <Select
               value={data?.project.autonomyLevel ?? 'agent_led_approval'}
-              onChange={(e) => setAutonomyTarget(e.target.value as AutonomyLevel)}
+              onValueChange={(v) => setAutonomyTarget(v as AutonomyLevel)}
               // ★ 改自治等级是 pm / tech_lead 的事（§2.3）。
               //   禁用的同时把原因挂上去 —— 一个灰着又不说话的下拉框
               //   会让人以为页面卡住了。
               disabled={!perms.can('project.autonomy.change')}
-              title={perms.why('project.autonomy.change')}
-              className="rounded border border-slate-300 px-1.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label={t('policy.autonomyLevel')}
             >
-              {AUTONOMY.map((a) => (
-                <option key={a.value} value={a.value}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <SelectTrigger
+                id="autonomy-level"
+                className="w-auto disabled:cursor-not-allowed disabled:opacity-50"
+                title={perms.why('project.autonomy.change')}
+                aria-label={t('policy.autonomyLevel')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AUTONOMY.map((a) => (
+                  <SelectItem key={a.value} value={a.value}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="mt-1.5 flex items-center gap-1">
           {/* ★ 参数别叫 t —— 会遮住 i18n 的 t，而报错只说「不可调用」 */}
           {TABS.map((item) => (
-            <button
+            <Button variant="ghost"
               key={item.key}
-              type="button"
               onClick={() => {
                 const next = new URLSearchParams(params);
                 next.set('tab', item.key);
                 setParams(next, { replace: true });
               }}
-              className={clsx(
+              className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                 'rounded px-2 py-0.5 text-xs',
                 tab === item.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
               {t(item.labelKey)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -199,13 +219,12 @@ export function PoliciesPage() {
                     <span className="font-medium">{data.summary.depends.length}</span> {t('policy.summaryDepends')}
                   </>
                 )}
-                <button
-                  type="button"
+                <Button variant="ghost"
                   onClick={() => setExpandSummary((v) => !v)}
-                  className="ml-2 text-[11px] text-slate-500 underline hover:text-slate-800"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 text-[11px] text-slate-500 underline hover:text-slate-800"
                 >
                   {expandSummary ? t('policy.collapse') : t('policy.showFullList')}
-                </button>
+                </Button>
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 {t('policy.ruleCounts', {
@@ -256,13 +275,12 @@ export function PoliciesPage() {
                             <p className="text-[11px] text-slate-400">{t('policy.counterExample', { example: issue.example })}</p>
                           )}
                           {issue.policyIds.length > 0 && (
-                            <button
-                              type="button"
+                            <Button variant="ghost"
                               onClick={() => setHighlight(new Set(issue.policyIds))}
-                              className="text-[11px] text-slate-500 underline hover:text-slate-800"
+                              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
                             >
                               {t('policy.locateRule')}
-                            </button>
+                            </Button>
                           )}
                         </div>
                       </li>
@@ -400,9 +418,9 @@ export function PoliciesPage() {
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 max-w-lg -translate-x-1/2 rounded bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
           {toast}
-          <button type="button" className="ml-2 underline" onClick={() => setToast(null)}>
+          <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setToast(null)}>
             {t('common.gotIt')}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -464,7 +482,7 @@ function ToggleDialog({
           : t('policy.enableHint')}
       </p>
 
-      <label className="mt-3 block text-xs text-slate-600">
+      <Label className="mt-3 block text-xs text-slate-600">
         {t('policy.reason')}
         <Textarea
           value={reason}
@@ -473,14 +491,14 @@ function ToggleDialog({
           className="mt-0.5"
           placeholder={policy.enabled ? t('policy.disableReasonPlaceholder') : ''}
         />
-      </label>
+      </Label>
 
       {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
 
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onClose} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onClose} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="neutral" size="sm"
           onClick={() => mut.mutate()}
           disabled={!reason.trim() || mut.isPending}>
@@ -572,9 +590,9 @@ function AutonomyDialog({
         )}
 
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="text-xs text-slate-500">
+          <Button variant="ghost" onClick={onClose} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
             {t('common.cancel')}
-          </button>
+          </Button>
           <Button variant="neutral" size="sm"
             onClick={() => apply.mutate()}
             disabled={apply.isPending}>
@@ -626,9 +644,9 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
         </ul>
 
         <div className="mt-3 flex justify-end">
-          <button type="button" onClick={onClose} className="text-xs text-slate-500">
+          <Button variant="ghost" onClick={onClose} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
             {t('common.close')}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

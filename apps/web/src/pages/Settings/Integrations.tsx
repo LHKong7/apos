@@ -17,6 +17,7 @@ import type { IntegrationRow, IntegrationsResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const CATEGORY_ICONS: Record<string, string> = {
   code: '💻',
@@ -438,9 +439,9 @@ function DisconnectDialog({
           onClick={() => cut.mutate()}>
           {cut.isPending ? t('integ.disconnecting') : t('integ.confirmDisconnect')}
         </Button>
-        <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700">
+        <Button variant="ghost" onClick={onClose} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-700">
           {t('common.cancel')}
-        </button>
+        </Button>
       </div>
     </Modal>
   );
@@ -484,18 +485,17 @@ function AddRow({
   return (
     <div className="flex flex-wrap gap-1.5">
       {options.map((o) => (
-        <button
+        <Button variant="ghost"
           key={o.provider}
-          type="button"
           onClick={() => {
             setOpen(o.provider);
             setDisplayName('');
           }}
-          className="rounded border border-dashed border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:border-slate-400"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded border border-dashed border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:border-slate-400"
         >
           + {o.label}
           {!o.transportReady && <span className="ml-1 text-slate-400">{t('integ.noTransport')}</span>}
-        </button>
+        </Button>
       ))}
 
       {open && (
@@ -505,16 +505,16 @@ function AddRow({
               provider: options.find((o) => o.provider === open)?.label ?? '',
             })}
           </h2>
-          <label className="block">
+          <Label className="block">
             <span className="mb-0.5 block text-[11px] text-slate-500">{t('integ.target')}</span>
             <Input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="order-service" />
-          </label>
+          </Label>
 
-          <label className="mt-1.5 block">
+          <Label className="mt-1.5 block">
             <span className="mb-0.5 block text-[11px] text-slate-500">
               {t('integ.credentialOptional')}
             </span>
@@ -526,9 +526,9 @@ function AddRow({
             <span className="mt-0.5 block text-[11px] text-slate-400">
               {t('integ.credentialStorage')}
             </span>
-          </label>
+          </Label>
 
-          <label className="mt-1.5 flex items-start gap-1.5 text-[11px] text-slate-600">
+          <Label className="mt-1.5 flex items-start gap-1.5 text-[11px] text-slate-600">
             <Checkbox checked={grantWrite} onCheckedChange={setGrantWrite} className="mt-0.5" />
             <span>
               {t('integ.grantWrite')}
@@ -536,7 +536,7 @@ function AddRow({
                 {t('integ.grantWriteHint')}
               </span>
             </span>
-          </label>
+          </Label>
 
           {connect.error && (
             <p className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
@@ -550,13 +550,12 @@ function AddRow({
               onClick={() => connect.mutate()}>
               {connect.isPending ? t('integ.testing') : t('integ.testAndSave')}
             </Button>
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setOpen(null)}
-              className="text-xs text-slate-500 hover:text-slate-700"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-700"
             >
               {t('common.cancel')}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

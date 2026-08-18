@@ -7,6 +7,20 @@ import { qk } from '../../lib/query/keys';
 import { AssigneeChip } from '../../components/AssigneeChip';
 import { GatedButton } from '../../components/Gated';
 import type { ExecutorCandidates } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  SELECT_EMPTY,
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+  fromSelectValue,
+  toSelectValue,
+} from '@/components/ui/select';
 
 /**
  * 卡片执行者选择器。
@@ -149,35 +163,39 @@ export function ExecutorPicker({
           {d.agents.eligible.length === 0 && d.agents.ineligible.length === 0 ? (
             <span className="text-[11px] text-slate-400">{t('executor.noAgents')}</span>
           ) : (
-            <select
-              value={current.executorType === 'agent' ? (current.executorId ?? '') : ''}
+            <Select
+              value={toSelectValue(current.executorType === 'agent' ? current.executorId : '')}
               disabled={busy}
-              onChange={(e) =>
-                setAssignee.mutate({ agentId: e.target.value || null, userId: null })
+              onValueChange={(v) =>
+                setAssignee.mutate({ agentId: fromSelectValue(v) || null, userId: null })
               }
-              className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
-              aria-label={t('executor.agents')}
             >
-              <option value="">{t('executor.autoAssign')}</option>
-              {d.agents.eligible.map((a) => (
-                <option key={a.agentId} value={a.agentId}>
-                  {a.name} · {a.runtimeKind ?? '—'}
-                </option>
-              ))}
-              {/*
-                ★ 不可选的进 disabled 分组而不是被删掉 —— 用户要看见它在那儿、
-                  以及为什么选不了。删掉的话「我明明配了那个 Agent」无从解释。
-              */}
-              {d.agents.ineligible.length > 0 && (
-                <optgroup label={t('executor.unavailable')}>
-                  {d.agents.ineligible.map((a) => (
-                    <option key={a.agentId} value={a.agentId} disabled>
-                      {a.name} —— {a.reason}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
+              <SelectTrigger className="w-full" aria-label={t('executor.agents')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SELECT_EMPTY}>{t('executor.autoAssign')}</SelectItem>
+                {d.agents.eligible.map((a) => (
+                  <SelectItem key={a.agentId} value={a.agentId}>
+                    {a.name} · {a.runtimeKind ?? '—'}
+                  </SelectItem>
+                ))}
+                {/*
+                  ★ 不可选的进 disabled 分组而不是被删掉 —— 用户要看见它在那儿、
+                    以及为什么选不了。删掉的话「我明明配了那个 Agent」无从解释。
+                */}
+                {d.agents.ineligible.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>{t('executor.unavailable')}</SelectLabel>
+                    {d.agents.ineligible.map((a) => (
+                      <SelectItem key={a.agentId} value={a.agentId} disabled>
+                        {a.name} —— {a.reason}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
           )}
         </Row>
 
@@ -204,20 +222,25 @@ export function ExecutorPicker({
         )}
 
         <Row label={t('executor.humans')}>
-          <select
-            value={current.executorType === 'human' ? (current.executorId ?? '') : ''}
+          <Select
+            value={toSelectValue(current.executorType === 'human' ? current.executorId : '')}
             disabled={busy}
-            onChange={(e) => setAssignee.mutate({ userId: e.target.value || null, agentId: null })}
-            className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
-            aria-label={t('executor.humans')}
+            onValueChange={(v) =>
+              setAssignee.mutate({ userId: fromSelectValue(v) || null, agentId: null })
+            }
           >
-            <option value="">{t('executor.noHuman')}</option>
-            {d.humans.map((h) => (
-              <option key={h.userId} value={h.userId}>
-                {h.name} · {h.role}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-full" aria-label={t('executor.humans')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SELECT_EMPTY}>{t('executor.noHuman')}</SelectItem>
+              {d.humans.map((h) => (
+                <SelectItem key={h.userId} value={h.userId}>
+                  {h.name} · {h.role}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Row>
       </div>
 
@@ -229,23 +252,23 @@ export function ExecutorPicker({
           <p className="mt-0.5 text-[11px] text-amber-800">{t('executor.takeoverWhy')}</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {(['terminate', 'wait', 'handover'] as const).map((mode) => (
-              <button
+              <Button
                 key={mode}
-                type="button"
+                variant="outline"
                 disabled={setAssignee.isPending}
                 onClick={() => setAssignee.mutate({ ...pendingTakeover.body, takeover: mode })}
-                className="rounded border border-amber-400 bg-white px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+                className="h-auto border-amber-400 bg-white px-2 py-0.5 text-[11px] font-normal text-amber-900 shadow-none hover:bg-amber-100 hover:text-amber-900 disabled:opacity-40"
               >
                 {t(`executor.takeover.${mode}` as const)}
-              </button>
+              </Button>
             ))}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => setPendingTakeover(null)}
-              className="px-1 text-[11px] text-slate-500"
+              className="h-auto px-1 py-0 text-[11px] font-normal text-slate-500 hover:bg-transparent"
             >
               {t('common.cancel')}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -262,10 +285,10 @@ export function ExecutorPicker({
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <Label className="block font-normal">
       <span className="text-[11px] text-slate-500">{label}</span>
       <div className="mt-0.5">{children}</div>
-    </label>
+    </Label>
   );
 }
 

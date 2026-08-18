@@ -207,13 +207,12 @@ export function DecisionCardView({
             </p>
           ) : mode === null ? (
             <div className="mt-1.5 flex gap-1.5">
-              <button
-                type="button"
+              <Button variant="ghost"
                 onClick={() => setMode('approve')}
-                className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700"
               >
                 {t('decDrawer.approve')}
-              </button>
+              </Button>
               <Button variant="outline" size="sm"
                 onClick={() => setMode('reject')}>
                 {t('decDrawer.reject')}
@@ -227,21 +226,19 @@ export function DecisionCardView({
                 onChange={(e) => setNote(e.target.value)}
                 placeholder={t('decision.noteOptional')} />
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button variant="ghost"
                   disabled={approve.isPending}
                   onClick={() => approve.mutate()}
-                  className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700 disabled:opacity-40"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-700 disabled:opacity-40"
                 >
                   {approve.isPending ? t('decision.submitting') : t('decision.confirmApprove')}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button variant="ghost"
                   onClick={() => setMode(null)}
-                  className="text-xs text-slate-500 hover:text-slate-700"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-700"
                 >
                   {t('common.cancel')}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -259,13 +256,12 @@ export function DecisionCardView({
                   onClick={() => reject.mutate()}>
                   {reject.isPending ? t('decision.submitting') : t('decision.confirmReject')}
                 </Button>
-                <button
-                  type="button"
+                <Button variant="ghost"
                   onClick={() => setMode(null)}
-                  className="text-xs text-slate-500 hover:text-slate-700"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-700"
                 >
                   {t('common.cancel')}
-                </button>
+                </Button>
               </div>
             </div>
           )}

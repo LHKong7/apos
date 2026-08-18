@@ -5,6 +5,16 @@ import { qk } from '../../lib/query/keys';
 import { useT } from '../../lib/i18n';
 import { usePermissions } from '../../lib/permissions/usePermissions';
 import type { RequirementDetail } from '../../lib/api/types';
+import {
+  SELECT_EMPTY,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  fromSelectValue,
+  toSelectValue,
+} from '@/components/ui/select';
 
 /**
  * 「这条需求的 PRD 由谁写」——需求级的编写 Agent 指定（页面文档 03 §5.4）。
@@ -127,30 +137,36 @@ export function AuthorAgent({
         <span className="text-[11px] font-medium text-slate-600">
           {t('requirement.author.label')}
         </span>
-        <select
-          value={(pending ? pending.id : selectedId) ?? ''}
+        <Select
+          value={toSelectValue(pending ? pending.id : selectedId)}
           disabled={readOnly || denied || save.isPending || agents.isPending}
-          title={denied ? perms.why('requirement.edit') : undefined}
-          onChange={(e) => save.mutate(e.target.value || null)}
-          aria-label={t('requirement.author.label')}
-          className="w-64 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs disabled:opacity-60"
+          onValueChange={(v) => save.mutate(fromSelectValue(v) || null)}
         >
-          {/* ★ 「未指定」是显式的一档，不是空白：它表示回到按项目绑定挑 */}
-          <option value="">{t('requirement.author.auto')}</option>
-          {candidates.map((a) => (
-            <option key={a.agentId} value={a.agentId}>
-              {a.name} · {a.runtimeKind}
-              {a.status === 'active' ? '' : ` · ${a.status}`}
-            </option>
-          ))}
-          {/*
-            ★ 已选但不在候选里的那个也要有一项，否则 select 会落回「未指定」，
-              界面上看起来像是从没选过 —— 而库里还指着它。
-            ★ 用 known 而不是 orphaned：候选还在加载时也得有这一项，
-              否则下拉框会先显示成「未指定」再跳回来。
-          */}
-          {selectedId && !known && <option value={selectedId}>{selectedName}</option>}
-        </select>
+          <SelectTrigger
+            className="w-64 bg-white text-xs disabled:opacity-60"
+            title={denied ? perms.why('requirement.edit') : undefined}
+            aria-label={t('requirement.author.label')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {/* ★ 「未指定」是显式的一档，不是空白：它表示回到按项目绑定挑 */}
+            <SelectItem value={SELECT_EMPTY}>{t('requirement.author.auto')}</SelectItem>
+            {candidates.map((a) => (
+              <SelectItem key={a.agentId} value={a.agentId}>
+                {a.name} · {a.runtimeKind}
+                {a.status === 'active' ? '' : ` · ${a.status}`}
+              </SelectItem>
+            ))}
+            {/*
+              ★ 已选但不在候选里的那个也要有一项，否则 select 会落回「未指定」，
+                界面上看起来像是从没选过 —— 而库里还指着它。
+              ★ 用 known 而不是 orphaned：候选还在加载时也得有这一项，
+                否则下拉框会先显示成「未指定」再跳回来。
+            */}
+            {selectedId && !known && <SelectItem value={selectedId}>{selectedName}</SelectItem>}
+          </SelectContent>
+        </Select>
         {save.isPending && (
           <span className="text-[11px] text-slate-400">{t('requirement.author.saving')}</span>
         )}

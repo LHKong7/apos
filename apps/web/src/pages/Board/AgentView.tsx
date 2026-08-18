@@ -9,6 +9,7 @@ import { qk } from '../../lib/query/keys';
 import { statusLabel, tokens } from '../../lib/format';
 import type { AgentSummary, BoardColumn } from '../../lib/api/types';
 import type { CardActions } from '../../features/work-item/BoardCard';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   projectId: string;
@@ -69,10 +70,9 @@ export function AgentView({ projectId, columns, actions }: Props) {
           <ul className="divide-y divide-slate-200/60">
             {lane.cards.map((card) => (
               <li key={card.id}>
-                <button
-                  type="button"
+                <Button variant="ghost"
                   onClick={() => actions.onOpen(card)}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-xs transition-colors hover:bg-slate-100/60"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start flex w-full items-center gap-3 px-3 py-2.5 text-left text-xs transition-colors hover:bg-slate-100/60"
                 >
                   <span className="min-w-0 flex-1 truncate text-slate-700">{card.title}</span>
                   {card.humanGate && (
@@ -81,7 +81,7 @@ export function AgentView({ projectId, columns, actions }: Props) {
                       dueInMinutes={card.decisionDueInMinutes}
                     />
                   )}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -156,10 +156,9 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
                 : null;
             return (
               <li key={item.id}>
-                <button
-                  type="button"
+                <Button variant="ghost"
                   onClick={() => actions.onOpen({ id: item.id } as never)}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-xs transition-colors hover:bg-slate-100/60"
+                  className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start flex w-full items-center gap-3 px-3 py-2.5 text-left text-xs transition-colors hover:bg-slate-100/60"
                 >
                   <span className="min-w-0 flex-1 truncate text-slate-700">{item.title}</span>
                   {pct !== null && (
@@ -183,7 +182,7 @@ function AgentLane({ agent, actions }: { agent: AgentSummary; actions: CardActio
                       ? t('agentView.failedTimes', { count: item.consecutiveFailures })
                       : statusLabel(item.status)}
                   </span>
-                </button>
+                </Button>
               </li>
             );
           })}

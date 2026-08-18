@@ -8,6 +8,14 @@ import type { CardActions } from '../../features/work-item/BoardCard';
 import type { BoardCard, BoardColumn } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 type SortKey = 'title' | 'status' | 'risk' | 'cost' | 'updatedAt';
 
@@ -63,13 +71,12 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
           {retriable.length > 0 && (
             <span className="text-slate-500">{t('list.estimatedSpend', { amount: tokens(estimatedRetryCost) })}</span>
           )}
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-auto text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
           >
             {t('list.clearSelection')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -78,10 +85,10 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
           此前每一行都贴着上下两行，扫到第五行就串行了 —— 而这个视图存在的
           理由恰恰是「一次看很多行、挑出要批量处理的那几行」。
       */}
-      <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_0_rgb(var(--c-slate-200))]">
-          <tr>
-            <th className="w-9 px-3 py-2">
+      <Table className="w-full border-collapse text-xs">
+        <TableHeader className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_0_rgb(var(--c-slate-200))]">
+          <TableRow>
+            <TableHead className="w-9 px-3 py-2">
               <Checkbox
                 aria-label={t('list.selectAll')}
                 checked={selected.size > 0 && selected.size === rows.length}
@@ -89,18 +96,18 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                   setSelected(v ? new Set(rows.map((r) => r.id)) : new Set())
                 }
               />
-            </th>
+            </TableHead>
             <SortHeader label={t('list.col.title')} sortKey="title" sort={sort} onSort={setSort} />
             <SortHeader label={t('list.col.status')} sortKey="status" sort={sort} onSort={setSort} />
-            <th className="px-3 py-2 font-medium">{t('list.col.executor')}</th>
+            <TableHead className="px-3 py-2 font-medium">{t('list.col.executor')}</TableHead>
             <SortHeader label={t('list.col.risk')} sortKey="risk" sort={sort} onSort={setSort} />
             <SortHeader label={t('list.col.tokens')} sortKey="cost" sort={sort} onSort={setSort} align="right" />
             <SortHeader label={t('list.col.updated')} sortKey="updatedAt" sort={sort} onSort={setSort} />
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((card) => (
-            <tr
+            <TableRow
               key={card.id}
               onClick={() => actions.onOpen(card)}
               className={clsx(
@@ -108,19 +115,19 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                 selected.has(card.id) && 'bg-brand/5',
               )}
             >
-              <td className="px-3 py-2.5 align-middle" onClick={(e) => e.stopPropagation()}>
+              <TableCell className="px-3 py-2.5 align-middle" onClick={(e) => e.stopPropagation()}>
                 <Checkbox
                   aria-label={t('list.selectOne', { title: card.title })}
                   checked={selected.has(card.id)}
                   onCheckedChange={() => toggle(card.id)}
                 />
-              </td>
+              </TableCell>
               {/*
                 ★ w-full + max-w-0：表格里让某一列「吃掉剩余宽度并省略号截断」
                   只有这一种写法。此前是 max-w-xs 加一个 inline 的 truncate ——
                   truncate 的 overflow 对 inline 元素不生效，长标题照样把整张表撑宽。
               */}
-              <td className="w-full max-w-0 px-3 py-2.5 align-middle">
+              <TableCell className="w-full max-w-0 px-3 py-2.5 align-middle">
                 <div className="flex items-center gap-1.5">
                   <span aria-hidden className="shrink-0">
                     {typeIcon(card.type)}
@@ -129,15 +136,15 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                     {card.title}
                   </span>
                 </div>
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 align-middle">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2.5 align-middle">
                 {card.humanGate && card.humanGateRef ? (
                   <HumanGateBadge gate={card.humanGate} dueInMinutes={card.decisionDueInMinutes} />
                 ) : (
                   <span className="text-slate-600">{statusLabel(card.status)}</span>
                 )}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 align-middle">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2.5 align-middle">
                 {card.executor ? (
                   <AssigneeChip
                     actor={card.executor}
@@ -147,20 +154,20 @@ export function ListView({ columns, actions, onBulkRetry }: Props) {
                 ) : (
                   <span className="text-slate-400">{t('card.unassigned')}</span>
                 )}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-600">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-600">
                 {riskLabel(card.riskLevel)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-right align-middle font-mono tabular-nums text-slate-600">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2.5 text-right align-middle font-mono tabular-nums text-slate-600">
                 {tokens(card.tokens)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-500">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2.5 align-middle text-slate-500">
                 {relativeTime(card.updatedAt)}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -180,16 +187,15 @@ function SortHeader({
 }) {
   const active = sort.key === sortKey;
   return (
-    <th
+    <TableHead
       className={clsx(
         'whitespace-nowrap px-3 py-2 font-medium',
         align === 'right' && 'text-right',
       )}
     >
-      <button
-        type="button"
+      <Button variant="ghost"
         onClick={() => onSort({ key: sortKey, desc: active ? !sort.desc : true })}
-        className={clsx(
+        className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
           'inline-flex items-center gap-0.5 rounded px-0.5 hover:text-slate-900',
           active && 'text-slate-900',
         )}
@@ -199,8 +205,8 @@ function SortHeader({
         <span aria-hidden className={clsx('w-2 text-[10px]', !active && 'opacity-0')}>
           {sort.desc ? '↓' : '↑'}
         </span>
-      </button>
-    </th>
+      </Button>
+    </TableHead>
   );
 }
 

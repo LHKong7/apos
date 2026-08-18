@@ -6,6 +6,8 @@ import { useAuthStore } from '../../stores/auth';
 import { useT, type MessageKey } from '../../lib/i18n';
 import { BrandMark } from '../../components/BrandMark';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 type Mode = 'login' | 'register';
 
@@ -169,12 +171,11 @@ export function LoginPage() {
                   { key: 'register', labelKey: 'login.tab.register' },
                 ] as const
               ).map((tab) => (
-                <button
+                <Button variant="ghost"
                   key={tab.key}
-                  type="button"
                   onClick={() => switchTo(tab.key)}
                   aria-pressed={active === tab.key}
-                  className={clsx(
+                  className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                     'flex-1 rounded-md py-1.5 text-xs transition',
                     active === tab.key
                       ? 'bg-white font-medium text-slate-900 shadow-sm'
@@ -182,7 +183,7 @@ export function LoginPage() {
                   )}
                 >
                   {t(tab.labelKey)}
-                </button>
+                </Button>
               ))}
             </div>
           ) : (
@@ -197,9 +198,9 @@ export function LoginPage() {
 
           {active === 'register' && (
             <>
-              <label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
+              <Label className="mt-4 block text-xs text-slate-600" htmlFor="register-name">
                 {t('login.field.name')}
-              </label>
+              </Label>
               <Input
                 id="register-name"
                 autoComplete="name"
@@ -211,9 +212,9 @@ export function LoginPage() {
             </>
           )}
 
-          <label className="mt-4 block text-xs text-slate-600" htmlFor="login-email">
+          <Label className="mt-4 block text-xs text-slate-600" htmlFor="login-email">
             {t('login.field.email')}
-          </label>
+          </Label>
           <Input
             id="login-email"
             type="email"
@@ -223,9 +224,9 @@ export function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="mt-1.5" />
 
-          <label className="mt-3.5 block text-xs text-slate-600" htmlFor="login-password">
+          <Label className="mt-3.5 block text-xs text-slate-600" htmlFor="login-password">
             {t('login.field.password')}
-          </label>
+          </Label>
           <Input
             id="login-password"
             type="password"
@@ -242,10 +243,10 @@ export function LoginPage() {
 
           {active === 'register' && (
             <>
-              <label className="mt-3.5 block text-xs text-slate-600" htmlFor="register-org">
+              <Label className="mt-3.5 block text-xs text-slate-600" htmlFor="register-org">
                 {t('login.field.orgName')}
                 <span className="ml-1 text-slate-400">{t('login.field.optional')}</span>
-              </label>
+              </Label>
               <Input
                 id="register-org"
                 value={orgName}
@@ -273,10 +274,10 @@ export function LoginPage() {
             </p>
           )}
 
-          <button
+          <Button variant="ghost"
             type="submit"
             disabled={submit.isPending || !canSubmit}
-            className="mt-5 w-full rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-2 text-sm font-medium text-white shadow-sm hover:brightness-110 disabled:opacity-50"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mt-5 w-full rounded-md bg-gradient-to-r from-brand-alt via-brand to-brand-far px-3 py-2 text-sm font-medium text-white shadow-sm hover:brightness-110 disabled:opacity-50"
           >
             {submit.isPending
               ? active === 'login'
@@ -285,7 +286,7 @@ export function LoginPage() {
               : active === 'login'
                 ? t('login.submit.login')
                 : t('login.submit.register')}
-          </button>
+          </Button>
 
           <p className="mt-4 border-t border-slate-200/70 pt-3 text-[11px] leading-relaxed text-slate-500">
             {active === 'login' ? (

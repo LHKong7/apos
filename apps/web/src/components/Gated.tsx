@@ -1,6 +1,7 @@
 import { useT, type MessageKey } from '../lib/i18n';
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
+import { Button } from '@/components/ui/button';
 import { usePermissions } from '../lib/permissions/usePermissions';
 import type { Permission } from '../lib/api/types';
 
@@ -45,17 +46,29 @@ export function GatedButton({
   // 权限优先说 —— 两个原因都在时，「你没资格」比「现在还不能」更根本
   const reason = denied ? perms.why(permission) : disabledReason;
 
+  /**
+   * ★ 变体固定 ghost：调用点传的 className 里已经带着完整配色
+   *   （全站三十多处，各自的语义不同）。挑一个有底色的变体会和它们打架，
+   *   ghost 几乎不加东西，而 cva 把 className 排在最后，
+   *   tailwind-merge 保证调用点仍然赢。这里要的只是 Button 的基础
+   *   行为：type 默认 button、焦点环、disabled 语义。
+   *
+   *   Pinned to the ghost variant because callers already pass their own full
+   *   color classes. A variant with a background would fight them; ghost adds
+   *   almost nothing, and cva orders className last so callers still win.
+   */
   return (
-    <button
+    <Button
+      variant="ghost"
       type={type}
       onClick={onClick}
       disabled={blocked}
       title={blocked ? reason : undefined}
       aria-disabled={blocked}
-      className={clsx(className, blocked && 'cursor-not-allowed opacity-50')}
+      className={clsx('h-auto p-0 font-normal hover:bg-transparent', className, blocked && 'cursor-not-allowed opacity-50')}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

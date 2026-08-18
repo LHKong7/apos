@@ -233,9 +233,9 @@ export function RequirementPage() {
           {error && (
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {error}
-              <button type="button" className="ml-2 underline" onClick={() => setError(null)}>
+              <Button variant="ghost" className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-2 underline" onClick={() => setError(null)}>
                 {t('common.gotIt')}
-              </button>
+              </Button>
             </p>
           )}
 
@@ -272,28 +272,26 @@ export function RequirementPage() {
                 {analyzed && <AnalysisSource model={r.analysisModel} />}
                 {!editing && !readOnly && (
                   <div className="ml-auto flex items-center gap-2">
-                    <button
-                      type="button"
+                    <Button variant="ghost"
                       onClick={() => analyze.mutate()}
                       disabled={analyze.isPending}
-                      className="text-[11px] text-slate-500 underline disabled:opacity-50"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline disabled:opacity-50"
                     >
                       {analyze.isPending
                         ? t('requirement.detail.analyzing')
                         : analyzed
                           ? t('requirement.detail.reanalyze')
                           : t('requirement.detail.analyze')}
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button variant="ghost"
                       onClick={() => {
                         setEditError(null);
                         setEditing(true);
                       }}
-                      className="text-[11px] text-slate-500 underline hover:text-slate-700"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-700"
                     >
                       {structured ? t('requirement.detail.editManually') : t('requirement.detail.fillManually')}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -320,13 +318,12 @@ export function RequirementPage() {
                   {t('requirement.detail.keptFields', {
                     fields: keptFields.map((f) => (FIELD_KEYS[f] ? t(FIELD_KEYS[f]!) : f)).join('、'),
                   })}
-                  <button
-                    type="button"
-                    className="ml-1 underline"
+                  <Button variant="ghost"
+                    className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-1 underline"
                     onClick={() => setKeptFields([])}
                   >
                     {t('common.gotIt')}
-                  </button>
+                  </Button>
                 </p>
               )}
 
@@ -720,9 +717,9 @@ function ConfirmDialog({
       )}
 
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('requirement.approve.backToEdit')}
-        </button>
+        </Button>
         <Button variant="neutral" size="sm"
           onClick={onConfirm}
           disabled={pending}>
@@ -765,9 +762,9 @@ function DeleteDialog({
         {t('requirement.delete.notRejection')}
       </p>
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="destructive" size="sm" onClick={onConfirm} disabled={pending}>
           {pending ? t('common.deleting') : t('requirement.delete.confirm')}
         </Button>
@@ -799,9 +796,9 @@ function RejectDialog({
         className="mt-2"
       />
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="neutral" size="sm"
           onClick={() => onConfirm(reason.trim())}
           disabled={!reason.trim() || pending}>

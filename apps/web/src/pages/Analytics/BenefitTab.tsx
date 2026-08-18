@@ -7,6 +7,7 @@ import { Card } from './Card';
 import type { AnalyticsResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 /**
  * 成本效益（页面文档 12 §12.3）。
@@ -64,7 +65,7 @@ export function BenefitTab({
         subtitle={t('benefit.baselineSubtitle')}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1 text-[11px] text-slate-600">
+          <Label className="flex items-center gap-1 text-[11px] text-slate-600">
             {b.currency}
             <Input
               type="number"
@@ -76,23 +77,22 @@ export function BenefitTab({
               aria-label={t('benefit.hourlyCost')}
               className="w-24" />
             {t('benefit.perHour')}
-          </label>
+          </Label>
           <Button variant="neutral" size="xs"
             disabled={save.isPending}
             onClick={() => save.mutate()}>
             {save.isPending ? t('common.saving') : t('common.save')}
           </Button>
           {draft.trim() !== '' && (
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => {
                 setDraft('');
                 save.mutate();
               }}
-              className="text-[11px] text-slate-500 hover:text-slate-700"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 hover:text-slate-700"
             >
               {t('benefit.clearRate')}
-            </button>
+            </Button>
           )}
         </div>
         {save.error && (

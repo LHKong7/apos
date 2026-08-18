@@ -2,6 +2,7 @@ import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import { GatedButton } from '../../components/Gated';
 import type { Permission, PolicyRow } from '../../lib/api/types';
+import { Button } from '@/components/ui/button';
 
 /**
  * 规则列表（页面文档 13 §5.3）。
@@ -77,16 +78,15 @@ export function RuleList({
             <p className="mt-0.5 text-xs leading-5 text-slate-600">{p.explanation}</p>
 
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-              <button
-                type="button"
+              <Button variant="ghost"
                 onClick={() => onViewHits(p)}
-                className={clsx(
+                className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                   'underline',
                   p.hits30d === 0 ? 'text-slate-400' : 'text-slate-600 hover:text-slate-900',
                 )}
               >
                 {t('ruleList.hits30d', { count: p.hits30d })}
-              </button>
+              </Button>
 
               {p.editable ? (
                 <>

@@ -89,11 +89,10 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
             <nav className="flex gap-1 border-b border-slate-200">
               {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
               {(['overview', 'runs', 'timeline'] as const).map((key) => (
-                <button
+                <Button variant="ghost"
                   key={key}
-                  type="button"
                   onClick={() => setTab(key)}
-                  className={clsx(
+                  className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
                     'px-2 py-1 text-xs',
                     tab === key
                       ? 'border-b-2 border-brand font-medium text-slate-900'
@@ -105,7 +104,7 @@ export function WorkItemDrawer({ workItemId, onClose, onOpenDecision }: Props) {
                     : key === 'runs'
                       ? t('itemDrawer.tab.runs', { count: runs.length })
                       : t('itemDrawer.tab.timeline')}
-                </button>
+                </Button>
               ))}
             </nav>
 

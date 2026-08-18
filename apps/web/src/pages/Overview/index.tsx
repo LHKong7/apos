@@ -237,10 +237,9 @@ export function OverviewPage() {
                 <ul>
                   {d.blocked.map((b) => (
                     <li key={b.id} className="border-b border-slate-100 px-3 py-1.5 last:border-0">
-                      <button
-                        type="button"
+                      <Button variant="ghost"
                         onClick={() => setOpenCard(b.id)}
-                        className="w-full text-left text-xs"
+                        className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start w-full text-left text-xs"
                       >
                         <span className="text-red-700">
                           ⛔ {b.minutes === null ? '—' : duration(b.minutes)}
@@ -254,7 +253,7 @@ export function OverviewPage() {
                             {t('overview.item.owner', { name: b.ownerName })}
                           </span>
                         )}
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -408,10 +407,9 @@ function MetricCard({
   hint?: string;
 }) {
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={onClick}
-      className={clsx(
+      className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start', 
         'lift relative overflow-hidden rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm hover:shadow-md',
         // 指标卡的色调只体现在**顶边那道线**上，不给整块上色 ——
         // 五张卡并排时，五块彩色底会让人先看到颜色，再去找数字
@@ -448,7 +446,7 @@ function MetricCard({
       </p>
       {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
       {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
-    </button>
+    </Button>
   );
 }
 

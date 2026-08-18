@@ -9,6 +9,17 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Field, Labeled, StatusDot } from './primitives';
+import { Label } from '@/components/ui/label';
+import {
+  SELECT_EMPTY,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  fromSelectValue,
+  toSelectValue,
+} from '@/components/ui/select';
 
 /**
  * 存储目标 —— 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
@@ -79,18 +90,24 @@ export function DeliveryTargetPicker({
           : defaultLabel
       }
     >
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+      <Select
+        value={toSelectValue(value)}
+        onValueChange={(v) => onChange(fromSelectValue(v) || null)}
       >
-        <option value="">{t('agentCfg.delivery.default', { label: defaultLabel })}</option>
-        {options.map((target) => (
-          <option key={target.id} value={target.id}>
-            {target.ref} · {t(TARGET_KIND_KEYS[target.kind])}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={SELECT_EMPTY}>
+            {t('agentCfg.delivery.default', { label: defaultLabel })}
+          </SelectItem>
+          {options.map((target) => (
+            <SelectItem key={target.id} value={target.id}>
+              {target.ref} · {t(TARGET_KIND_KEYS[target.kind])}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {options.length === 0 && (
         <p className="mt-1 text-[11px] text-slate-500">{t('agentCfg.noWritableTargets')}</p>
       )}
@@ -409,7 +426,7 @@ export function StorageTargetForm({
                 东西指向「寻址风格」。所以默认打开路径风格，并在这里说清楚
                 什么时候该关掉。
             */}
-            <label className="flex items-start gap-2 text-xs text-slate-700">
+            <Label className="flex items-start gap-2 text-xs text-slate-700">
               <Checkbox
                 checked={form.forcePathStyle}
                 onCheckedChange={(v) => set('forcePathStyle', v)}
@@ -420,7 +437,7 @@ export function StorageTargetForm({
                   {t('storage.pathStyleHint')}
                 </span>
               </span>
-            </label>
+            </Label>
 
             <Labeled
               label={isEdit ? t('storage.rotateCredential') : t('storage.credential')}
@@ -448,7 +465,7 @@ export function StorageTargetForm({
           </Labeled>
         )}
 
-        <label className="flex items-start gap-2 text-xs text-slate-700">
+        <Label className="flex items-start gap-2 text-xs text-slate-700">
           <Checkbox checked={form.writable} onCheckedChange={(v) => set('writable', v)} />
           <span>
             {t('agentCfg.writable')}
@@ -456,7 +473,7 @@ export function StorageTargetForm({
               {t('storage.writableHint')}
             </span>
           </span>
-        </label>
+        </Label>
 
         <DeliveryTargetPicker
           value={deliveryTargetId}
@@ -467,10 +484,10 @@ export function StorageTargetForm({
         />
 
         {!isEdit && (
-          <label className="flex items-center gap-2 text-xs text-slate-700">
+          <Label className="flex items-center gap-2 text-xs text-slate-700">
             <Checkbox checked={form.orgWide} onCheckedChange={(v) => set('orgWide', v)} />
             {t('agentCfg.orgWide')}
-          </label>
+          </Label>
         )}
       </div>
     </Modal>

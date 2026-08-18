@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -290,29 +291,45 @@ describe('交货目标选择器', () => {
       ),
     );
 
-  it('只读的目标不出现在候选里', () => {
+  /**
+   * ★ 这三条都要先点开下拉：Radix 的选项在打开之前不在 DOM 里，
+   *   而它们断言的恰恰是「候选里有什么、没有什么」。
+   *   不点开的话 queryByRole('option') 一律为 null —— 后两条会**假绿**。
+   */
+  it('只读的目标不出现在候选里', async () => {
+    const user = userEvent.setup();
     pick([
       target({ id: 'w', ref: 'writable-one', writable: true }),
       target({ id: 'r', ref: 'readonly-one', writable: false }),
     ]);
 
-    expect(screen.getByRole('option', { name: /writable-one/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByRole('option', { name: /writable-one/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /readonly-one/ })).toBeNull();
   });
 
   /** ★ 停用的目标同理：选上去也不会生效 */
-  it('非 active 的目标不出现在候选里', () => {
+  it('非 active 的目标不出现在候选里', async () => {
+    const user = userEvent.setup();
     pick([target({ id: 'p', ref: 'paused-one', status: 'paused' })]);
 
+    await user.click(screen.getByRole('combobox'));
+
+    // 默认项一定在，说明下拉确实开着 —— 否则下一条断言是假绿
+    expect(await screen.findByRole('option', { name: /写回自己/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /paused-one/ })).toBeNull();
   });
 
   /** ★ 编辑一个存储目标自身时，它不能当自己的交货目标 */
-  it('编辑自身时把自己从候选里去掉', () => {
+  it('编辑自身时把自己从候选里去掉', async () => {
+    const user = userEvent.setup();
     pick([target({ id: 'self', ref: 'me' }), target({ id: 'other', ref: 'other-one' })], 'self');
 
-    expect(screen.getByRole('option', { name: /other-one/ })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /me/ })).toBeNull();
+    await user.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByRole('option', { name: /other-one/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /^me/ })).toBeNull();
   });
 
   /** ★ 一个可写目标都没有时说出来，而不是给一个只有默认项的下拉框 */

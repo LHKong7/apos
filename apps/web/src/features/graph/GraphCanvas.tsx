@@ -6,6 +6,7 @@ import { NODE_H, NODE_W, edgePath, edgeStyle, fitTransform } from './geometry';
 import { KIND_META, NodeShape } from './shapes';
 import { edgeKey, type HighlightResult } from './highlight';
 import { tokens } from '../../lib/format';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   nodes: GraphNode[];
@@ -342,39 +343,36 @@ export function GraphCanvas({
       </div>
 
       <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded border border-slate-300 bg-white/90 px-1.5 py-1 text-[11px]">
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={() => {
             touched.current = true;
             setTransform((t) => zoom(t, 1.2));
           }}
-          className="px-1"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent px-1"
         >
           ＋
-        </button>
+        </Button>
         <span className="w-9 text-center tabular-nums text-slate-500">
           {Math.round(transform.scale * 100)}%
         </span>
-        <button
-          type="button"
+        <Button variant="ghost"
           onClick={() => {
             touched.current = true;
             setTransform((t) => zoom(t, 1 / 1.2));
           }}
-          className="px-1"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent px-1"
         >
           －
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button variant="ghost"
           onClick={() => {
             touched.current = false;
             fit();
           }}
-          className="ml-1 text-slate-600 hover:text-slate-900"
+          className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-1 text-slate-600 hover:text-slate-900"
         >
           {t('graph.fitToWindow')}
-        </button>
+        </Button>
       </div>
     </div>
   );

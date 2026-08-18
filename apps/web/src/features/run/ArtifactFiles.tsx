@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
+import { Button } from '@/components/ui/button';
 
 /**
  * 产物文件浏览。
@@ -64,12 +65,11 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
       <ul className="max-h-40 overflow-y-auto">
         {files.map((f) => (
           <li key={f.path}>
-            <button
-              type="button"
+            <Button variant="ghost"
               // ★ 被删掉的文件不在归档里，点开也没有内容可看
               disabled={f.change === 'deleted'}
               onClick={() => setOpen(open === f.path ? null : f.path)}
-              className={clsx(
+              className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start', 
                 'flex w-full items-center gap-2 px-2 py-0.5 text-left text-[11px]',
                 f.change === 'deleted' ? 'cursor-default' : 'hover:bg-slate-50',
                 open === f.path && 'bg-slate-100',
@@ -105,7 +105,7 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
               <span className="shrink-0 tabular-nums text-slate-400">
                 {f.change === 'deleted' ? '' : sizeOf(f.size)}
               </span>
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

@@ -206,13 +206,12 @@ export function RequirementListPage() {
                   </li>
                 ))}
               </ul>
-              <button
-                type="button"
-                className="mt-1 text-[11px] text-amber-700 underline"
+              <Button variant="ghost"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent mt-1 text-[11px] text-amber-700 underline"
                 onClick={() => setBlocked([])}
               >
                 {t('common.gotIt')}
-              </button>
+              </Button>
             </section>
           )}
 
@@ -231,13 +230,12 @@ export function RequirementListPage() {
                     <span className="text-[11px] text-slate-500">
                       {t('requirement.list.selected', { count: selected.size })}
                     </span>
-                    <button
-                      type="button"
-                      className="text-[11px] text-slate-500 underline"
+                    <Button variant="ghost"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline"
                       onClick={() => setSelected(new Set())}
                     >
                       {t('requirement.list.clearSelection')}
-                    </button>
+                    </Button>
                     <GatedButton
                       permission="requirement.delete"
                       onClick={() => setConfirmingDelete(true)}
@@ -267,15 +265,14 @@ export function RequirementListPage() {
                       onCheckedChange={() => toggle(r.id)}
                       aria-label={t('requirement.list.selectOne', { title: r.title })}
                     />
-                    <button
-                      type="button"
+                    <Button variant="ghost"
                       onClick={() =>
                         // 已经生成过计划的，直接去计划页 —— 用户此刻要看的是计划
                         r.latestPlanId
                           ? navigate(`/projects/${projectId}/plans/${r.latestPlanId}`)
                           : navigate(`/projects/${projectId}/requirements/${r.id}`)
                       }
-                      className="flex min-w-0 flex-1 flex-wrap items-center gap-2 py-1.5 text-left text-xs hover:bg-slate-50"
+                      className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start flex min-w-0 flex-1 flex-wrap items-center gap-2 py-1.5 text-left text-xs hover:bg-slate-50"
                     >
                       <span className="min-w-0 flex-1 truncate text-slate-800">{r.title}</span>
                       <span
@@ -300,7 +297,7 @@ export function RequirementListPage() {
                       <span className="text-[11px] text-slate-400">
                         {relativeTime(r.createdAt)}
                       </span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -365,9 +362,9 @@ function BulkDeleteDialog({
         {t('requirement.delete.blockedHint')}
       </p>
       <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
+        <Button variant="ghost" onClick={onCancel} className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500">
           {t('common.cancel')}
-        </button>
+        </Button>
         <Button variant="destructive" size="sm" onClick={onConfirm} disabled={pending}>
           {pending
             ? t('common.deleting')

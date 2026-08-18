@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useLocaleStore } from '../../lib/i18n';
+import { selectOption } from '../../test/select';
 import { api } from '../../lib/api/client';
 import { useAuthStore } from '../../stores/auth';
 import type {
@@ -122,7 +123,15 @@ describe('PRD 编写 Agent 选择', () => {
       ]),
     );
 
+    const user = userEvent.setup();
     renderPicker();
+
+    /**
+     * ★ Radix 的选项在**打开之前不在 DOM 里**，所以断言「列了哪些」
+     *   必须先点开触发器。原来直接 findByRole('option') 能过，
+     *   是因为原生 <select> 的 <option> 一直在文档里。
+     */
+    await user.click(await screen.findByRole('combobox', { name: 'PRD 编写' }));
 
     await screen.findByRole('option', { name: /prd-writer/ });
     expect(screen.getByRole('option', { name: /coder/ })).toBeTruthy();
@@ -140,10 +149,10 @@ describe('PRD 编写 Agent 选择', () => {
       .spyOn(api, 'setRequirementAuthorAgent')
       .mockResolvedValue({ ok: true, agentId: 'a2', agentName: 'paused-one' });
 
+    const user = userEvent.setup();
     renderPicker();
-    await screen.findByRole('option', { name: /paused-one/ });
 
-    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), 'a2');
+    await selectOption(user, await screen.findByRole('combobox', { name: 'PRD 编写' }), /paused-one/);
 
     await waitFor(() => expect(save).toHaveBeenCalledWith('r1', 'a2'));
   });
@@ -156,10 +165,10 @@ describe('PRD 编写 Agent 选择', () => {
       .spyOn(api, 'setRequirementAuthorAgent')
       .mockResolvedValue({ ok: true, agentId: 'a1', agentName: 'prd-writer' });
 
+    const user = userEvent.setup();
     renderPicker();
-    await screen.findByRole('option', { name: /prd-writer/ });
 
-    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), 'a1');
+    await selectOption(user, await screen.findByRole('combobox', { name: 'PRD 编写' }), /prd-writer/);
 
     await waitFor(() => expect(save).toHaveBeenCalledWith('r1', 'a1'));
   });
@@ -173,10 +182,16 @@ describe('PRD 编写 Agent 选择', () => {
       .spyOn(api, 'setRequirementAuthorAgent')
       .mockResolvedValue({ ok: true, agentId: null, agentName: null });
 
+    const user = userEvent.setup();
     renderPicker({ requirement: { authorAgentId: 'a1' } });
-    await screen.findByRole('option', { name: /prd-writer/ });
 
-    await userEvent.selectOptions(screen.getByLabelText('PRD 编写'), '');
+    /**
+     * ★ 原来选的是 value=''。Radix 不许 SelectItem 用空串（那是它的
+     *   「未选中」内部值），这一档改成走 SELECT_EMPTY 哨兵，
+     *   而组件在回调里把哨兵还原成空串 —— 所以这里按可见文案点它，
+     *   仍然断言最终传给服务端的是 null。
+     */
+    await selectOption(user, await screen.findByRole('combobox', { name: 'PRD 编写' }), /未指定/);
 
     await waitFor(() => expect(save).toHaveBeenCalledWith('r1', null));
   });
@@ -195,11 +210,16 @@ describe('PRD 编写 Agent 选择', () => {
       authorAgent: { id: 'gone-1', name: '被移走的', status: 'active' },
     });
 
-    await screen.findByRole('option', { name: /还在的那个/ });
-    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
-    // 值没有被悄悄落回「未指定」
-    expect(select.value).toBe('gone-1');
-    expect(screen.getByText(/被移走的.*已不是这个项目的成员/)).toBeTruthy();
+    /**
+     * ★ 原来断言 select.value === 'gone-1'。Radix 的触发器上没有 value，
+     *   选中项是渲染成触发器里的**文案**的 —— 所以改成断言它显示的是
+     *   那个已被移走的 Agent 的名字。守的仍是同一条：
+     *   没有被悄悄落回「未指定」。
+     */
+    expect(await screen.findByText(/被移走的.*已不是这个项目的成员/)).toBeTruthy();
+    const trigger = screen.getByRole('combobox', { name: 'PRD 编写' });
+    expect(trigger).toHaveTextContent('被移走的');
+    expect(trigger).not.toHaveTextContent('未指定');
   });
 
   it('选中的 Agent 停用时说出来 —— 下一次分析会失败', async () => {
@@ -240,14 +260,15 @@ describe('PRD 编写 Agent 选择', () => {
       new Error('writer-2 不是这个项目的成员'),
     );
 
+    const user = userEvent.setup();
     renderPicker({ requirement: { authorAgentId: 'a1' } });
-    await screen.findByRole('option', { name: /writer-2/ });
 
-    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
-    await userEvent.selectOptions(select, 'a2');
+    const trigger = await screen.findByRole('combobox', { name: 'PRD 编写' });
+    await selectOption(user, trigger, /writer-2/);
 
     await waitFor(() => expect(screen.getByText('更换编写 Agent 失败')).toBeTruthy());
-    expect(select.value).toBe('a1');
+    // ★ 落回服务端的真值：触发器上显示的又是 writer-1，不是那个没存上的 writer-2
+    expect(trigger).toHaveTextContent('writer-1');
   });
 
   it('已确认的需求上是只读的', async () => {
@@ -257,8 +278,7 @@ describe('PRD 编写 Agent 选择', () => {
 
     renderPicker({ readOnly: true });
 
-    await screen.findByRole('option', { name: /prd-writer/ });
-    expect(screen.getByLabelText<HTMLSelectElement>('PRD 编写').disabled).toBe(true);
+    expect(await screen.findByRole('combobox', { name: 'PRD 编写' })).toBeDisabled();
   });
 
   /**
@@ -273,9 +293,8 @@ describe('PRD 编写 Agent 选择', () => {
 
     renderPicker();
 
-    await screen.findByRole('option', { name: /prd-writer/ });
-    const select = screen.getByLabelText<HTMLSelectElement>('PRD 编写');
-    await waitFor(() => expect(select.disabled).toBe(true));
-    expect(select.title).toContain('编辑需求');
+    const trigger = await screen.findByRole('combobox', { name: 'PRD 编写' });
+    await waitFor(() => expect(trigger).toBeDisabled());
+    expect(trigger.title).toContain('编辑需求');
   });
 });

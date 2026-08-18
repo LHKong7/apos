@@ -12,6 +12,7 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const ESCALATE_KEYS: Record<string, MessageKey> = {
   assignee: 'notify.remindOwner',
@@ -72,7 +73,7 @@ export function NotificationPanel({
 
       <div className="mt-1 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2 lg:grid-cols-3">
         {meta.notifyEvents.map((e) => (
-          <label
+          <Label
             key={e.key}
             className={clsx(
               'flex items-center gap-1.5 text-[11px]',
@@ -86,7 +87,7 @@ export function NotificationPanel({
             />
             {e.label}
             {e.noisy && <span className="text-slate-400">{t('notify.offByDefault')}</span>}
-          </label>
+          </Label>
         ))}
       </div>
 
@@ -101,15 +102,15 @@ export function NotificationPanel({
       )}
 
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-        <label className="flex items-center gap-1">
+        <Label className="flex items-center gap-1">
           {t('notify.dailyDigest')}
           <Input
             type="time"
             disabled={!canEdit}
             value={config.dailyDigestAt ?? ''}
             onChange={(e) => setDraft({ ...config, dailyDigestAt: e.target.value || null })} />
-        </label>
-        <label className="flex items-center gap-1">
+        </Label>
+        <Label className="flex items-center gap-1">
           {t('notify.quietHours')}
           <Input
             type="time"
@@ -132,16 +133,16 @@ export function NotificationPanel({
                 quietHours: { from: config.quietHours?.from ?? '22:00', to: e.target.value },
               })
             } />
-        </label>
+        </Label>
         {/* ★ 免打扰保护的是注意力，不是责任 —— 高风险决策必须能穿透 */}
-        <label className="flex items-center gap-1">
+        <Label className="flex items-center gap-1">
           <Checkbox
             disabled={!canEdit}
             checked={config.quietHoursExceptHighRisk}
             onCheckedChange={(v) => setDraft({ ...config, quietHoursExceptHighRisk: v })}
           />
           {t('notify.highRiskExempt')}
-        </label>
+        </Label>
       </div>
 
       {/* 升级规则（产品文档十一）*/}
@@ -182,13 +183,12 @@ export function NotificationPanel({
               onClick={() => save.mutate()}>
               {save.isPending ? t('common.saving') : t('notify.save')}
             </Button>
-            <button
-              type="button"
+            <Button variant="ghost"
               onClick={() => setDraft(null)}
-              className="text-[11px] text-slate-500 hover:text-slate-700"
+              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 hover:text-slate-700"
             >
               {t('notify.revert')}
-            </button>
+            </Button>
           </div>
         )
       ) : (

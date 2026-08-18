@@ -9,6 +9,13 @@ import { relativeTime } from '../../lib/format';
 import type { SyncConflictRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from '@/components/ui/table';
 
 /**
  * 同步冲突处理（页面文档 14 §5.3 的冲突界面）。
@@ -113,16 +120,16 @@ function ConflictRow({
       </p>
 
       {/* ★ 值 / 时间 / 谁改的，三样缺一不可 */}
-      <table className="mt-1 text-[11px]">
-        <tbody>
+      <Table className="mt-1 text-[11px]">
+        <TableBody>
           <Side label="APOS" side={conflict.apos} winner={conflict.sourceOfTruth === 'apos'} />
           <Side
             label={t('conflict.externalSystem')}
             side={conflict.external}
             winner={conflict.sourceOfTruth === 'external'}
           />
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
 
       <p className="mt-0.5 text-[11px] text-slate-500">ℹ {conflict.sotNote}</p>
 
@@ -142,10 +149,10 @@ function ConflictRow({
           </div>
           {/* ★ 记的是字段级规则，不是这一条对象 —— 用户勾它时想表达的是
               「这个字段以后别再问我」 */}
-          <label className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+          <Label className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
             <Checkbox checked={applyToSimilar} onCheckedChange={setApplyToSimilar} />
             {t('conflict.applyToSimilar', { field: conflict.fieldLabel })}
-          </label>
+          </Label>
         </>
       ) : (
         <p className="mt-1 text-[11px] text-slate-400">{t('conflict.needMembership')}</p>
@@ -170,20 +177,20 @@ function Side({
   winner: boolean;
 }) {
   return (
-    <tr>
-      <td className="w-16 py-0.5 text-slate-500">{label}</td>
-      <td className={clsx('w-28 py-0.5', winner ? 'font-medium text-slate-800' : 'text-slate-700')}>
+    <TableRow>
+      <TableCell className="w-16 py-0.5 text-slate-500">{label}</TableCell>
+      <TableCell className={clsx('w-28 py-0.5', winner ? 'font-medium text-slate-800' : 'text-slate-700')}>
         {String(side.value ?? '—')}
-      </td>
+      </TableCell>
       {/* 原始 ISO 串是给机器读的；用户要比的是「谁改得更晚」 */}
-      <td className="w-24 py-0.5 text-slate-400" title={side.changedAt || undefined}>
+      <TableCell className="w-24 py-0.5 text-slate-400" title={side.changedAt || undefined}>
         {side.changedAt ? relativeTime(side.changedAt) : '—'}
-      </td>
+      </TableCell>
       {/* 系统改的和人手改的是完全不同的两种情况，图标要能一眼区分 */}
-      <td className="py-0.5 text-slate-500">
+      <TableCell className="py-0.5 text-slate-500">
         {side.actorType === 'human' ? '👤' : side.actorType === 'system' ? '🔧' : '🔗'}{' '}
         {side.changedBy}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }

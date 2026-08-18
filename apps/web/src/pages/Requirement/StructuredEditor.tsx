@@ -4,6 +4,14 @@ import type { RequirementDetail } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 /**
  * 人工填写 / 修改结构化需求（页面文档 03 §5.4）。
@@ -145,13 +153,12 @@ export function StructuredEditor({
           <span className="text-[11px] text-slate-400">
             {t('editor.acceptanceHint')}
           </span>
-          <button
-            type="button"
+          <Button variant="ghost"
             onClick={() => setCriteria((l) => [...l, { text: '', verification: 'human' }])}
-            className="ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-auto text-[11px] text-slate-500 underline hover:text-slate-700"
           >
             {t('editor.addCriterion')}
-          </button>
+          </Button>
         </div>
         <div className="mt-1 space-y-1">
           {criteria.length === 0 && (
@@ -171,27 +178,30 @@ export function StructuredEditor({
                   平台没有依据认定一条自由文本能被自动核验，
                   默认成 auto 等于替用户许了一个他没许的承诺。
               */}
-              <select
+              <Select
                 value={c.verification}
-                onChange={(e) =>
-                  setCriterion(i, { verification: e.target.value as Criterion['verification'] })
+                onValueChange={(v) =>
+                  setCriterion(i, { verification: v as Criterion['verification'] })
                 }
-                className="shrink-0 rounded border border-slate-300 px-1 py-1.5 text-[11px]"
               >
-                {(['auto', 'agent', 'human'] as const).map((v) => (
-                  <option key={v} value={v}>
-                    {t(VERIFICATION_KEYS[v])}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
+                <SelectTrigger className="w-auto shrink-0 px-1.5 text-[11px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['auto', 'agent', 'human'] as const).map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {t(VERIFICATION_KEYS[v])}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="ghost"
                 onClick={() => setCriteria((l) => l.filter((_, idx) => idx !== i))}
-                className="shrink-0 px-1 text-[11px] text-slate-400 hover:text-rose-600"
+                className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent shrink-0 px-1 text-[11px] text-slate-400 hover:text-rose-600"
                 aria-label={t('editor.removeCriterion', { n: i + 1 })}
               >
                 ✕
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -230,10 +240,10 @@ function Labeled({
   children: React.ReactNode;
 }) {
   return (
-    <label className="block">
+    <Label className="block">
       <span className="text-[11px] font-medium text-slate-600">{label}</span>
       {help && <span className="ml-1 text-[11px] text-slate-400">{help}</span>}
       <div className="mt-0.5">{children}</div>
-    </label>
+    </Label>
   );
 }

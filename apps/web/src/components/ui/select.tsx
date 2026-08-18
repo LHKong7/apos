@@ -12,12 +12,46 @@ import { cn } from '@/lib/utils';
  *   主题，所以这里必须换。
  *
  * ★ 代价要认：Radix 的 Select 是 div 拼出来的，移动端没有原生滚轮选择器。
- *   所以**不强制全站替换** —— 筛选器这类需要跟主题走的换掉，
- *   表单里那些朴素的原生 select 可以留着。
+ *
+ * ★★ 2026-08-18：**已全站替换**，上面那条「表单里的原生 select 可以留着」
+ *   的分档作废。理由是分档本身没守住 —— 深浅主题下同一个页面里两种下拉
+ *   长得不一样（表单里是操作系统的浅色列表，筛选器是自绘的），
+ *   而「哪个算筛选器」没有客观判据，于是新代码随手挑一种。
+ *   移动端滚轮选择器的损失是明知故犯的代价，不是疏忽。
+ *
+ *   As of 2026-08-18 every native select in the app has been migrated; the
+ *   earlier "leave plain form selects native" carve-out is withdrawn. The
+ *   carve-out had no objective boundary, so the two kinds of dropdown ended up
+ *   side by side on the same page, looking different in dark mode. Losing the
+ *   native mobile wheel picker is an accepted cost, not an oversight.
  */
 const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
+
+/**
+ * ★★ 空串哨兵。Radix 把空串**保留**给「未选中」这个内部状态，
+ *   `<SelectItem value="">` 会直接抛错。而这套界面里到处是「全部执行者 /
+ *   自动分配 / 不适用 / 不设兜底」这类选项，它们原本就是 `value=""`，
+ *   对应后端的 undefined —— 语义上确实是「没选」，但必须能被点中。
+ *
+ *   所以在组件边界上转换：进 Select 前 `toSelectValue`，出来 `fromSelectValue`。
+ *   哨兵值取一个不可能与真实取值（UUID / 枚举 / 角色名）相撞的形状。
+ *
+ *   Radix reserves the empty string for its own "nothing selected" state, so
+ *   `<SelectItem value="">` throws. This app is full of options that mean
+ *   exactly that ("all executors", "auto-assign", "not applicable") and which
+ *   map to undefined server-side — semantically unselected, yet they still have
+ *   to be clickable. Convert at the component boundary instead, using a
+ *   sentinel that cannot collide with a real value (UUID, enum, role name).
+ */
+const SELECT_EMPTY = '__empty__';
+
+/** 空串/null → 哨兵，供 Select 的 value 用 */
+const toSelectValue = (value: string | null | undefined): string => value || SELECT_EMPTY;
+
+/** 哨兵 → 空串，交还给原来的 onChange 语义 */
+const fromSelectValue = (value: string): string => (value === SELECT_EMPTY ? '' : value);
 
 const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
@@ -148,4 +182,5 @@ SelectSeparator.displayName = SelectPrimitive.Separator.displayName;
 export {
   Select, SelectGroup, SelectValue, SelectTrigger, SelectContent,
   SelectLabel, SelectItem, SelectSeparator, SelectScrollUpButton, SelectScrollDownButton,
+  SELECT_EMPTY, toSelectValue, fromSelectValue,
 };

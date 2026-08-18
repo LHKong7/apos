@@ -11,6 +11,7 @@ import { Drawer } from '../../components/Drawer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 interface Props {
   decisionId: string;
@@ -209,14 +210,13 @@ export function DecisionDrawer({ decisionId, onClose }: Props) {
                           {t('decDrawer.constraintNote')}
                         </p>
                       </Field>
-                      <button
-                        type="button"
+                      <Button variant="ghost"
                         disabled={approve.isPending}
                         onClick={() => approve.mutate()}
-                        className="w-full rounded bg-emerald-600 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                        className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent w-full rounded bg-emerald-600 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
                       >
                         {approve.isPending ? t('decision.submitting') : t('decDrawer.approveAndContinue')}
-                      </button>
+                      </Button>
                     </>
                   ) : (
                     <>
@@ -264,10 +264,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <Label className="block">
       <span className="mb-0.5 block text-[11px] text-slate-500">{label}</span>
       {children}
-    </label>
+    </Label>
   );
 }
 
@@ -281,15 +281,14 @@ function TabButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Button variant="ghost"
       onClick={onClick}
-      className={clsx(
+      className={clsx('h-auto p-0 font-normal whitespace-normal hover:bg-transparent', 
         'rounded px-2 py-0.5 text-xs',
         active ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-600',
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
