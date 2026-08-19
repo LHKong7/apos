@@ -1,3 +1,4 @@
+import { AgentCapability } from '@apos/contracts';
 import { z } from 'zod';
 
 /**
@@ -91,9 +92,45 @@ export const AgentPlanOutput = z.object({
         type: WorkItemType,
         phase: z.string().default('Execution'),
         estimatedHours: z.number().nonnegative(),
-        estimatedTokens: z.number().int().nonnegative().nullable().default(null),
+        /**
+         * ★★ 收小数然后取整，**不要**用 `.int()` 拒绝。
+         *
+         *   这是个**估算值**，紧挨着的 estimatedHours 也允许小数。模型写
+         *   `1.5`（它心里是「1.5k」）在这里完全正常，而 `.int()` 会因为这一个
+         *   字段判废**整份计划**，退回规则占位 —— 用户拿到的是一份与需求
+         *   无关的通用模板，界面上只有一行灰字说明发生过什么。
+         *
+         *   文件顶部为「整份拒绝」辩护时举的是**结构性**错误（漏字段、
+         *   数组写成字符串、多一层嵌套）—— 那些确实没法救。float→int 不是，
+         *   它能无损取整，那条理由覆盖不到这里。
+         *
+         *   Round instead of rejecting: this is an estimate, and one decimal
+         *   place must not discard an otherwise valid plan.
+         */
+        estimatedTokens: z
+          .number()
+          .nonnegative()
+          .nullable()
+          .default(null)
+          .transform((v) => (v === null ? null : Math.round(v))),
         riskLevel: RiskLevel,
         requiredSkills: z.array(z.string()).default([]),
+        /**
+         * ★★ 计划表达的是**能力**，不是工具名。
+         *
+         *   工具名属于某一个运行时的词汇表（mock 说 `read_file`，
+         *   claude-code 说 `Read`，opencode 走 cli 翻译器又是另一套）。
+         *   计划里写死任何一套，换个运行时就永远匹配不到 Agent，
+         *   而症状是任务安静地停在 ready —— 没有报错、没有事件。
+         *
+         *   能力是跨运行时的那一层，翻译成具体工具是适配器的事。
+         *
+         *   Plans speak capabilities, never tool names: a tool name belongs to
+         *   one runtime's vocabulary, and hard-coding one strands every task
+         *   on any other runtime.
+         */
+        requiredCapabilities: z.array(AgentCapability).default([]),
+        /** @deprecated 存量计划里的运行时工具名，只读不写 —— 见 requiredCapabilities */
         requiredTools: z.array(z.string()).default([]),
         /** 计划阶段就要标出必须由人做的任务（产品文档 8.8.6：生产发布默认由人执行） */
         requiresHuman: z.boolean().default(false),

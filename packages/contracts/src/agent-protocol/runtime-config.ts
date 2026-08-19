@@ -264,6 +264,10 @@ const PASSTHROUGH_ENV: ConfigField = {
   help:
     '默认只给子进程 PATH / HOME / 该运行时自己的凭证。这里每加一个变量名，' +
     '就等于把它交给 Agent —— 不要把数据库口令、其他服务的 token 放进来。',
+  helpEn:
+    'By default the child process gets only PATH, HOME and this runtime\'s own ' +
+    'credential. Every name added here is handed to the Agent — do not list ' +
+    'database passwords or tokens belonging to other services.',
 };
 
 /**
@@ -318,6 +322,13 @@ const ENV_OVERRIDES = (examples: string): ConfigField => ({
     '敏感键（含 TOKEN / KEY / SECRET / AUTH 等字样）加密入库、保存后不回显；' +
     '值写成 `env:变量名` 则改为从 APOS 进程环境取，什么都不进库。' +
     '★ 这里能把上面的安全设置绕过去，填之前想清楚给的是什么。',
+  helpEn:
+    `Handed to the child process verbatim, overriding the platform default of ` +
+    `the same name. For example ${examples}. Sensitive keys (containing TOKEN / ` +
+    'KEY / SECRET / AUTH) are encrypted at rest and never echoed back; write a ' +
+    'value as `env:VARIABLE_NAME` to read it from the APOS process environment ' +
+    'instead, storing nothing. ★ This table can override the safety settings ' +
+    'above — be clear about what you are handing over.',
 });
 
 /**
@@ -364,6 +375,10 @@ const CLI_COMMON_FIELDS = (binary: string): ConfigField[] => [
     help:
       '原样追加到命令行末尾。平台不校验内容 —— 填错会让 CLI 直接启动失败，' +
       '也可能绕开上面的安全设置（例如手工加上放开审批的开关）。',
+    helpEn:
+      'Appended to the command line verbatim. The platform does not validate ' +
+      'them — a wrong value stops the CLI from starting, and can also bypass ' +
+      'the safety settings above (for example by re-enabling auto-approval).',
   },
   ENV_OVERRIDES('`{"HTTPS_PROXY": "http://…"}`'),
   PASSTHROUGH_ENV,
@@ -409,6 +424,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Pi Coding Agent',
     description:
       '极简 harness（Earendil / MIT）。纯文本输出 —— 看得到它在动，但没有结构化的工具调用与用量统计。',
+    descriptionEn:
+      'A minimal harness (Earendil / MIT). Plain-text output — you can see it working, but there are no structured tool calls and no usage figures.',
     credential: {
       label: 'API Key',
       help: '推荐填 `env:变量名`。留空则沿用进程环境里的凭证。',
@@ -439,6 +456,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Gemini CLI',
     description:
       'Google 官方 CLI。★ 输出是**一个** JSON 对象而不是事件流 —— 执行过程中界面上不会有任何中间事件，要跑完才一次性出结果。适合短任务，不适合需要盯进度的长任务。',
+    descriptionEn:
+      'Google’s official CLI. ★ It emits **one** JSON object rather than an event stream, so nothing shows up mid-run and the whole result lands at the end. Fine for short tasks, poor for long ones you want to watch.',
     credential: {
       label: 'Gemini API Key',
       help: '推荐填 `env:变量名`。',
@@ -451,6 +470,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'string',
         default: 'gemini-2.5-pro',
         impact: 'cost',
@@ -466,6 +486,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Aider',
     description:
       '成熟的结对编程 CLI（Python）。纯文本输出，没有结构化通道。★ 平台会加 --no-auto-commits：提交由工作区供给统一负责，两边都提交会让一个 Run 产生一堆零碎提交。',
+    descriptionEn:
+      'A mature pair-programming CLI (Python). Plain-text output, no structured channel. ★ The platform adds --no-auto-commits: committing belongs to the workspace provider, and letting both sides commit scatters one run across many small commits.',
     credential: {
       label: 'API Key',
       help: '按所选模型对应的供应商填；推荐 `env:变量名`。',
@@ -499,6 +521,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Goose',
     description:
       'Block 开源的 on-machine agent。支持 stream-json，能边跑边出事件与工具调用。★ 非交互下只能是 Auto 模式，审批档位不开放（其余档位会被 CLI 显式拒绝）。',
+    descriptionEn:
+      'Block’s open-source on-machine agent. Supports stream-json, so events and tool calls arrive while it runs. ★ Non-interactive runs are Auto mode only; the approval modes are not offered because the CLI rejects them outright.',
     credential: {
       label: 'API Key',
       help: '按 goose 配置的 provider 填；推荐 `env:变量名`。',
@@ -507,10 +531,13 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     endpoint: null,
     prerequisite:
       '需要 goose 已安装并配置好 provider：curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
+    prerequisiteEn:
+      'Requires goose installed with a provider configured: curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
     fields: [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'string',
         default: '',
         impact: 'cost',
@@ -525,6 +552,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     kind: 'opencode',
     label: 'OpenCode',
     description: '终端原生编码 agent（sst）。纯文本输出。★ 模型要写成 provider/model 的形式。',
+    descriptionEn:
+      'A terminal-native coding agent (sst). Plain-text output. ★ The model must be written as provider/model.',
     credential: {
       label: 'API Key',
       help: '按所选 provider 填；推荐 `env:变量名`。',
@@ -537,6 +566,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'string',
         default: '',
         impact: 'cost',
@@ -553,6 +583,8 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
     label: 'Qwen Code',
     description:
       '阿里开源的编码 CLI（gemini-cli 的 fork，但多了 stream-json）。能边跑边出事件与工具调用。',
+    descriptionEn:
+      'Alibaba’s open-source coding CLI — a gemini-cli fork that adds stream-json, so events and tool calls arrive while it runs.',
     credential: {
       label: 'API Key',
       help: '推荐填 `env:变量名`。',
@@ -571,6 +603,7 @@ const HEADLESS_CLI_SPECS: RuntimeKindSpec[] = [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'string',
         default: 'qwen3-coder-plus',
         impact: 'cost',
@@ -594,7 +627,10 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       labelEn: 'Anthropic credential',
       help:
         '推荐填 `env:变量名`，凭证只留在进程环境、不进数据库，且多个 Agent 共用同一变量名时轮换只需改一处。' +
+
         '走中转站/网关时把下面的「凭证下发变量名」改成 ANTHROPIC_AUTH_TOKEN。',
+      helpEn:
+        'Prefer `env:VARIABLE_NAME`: the credential stays in the process environment rather than the database, and several Agents sharing one variable name rotate in a single place. Behind a relay or gateway, switch “Credential variable” below to ANTHROPIC_AUTH_TOKEN.',
     },
     /**
      * ★ 接入地址 = ANTHROPIC_BASE_URL。
@@ -623,13 +659,14 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'select',
         default: 'claude-opus-5',
         impact: 'cost',
         options: [
-          { value: 'claude-opus-5', label: 'Opus 5', help: '最强，单价最高' },
-          { value: 'claude-sonnet-5', label: 'Sonnet 5', help: '均衡，多数编码任务够用' },
-          { value: 'claude-haiku-4-5', label: 'Haiku 4.5', help: '最快最省，适合评审、分类这类轻任务' },
+          { value: 'claude-opus-5', label: 'Opus 5', help: '最强，单价最高', helpEn: 'Strongest, highest price per token' },
+          { value: 'claude-sonnet-5', label: 'Sonnet 5', help: '均衡，多数编码任务够用', helpEn: 'Balanced — enough for most coding work' },
+          { value: 'claude-haiku-4-5', label: 'Haiku 4.5', help: '最快最省，适合评审、分类这类轻任务', helpEn: 'Fastest and cheapest; good for reviews, triage and other light work' },
         ],
       },
       {
@@ -646,7 +683,7 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
           { value: 'low', label: 'low' },
           { value: 'medium', label: 'medium' },
           { value: 'high', label: 'high' },
-          { value: 'xhigh', label: 'xhigh（默认）' },
+          { value: 'xhigh', label: 'xhigh（默认）', labelEn: 'xhigh (default)' },
           { value: 'max', label: 'max' },
         ],
       },
@@ -674,12 +711,16 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
           {
             value: 'escalate',
             label: '停下来请人决策（默认）',
+            labelEn: 'Stop and ask a person (default)',
             help: '中断执行并生成一条待办，人可以当场授权后重试',
+            helpEn: 'Interrupts the run and files a to-do; a person can grant it and retry on the spot',
           },
           {
             value: 'deny',
             label: '拒绝但让它继续',
+            labelEn: 'Refuse but let it carry on',
             help: 'Agent 自己收敛，不打扰人。适合跑批量低风险任务',
+            helpEn: 'The Agent works around it without interrupting anyone. Good for batches of low-risk work',
           },
         ],
       },
@@ -694,6 +735,7 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'credentialEnv',
         label: '凭证下发变量名',
+        labelEn: 'Credential variable name',
         type: 'select',
         default: 'ANTHROPIC_API_KEY',
         advanced: true,
@@ -701,12 +743,15 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
           {
             value: 'ANTHROPIC_API_KEY',
             label: 'ANTHROPIC_API_KEY（默认）',
+            labelEn: 'ANTHROPIC_API_KEY (default)',
             help: '官方端点用这个',
+            helpEn: 'What the official endpoint expects',
           },
           {
             value: 'ANTHROPIC_AUTH_TOKEN',
             label: 'ANTHROPIC_AUTH_TOKEN',
             help: '多数中转站/网关用这个（Authorization: Bearer）',
+            helpEn: 'What most relays and gateways expect (Authorization: Bearer)',
           },
         ],
       },
@@ -722,39 +767,50 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
     label: 'Codex CLI',
     description:
       'OpenAI Codex CLI。权限是沙箱级而非工具级 —— 表达不了「Bash 可用但 rm 不可用」，映射时一律收紧。',
+    descriptionEn:
+      'OpenAI’s Codex CLI. Permissions are sandbox-level, not tool-level: it cannot express “Bash yes, rm no”, so the mapping always errs tighter.',
     credential: {
       label: 'OpenAI API Key',
       help: '推荐填 `env:变量名`。',
+      helpEn: 'Prefer `env:VARIABLE_NAME`.',
     },
     endpoint: {
       label: '接入地址',
+      labelEn: 'Endpoint',
       help: '自建网关或代理才填，留空走官方端点。',
+      helpEn: 'Only for a self-hosted gateway or proxy; leave blank for the official endpoint.',
     },
     prerequisite: '需要 codex CLI 已安装且在 PATH 中（或在下方指定可执行文件路径）。',
+    prerequisiteEn:
+      'Requires the codex CLI on PATH (or give an absolute path below).',
     fields: [
       {
         key: 'model',
         label: '模型',
+        labelEn: 'Model',
         type: 'select',
         default: 'gpt-5-codex',
         impact: 'cost',
         options: [
           { value: 'gpt-5-codex', label: 'GPT-5 Codex' },
           { value: 'gpt-5', label: 'GPT-5' },
-          { value: 'o4-mini', label: 'o4-mini', help: '更省，适合轻任务' },
+          { value: 'o4-mini', label: 'o4-mini', help: '更省，适合轻任务', helpEn: 'Cheaper; good for light work' },
         ],
       },
       {
         key: 'approvalPolicy',
         label: '审批策略',
+        labelEn: 'Approval policy',
         type: 'select',
         default: 'never',
         impact: 'safety',
         help:
           '非交互执行下只有 never 是真正可用的 —— 其余档位会让 CLI 挂起等人在终端上确认，' +
           '而这里没有终端，表现是 Run 一直卡着直到超时。',
+        helpEn:
+          'Only `never` actually works headless — the other modes make the CLI wait for someone to confirm at a terminal, and there is no terminal here, so the Run simply hangs until it times out.',
         options: [
-          { value: 'never', label: 'never（默认，推荐）' },
+          { value: 'never', label: 'never（默认，推荐）', labelEn: 'never (default, recommended)' },
           { value: 'on-failure', label: 'on-failure' },
           { value: 'untrusted', label: 'untrusted' },
         ],
@@ -762,10 +818,12 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'binary',
         label: '可执行文件',
+        labelEn: 'Executable',
         type: 'string',
         default: 'codex',
         advanced: true,
         help: '不在 PATH 里时填绝对路径。',
+        helpEn: 'Give an absolute path when it is not on PATH.',
       },
       ENV_OVERRIDES('`{"OPENAI_BASE_URL": "https://gw.example.com"}`'),
       PASSTHROUGH_ENV,
@@ -778,6 +836,8 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
     kind: 'mock',
     label: '内存运行时（演示 / 测试）',
     description: '不调用任何外部模型，按脚本产生事件。用于演练流程与验证降级路径，不会产生费用。',
+    descriptionEn:
+      'Calls no external model; replays scripted events. For rehearsing the flow and checking degradation paths. Costs nothing.',
     credential: null,
     endpoint: null,
     prerequisite: null,
@@ -785,21 +845,24 @@ export const RUNTIME_KIND_SPECS: RuntimeKindSpec[] = [
       {
         key: 'outcome',
         label: '模拟结果',
+        labelEn: 'Simulated outcome',
         type: 'select',
         default: 'completed',
         options: [
-          { value: 'completed', label: '成功' },
-          { value: 'failed', label: '失败' },
+          { value: 'completed', label: '成功', labelEn: 'Succeeds' },
+          { value: 'failed', label: '失败', labelEn: 'Fails' },
         ],
       },
       {
         key: 'stepDelayMs',
         label: '每步延迟（毫秒）',
+        labelEn: 'Delay per step (ms)',
         type: 'number',
         default: 300,
         min: 0,
         max: 60_000,
         help: '调大可以观察执行中的进度与干预操作。',
+        helpEn: 'Raise it to watch progress and try the intervention controls mid-run.',
       },
     ],
   },

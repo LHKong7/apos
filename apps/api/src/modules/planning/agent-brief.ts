@@ -142,10 +142,14 @@ ${feedback}
                                             // review|test|incident|decision|approval|release|knowledge
       "phase": "Research",                  // 自定义阶段名，用于分组
       "estimatedHours": 4,
-      "estimatedTokens": 1.5,                 // 美元，估不出来填 null
+      "estimatedTokens": 75000,             // 预计消耗的 token 数，估不出来填 null
       "riskLevel": "low",                   // low|medium|high|critical
       "requiredSkills": ["需求分析"],
-      "requiredTools": ["read_file"],
+      // 语义能力，**不是**工具名。可选值：workspace.read|workspace.write|
+      // command.build|command.test|network.external|artifact.create|
+      // repository.push|pull_request.create|pull_request.merge|environment.deploy|
+      // database.read|database.write|secret.read
+      "requiredCapabilities": ["workspace.read"],
       "requiresHuman": false,
       "operationType": "deploy",            // 可选：deploy / db_ddl 等敏感操作
       "environment": "production",          // 可选

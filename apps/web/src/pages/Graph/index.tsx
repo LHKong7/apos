@@ -1,5 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -64,7 +64,27 @@ export function GraphPage() {
   );
 
   const [hovered, setHovered] = useState<string | null>(null);
-  const [openCard, setOpenCard] = useState<string | null>(null);
+  /**
+   * ★ 抽屉开关写进 URL，与看板同一个 `card` 参数。
+   *   本地 useState 的代价有两处：任务详情**没法发链接**（「你看这张卡」
+   *   只能口头描述），以及浏览器返回键关不掉抽屉 —— 返回会直接离开这一页，
+   *   而用户按它的本意是「退出这个详情」。看板早就这么做了，这里跟上。
+   */
+  const openCard = params.get('card');
+  const setOpenCard = useCallback(
+    (id: string | null) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set('card', id);
+          else next.delete('card');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
   const [openDecision, setOpenDecision] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);

@@ -217,6 +217,7 @@ export class AgentPlanningProvider implements PlanningProvider {
         estimatedTokens: t.estimatedTokens,
         riskLevel: t.riskLevel,
         requiredSkills: t.requiredSkills,
+        requiredCapabilities: t.requiredCapabilities,
         requiredTools: t.requiredTools,
         requiresHuman: t.requiresHuman,
         ...(t.operationType ? { operationType: t.operationType } : {}),
@@ -626,7 +627,26 @@ export class AgentPlanningProvider implements PlanningProvider {
       agentId: agent.id,
       status: 'dispatching',
       idempotencyKey: runId,
-      goal: kind === 'structure' ? '需求结构化' : '生成计划',
+      /**
+       * ★★ 规划 Run 的 goal 存**码**，不存中文句子。
+       *
+       *   这一行会出现在英文界面上（需求页的「Analysis runs」），而一句中文
+       *   在那里就是一段读不懂的字。规划 Run 的 goal 只有两种取值，正是
+       *   「该用码」的典型：句子只服务中文界面，码同时服务两种语言。
+       *
+       * ★ 为什么放在 `goal` 而不是另起一栏：这一栏的含义本来就是
+       *   「这次 Run 是要干什么」。执行 Run 往里放的是工作项标题（用户内容），
+       *   规划 Run 放平台自己的码 —— 界面按 `kind` 区分，两者不会撞。
+       *
+       *   ★★ 特别不能放进 `inputContext`：那一栏是**数组**
+       *   （TaskDispatch['context']，每项有 kind/ref/title/priority），
+       *   Run 详情页对它做 `.length` 与 `.map()`。塞一个对象进去，
+       *   任何一次规划 Run 的详情页都会当场崩掉。
+       *
+       *   Planning runs store the code here; execution runs store the work item
+       *   title. The UI tells them apart by `kind`.
+       */
+      goal: kind === 'structure' ? 'structure' : 'plan',
       model: agent.model,
       startedAt: new Date(),
     });

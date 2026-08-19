@@ -415,6 +415,8 @@ async function createDecisionFor(
        *   平台自带的九条基线规则由前端按 id 认领词条。
        */
       reasonDetail: {
+        /** ★ 原样带过去，让界面自己拼「—— 需要你确认」那半句（见 DecisionReason） */
+        subjectTitle: item.title,
         whyHuman: verdict.matchedPolicyName
           ? {
               code: 'policy_requires_human' as const,

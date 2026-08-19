@@ -116,6 +116,15 @@ export function LoginPage() {
           </div>
 
           <h1 className="mt-7 max-w-md text-2xl font-semibold leading-snug tracking-tight text-slate-800">
+            {/*
+              ★★ 词条自带分隔，不要指望 JSX 的空白。
+                两个表达式分处两行时，JSX 会把「只含换行的空白」整段丢掉 ——
+                于是英文渲染成「Let a projectmove forward…」。而中文
+                「让项目」+「自主向前流动」本来就不该有空格，一直看起来是对的：
+                这就是 CLAUDE.md 那条「不许拼句子」的实例，分词规则不同，
+                拼接只在其中一种语言里成立。所以空格属于**英文那一份词条**，
+                由它自己决定要不要，而不是由渲染处统一加。
+            */}
             {t('login.hero.line1')}
             <span className="text-gradient-brand">{t('login.hero.highlight')}</span>
             <br />

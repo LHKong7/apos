@@ -11,6 +11,19 @@ export type ErrorCode =
   | 'GUARD_FAILED'
   | 'POLICY_DENIED'
   | 'BUDGET_EXCEEDED'
+  /**
+   * 请求本身没问题，但需要用户先明确确认一次才能继续。
+   *
+   * ★★ 与 VALIDATION_FAILED 分开：后者是「你发来的东西不对」，这个是
+   *   「东西没问题，但我要你看一眼再点一次」。混用 400 的代价不在功能上——
+   *   功能照常——而在**日志与监控**里：一条正常的人机交互和一次真正的
+   *   客户端错误长得一模一样，于是 4xx 率再也不能当告警指标用。
+   *
+   * Well-formed but needs an explicit acknowledgement first. Kept apart from
+   * VALIDATION_FAILED so a normal confirmation round-trip does not read as a
+   * client error in the logs.
+   */
+  | 'CONFIRMATION_REQUIRED'
   | 'UNANSWERED_MUST_CONFIRM'
   | 'AGENT_UNAVAILABLE'
   /** 运行时能力不足（降级矩阵）—— 不是故障，是这个运行时做不到 */
@@ -30,6 +43,8 @@ const STATUS: Record<ErrorCode, number> = {
   GUARD_FAILED: 409,
   POLICY_DENIED: 422,
   BUDGET_EXCEEDED: 422,
+  // 409：请求合法，与当前状态冲突，确认之后重发即可
+  CONFIRMATION_REQUIRED: 409,
   UNANSWERED_MUST_CONFIRM: 422,
   AGENT_UNAVAILABLE: 503,
   // 501 而不是 4xx：请求本身没问题，是服务端这个运行时不具备该能力

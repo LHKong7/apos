@@ -14,6 +14,10 @@ import {
   humanActor,
   STATUS_STAGE,
   SYSTEM_ACTOR,
+  type AssigneeHintCode,
+  type AutoActionCode,
+  type ConsequenceParams,
+  type HumanGateCode,
   type PolicyContext,
 } from '@apos/contracts';
 import {
@@ -31,6 +35,14 @@ import { transition } from '../flow/transition';
 import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './provider';
 
 export interface AutoAction {
+  /**
+   * 界面读这个码 + params，**不读** description。
+   * ★ description 保留为兜底：存量快照里只有它，日志里也是它更省事。
+   *   「界面读码，日志读句子」——CLAUDE.md。
+   */
+  code: AutoActionCode;
+  params: ConsequenceParams;
+  /** @deprecated 中文兜底句，给存量数据与日志用 / Chinese fallback for logs and old snapshots */
   description: string;
   policyId: string | null;
   policyName: string | null;
@@ -62,7 +74,13 @@ export interface HumanGateEntry {
    *   里可能一条审批都没有 —— 全是「这几件事得人做」。
    */
   cause: 'execution' | 'approval';
+  /** 界面读码 + params；reason 是兜底句 / UI reads the code, reason is the fallback */
+  code: HumanGateCode;
+  params: ConsequenceParams;
+  assigneeHintCode: AssigneeHintCode;
+  /** @deprecated 中文兜底 / Chinese fallback */
   reason: string;
+  /** @deprecated 中文兜底 / Chinese fallback */
   assigneeHint: string;
 }
 
@@ -266,6 +284,7 @@ export async function generatePlan(
         typeData: {
           phase: task.phase,
           requiredSkills: task.requiredSkills,
+          requiredCapabilities: task.requiredCapabilities,
           requiredTools: task.requiredTools,
           /**
            * ★★ executionMode 与 approvalGate 是两件事。
@@ -375,6 +394,44 @@ async function loadRules(db: Database, orgId: string, projectId: string) {
  * 页面文档 04 §5.3：批准计划 = 批准一批自动化行为，
  * 用户必须清楚看到自己让渡了什么，以及安全网在哪。
  */
+/**
+ * Policy 动作 → 「接下来系统会怎么办」的码。
+ *
+ * ★ 与 explainAction() 一一对应，但产出的是码而不是中文句子。
+ *   explainAction 仍然保留 —— 它喂日志与通知，那里拼一句现成的话更省事。
+ */
+function assigneeHintCodeFor(action: { type: string }): AssigneeHintCode {
+  switch (action.type) {
+    case 'allow':
+      return 'auto_allow';
+    case 'allow_and_notify':
+      return 'auto_notify';
+    case 'require_agent_review':
+      return 'agent_review';
+    case 'require_human_review':
+      return 'human_review';
+    case 'require_multiple_approvals':
+      return 'multiple_approvals';
+    case 'ask':
+      return 'ask';
+    case 'pause':
+      return 'pause';
+    case 'deny':
+      return 'deny';
+    case 'escalate':
+      return 'escalate';
+    case 'transfer_to_human':
+      return 'transfer_to_human';
+    /**
+     * ★ 认不出来的动作类型回落到「得有人处理」而不是「自动放行」。
+     *   猜错方向的代价不对称：把「需要人」显示成「自动」会让用户以为
+     *   不用管，而反过来只是多看一眼。
+     */
+    default:
+      return 'project_member';
+  }
+}
+
 function predictPolicyOutcomes(
   plan: GeneratedPlan,
   ctx: {
@@ -430,6 +487,9 @@ function predictPolicyOutcomes(
       humanGates.push({
         taskTitle: task.title,
         cause: 'execution',
+        code: 'execution_required',
+        params: {},
+        assigneeHintCode: 'project_member',
         reason: '该任务需要人来执行（不是审批闸）',
         assigneeHint: '项目成员',
       });
@@ -440,9 +500,22 @@ function predictPolicyOutcomes(
       humanGates.push({
         taskTitle: task.title,
         cause: 'approval',
-        reason: verdict.matchedPolicyName
-          ? `Policy「${verdict.matchedPolicyName}」要求人工介入`
-          : `项目自治等级下 ${task.riskLevel} 风险任务需人工确认`,
+        /**
+         * ★ Policy 名是**用户起的名字**，作为参数原样带过去，不翻译 ——
+         *   翻译一个用户自定义的名称等于给它改名（CLAUDE.md）。
+         */
+        ...(verdict.matchedPolicyName
+          ? {
+              code: 'policy_requires_human' as const,
+              params: { policy: verdict.matchedPolicyName },
+              reason: `Policy「${verdict.matchedPolicyName}」要求人工介入`,
+            }
+          : {
+              code: 'autonomy_requires_confirm' as const,
+              params: { risk: task.riskLevel },
+              reason: `项目自治等级下 ${task.riskLevel} 风险任务需人工确认`,
+            }),
+        assigneeHintCode: assigneeHintCodeFor(verdict.action),
         assigneeHint: explainAction(verdict.action),
       });
     } else {
@@ -452,6 +525,8 @@ function predictPolicyOutcomes(
 
   if (autoTaskTitles.length > 0) {
     autoActions.push({
+      code: 'agents_execute',
+      params: { count: autoTaskTitles.length, titles: autoTaskTitles.join('、') },
       description: `${autoTaskTitles.length} 个任务将由 Agent 自动执行：${autoTaskTitles.join('、')}`,
       policyId: null,
       policyName: null,
@@ -476,6 +551,8 @@ function predictPolicyOutcomes(
      * ★ 而且它是**估算**不是动作：`kind: 'estimate'`，不再标不可逆。
      */
     autoActions.push({
+      code: 'token_estimate',
+      params: { tokens: formatTokens(totalTokens), ...(pct ? { percent: pct } : {}) },
       description: `预计消耗 ${formatTokens(totalTokens)} token${pct ? `（约占预算 ${pct}%）` : ''}，实际用量以运行结果为准`,
       policyId: null,
       policyName: null,
@@ -485,8 +562,21 @@ function predictPolicyOutcomes(
     });
   }
 
-  if (plan.tasks.some((t) => t.requiredTools.includes('create_pr'))) {
+  /**
+   * ★ 判据是**能力**，不是工具名。`create_pr` 是 mock 运行时的词，
+   *   真实运行时永远不会出现它 —— 按工具名判的结果是：真跑 opencode /
+   *   claude-code 的计划，这条「会自动开 PR」的警告一次都不会显示。
+   *   存量计划里只有工具名，所以两者都认。
+   */
+  const opensPullRequest = plan.tasks.some(
+    (t) =>
+      t.requiredCapabilities.includes('pull_request.create') ||
+      t.requiredTools.includes('create_pr'),
+  );
+  if (opensPullRequest) {
     autoActions.push({
+      code: 'pull_request_create',
+      params: {},
       description: '将自动创建 Pull Request',
       policyId: null,
       policyName: null,

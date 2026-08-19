@@ -1,8 +1,11 @@
 import type { Diagnostic, PlanDiff, Permission } from '@apos/domain';
 import type {
+  AssigneeHintCode,
+  AutoActionCode,
   BlockedDetail,
   DecisionReason,
   HumanGate,
+  HumanGateCode,
   ProjectRole,
   RiskLevel,
   Stage,
@@ -641,6 +644,13 @@ export interface PlanDetail {
     highRiskTasks: number;
   };
   autoActions: {
+    /**
+     * ★ 界面读码，`description` 只是兜底 —— 存量快照里没有 code，
+     *   而日志与通知拼一句现成的中文仍然更省事（CLAUDE.md）。
+     *   Render from the code; `description` is the legacy fallback.
+     */
+    code?: AutoActionCode;
+    params?: Record<string, string | number>;
     description: string;
     policyName: string | null;
     reversible: boolean;
@@ -652,7 +662,10 @@ export interface PlanDetail {
     taskTitle: string;
     /** execution = 这活得人干；approval = 干完要人批。两者判断完全不同 */
     cause: 'execution' | 'approval';
+    code?: HumanGateCode;
+    params?: Record<string, string | number>;
     reason: string;
+    assigneeHintCode?: AssigneeHintCode;
     assigneeHint: string;
   }[];
   currentBoundary: { auto: string[]; human: string[]; depends: { label: string; when: string | null }[] };

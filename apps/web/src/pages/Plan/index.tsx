@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -459,8 +459,47 @@ const DONE_STATUSES = new Set(['done', 'released', 'acceptance', 'cancelled']);
 const RUNNING_STATUSES = new Set(['executing', 'reviewing', 'releasing']);
 const STUCK_STATUSES = new Set(['blocked', 'failed', 'changes_requested', 'awaiting_decision']);
 
+/**
+ * 后果说明成句 —— 有码走码，没码回落到服务端那句中文。
+ *
+ * ★★ 这一段是**人类闸门上最要紧的文案**：批准之后哪些事会不经二次确认
+ *   自动发生（含「自动创建 Pull Request」这种对外可见、收不回的动作）。
+ *   它此前直接渲染服务端拼好的 `description`，于是英文界面上整块是中文 ——
+ *   看不懂它的人，点下 Approve 时并不知道自己授权了什么。
+ *
+ * ★ 认不出的码回落到 `description` 而不是空白：存量计划快照里没有 code，
+ *   而空白会让人以为「这里没什么会自动发生」—— 恰好是相反的意思。
+ *
+ * Assemble the consequence copy from the server's code + params. Unknown
+ * codes fall back to the stored sentence, never to blank: an empty line here
+ * reads as "nothing happens automatically", which is the opposite of the truth.
+ */
+function useConsequenceText() {
+  const t = useT();
+  return {
+    auto: (a: PlanDetail['autoActions'][number]): string => {
+      if (!a.code) return a.description;
+      const params = a.params ?? {};
+      /** ★ 带不带预算占比是两句话，不是一句话里塞个可空占位符 —— */
+      /*    占位符取不到值时会原样留下 `{percent}` 摆在用户眼前。 */
+      const key =
+        a.code === 'token_estimate' && params['percent'] === undefined
+          ? 'plan.auto.token_estimate'
+          : a.code === 'token_estimate'
+            ? 'plan.auto.token_estimate.withBudget'
+            : (`plan.auto.${a.code}` as MessageKey);
+      return t(key as MessageKey, params);
+    },
+    gate: (g: PlanDetail['humanGates'][number]): string =>
+      g.code ? t(`plan.gate.${g.code}` as MessageKey, g.params ?? {}) : g.reason,
+    assignee: (g: PlanDetail['humanGates'][number]): string =>
+      g.assigneeHintCode ? t(`plan.assignee.${g.assigneeHintCode}` as MessageKey) : g.assigneeHint,
+  };
+}
+
 function AutoActions({ detail: d }: { detail: PlanDetail }) {
   const t = useT();
+  const say = useConsequenceText();
   const [expanded, setExpanded] = useState(false);
   const stale = d.plan.status !== 'approved' && d.autoActions.length > 0;
 
@@ -495,7 +534,7 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
         {d.autoActions.map((a, i) => (
           <li key={i} className="flex flex-wrap items-baseline gap-1 text-xs leading-5 text-amber-900">
             <span aria-hidden>{a.kind === 'estimate' ? '≈' : '·'}</span>
-            <span className="min-w-0">{a.description}</span>
+            <span className="min-w-0">{say.auto(a)}</span>
             {a.kind === 'estimate' && (
               <span
                 className="rounded bg-white/70 px-1 text-[10px] text-amber-800"
@@ -530,9 +569,18 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
               「批准之后还有多少道闸」的。
           */}
           <p className="text-[11px] text-amber-900">
+            {/*
+              ★ 两个数字各自变位，再由一句带占位符的整句把它们拼起来。
+                英文 count=1 时是 needs 而不是 need，中文不分单复数 ——
+                所以不能在渲染处拼「{n} need …」，那句话只在中文里恒成立。
+            */}
             {t('plan.gateBreakdown', {
-              approval: d.humanGates.filter((g) => g.cause === 'approval').length,
-              execution: d.humanGates.filter((g) => g.cause === 'execution').length,
+              approval: t('plan.gateApproval', {
+                count: d.humanGates.filter((g) => g.cause === 'approval').length,
+              }),
+              execution: t('plan.gateExecution', {
+                count: d.humanGates.filter((g) => g.cause === 'execution').length,
+              }),
             })}
             {!expanded && ' ' + d.humanGates.map((g) => g.taskTitle).join(' · ')}
           </p>
@@ -551,8 +599,17 @@ function AutoActions({ detail: d }: { detail: PlanDetail }) {
                   >
                     {g.cause === 'approval' ? t('plan.causeApproval') : t('plan.causeExecution')}
                   </span>
-                  <span className="font-medium">{g.taskTitle}</span> —— {g.reason}
-                  <span className="ml-1 text-amber-700">（{g.assigneeHint}）</span>
+                  {/*
+                    ★ 破折号与括号也走词条：中文用「——」「（）」，英文用「—」「()」。
+                      写死在 JSX 里的全角标点在英文句子中间会很突兀，
+                      而这正是「不许拼句子」要防的那类问题的小号版本。
+                  */}
+                  <span className="font-medium">{g.taskTitle}</span>
+                  {t('plan.gateReasonSep')}
+                  {say.gate(g)}
+                  <span className="ml-1 text-amber-700">
+                    {t('plan.gateHint', { hint: say.assignee(g) })}
+                  </span>
                 </li>
               ))}
             </ul>

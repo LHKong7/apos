@@ -217,7 +217,26 @@ export function useBlockedSummary(): (
   fallback: string | null | undefined,
 ) => string {
   const t = useT();
-  return (detail, fallback) => {
+  return (detail, fallback) => summarizeBlocked(t, detail, fallback);
+}
+
+/**
+ * 同一套归并逻辑的**非 hook** 版本。
+ *
+ * ★ 执行图的 tooltip 是个普通函数（不是组件），拿不到 hook。它此前因此
+ *   只读 `blockedReason` —— 于是图上的阻塞说明必然是那句中文兜底，
+ *   而且**刷新也不会自愈**（与 SSE 那处同源，但在读取路径上）。
+ *   把逻辑抽出来共用，而不是在图里再写一份：两份实现迟早给出两个答案。
+ *
+ * The same collapsing logic without the hook, so the graph tooltip can read
+ * codes too instead of falling back to the stored Chinese sentence forever.
+ */
+export function summarizeBlocked(
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+  detail: BlockedDetail | null | undefined,
+  fallback: string | null | undefined,
+): string {
+  {
     if (!detail) return fallback ?? t('card.reasonNotRecorded');
     if (detail.kind === 'workspace_unavailable') {
       return detail.detail ?? t('blocked.kind.workspace_unavailable');
@@ -241,5 +260,5 @@ export function useBlockedSummary(): (
         ? t('blocked.summary.one', { name: list[0]!.agentName, reason: head })
         : t('blocked.summary.many', { count: list.length, reason: head });
     return rest > 0 ? t('blocked.summary.andMore', { lead, count: rest }) : lead;
-  };
+  }
 }

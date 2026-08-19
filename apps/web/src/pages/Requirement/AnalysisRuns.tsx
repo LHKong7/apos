@@ -59,7 +59,14 @@ export function AnalysisRuns({ requirementId }: { requirementId: string }) {
             >
               {r.status}
             </span>
-            <span className="min-w-0 flex-1 truncate text-slate-700">{r.goal}</span>
+            {/*
+              ★ 读码，不读那句中文。规划 Run 的目标只有两种取值，正是
+                「该用码」的典型：句子只服务中文界面，码同时服务两种语言。
+                存量 Run 没有 goalCode，回落到 goal（那句中文）而不是空白。
+            */}
+            <span className="min-w-0 flex-1 truncate text-slate-700">
+              {r.goalCode ? t(`requirement.runs.goal.${r.goalCode}`) : r.goal}
+            </span>
             {/*
               ★★ 「由谁跑的」要摆在模型旁边。编写 Agent 可以由人指定之后，
                 这一列才是这张表最该回答的问题 —— 只有 `claude-code:sonnet`
@@ -75,7 +82,16 @@ export function AnalysisRuns({ requirementId }: { requirementId: string }) {
                   : ''}
             </span>
             {r.model && <span className="shrink-0 font-mono text-slate-400">{r.model}</span>}
-            <span className="shrink-0 tabular-nums text-slate-500">{tokens(r.tokens)}</span>
+            {/*
+              ★ 这个数字光秃秃地摆着读不出是什么 —— 加单位，并在
+                「该运行时不上报用量」时说清楚是不知道而不是没花。
+            */}
+            <span
+              className="shrink-0 tabular-nums text-slate-500"
+              title={r.tokens === null || r.tokens === undefined ? t('requirement.runs.tokensUnknown') : undefined}
+            >
+              {t('requirement.runs.tokens', { amount: tokens(r.tokens) })}
+            </span>
             <span className="shrink-0 text-slate-400">
               {r.startedAt ? relativeTime(r.startedAt) : '—'}
             </span>

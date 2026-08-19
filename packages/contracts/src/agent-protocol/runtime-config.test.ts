@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  RUNTIME_KIND_SPECS,
   defaultRuntimeConfig,
   envOverridesOf,
   isSecretEnvKey,
@@ -186,5 +187,56 @@ describe('envOverridesOf', () => {
 
   it('过滤掉非字符串的值', () => {
     expect(envOverridesOf({ env: { A: 'a', B: 42 } })).toEqual({ A: 'a' });
+  });
+});
+
+
+/**
+ * 英文覆盖 —— 阻断性。
+ *
+ * ★★ 为什么这条要是**测试**而不是靠自觉：
+ *
+ *   这张表上的 `*En` 字段是可选的，界面取不到就回落中文（见 useSpecText，
+ *   那个回落本身是对的：一段中文说明总比空白强）。但可选 + 回落意味着
+ *   漏写**没有任何现场迹象** —— 英文界面照常渲染，只是渲染的是中文。
+ *   实测曾经一次欠下 48 处，正好落在新用户配置 Agent 的必经路径上。
+ *
+ *   而这张表存在的理由是「加一个 CLI 只用加一条 profile」——
+ *   那也意味着加一个 CLI 就会顺手多欠一批文案。所以由测试来数。
+ *
+ * ★ 判据是「中文的那一份含 CJK」而不是「有没有填」：像 `binary`、
+ *   `ANTHROPIC_API_KEY` 这种本来就是英文/标识符的值不需要再来一份。
+ *
+ * Every reader-facing string that is written in Chinese must ship an English
+ * counterpart. The optional fields fall back to Chinese, which renders fine
+ * and therefore hides the omission — so it is counted here instead.
+ */
+describe('运行时规格的英文覆盖', () => {
+  const hasCJK = (s: string | null | undefined) => /[\u4e00-\u9fff]/.test(s ?? '');
+
+  it('每一条面向用户的中文文案都配了英文', () => {
+    const missing: string[] = [];
+    for (const spec of RUNTIME_KIND_SPECS) {
+      const need = (zh: string | null | undefined, en: string | null | undefined, at: string) => {
+        if (hasCJK(zh) && !en) missing.push(`${spec.kind}.${at}`);
+      };
+      need(spec.description, spec.descriptionEn, 'description');
+      need(spec.prerequisite, spec.prerequisiteEn, 'prerequisite');
+      for (const key of ['credential', 'endpoint'] as const) {
+        const slot = spec[key];
+        if (!slot) continue;
+        need(slot.label, slot.labelEn, `${key}.label`);
+        need(slot.help, slot.helpEn, `${key}.help`);
+      }
+      for (const f of spec.fields) {
+        need(f.label, f.labelEn, `${f.key}.label`);
+        need(f.help, f.helpEn, `${f.key}.help`);
+        for (const o of f.options ?? []) {
+          need(o.label, o.labelEn, `${f.key}/${o.value}.label`);
+          need(o.help, o.helpEn, `${f.key}/${o.value}.help`);
+        }
+      }
+    }
+    expect(missing, `以下文案缺英文，英文界面会显示中文：\n${missing.join('\n')}`).toEqual([]);
   });
 });

@@ -835,8 +835,12 @@ export const api = {
       runs: {
         id: string;
         status: string;
+        /** ★ 日志与存量数据用的中文句子 —— 界面读 `goalCode`，这只是兜底 */
         goal: string;
-        tokens: number;
+        /** 规划 Run 的目标码：structure = 需求结构化，plan = 生成计划 */
+        goalCode: 'structure' | 'plan' | null;
+        /** ★ null = 该运行时不上报用量（不是「没花」）—— 见 format/tokens */
+        tokens: number | null;
         model: string | null;
         /** ★ 是谁跑的。换过编写 Agent 之后，这一列才让两次分析分得开 */
         agentId: string | null;

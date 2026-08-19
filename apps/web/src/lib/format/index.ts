@@ -14,9 +14,26 @@ import { currentLocale, t, type MessageKey } from '../i18n';
  * Token usage, abbreviated. Cards and tables need to be scannable: two full
  * counts side by side read as lengths before they read as magnitudes.
  */
+/**
+ * ★★ 「不知道」和「零」必须分开显示。
+ *
+ *   这里以前是 `Number(value ?? 0)` —— null 被折叠成 0，界面上出现一个
+ *   干净的「0」。而 null 的真实含义是**该运行时不上报用量**
+ *   （opencode / pi / aider 的能力清单里 `tokenReporting: false`），
+ *   于是用户读到的是「这次没花 token」——一个我们并不知道的事实。
+ *
+ *   能力清单那套设计的全部要点就是「不静默降级」：缺什么能力要让人看见。
+ *   把 unknown 折叠成 0 正是它要禁止的事。
+ *
+ *   Unknown must not render as zero: a null token count means the runtime
+ *   does not report usage, and "0" states something we do not know.
+ */
+export const UNKNOWN = '—';
+
 export function tokens(value: number | null | undefined): string {
-  const n = Number(value ?? 0);
-  if (!Number.isFinite(n)) return '0';
+  if (value === null || value === undefined) return UNKNOWN;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return UNKNOWN;
   const abs = Math.abs(n);
   if (abs >= 1e9) return `${trimUnit(n / 1e9)}B`;
   if (abs >= 1e6) return `${trimUnit(n / 1e6)}M`;

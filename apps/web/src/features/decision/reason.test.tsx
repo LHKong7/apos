@@ -15,6 +15,7 @@ import { useLocaleStore } from '../../lib/i18n';
 const reason = (over: Partial<DecisionReason> = {}): DecisionReason => ({
   whyHuman: { code: 'policy_requires_human', params: { policy: '生产环境发布需发布负责人审批', policyId: 'baseline-prod-deploy' } },
   consequence: { code: 'stalled_with_downstream', params: { status: 'ready', count: 3 } },
+  subjectTitle: null,
   ...over,
 });
 

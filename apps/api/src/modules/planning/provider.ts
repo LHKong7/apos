@@ -1,4 +1,9 @@
-import type { AcceptanceCriterion, DependencyType, WorkItemType } from '@apos/contracts';
+import type {
+  AcceptanceCriterion,
+  AgentCapability,
+  DependencyType,
+  WorkItemType,
+} from '@apos/contracts';
 
 /**
  * 需求结构化与计划生成的 LLM 抽象。
@@ -108,6 +113,12 @@ export interface PlanTaskDraft {
   estimatedTokens: number | null;
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   requiredSkills: string[];
+  /**
+   * 这个任务需要的**语义能力**（跨运行时）。调度器按它筛候选。
+   * Semantic capabilities this task needs — runtime independent.
+   */
+  requiredCapabilities: AgentCapability[];
+  /** @deprecated 运行时工具名，只为读存量计划保留 / legacy runtime tool names, read-only */
   requiredTools: string[];
   /** 计划阶段就标记出必须由人做的任务 */
   requiresHuman: boolean;

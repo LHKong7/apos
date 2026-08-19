@@ -1732,12 +1732,33 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .orderBy(desc(agentRuns.createdAt));
 
     return {
-      runs: rows.map((r) => ({
-        ...r,
-        tokens: r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite,
-        startedAt: r.startedAt?.toISOString() ?? null,
-        endedAt: r.endedAt?.toISOString() ?? null,
-      })),
+      runs: rows.map((r) => {
+        const total = r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite;
+        /**
+         * ★ 规划 Run 的 goal 存的就是码（'structure' / 'plan'）。
+         *   认得就当码用，认不出说明是**存量行**（那时候存的是中文句子）——
+         *   回落到原样显示，界面上宁可出现一句中文，也不要空白。
+         */
+        const goalCode = r.goal === 'structure' || r.goal === 'plan' ? r.goal : null;
+        return {
+          ...r,
+          /**
+           * ★★ 四个计数器全为 0 表示**没收到用量**，不是「这次没花 token」。
+           *
+           *   有些运行时的能力清单里 tokenReporting 就是 false（纯文本输出的
+           *   CLI 拿不到结构化用量）。把 unknown 折叠成 0 之后，界面上显示的是
+           *   「这次分析没花 token」—— 一句假话，而且正好违反能力清单
+           *   「不静默降级」那条承诺。真跑起来的 Run 不可能一个 input token 都不消耗。
+           *
+           *   All-zero means "no usage was reported", never "zero was used".
+           */
+          tokens: total > 0 ? total : null,
+          /** 界面读码；取不到（存量数据）时前端回落到 goal 那句中文 */
+          goalCode,
+          startedAt: r.startedAt?.toISOString() ?? null,
+          endedAt: r.endedAt?.toISOString() ?? null,
+        };
+      }),
     };
   });
 
@@ -2059,7 +2080,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
          */
         if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
           throw new ApiError(
-            'VALIDATION_FAILED',
+            /** ★ 不是校验失败 —— 请求是对的，只是要用户先确认一次（见 errors.ts） */
+            'CONFIRMATION_REQUIRED',
             `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
               .map((t) => t.title)
               .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,

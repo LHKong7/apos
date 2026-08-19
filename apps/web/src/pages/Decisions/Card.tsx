@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -33,6 +33,16 @@ export function DecisionCardView({
   showSelectColumn: boolean;
 }) {
   const t = useT();
+  /**
+   * 决策类型取词：认得的码走词条，认不出的回落到服务端那句中文。
+   * ★ 回落到中文而不是裸 key —— 新增一个类型时界面上出现的应该是
+   *   一句读得懂的话，不是 `high_risk_operation` 这种给机器看的字符串。
+   */
+  const typeLabel = (type: string, fallback: string): string => {
+    const key = `decision.type.${type}` as MessageKey;
+    const text = t(key);
+    return text === key ? fallback : text;
+  };
   const explain = useDecisionReason();
   const qc = useQueryClient();
   const [mode, setMode] = useState<null | 'approve' | 'reject'>(null);
@@ -90,9 +100,23 @@ export function DecisionCardView({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-sm text-slate-900">{card.title}</span>
+            {/*
+              ★ 标题由「工作项标题」+「需要你确认」两半组成，而只有后半是
+                平台自己的词、可以翻译。服务端把前半原样带在 reasonDetail 里，
+                这里拼 —— 存量决策没有那一栏，回落到库里那句拼好的中文。
+            */}
+            <span className="text-sm text-slate-900">
+              {card.reasonDetail?.subjectTitle
+                ? t('decision.needsYou', { title: card.reasonDetail.subjectTitle })
+                : card.title}
+            </span>
+            {/*
+              ★ 决策类型是**平台自己的词表**（decisionLabel 里那十三条），
+                所以按码取词。服务端仍然给 typeLabel —— 它喂日志与存量客户端，
+                也是界面认不出新类型时的兜底（宁可显示中文，不要显示裸 key）。
+            */}
             <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-600">
-              {card.typeLabel}
+              {typeLabel(card.type, card.typeLabel)}
             </span>
             <span
               className={clsx(

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { Contribution } from '@apos/domain';
@@ -46,7 +46,26 @@ export function OverviewPage() {
   const navigate = useNavigate();
   const [expand, setExpand] = useState<'health' | 'delay' | null>(null);
   const [openDecision, setOpenDecision] = useState<string | null>(null);
-  const [openCard, setOpenCard] = useState<string | null>(null);
+  /**
+   * ★ 抽屉开关写进 URL，与看板同一个 `card` 参数（理由见 Board/index.tsx）：
+   *   本地 state 的抽屉发不出链接，浏览器返回键也关不掉它。
+   */
+  const [params, setParams] = useSearchParams();
+  const openCard = params.get('card');
+  const setOpenCard = useCallback(
+    (id: string | null) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set('card', id);
+          else next.delete('card');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
 
   useProjectStream(projectId);
 

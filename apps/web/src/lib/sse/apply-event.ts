@@ -18,15 +18,41 @@ export function applyEventToCache(qc: QueryClient, event: StreamEvent) {
     case 'work_item.status_changed':
       return onStatusChanged(qc, event);
 
+    /**
+     * ★★ 结构化的 `detail` 必须跟着补进来，`reason` 只是兜底句。
+     *
+     *   卡片上的说明由 `useBlockedSummary()` 渲染，它是 detail 优先、
+     *   fallback 兜底。补丁不写 detail 的话，实时推来的那张卡片永远走兜底 ——
+     *   而兜底按设计就是**存量中文句子**。症状是：调度器一判定阻塞，
+     *   英文界面上就冒出一句中文，刷新之后又变回英文。
+     *   原因码这套设计在实时路径上等于没有生效（「界面读码，日志读句子」）。
+     *
+     * ★ `blockedSince` 只在**第一次**被阻塞时写。
+     *
+     *   服务端在原因没变时刻意不动这个字段（sameBlockedDetail），为的是
+     *   让界面上的「已阻塞 N 分钟」从真正的起点开始算。补丁无条件写成
+     *   事件时间的话，每轮调度都把它推回现在 —— 时长恒等于 0，
+     *   而这正是 CLAUDE.md 点名要防的那个症状。
+     *
+     * Patch the structured detail too, and never reset the start time: the
+     * server deliberately preserves `blockedSince` across re-evaluations so the
+     * UI can show how long this has really been stuck.
+     */
     case 'work_item.blocked':
     case 'work_item.unblocked':
-      return patchBoardCard(qc, event.projectId, event.subjectId, (card) => ({
-        ...card,
-        blockedSince: event.type === 'work_item.blocked' ? event.occurredAt : null,
-        blockedReason:
-          event.type === 'work_item.blocked' ? String(event.payload['reason'] ?? '') : null,
-        blockedMinutes: event.type === 'work_item.blocked' ? 0 : null,
-      }));
+      return patchBoardCard(qc, event.projectId, event.subjectId, (card) => {
+        if (event.type === 'work_item.unblocked') {
+          return { ...card, blockedSince: null, blockedReason: null, blockedDetail: null, blockedMinutes: null };
+        }
+        const detail = (event.payload['detail'] ?? null) as BoardCard['blockedDetail'];
+        return {
+          ...card,
+          blockedSince: card.blockedSince ?? event.occurredAt,
+          blockedReason: String(event.payload['reason'] ?? ''),
+          blockedDetail: detail,
+          blockedMinutes: card.blockedSince ? card.blockedMinutes : 0,
+        };
+      });
 
     case 'agent_run.dispatched':
       return patchBoardCard(qc, event.projectId, asString(event.payload['workItemId']), (card) => ({

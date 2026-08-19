@@ -55,6 +55,25 @@ const Coded = <T extends z.ZodTypeAny>(code: T) =>
 export const DecisionReason = z.object({
   whyHuman: Coded(WhyHumanCode).nullable().default(null),
   consequence: Coded(ConsequenceCode).nullable().default(null),
+  /**
+   * 被决策的那个工作项的标题，**未经加工**。
+   *
+   * ★★ 决策的 `title` 列存的是平台拼好的一句话（`「X」—— 需要你确认`）。
+   *   那个后缀是**平台自己写的词**，因此必须可翻译；而工作项标题是
+   *   用户/Agent 产出的内容，必须原样透传（翻译它等于给它改名）。
+   *   两者拼在一起入库之后就再也分不开了 —— 英文界面上只能整句照搬中文。
+   *
+   * ★ 存量决策没有这一栏，界面回落到 `title` 那句拼好的中文。
+   *
+   * The raw work item title, so the UI can compose "<title> — needs you" in
+   * the reader's language instead of inheriting a pre-assembled Chinese one.
+   */
+  /**
+   * ★ optional 而不是必填：另外三条产生决策的路径（恢复升级、复核、
+   *   Agent 求助）本来就没有「工作项标题 + 后缀」这种拼法，强制它们填
+   *   一个 null 只是噪音。取不到时界面回落到 `title`。
+   */
+  subjectTitle: z.string().nullable().optional(),
 });
 export type DecisionReason = z.infer<typeof DecisionReason>;
 

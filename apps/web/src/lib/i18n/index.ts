@@ -25,8 +25,33 @@ export type Params = Record<string, string | number>;
  * ★ 插值不做转义：React 渲染文本节点时自己会转义，这里再转一遍会把
  *   用户填的 `<` 变成 `&lt;` 显示出来。
  */
+/**
+ * 按 `count` 选单复数变体 / Pick the plural variant for `count`.
+ *
+ * ★★ 为什么需要它：英文里 `{count} tasks are marked` 在 count=1 时是错的，
+ *   而中文「{count} 个任务」不分单复数 —— 于是「把 count 插进一句写死复数的话」
+ *   在中文界面上永远看起来是对的，英文界面上永远是错的。实测有四处
+ *   （`1 points`、`1 tasks`、`1 places`、`1 of them are`）。
+ *
+ * ★ 约定：需要区分的词条额外提供 `<key>_one` / `<key>_other` 两条。
+ *   两条都在 en.ts 里声明，因此漏写是**编译错误**而不是运行时的错句子。
+ *   不提供变体的词条照旧走原键 —— 绝大多数文案不需要这个。
+ *
+ * ★ 只在当前语言真的有变体时才切换 —— 没有变体的词条落回原键。
+ *   中文两条变体写成同一句话（中文本来就不分单复数），这不是冗余：
+ *   zh.ts 的类型钉死在 en.ts 的键上，少写一条是编译错误，而那正是
+ *   我们要的 —— 加英文变体时不会忘了中文侧。
+ */
+function pluralKey(locale: Locale, key: MessageKey, params?: Params): MessageKey {
+  const count = params?.['count'];
+  if (typeof count !== 'number') return key;
+  const variant = `${key}_${count === 1 ? 'one' : 'other'}` as MessageKey;
+  return CATALOGS[locale][variant] !== undefined ? variant : key;
+}
+
 export function translate(locale: Locale, key: MessageKey, params?: Params): string {
-  const template = CATALOGS[locale][key] ?? CATALOGS.en[key];
+  const resolved = pluralKey(locale, key, params);
+  const template = CATALOGS[locale][resolved] ?? CATALOGS.en[resolved];
 
   if (template === undefined) {
     if (import.meta.env.DEV) {

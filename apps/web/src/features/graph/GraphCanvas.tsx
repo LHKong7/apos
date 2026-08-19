@@ -6,6 +6,7 @@ import { NODE_H, NODE_W, edgePath, edgeStyle, fitTransform } from './geometry';
 import { KIND_META, NodeShape } from './shapes';
 import { edgeKey, type HighlightResult } from './highlight';
 import { tokens } from '../../lib/format';
+import { summarizeBlocked } from '../work-item/BlockedReasons';
 import { Button } from '@/components/ui/button';
 
 interface Props {
@@ -407,7 +408,15 @@ function tooltipOf(node: GraphNode): string {
     t('graph.executorLine', { name: node.executor?.name ?? t('graph.unassigned') }),
     t('graph.durationLine', { hours: node.durationHours, estimated: node.durationEstimated ? t('graph.defaultEstimate') : '', cost: tokens(node.tokens) }),
   ];
-  if (node.blockedReason) lines.push(t('graph.blockedLine', { reason: node.blockedReason }));
+  /**
+   * ★ 读结构化 detail，`blockedReason` 只是老数据的兜底 ——
+   *   这里以前只读兜底句，于是图上的阻塞说明恒为中文（见 BlockedReasons）。
+   */
+  if (node.blockedDetail || node.blockedReason) {
+    lines.push(
+      t('graph.blockedLine', { reason: summarizeBlocked(t, node.blockedDetail, node.blockedReason) }),
+    );
+  }
   if (node.decisionDueInMinutes !== null) {
     lines.push(
       node.decisionDueInMinutes < 0
