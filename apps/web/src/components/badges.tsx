@@ -101,8 +101,14 @@ const RISK_STYLES: Record<RiskLevel, string> = {
 /** 低风险不显示 —— 卡片上每一行都要挣得自己的位置 */
 export function RiskBadge({ risk }: { risk: RiskLevel }) {
   if (risk === 'low') return null;
+  /**
+   * ★ whitespace-nowrap + shrink-0：「Medium risk」这类两词标签在窄列上
+   *   会从中间断成两行，把同一行里的状态芯片挤出卡片外 ——
+   *   卡片上于是看得到风险却看不到「这张卡现在怎么样」。
+   *   风险标签本来就短，宁可它占满自己那一格，也不要它换行。
+   */
   return (
-    <span className={clsx('text-[11px]', RISK_STYLES[risk])}>
+    <span className={clsx('shrink-0 text-[11px] whitespace-nowrap', RISK_STYLES[risk])}>
       ● {riskLabel(risk)}
     </span>
   );

@@ -2,6 +2,7 @@ import { useT } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Diagnostic, DiagnosticAction } from '@apos/domain';
+import { useDiagnosticText } from '@/features/graph/diagnostic-text';
 import { Button } from '@/components/ui/button';
 
 const SEVERITY_META = {
@@ -30,6 +31,7 @@ export function DiagnosticsPanel({
   onFocus: (nodeId: string) => void;
 }) {
   const t = useT();
+  const say = useDiagnosticText();
   const [expanded, setExpanded] = useState(false);
 
   if (diagnostics.length === 0) {
@@ -67,13 +69,13 @@ export function DiagnosticsPanel({
                 {meta.icon}
               </span>
               <div className="min-w-0 flex-1">
-                <p className={clsx('leading-5', meta.className)}>{d.message}</p>
+                <p className={clsx('leading-5', meta.className)}>{say.message(d)}</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                   {d.actions.map((action) => (
                     <Button variant="outline" size="xs"
-                      key={`${action.kind}-${action.label}`}
+                      key={`${action.kind}-${action.labelCode}`}
                       onClick={() => onAction(action)}>
-                      {action.label}
+                      {say.action(action)}
                     </Button>
                   ))}
                   {d.affectedNodes[0] && (

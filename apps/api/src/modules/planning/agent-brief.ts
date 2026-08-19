@@ -49,12 +49,39 @@ const CLARIFICATION_RULES = `
 只提问不给建议，等于在考用户。
 `;
 
+/**
+ * 输出语言指令。
+ *
+ * ★★ 必须显式写死，不能靠 brief 自己是中文来暗示。
+ *   brief 是中文而需求是英文时，模型两边都占理，于是它每次自己选一个 ——
+ *   现场就是同一个项目里中英两份 PRD 并存（问题记录：BUG-4）。
+ *
+ * ★ 只约束**平台要它写的字段**。用户原话、既有代码里的标识符照抄，
+ *   翻译它们等于给用户的东西改名。
+ *
+ * Stated explicitly because an implicit cue (a Chinese brief) loses to an
+ * English requirement about half the time.
+ */
+function languageRule(locale: 'en' | 'zh' | undefined): string {
+  const target = locale === 'zh' ? '简体中文' : '英文（English）';
+  return `
+## 输出语言
+
+**你写进 JSON 的每一个字段都必须用${target}。** 这一条压过原始需求的语言：
+需求是英文而这里要求中文时，也写中文；反之亦然。
+
+例外只有一类：**原样引用**的内容 —— 用户的原话、代码标识符、文件路径、
+第三方产品名。它们照抄，不要翻译。
+`;
+}
+
 export function buildStructureBrief(input: StructureInput): string {
   const context = input.context.length
     ? `\n## 可参考的上下文\n\n${input.context.map((c) => `### ${c.title}\n${c.content}`).join('\n\n')}\n`
     : '';
 
   return `${header('把一段自然语言需求结构化')}
+${languageRule(input.scope?.locale)}
 ## schema
 
 \`\`\`jsonc
@@ -114,6 +141,7 @@ export function buildPlanBrief(
   req: StructuredRequirement,
   projectType: string,
   feedback?: string,
+  locale?: 'en' | 'zh',
 ): string {
   const revision = feedback
     ? `
@@ -129,6 +157,7 @@ ${feedback}
     : '';
 
   return `${header('把结构化需求拆成可执行的任务计划')}
+${languageRule(locale)}
 ## schema
 
 \`\`\`jsonc

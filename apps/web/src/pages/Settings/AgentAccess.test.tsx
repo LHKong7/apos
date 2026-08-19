@@ -210,3 +210,35 @@ describe('★ 改动前先看影响', () => {
     expect(previewAgentAccess).toHaveBeenCalled();
   });
 });
+
+/**
+ * ★★ 英文说法**已经在接口返回里**了（nameEn / labelEn / descriptionEn）。
+ *
+ *   此前界面只画中文那一份，于是英文用户在一个管权限的页面上
+ *   看到「标准执行者」「读取工作区文件」—— 而这不是缺翻译，
+ *   是把已经在线上的英文丢掉了。这条测试盯着它别再丢一次。
+ */
+describe('英文界面用接口给的英文', () => {
+  it('能力说明走 labelEn', async () => {
+    useLocaleStore.setState({ locale: 'en' });
+    renderPanel();
+
+    expect(await screen.findByText('Read workspace files')).toBeInTheDocument();
+    expect(screen.queryByText('读取工作区文件')).not.toBeInTheDocument();
+  });
+
+  it('档案名走 nameEn', async () => {
+    useLocaleStore.setState({ locale: 'en' });
+    renderPanel();
+
+    expect(await screen.findByText('Standard executor')).toBeInTheDocument();
+  });
+
+  /** ★ 中文界面照旧走中文那一份 —— 别把方向修反了 */
+  it('中文界面仍是中文', async () => {
+    useLocaleStore.setState({ locale: 'zh' });
+    renderPanel();
+
+    expect(await screen.findByText('读取工作区文件')).toBeInTheDocument();
+  });
+});

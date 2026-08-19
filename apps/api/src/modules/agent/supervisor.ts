@@ -1,8 +1,9 @@
 import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
-import { agentRuns, agents, runEvents, type Database } from '@apos/db';
-import { ACTIVE_RUN_STATUSES, type RunEvent } from '@apos/contracts';
+import { agentRuns, agents, runEvents, workItems, type Database } from '@apos/db';
+import { ACTIVE_RUN_STATUSES, SYSTEM_ACTOR, type RunEvent } from '@apos/contracts';
 import { UnsupportedFeatureError, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type { WorkspaceService } from '../workspace';
+import { transition } from '../flow/transition';
 import { ingestRunEvent } from './ingest';
 
 export interface SuperviseOptions {
@@ -17,6 +18,8 @@ export interface SuperviseReport {
   timedOut: string[];
   orphanedResolved: string[];
   stillRunning: string[];
+  /** 停在 executing 但已经没有活跃 Run 的工作项。见 reconcileStrandedItems */
+  strandedItems: string[];
 }
 
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 90_000;
@@ -88,6 +91,7 @@ export async function superviseRuns(
     timedOut: [],
     orphanedResolved: [],
     stillRunning: [],
+    strandedItems: [],
   };
 
   for (const run of rows) {
@@ -127,7 +131,59 @@ export async function superviseRuns(
     report.orphanedResolved.push(run.id);
   }
 
+  report.strandedItems = await reconcileStrandedItems(db, opts.correlationId);
+
   return report;
+}
+
+/**
+ * 兜底：停在 `executing`、但一条活跃 Run 都没有的工作项。
+ *
+ * ★★ 为什么需要这一条，而不是「把派发路径写对就够了」。
+ *
+ *   supervisor 上面那段只看 `dispatching` / `running` 两个状态的 Run ——
+ *   这是对的，它要判的是「没有事件回来的 Run 现在怎么样了」。
+ *   但正因为如此，**Run 已经结算、工作项却没跟着走**的那一类偏差，
+ *   它一条都看不见：Run 不在视野里，于是没有任何循环能再碰到这个工作项。
+ *   现场表现是看板按 `status = 'executing'` 数出「1 个 Agent 在跑」，
+ *   而库里那条 Run 半小时前就 failed 了，卡片永远不动。
+ *
+ *   派发路径的漏洞已经补上（见 dispatch.ts 里 `!ack.accepted` 那段），
+ *   但「先更新 Run、再写事件」中间隔着一次 await，进程在那一刻挂掉
+ *   同样会留下这种孤儿。所以这里按**状态本身**收口，不假设是谁造成的。
+ *
+ * A work item stuck at `executing` with no live run is unreachable by every
+ * other loop, so it is reconciled here by state rather than by cause.
+ */
+async function reconcileStrandedItems(
+  db: Database,
+  correlationId: string,
+): Promise<string[]> {
+  const stranded = await db
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.status, 'executing'),
+        sql`not exists (
+          select 1 from ${agentRuns} r
+          where r.work_item_id = ${workItems.id}
+            and r.status in ('dispatching', 'running')
+        )`,
+      ),
+    );
+
+  const moved: string[] = [];
+  for (const item of stranded) {
+    const result = await transition(db, {
+      workItemId: item.id,
+      trigger: 'agent_run_failed',
+      actor: SYSTEM_ACTOR,
+      correlationId,
+    });
+    if (result.ok) moved.push(item.id);
+  }
+  return moved;
 }
 
 type RunRow = typeof agentRuns.$inferSelect;

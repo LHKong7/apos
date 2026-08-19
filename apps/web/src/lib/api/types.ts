@@ -612,6 +612,23 @@ export interface RequirementDetail {
   authorAgent: { id: string; name: string; status: string } | null;
 }
 
+export type PlanFallbackCode =
+  | 'no_scope'
+  | 'no_agent'
+  | 'agent_unregistered'
+  | 'runtime_rejected'
+  | 'run_failed'
+  | 'output_missing'
+  | 'output_invalid'
+  | 'output_inconsistent'
+  | 'unexpected_error';
+
+export interface PlanFallback {
+  code: PlanFallbackCode;
+  /** 原始中文细节，界面认不出码时的兜底 */
+  reason: string;
+}
+
 export interface PlanDetail {
   plan: {
     id: string;
@@ -620,8 +637,11 @@ export interface PlanDetail {
     projectId: string;
     requirementId: string | null;
     model: string | null;
-    generationCost: number;
+    /** null = 该运行时不上报成本（不是「没花」）。见 format/money */
+    generationCost: number | null;
     generationMs: number | null;
+    /** 非 null = 这份计划是通用模板，不是按需求生成的 */
+    fallback: PlanFallback | null;
     estimatedHours: number;
     estimatedTokens: number;
     createdAt: string;
@@ -641,6 +661,8 @@ export interface PlanDetail {
     spent: number;
     overBudget: boolean;
     humanGateCount: number;
+    /** 没有任何合格 Agent 能接的任务 —— 批下去会停在 ready 不动 */
+    tasksWithoutAgent: { id: string; title: string }[];
     highRiskTasks: number;
   };
   autoActions: {
@@ -712,7 +734,13 @@ export interface OverviewResponse {
   actionItems: {
     kind: 'plan' | 'decision';
     id: string;
+    /** @deprecated 服务端拼好的中文，仅在认不出码/没有 reasonDetail 时兜底 */
     title: string;
+    /** 计划类条目的标题码 —— 界面按它取词 */
+    titleCode?: 'plan_awaiting_approval';
+    titleParams?: Record<string, string | number>;
+    /** 决策类条目：与决策中心同源，用它拼「X — 需要你确认」 */
+    reasonDetail?: DecisionReason | null;
     riskLevel: string;
     overdueMinutes: number | null;
     dueInMinutes: number | null;

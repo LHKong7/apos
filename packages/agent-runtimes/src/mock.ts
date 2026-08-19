@@ -24,6 +24,18 @@ export interface MockScript {
   costPerStep?: number;
   /** 每步之间的模拟延迟，测试里设 0 */
   stepDelayMs?: number;
+  /**
+   * 让 dispatch 直接拒收，值就是拒收理由。
+   *
+   * ★ 真实运行时最常见的失败不是「跑挂了」而是「压根没接」——
+   *   缺凭证、没有可用工具、工作目录没准备好。这三种都在 dispatch
+   *   就返回 accepted:false，走的是与执行失败完全不同的代码路径，
+   *   而那条路径此前没有任何测试覆盖。
+   *
+   * Rejects at dispatch time rather than failing mid-run: a distinct code
+   * path that real adapters hit far more often than an in-flight failure.
+   */
+  rejectDispatch?: string;
 }
 
 /**
@@ -98,6 +110,10 @@ export class MockRuntime implements AgentRuntimeAdapter {
 
   async dispatch(task: TaskDispatch): Promise<DispatchAck> {
     this.dispatched.set(task.runId, task);
+    const reject = (this.scripts.get(task.runId) ?? this.defaultScript).rejectDispatch;
+    if (reject !== undefined) {
+      return { externalRunId: `mock-${task.runId}`, accepted: false, rejectReason: reject };
+    }
     return { externalRunId: `mock-${task.runId}`, accepted: true };
   }
 

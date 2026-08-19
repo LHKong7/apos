@@ -8,8 +8,9 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
-import type { AutonomyLevel } from '@apos/contracts';
+import type { AutonomyLevel, PlanFallback } from '@apos/contracts';
 import { auditPolicies, diffPlans, type PlanSide } from '@apos/domain';
+import { resolveExecutor } from '../modules/agent/matching';
 import { notFound } from './errors';
 import { loadProjectPolicies } from './policies';
 
@@ -108,6 +109,32 @@ export async function getPlanDetail(db: Database, planId: string) {
   const humanTasks = tasks.filter((t) => gatedTitles.has(t.title)).length;
   const agentTasks = tasks.length - humanTasks;
 
+  /**
+   * ★★ 「会自动跑」是一句**可验证**的承诺，批准之前就该验。
+   *
+   *   页面此前说「N 个任务会由 Agent 自动执行」，而那个 N 只是
+   *   「没有人工闸门的任务数」—— 它没问过一句「这个项目里有没有 Agent
+   *   接得住这些任务」。现场是：计划里 3 个任务写着自动执行，
+   *   而项目里唯一的 Agent 只接 requirement / research 两类，
+   *   feature 与 test 那两条批下去会永远停在 ready，没有任何提示。
+   *
+   *   同一套判定，系统在**批准之后**是会算的 —— 总览上那句
+   *   「本项目没有 Agent 能接这个（已检查 1 个）」正是它。
+   *   只是算得太晚：用户已经在那句承诺上签过字了。
+   *
+   *   所以这里用**同一个** resolveExecutor 把它提前到批准前。
+   *   两份实现的代价不是重复代码，是两个对不上的答案。
+   *
+   * The "runs automatically" claim is checkable before approval, and the system
+   * already computes it — just after the user has signed off on it.
+   */
+  const unrunnable: { id: string; title: string }[] = [];
+  for (const task of tasks) {
+    if (gatedTitles.has(task.title)) continue;
+    const match = await resolveExecutor(db, task);
+    if (match.candidates.length === 0) unrunnable.push({ id: task.id, title: task.title });
+  }
+
   return {
     plan: {
       id: plan.id,
@@ -116,8 +143,20 @@ export async function getPlanDetail(db: Database, planId: string) {
       projectId: plan.projectId,
       requirementId: plan.requirementId,
       model: plan.model,
-      generationCost: Number(plan.generationCost ?? 0),
+      /**
+       * ★★ null = 这次运行时没上报成本，**不是「没花钱」**。
+       *
+       *   此前这里是 `Number(plan.generationCost ?? 0)`，于是不上报用量的
+       *   运行时（opencode 就是一个）跑完一次真实规划之后，页面上写着
+       *   $0.00 —— 与「这次规划确实免费」完全无法区分。
+       *   tokens 那边早就是这个约定（见 format/tokens），成本这条漏了。
+       *
+       * null means "this runtime does not report cost", not "it was free".
+       */
+      generationCost: plan.generationCost === null ? null : Number(plan.generationCost),
       generationMs: plan.generationMs,
+      /** 非 null = 这份计划是通用模板，不是按需求生成的。见 PlanFallback */
+      fallback: (plan.generationFallback as PlanFallback | null) ?? null,
       estimatedHours: Number(plan.estimatedHours ?? 0),
       estimatedTokens,
       createdAt: plan.createdAt.toISOString(),
@@ -138,6 +177,8 @@ export async function getPlanDetail(db: Database, planId: string) {
       /** ★ 超预算要阻断批准，所以这个判断放服务端算，不让前端各算各的 */
       overBudget: budget !== null && spent + estimatedTokens > budget,
       humanGateCount: (plan.humanGates as unknown[]).length,
+      /** 没有任何合格 Agent 能接的任务 —— 批下去会停在 ready 不动 */
+      tasksWithoutAgent: unrunnable,
       highRiskTasks: tasks.filter((t) => t.riskLevel === 'high' || t.riskLevel === 'critical').length,
     },
     /** 批准时的快照 */

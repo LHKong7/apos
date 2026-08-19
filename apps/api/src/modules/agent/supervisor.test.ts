@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, runEvents, workItems } from '@apos/db';
+import { agentRuns, events as eventsTable, runEvents, workItems } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, degradedMockRuntime } from '@apos/agent-runtimes';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent, waitFor } from '../../test/agent-fixtures';
@@ -346,5 +346,106 @@ describe('recovery-worker', () => {
     expect(run!.recoveryAction).toBe('switch_agent');
     expect(run!.recoveryAgentId).not.toBeNull();
     expect(run!.recoveryAgentId).not.toBe(primary.agentId);
+  });
+});
+
+/**
+ * ★★ 运行时**拒收**派发，和运行时跑到一半失败，是两条完全不同的代码路径。
+ *
+ *   前者在真实部署里远比后者常见（缺凭证、没有可用工具、工作目录没准备好），
+ *   而它此前没有任何测试：dispatch 只把 Run 标成 failed 就 return，
+ *   工作项停在 executing 上，看板照样按 `status = 'executing'`
+ *   数出「1 个 Agent 在跑」，而没有任何循环能再碰到它。
+ *
+ * Dispatch-time rejection is a different path from an in-flight failure, and
+ * the far more common one in real deployments.
+ */
+describe('运行时拒收派发', () => {
+  async function rejectedRun(reason = '工作目录没准备好') {
+    const runtime = new MockRuntime({}, { rejectDispatch: reason });
+    const registry = new RuntimeRegistry();
+    const agent = await seedAgent(db, fx, { runtime, registry });
+    const item = await createWorkItem(db, fx, { status: 'ready' });
+
+    const result = await dispatchRun(db, registry, {
+      workItemId: item.id,
+      agentId: agent.agentId,
+      correlationId: randomUUID(),
+    });
+
+    const [run] = await db.select().from(agentRuns).where(eq(agentRuns.workItemId, item.id));
+    return { result, run: run!, item, registry };
+  }
+
+  it('工作项不会停在 executing 上', async () => {
+    const { result, item } = await rejectedRun();
+
+    expect(result.ok).toBe(false);
+
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).not.toBe('executing');
+    expect(after!.status).toBe('failed');
+  });
+
+  it('Run 结算完整：failed + endedAt + 拒收理由', async () => {
+    const { run } = await rejectedRun('缺少凭证');
+
+    expect(run.status).toBe('failed');
+    expect(run.errorClass).toBe('runtime_error');
+    expect(run.errorMessage).toContain('缺少凭证');
+    // ★ endedAt 为空的 failed Run 会让「跑了多久」永远算不出来
+    expect(run.endedAt).not.toBeNull();
+  });
+
+  /** CLAUDE.md 第一条：状态变更必须产生事件 */
+  it('状态变了就有对应事件 —— run_ended 与 agent_run.failed 都在', async () => {
+    const { run } = await rejectedRun();
+
+    const events = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(events.some((e) => e.type === 'run_ended')).toBe(true);
+
+    const domain = await db.select().from(eventsTable).where(eq(eventsTable.subjectId, run.id));
+    expect(domain.some((e) => e.type === 'agent_run.failed')).toBe(true);
+  });
+
+  it('拒收后交给恢复策略，不是无声停住', async () => {
+    const { run } = await rejectedRun();
+    const [after] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id));
+    expect(after!.recoveryAction).not.toBeNull();
+  });
+});
+
+/**
+ * 兜底层：即便派发路径再出新漏洞，停在 executing 却没有活跃 Run 的
+ * 工作项也必须能被收回来 —— 它是所有循环都够不着的那一类。
+ */
+describe('停在 executing 却没有活跃 Run 的工作项', () => {
+  it('被 supervisor 收回并流转出 executing', async () => {
+    const { run, item, registry } = await stuckRun();
+
+    // 只结算 Run，不动工作项 —— 复现进程在两次写之间挂掉的现场
+    await db
+      .update(agentRuns)
+      .set({ status: 'failed', endedAt: new Date() })
+      .where(eq(agentRuns.id, run.id));
+
+    const [before] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(before!.status).toBe('executing');
+
+    const report = await superviseRuns(db, registry, { correlationId: randomUUID() });
+
+    expect(report.strandedItems).toContain(item.id);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('failed');
+  });
+
+  it('还在跑的 Run 不会被误收', async () => {
+    const { item, registry } = await stuckRun();
+
+    const report = await superviseRuns(db, registry, { correlationId: randomUUID() });
+
+    expect(report.strandedItems).not.toContain(item.id);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('executing');
   });
 });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -9,6 +9,7 @@ import { GatedButton } from '../../components/Gated';
 import { useT, type MessageKey } from '../../lib/i18n';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Completeness } from './Completeness';
+import { AnalyzingHint } from './AnalyzingHint';
 import { AnalysisRuns } from './AnalysisRuns';
 import { AuthorAgent } from './AuthorAgent';
 import { Clarifications } from './Clarifications';
@@ -43,11 +44,12 @@ export function RequirementPage() {
   const qc = useQueryClient();
   const t = useT();
   /**
-   * ★ 列表页选了「自己填写」就带着 ?edit=1 进来，直接落在编辑态。
-   *   否则用户刚表达完「我要自己填」，看到的还是一个「让 AI 分析」的空面板 ——
-   *   他的选择在跳转的一瞬间就丢了。
+   * ★ 列表页的选择跟着 URL 进来，两个方向都要接住：
+   *   `?edit=1` 落在编辑态，`?analyze=1` 直接开跑分析。
+   *   否则用户刚表达完「我要自己填」/「交给 AI」，看到的还是那个
+   *   又问一遍同一个问题的空面板 —— 他的选择在跳转的一瞬间就丢了。
    */
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
 
   const [answering, setAnswering] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -67,19 +69,45 @@ export function RequirementPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: qk.requirement(reqId!) });
 
+
   /**
    * ★ 重新分析**不覆盖**人改过的字段（服务端按 fieldProvenance 判定）。
    *   保住了哪几个必须说出来：不说的话，用户会以为「分析怎么没改这几项」，
    *   而真相恰恰相反 —— 是平台在替他护着自己写的那几句。
    */
   const analyze = useMutation({
-    mutationFn: () => api.analyzeRequirement(reqId!),
+    mutationFn: () => {
+      setAnalyzeStartedAt(Date.now());
+      return api.analyzeRequirement(reqId!);
+    },
     onSuccess: (res) => {
+      setAnalyzeStartedAt(null);
       setKeptFields(res.keptHumanFields ?? []);
       void refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.detail.analyzeFailed')),
+    onError: (e) => {
+      setAnalyzeStartedAt(null);
+      setError(e instanceof ApiError ? e.message : t('requirement.detail.analyzeFailed'));
+    },
   });
+
+  /**
+   * ★★ `?analyze=1` 进来就自动开跑，并且**立刻把参数抹掉**。
+   *
+   *   不抹的话，刷新页面会再跑一次分析 —— 那是一次真实的 Agent 调用，
+   *   几十秒、要花 token，而用户只是按了 F5。
+   *   用 ref 而不是依赖数组去防重：mutation 对象每次渲染都是新的，
+   *   放进依赖里会让这个 effect 每渲染一次就再触发一次。
+   */
+  /** 分析开跑的时刻 —— AnalyzingHint 靠它算已耗时 */
+  const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null);
+  const autoAnalyzed = useRef(false);
+  useEffect(() => {
+    if (params.get('analyze') !== '1' || autoAnalyzed.current) return;
+    autoAnalyzed.current = true;
+    setParams({}, { replace: true });
+    analyze.mutate();
+  }, [params, setParams, analyze]);
 
   /**
    * 人工填写 / 修改结构化字段。
@@ -270,6 +298,11 @@ export function RequirementPage() {
                   {t('requirement.detail.structured')}
                 </h2>
                 {analyzed && <AnalysisSource model={r.analysisModel} />}
+                {analyze.isPending && analyzeStartedAt !== null && (
+                  <span className="basis-full">
+                    <AnalyzingHint startedAt={analyzeStartedAt} />
+                  </span>
+                )}
                 {!editing && !readOnly && (
                   <div className="ml-auto flex items-center gap-2">
                     <Button variant="ghost"
@@ -366,9 +399,13 @@ export function RequirementPage() {
                       {t('requirement.detail.fillManually')}
                     </Button>
                   </div>
-                  <p className="mt-2 text-[11px] text-slate-400">
-                    {t('requirement.detail.bothPathsNote')}
-                  </p>
+                  {analyze.isPending && analyzeStartedAt !== null ? (
+                    <AnalyzingHint startedAt={analyzeStartedAt} />
+                  ) : (
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {t('requirement.detail.bothPathsNote')}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <dl className="mt-1 space-y-1.5 text-xs">

@@ -12,3 +12,4 @@ export * from './integration/index';
 export * from './work-item/blocked';
 export * from './work-item/decision-reason';
 export * from './plan/consequence';
+export * from './plan/fallback';

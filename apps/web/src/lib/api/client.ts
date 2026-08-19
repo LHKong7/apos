@@ -1,4 +1,4 @@
-import { t } from '../i18n';
+import { readLocale, t } from '../i18n';
 import type { AnalyticsRange, LayoutKind } from '@apos/domain';
 import type {
   AgentDetail,
@@ -122,6 +122,18 @@ async function request<T>(
   const headers = new Headers(init.headers);
   if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
   if (currentOrgId) headers.set('X-Org-Id', currentOrgId);
+  /**
+   * ★★ 语言要送到服务端，因为**有产出是服务端生成的**。
+   *
+   *   规划 Agent 的 brief 里此前没有一句关于输出语言的话，于是同一段
+   *   英文需求，这次拿回一份全中文的 PRD、下次拿回全英文的 —— 同一个项目里
+   *   两种语言的需求文档并存，而界面上没有任何设置能左右它。
+   *   界面知道自己是哪个语言，让它说出来。
+   *
+   * Some output is generated server-side; the language has to travel with the
+   * request or the model picks one per call.
+   */
+  headers.set('X-Locale', readLocale());
   if (init.json !== undefined) headers.set('Content-Type', 'application/json');
 
   const res = await fetch(`/api/v1${path}`, {

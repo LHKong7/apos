@@ -145,6 +145,7 @@ export class CodexRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'missing_credential',
         rejectReason:
           '未配置 Agent 凭证：请为该运行时登记 OpenAI API Key（不要复用平台凭证），' +
           '或显式开启 allowInheritedCredentials，也可以在环境变量表里直接给出 OPENAI_API_KEY。',
@@ -155,9 +156,10 @@ export class CodexRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'no_workspace',
         rejectReason:
-          'Codex 必须在一个已准备好的工作目录里执行：请为该 Agent 配置 repo 资源范围，' +
-          '并在「代码仓库」中登记对应仓库。',
+          'Codex 必须在一个已准备好的工作目录里执行：请先在「工作区来源」里登记这个仓库或目录，' +
+          '再到项目的 Agent 设置里把它授权给该 Agent。',
       };
     }
 

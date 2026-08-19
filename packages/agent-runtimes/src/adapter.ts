@@ -9,10 +9,31 @@ import type {
 
 export type Unsubscribe = () => void | Promise<void>;
 
+/**
+ * 运行时拒收派发的原因码 / Why a runtime refused a dispatch.
+ *
+ * ★★ 拒收理由是**用户要照着做的话**，所以必须是码。
+ *
+ *   此前只有 `rejectReason` 一句中文，而它现在会一路显示到任务卡片上
+ *   （拒收终于走 run_ended 之后）。一句中文在英文界面上已经够糟，
+ *   更糟的是它没法带「怎么修」的入口 —— 三种拒收的下一步动作完全不同：
+ *   缺凭证去 Agent 配置、没工作区去登记工作区来源、没工具去改能力档案。
+ */
+export type DispatchRejectCode =
+  | 'missing_credential'
+  | 'no_workspace'
+  | 'no_tools'
+  | 'unsupported_task';
+
 export interface DispatchAck {
   externalRunId: string;
   accepted: boolean;
-  /** 运行时拒绝时的原因 */
+  /** 拒收原因码 —— 界面按它取词并给出修复入口 */
+  rejectCode?: DispatchRejectCode;
+  /**
+   * @deprecated 中文兜底句 / Chinese fallback.
+   *   带着码里放不下的细节（缺的是哪个环境变量），日志与排查靠它。
+   */
   rejectReason?: string;
 }
 

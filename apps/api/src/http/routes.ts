@@ -307,6 +307,17 @@ function corr(req: { headers: Record<string, unknown> }): string {
 }
 
 /**
+ * 调用方的界面语言 —— 服务端生成的产出要用它来写。
+ *
+ * ★ 认不出的取值回落到 'en'（产品默认语言），**不是**沉默地不传：
+ *   不传等于把语言的选择权交还给模型，而那正是要治的病
+ *   —— 同一个项目里中英两份 PRD 并存，界面上没有设置左右得了它。
+ */
+function localeOf(req: { headers: Record<string, unknown> }): 'en' | 'zh' {
+  return req.headers['x-locale'] === 'zh' ? 'zh' : 'en';
+}
+
+/**
  * 键序无关的深比较用序列化 —— 判断「这个字段真的变了吗」。
  *
  * ★★ 不能直接 `JSON.stringify` 两边比。
@@ -1568,6 +1579,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         requirementId: id,
         correlationId: corr(req),
         actor,
+        locale: localeOf(req),
       });
     },
   );
@@ -1955,6 +1967,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       try {
         const summary = await generatePlan(db, deps.provider, {
+          locale: localeOf(req),
           requirementId: id,
           correlationId: corr(req),
         });
@@ -1987,6 +2000,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       actorFrom(req);
       const { id } = req.params as { id: string };
       const summary = await generatePlan(db, deps.provider, {
+        locale: localeOf(req),
         requirementId: id,
         correlationId: corr(req),
       });
@@ -2037,6 +2051,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .where(eq(plans.id, id));
 
       const summary = await generatePlan(db, deps.provider, {
+        locale: localeOf(req),
         requirementId: plan.requirementId,
         correlationId: corr(req),
         feedback: body.feedback,

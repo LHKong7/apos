@@ -204,7 +204,14 @@ export function App() {
           <Route path="/agents/:agentId" element={<AgentDetailPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/*
+            ★★ 认不出的地址要**说**认不出，不能默默换一页。
+              此前是 `<Navigate to="/" replace />`：打错一个字、或者顺着一条
+              过期链接进来，看到的是项目列表 —— 页面正常、地址被换掉、
+              没有任何痕迹说明刚才发生过什么。用户会以为那条链接指向的东西
+              被删了，而真相往往只是路径少了一段。
+          */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
         )}
         </div>
@@ -235,6 +242,33 @@ function IdentityGate({ error }: { error: unknown }) {
 }
 
 /** 旧的运行时设置页并入集成设置，保留跳转 */
+/**
+ * 认不出的地址。
+ *
+ * ★ 把原地址原样显示出来 —— 用户手上多半有一条链接，
+ *   要判断是自己贴错了还是东西没了，只能靠对照那串路径。
+ */
+function NotFoundPage() {
+  const t = useT();
+  const location = useLocation();
+
+  return (
+    <div className="p-8 text-center">
+      <h1 className="text-sm font-semibold text-slate-900">{t('notFound.title')}</h1>
+      <p className="mt-1 text-xs text-slate-600">{t('notFound.body')}</p>
+      <p className="mt-2 font-mono text-[11px] break-all text-slate-500">
+        {location.pathname}
+      </p>
+      <Link
+        to="/"
+        className="mt-3 inline-block text-xs text-slate-700 underline hover:text-slate-900"
+      >
+        {t('notFound.backToProjects')}
+      </Link>
+    </div>
+  );
+}
+
 function RuntimesRedirect() {
   const { projectId } = useParams<{ projectId: string }>();
   return <Navigate to={`/projects/${projectId}/settings/integrations`} replace />;

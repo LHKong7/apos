@@ -469,6 +469,14 @@ export const plans = pgTable(
     model: text(),
     generationCost: numeric({ precision: 10, scale: 4 }),
     generationMs: integer(),
+    /**
+     * 非 null = 这份计划是规则占位，不是 Agent 产出。`{ code, reason }`。
+     *
+     * ★ 单独一列而不是继续从 model 那句中文里正则抠：界面要据此禁掉
+     *   「会自动跑 / 预计多少 token / 会自动开 PR」那几句模板常量，
+     *   而匹配一句随时会改的话是定时炸弹。见 PlanFallback。
+     */
+    generationFallback: jsonb().$type<{ code: string; reason: string } | null>(),
 
     approvedBy: uuid().array().notNull().default(sql`'{}'`),
     approvedAt: timestamp({ withTimezone: true }),

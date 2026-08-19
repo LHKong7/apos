@@ -119,7 +119,13 @@ function isHumanWritten(provenance: Record<string, unknown>, field: string): boo
 export async function analyzeRequirement(
   db: Database,
   provider: PlanningProvider,
-  input: { requirementId: string; correlationId: string; actor?: ActorRef },
+  input: {
+    requirementId: string;
+    correlationId: string;
+    actor?: ActorRef;
+    /** 产出语言，来自调用方的 X-Locale。缺省时 provider 按英文写 */
+    locale?: 'en' | 'zh';
+  },
 ): Promise<AnalyzeResult> {
   const [req] = await db
     .select()
@@ -149,6 +155,7 @@ export async function analyzeRequirement(
       projectId: req.projectId,
       requirementId: req.id,
       ...(req.authorAgentId ? { agentId: req.authorAgentId } : {}),
+      ...(input.locale ? { locale: input.locale } : {}),
     },
   });
 

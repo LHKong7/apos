@@ -175,6 +175,16 @@ export async function getOverview(db: Database, projectId: string, userId: strin
             {
               kind: 'plan' as const,
               id: awaitingPlan.id,
+              /**
+               * ★ 标题走码 + 参数，不在这里拼句子。
+               *
+               *   此前是 `执行计划 v${n} 待批准` —— 服务端**现拼**的一句中文
+               *   （不是存量数据），于是英文界面上「Needs you」那一区
+               *   第一行就是中文。版本号是语言中立的值，作为参数带过去。
+               */
+              titleCode: 'plan_awaiting_approval' as const,
+              titleParams: { version: awaitingPlan.version },
+              /** @deprecated 中文兜底，给日志与存量客户端 */
               title: `执行计划 v${awaitingPlan.version} 待批准`,
               riskLevel: 'medium',
               overdueMinutes: null as number | null,
@@ -186,6 +196,16 @@ export async function getOverview(db: Database, projectId: string, userId: strin
         kind: 'decision' as const,
         id: d.id,
         title: d.title,
+        /**
+         * ★★ 决策标题必须带上 reasonDetail，和决策中心走同一条路。
+         *
+         *   决策中心用 `reasonDetail.subjectTitle` + t('decision.needsYou')
+         *   拼出「X — needs your confirmation」；总览这边此前只给
+         *   `d.title`，也就是服务端拼好的那句 `「X」—— 需要你确认`。
+         *   同一条决策于是在两个页面上语言不同 —— 而两个页面就在一次
+         *   点击的距离之内。
+         */
+        reasonDetail: d.reasonDetail ?? null,
         riskLevel: d.riskLevel as string,
         overdueMinutes:
           d.dueAt && d.dueAt.getTime() < now
@@ -204,7 +224,12 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       reason: i.blockedReason,
       detail: i.blockedDetail ?? null,
       minutes: i.blockedSince ? Math.round((now - i.blockedSince.getTime()) / 60_000) : null,
-      ownerName: i.ownerId ? (userName.get(i.ownerId) ?? '未知') : null,
+      /**
+       * ★ 查不到名字时给 null，不要拼一个「未知」。
+       *   'unknown' 这个词属于界面，不属于数据 —— 服务端拼进去，
+       *   英文界面上就只能显示中文。
+       */
+      ownerName: i.ownerId ? (userName.get(i.ownerId) ?? null) : null,
       humanGateRef: i.humanGateRef,
     })),
 

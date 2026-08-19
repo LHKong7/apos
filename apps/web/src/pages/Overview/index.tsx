@@ -22,7 +22,7 @@ import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { BlockedReasons } from '../../features/work-item/BlockedReasons';
 import { DiagnosticsBanner } from '../../features/graph/DiagnosticsBanner';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { Button } from '@/components/ui/button';
 
 /** 延期档位 → 词条键 / Delay level → message key */
@@ -252,7 +252,22 @@ export function OverviewPage() {
                     ) : (
                       <span className="text-slate-400">—</span>
                     )}
-                    <span className="min-w-0 flex-1 truncate text-slate-800">{a.title}</span>
+                    {/*
+                      ★★ 决策标题与决策中心走同一条路：`reasonDetail.subjectTitle`
+                        （工作项原标题，用户数据，原样带过来）+ 平台自己那半句。
+                        此前这里直接画服务端拼好的 `「X」—— 需要你确认`，
+                        于是同一条决策在总览上是中文、在决策中心是英文，
+                        而两页只隔一次点击。
+                      ★ 计划类条目按 titleCode 取词；两者都认不出时才回落到
+                        服务端那句中文 —— 空白等于「这条待办不存在」。
+                    */}
+                    <span className="min-w-0 flex-1 truncate text-slate-800">
+                      {a.reasonDetail?.subjectTitle
+                        ? t('decision.needsYou', { title: a.reasonDetail.subjectTitle })
+                        : a.titleCode
+                          ? t(`overview.item.${a.titleCode}` as MessageKey, a.titleParams ?? {})
+                          : a.title}
+                    </span>
                     <span className="text-slate-500">{riskLabel(a.riskLevel)}</span>
                     <Button variant="neutral" size="xs"
                       onClick={() =>

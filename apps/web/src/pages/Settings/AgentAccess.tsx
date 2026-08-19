@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '@/lib/api/client';
 import { qk } from '@/lib/query/keys';
-import { useT, type MessageKey } from '@/lib/i18n';
+import { useSpecText, useT, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { CardSkeleton, ErrorState } from '@/components/states';
@@ -64,6 +64,7 @@ export function AgentAccessPanel({
   agentId: string;
 }) {
   const t = useT();
+  const sx = useSpecText();
   const [editing, setEditing] = useState(false);
 
   const q = useQuery({
@@ -82,7 +83,7 @@ export function AgentAccessPanel({
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-slate-800">{data.agentName}</span>
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-          {profile?.name ?? data.profileKey}
+          {profile ? sx(profile.name, profile.nameEn) : data.profileKey}
         </span>
         <Button
           variant="outline"
@@ -121,7 +122,7 @@ export function AgentAccessPanel({
                   className={clsx('rounded px-1.5 py-0.5', RISK_STYLE[c.risk])}
                   title={`${t(RISK_LABEL[c.risk] ?? 'access.risk.low')}`}
                 >
-                  {c.label}
+                  {sx(c.label, c.labelEn)}
                 </span>
               ))
             )}
@@ -179,6 +180,7 @@ function AccessForm({
   onDone: () => void;
 }) {
   const t = useT();
+  const sx = useSpecText();
   const qc = useQueryClient();
 
   const [profileKey, setProfileKey] = useState(current.profileKey);
@@ -231,13 +233,19 @@ function AccessForm({
     <div className="mt-2 space-y-2 border-t border-slate-200 pt-2">
       <Labeled label={t('access.profile')}>
         <Select value={profileKey} onValueChange={setProfileKey}>
-          <SelectTrigger>
+          {/*
+            ★ 触发器要自带 aria-label。Labeled 是**包起来**而不是 htmlFor，
+              而隐式关联只对原生表单控件成立 —— Radix 的触发器是个
+              `role="combobox"` 的 button，包在 <label> 里读屏器照样只念
+              「按钮」。ResourceScopeEditor 里那几个 Select 早就是这么写的。
+          */}
+          <SelectTrigger aria-label={t('access.profile')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {current.profiles.map((p) => (
               <SelectItem key={p.key} value={p.key}>
-                {p.name}
+                {sx(p.name, p.nameEn)}
               </SelectItem>
             ))}
             {/*
@@ -252,7 +260,15 @@ function AccessForm({
         </Select>
       </Labeled>
       <p className="text-[11px] text-slate-500">
-        {current.profiles.find((p) => p.key === profileKey)?.description}
+        {(() => {
+          /**
+           * ★ 档案说明服务端两种语言都给了（description / descriptionEn），
+           *   此前这里只画中文那份 —— 英文界面上于是一整段中文。
+           *   这不是缺翻译，是把已经在线上的英文丢掉了。
+           */
+          const p = current.profiles.find((x) => x.key === profileKey);
+          return p ? sx(p.description, p.descriptionEn) : null;
+        })()}
       </p>
 
       <Labeled label={t('access.resources')}>
@@ -267,7 +283,12 @@ function AccessForm({
       */}
       {impact?.requiresReason && (
         <Labeled label={t('access.reason')} help={t('access.reasonHelp')}>
-          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
+          <Textarea
+            value={reason}
+            aria-label={t('access.reason')}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+          />
         </Labeled>
       )}
 

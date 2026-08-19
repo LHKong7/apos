@@ -195,6 +195,7 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'missing_credential',
         rejectReason:
           '未配置 Agent 凭证：请在 Agent 的凭证栏登记，或设置 APOS_AGENT_ANTHROPIC_API_KEY' +
           '（不要复用平台的 ANTHROPIC_API_KEY）。接中转站时也可以在环境变量表里给出 ANTHROPIC_AUTH_TOKEN。',
@@ -229,6 +230,7 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'no_tools',
         rejectReason: '该 Agent 没有任何可用工具，无法执行编码任务',
       };
     }
@@ -236,8 +238,10 @@ export class ClaudeCodeRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'no_workspace',
         rejectReason:
-          '未准备出可用的工作目录：请为该 Agent 配置 repo 资源范围，并在「代码仓库」中登记对应仓库',
+          '未准备出可用的工作目录：请先在「工作区来源」里登记这个仓库或目录，' +
+          '再到项目的 Agent 设置里把它授权给该 Agent',
       };
     }
 

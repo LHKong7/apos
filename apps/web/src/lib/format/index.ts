@@ -57,8 +57,20 @@ function trimUnit(v: number): string {
  * reference figure still use this. Anything new should use `tokens()`.
  */
 export function money(value: string | number | null | undefined): string {
-  const n = Number(value ?? 0);
-  if (!Number.isFinite(n)) return '$0.00';
+  /**
+   * ★★ null / 认不出的值 = **没有上报**，不是 0。
+   *
+   *   此前这里是 `Number(value ?? 0)` 外加「不是有限数就返回 $0.00」，
+   *   于是不上报成本的运行时（opencode 就是一个）跑完一次真实规划后，
+   *   计划页上写着 $0.00 —— 与「这次确实免费」完全无法区分，
+   *   读者得到的结论是「规划不花钱」。
+   *   tokens() 那边早有这个约定，成本这条一直漏着。
+   *
+   * A missing figure is not a zero one: render it as unknown.
+   */
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
   return `$${n.toFixed(2)}`;
 }
 

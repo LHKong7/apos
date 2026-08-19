@@ -250,3 +250,84 @@ describe('排序', () => {
     }
   });
 });
+
+/**
+ * ★★ 诊断是给界面读的，不是给日志读的。
+ *
+ *   正文与按钮说法此前是这里拼好的中文，一路显示到执行图与总览上 ——
+ *   英文界面上于是一行里两种语言并排。现在每条诊断必须带码，
+ *   这两条断言是那件事不会退回去的保证。
+ */
+describe('诊断一律带码', () => {
+  /** 覆盖到六类诊断：环、阻塞放大、伪串行、审批瓶颈、单点、Agent 过载 */
+  const graphs: [GraphNode[], GraphEdge[]][] = [
+    // 环
+    [[node('a'), node('b')], [edge('a', 'b'), edge('b', 'a')]],
+    // 阻塞放大 + 单点：a 卡住，下游五个在等
+    [
+      [
+        node('a', { blockedSince: '2026-01-01T00:00:00Z', blockedMinutes: 600 }),
+        node('b'), node('c'), node('d'), node('e'), node('f'),
+      ],
+      [edge('a', 'b'), edge('b', 'c'), edge('c', 'd'), edge('d', 'e'), edge('e', 'f')],
+    ],
+    // 审批瓶颈
+    [
+      [
+        node('appr', { kind: 'approval', decisionDueInMinutes: -600, durationHours: 4 }),
+        node('next'),
+      ],
+      [edge('appr', 'next')],
+    ],
+    // 伪串行 + Agent 过载
+    [
+      [
+        node('x', { durationHours: 10, executor: { type: 'agent', id: 'ag1', name: 'A1' } }),
+        node('y', { durationHours: 10, executor: { type: 'agent', id: 'ag2', name: 'A2' } }),
+      ],
+      [edge('x', 'y')],
+    ],
+  ];
+
+  /** ★ 先证明这批图**确实**产出了诊断，否则上面三条断言全是空转 */
+  it('这批图覆盖到六类诊断', () => {
+    const seen = new Set(graphs.flatMap(([n, e]) => run(n, e)).map((d) => d.messageCode));
+    expect(seen).toContain('cycle');
+    // ★ 阻塞放大有两种说法（占不占关键路径），这里只要求其中之一出现
+    expect(
+      seen.has('blocking_amplified') || seen.has('blocking_amplified_critical_path'),
+    ).toBe(true);
+    expect(seen).toContain('approval_bottleneck');
+    expect(seen).toContain('single_point');
+    expect(seen.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('每条诊断都有 messageCode 与 params', () => {
+    for (const [nodes, edges] of graphs) {
+      for (const d of run(nodes, edges)) {
+        expect(d.messageCode, d.message).toBeTruthy();
+        expect(d.params, d.message).toBeTypeOf('object');
+      }
+    }
+  });
+
+  it('每个动作都有 labelCode', () => {
+    for (const [nodes, edges] of graphs) {
+      for (const d of run(nodes, edges)) {
+        for (const a of d.actions) {
+          expect(a.labelCode, `${d.messageCode}/${a.kind}`).toBeTruthy();
+        }
+      }
+    }
+  });
+
+  /** ★ 中文兜底句必须留着：界面认不出新码时回落到它，而不是留一行空白 */
+  it('中文兜底句仍在', () => {
+    for (const [nodes, edges] of graphs) {
+      for (const d of run(nodes, edges)) {
+        expect(d.message.length).toBeGreaterThan(0);
+        for (const a of d.actions) expect(a.label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});

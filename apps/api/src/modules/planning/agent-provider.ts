@@ -12,7 +12,13 @@ import {
   type Database,
 } from '@apos/db';
 import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
-import type { AgentPermissions, RunEvent, RunWorkspace, TaskDispatch } from '@apos/contracts';
+import type {
+  AgentPermissions,
+  PlanFallbackCode,
+  RunEvent,
+  RunWorkspace,
+  TaskDispatch,
+} from '@apos/contracts';
 import type { EffectiveAgentAccess } from '@apos/domain';
 import { resolveAgentAccess } from '../agent/access';
 import { WorkspaceService } from '../workspace';
@@ -147,7 +153,11 @@ export class AgentPlanningProvider implements PlanningProvider {
 
     if (!attempt.ok) {
       const base = await this.fallback.structureRequirement(input);
-      return { ...base, model: degraded(base.model, attempt.reason) };
+      return {
+        ...base,
+        model: degraded(base.model, attempt.reason),
+        fallback: { code: attempt.code, reason: attempt.reason },
+      };
     }
 
     const out = attempt.value;
@@ -181,6 +191,7 @@ export class AgentPlanningProvider implements PlanningProvider {
       provenance: {},
       cost: attempt.costUsd,
       model: attempt.model,
+      fallback: null,
     };
   }
 
@@ -194,7 +205,7 @@ export class AgentPlanningProvider implements PlanningProvider {
     const attempt = await this.run({
       scope,
       kind: 'plan',
-      brief: buildPlanBrief(req, projectType, feedback),
+      brief: buildPlanBrief(req, projectType, feedback, scope?.locale),
       schema: AgentPlanOutput,
       /** ★ schema 过了不等于图是自洽的 —— 悬空 ref 与环会静默毁掉调度 */
       check: (plan) => validatePlanGraph(plan),
@@ -202,7 +213,11 @@ export class AgentPlanningProvider implements PlanningProvider {
 
     if (!attempt.ok) {
       const base = await this.fallback.generatePlan(req, projectType, feedback, scope);
-      return { ...base, model: degraded(base.model, attempt.reason) };
+      return {
+        ...base,
+        model: degraded(base.model, attempt.reason),
+        fallback: { code: attempt.code, reason: attempt.reason },
+      };
     }
 
     const out = attempt.value;
@@ -237,6 +252,7 @@ export class AgentPlanningProvider implements PlanningProvider {
       cost: attempt.costUsd,
       durationMs: Date.now() - started,
       model: attempt.model,
+      fallback: null,
     };
   }
 
@@ -249,13 +265,16 @@ export class AgentPlanningProvider implements PlanningProvider {
     schema: { parse: (v: unknown) => T };
     check?: (value: T) => string[];
   }): Promise<Attempt<T>> {
-    if (!input.scope) return fail('调用方没有给出 orgId/projectId，无法挑选规划 Agent');
+    if (!input.scope) return fail('no_scope', '调用方没有给出 orgId/projectId，无法挑选规划 Agent');
 
     const picked = await this.pickAgent(input.scope);
-    if (!picked.agent) return fail(picked.reason);
+    if (!picked.agent) return fail('no_agent', picked.reason);
     const agent = picked.agent;
     if (!this.registry.has(agent.id)) {
-      return fail(`Agent「${agent.name}」未在本进程注册（凭证缺失或运行时不可用）`);
+      return fail(
+        'agent_unregistered',
+        `Agent「${agent.name}」未在本进程注册（凭证缺失或运行时不可用）`,
+      );
     }
 
     const runId = randomUUID();
@@ -275,9 +294,9 @@ export class AgentPlanningProvider implements PlanningProvider {
     await this.openRun(runId, agent, input.scope, input.kind, input.scope.requirementId ?? null);
 
     /** 每一条失败路径都要落到那一行上，否则它会永远停在 dispatching */
-    const failRun = async (reason: string): Promise<Attempt<T>> => {
+    const failRun = async (code: PlanFallbackCode, reason: string): Promise<Attempt<T>> => {
       await this.closeRun(runId, 'failed', 0, reason);
-      return fail(reason);
+      return fail(code, reason);
     };
 
     let acquired: Awaited<ReturnType<WorkspaceService['acquireLocal']>> | null = null;
@@ -347,29 +366,33 @@ export class AgentPlanningProvider implements PlanningProvider {
       const task = this.buildDispatch(runId, agent, acquired.dispatch, input.brief, access);
 
       const ack = await adapter.dispatch(task);
-      if (!ack.accepted) return failRun(`运行时拒绝任务：${ack.rejectReason ?? '未说明原因'}`);
+      if (!ack.accepted) {
+        return failRun('runtime_rejected', `运行时拒绝任务：${ack.rejectReason ?? '未说明原因'}`);
+      }
 
       const outcome = await this.awaitRun(adapter, runId, agent.timeoutSeconds);
-      if (!outcome.ok) return failRun(outcome.reason);
+      if (!outcome.ok) return failRun('run_failed', outcome.reason);
 
       const raw = await readFile(join(dir, OUTPUT_FILE), 'utf8').catch(() => null);
-      if (raw === null) return failRun(`Agent 结束了但没有写出 ${OUTPUT_FILE}`);
+      if (raw === null) return failRun('output_missing', `Agent 结束了但没有写出 ${OUTPUT_FILE}`);
 
       let parsed: T;
       try {
         parsed = input.schema.parse(JSON.parse(stripFence(raw)));
       } catch (err) {
-        return failRun(`${OUTPUT_FILE} 不符合约定格式：${describe(err)}`);
+        return failRun('output_invalid', `${OUTPUT_FILE} 不符合约定格式：${describe(err)}`);
       }
 
       const problems = input.check?.(parsed) ?? [];
-      if (problems.length > 0) return failRun(`产出的计划不自洽：${problems.join('；')}`);
+      if (problems.length > 0) {
+        return failRun('output_inconsistent', `产出的计划不自洽：${problems.join('；')}`);
+      }
 
       this.diag(`[planning] ${input.kind} 由 ${agent.name} 完成，工作区 ${dir}`);
       await this.closeRun(runId, 'completed', outcome.costUsd, null);
       return { ok: true, value: parsed, model, costUsd: outcome.costUsd };
     } catch (err) {
-      return failRun(describe(err));
+      return failRun('unexpected_error', describe(err));
     } finally {
       /**
        * ★ keep: true —— 目录留着供人事后复查（这是现有行为，规划失败时
@@ -825,10 +848,17 @@ export class AgentPlanningProvider implements PlanningProvider {
 
 type Attempt<T> =
   | { ok: true; value: T; model: string; costUsd: number }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; code: PlanFallbackCode };
 
-function fail(reason: string): { ok: false; reason: string } {
-  return { ok: false, reason };
+/**
+ * ★ 每条失败路径都要带上码。
+ *
+ *   码决定界面怎么做（禁掉自动化承诺、给哪个修复入口），
+ *   reason 只是给日志和排查看的那句细节。少给码的代价是
+ *   界面只能回落到「不知道为什么，反正不可信」那一档。
+ */
+function fail(code: PlanFallbackCode, reason: string): { ok: false; reason: string; code: PlanFallbackCode } {
+  return { ok: false, reason, code };
 }
 
 /**

@@ -43,13 +43,21 @@ export function diagnose(
   // ── 1. 依赖成环：阻断性问题，排在最前 ──────────────────────────────
   const cycle = detectCycle(nodes, edges);
   if (cycle.hasCycle) {
+    const chain = cycle.nodes.map((id) => byId.get(id)?.title ?? id).join(' → ');
     out.push({
       type: 'cycle',
       severity: 'critical',
-      message: `检测到依赖环：${cycle.nodes.map((id) => byId.get(id)?.title ?? id).join(' → ')} → …。环上的任务永远等不到前置完成，必须先断开。`,
+      messageCode: 'cycle',
+      params: { chain },
+      message: `检测到依赖环：${chain} → …。环上的任务永远等不到前置完成，必须先断开。`,
       affectedNodes: cycle.nodes,
       actions: [
-        { kind: 'adjust_dependency', label: '手动断开依赖', nodeId: cycle.nodes[0] },
+        {
+          kind: 'adjust_dependency',
+          labelCode: 'breakDependencyManually',
+          label: '手动断开依赖',
+          nodeId: cycle.nodes[0],
+        },
       ],
     });
     // 有环时后面几条规则的结果不可信（拓扑序不成立），直接返回
@@ -66,19 +74,29 @@ export function diagnose(
     const criticalShare = shareOfCriticalPath(node.id, cp);
     const waited = node.blockedMinutes ?? Math.abs(node.decisionDueInMinutes ?? 0);
 
+    const waitedText = formatHours(waited / 60);
+    const sharePercent = Math.round(criticalShare * 100);
     out.push({
       type: 'blocking_amplified',
       severity: downstream.size >= 5 ? 'critical' : 'warning',
+      messageCode:
+        criticalShare > 0 ? 'blocking_amplified_critical_path' : 'blocking_amplified',
+      params: {
+        title: node.title,
+        waited: waitedText,
+        downstream: downstream.size,
+        ...(criticalShare > 0 ? { share: sharePercent } : {}),
+      },
       message:
-        `「${node.title}」已阻塞 ${formatHours(waited / 60)}，下游 ${downstream.size} 个任务在等` +
-        (criticalShare > 0 ? `，占关键路径 ${Math.round(criticalShare * 100)}%` : ''),
+        `「${node.title}」已阻塞 ${waitedText}，下游 ${downstream.size} 个任务在等` +
+        (criticalShare > 0 ? `，占关键路径 ${sharePercent}%` : ''),
       affectedNodes: [node.id, ...downstream],
       actions: [
         ...(node.humanGateRef
-          ? [{ kind: 'remind' as const, label: '催办', nodeId: node.id }]
+          ? [{ kind: 'remind' as const, labelCode: 'expedite' as const, label: '催办', nodeId: node.id }]
           : []),
-        { kind: 'reassign', label: '改派', nodeId: node.id },
-        { kind: 'locate', label: '在看板中定位', nodeId: node.id },
+        { kind: 'reassign', labelCode: 'reassign', label: '改派', nodeId: node.id },
+        { kind: 'locate', labelCode: 'locateOnBoard', label: '在看板中定位', nodeId: node.id },
       ],
     });
   }
@@ -96,14 +114,22 @@ export function diagnose(
   if (waitingLong.length > 0) {
     const avg =
       waitingLong.reduce((s, n) => s + waitHoursOf(n), 0) / waitingLong.length;
+    const avgText = formatHours(avg);
     out.push({
       type: 'approval_bottleneck',
       severity: 'warning',
-      message: `关键路径上有 ${waitingLong.length} 个人类审批节点，平均已等待 ${formatHours(avg)}`,
+      messageCode: 'approval_bottleneck',
+      params: { count: waitingLong.length, avg: avgText },
+      message: `关键路径上有 ${waitingLong.length} 个人类审批节点，平均已等待 ${avgText}`,
       affectedNodes: waitingLong.map((n) => n.id),
       actions: [
-        { kind: 'adjust_policy', label: '调整 Policy' },
-        { kind: 'reassign', label: '增加备用审批人', nodeId: waitingLong[0]!.id },
+        { kind: 'adjust_policy', labelCode: 'adjustPolicy', label: '调整 Policy' },
+        {
+          kind: 'reassign',
+          labelCode: 'addBackupApprover',
+          label: '增加备用审批人',
+          nodeId: waitingLong[0]!.id,
+        },
       ],
     });
   }
@@ -117,11 +143,18 @@ export function diagnose(
     out.push({
       type: 'single_point',
       severity: 'warning',
+      messageCode: 'single_point',
+      params: { count: dependents.size, title: node.title },
       message: `${dependents.size} 个任务依赖「${node.title}」。它一旦延期，整条链都会顺延`,
       affectedNodes: [node.id, ...dependents],
       actions: [
-        { kind: 'split', label: '拆分为可先行部分', nodeId: node.id },
-        { kind: 'locate', label: '在看板中定位', nodeId: node.id },
+        {
+          kind: 'split',
+          labelCode: 'splitOffIndependentPart',
+          label: '拆分为可先行部分',
+          nodeId: node.id,
+        },
+        { kind: 'locate', labelCode: 'locateOnBoard', label: '在看板中定位', nodeId: node.id },
       ],
     });
   }
@@ -145,11 +178,13 @@ export function diagnose(
       out.push({
         type: 'agent_overload',
         severity: 'info',
+        messageCode: 'agent_overload',
+        params: { share: Math.round(share * 100), agent: entry.name },
         message: `关键路径上 ${Math.round(share * 100)}% 的任务由 ${entry.name} 承担，它是单点`,
         affectedNodes: [...criticalIds].filter(
           (id) => byId.get(id)?.executor?.id === agentId,
         ),
-        actions: [{ kind: 'reassign', label: '分散到其他 Agent' }],
+        actions: [{ kind: 'reassign', labelCode: 'spreadAcrossAgents', label: '分散到其他 Agent' }],
       });
     }
   }
@@ -217,16 +252,22 @@ function findPseudoSerial(
     .slice(0, MAX_PSEUDO_SERIAL)
     .map(({ edge, saving, newTotal }) => {
       const [before, after] = formatHoursSpan(cp.totalHours, newTotal);
+      const waiter = byId.get(edge.to)!.title;
+      const blocker = byId.get(edge.from)!.title;
+      const saved = formatHours(saving);
       return {
       type: 'pseudo_serial' as const,
       severity: 'info' as const,
+      messageCode: 'pseudo_serial' as const,
+      params: { waiter, blocker, before, after, saved },
       message:
-        `「${byId.get(edge.to)!.title}」等「${byId.get(edge.from)!.title}」只是顺序安排，` +
-        `两者执行主体不同。若可并行，工期 ${before} → ${after}（省 ${formatHours(saving)}）`,
+        `「${waiter}」等「${blocker}」只是顺序安排，` +
+        `两者执行主体不同。若可并行，工期 ${before} → ${after}（省 ${saved}）`,
       affectedNodes: [edge.from, edge.to],
       actions: [
         {
           kind: 'adjust_dependency' as const,
+          labelCode: 'adjustDependency' as const,
           label: '调整依赖',
           edge: { from: edge.from, to: edge.to },
         },

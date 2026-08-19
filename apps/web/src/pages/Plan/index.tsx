@@ -1,4 +1,4 @@
-import { useT, type MessageKey } from '../../lib/i18n';
+import { hasMessage, useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -126,7 +126,7 @@ export function PlanPage() {
           <span className="ml-auto text-[11px] text-slate-400">
             {t('plan.generatedBy', { model: d.plan.model ?? t('plan.unknownModel') })} ·{' '}
             {d.plan.generationMs ? `${Math.round(d.plan.generationMs / 1000)}s` : '—'} ·{' '}
-            {money(String(d.plan.generationCost))}
+            {money(d.plan.generationCost)}
           </span>
         </div>
       </div>
@@ -195,8 +195,22 @@ export function PlanPage() {
             </p>
           )}
 
+          {/*
+            ── ★★ 回退横幅 ──
+            必须排在自动化承诺**之前**：那一段说的「N 个任务会自动跑」
+            「预计 625k tokens」「会自动开 PR」在回退时全是模板常量，
+            读者得先知道这份计划与他的需求无关，再去看那些数字。
+          */}
+          <FallbackBanner detail={d} projectId={projectId!} />
+
+          {/*
+            ★ 「没有 Agent 能接」排在自动化承诺之前，理由同上：
+              它反驳的正是那一段里的「N 个任务会自动跑」。
+          */}
+          <NoAgentWarning detail={d} projectId={projectId!} />
+
           {/* ── ★ 批准后将自动发生 —— 本页核心 ── */}
-          <AutoActions detail={d} />
+          {d.plan.fallback === null && <AutoActions detail={d} />}
 
           {/* ── 任务拆解 ── */}
           <section className="rounded border border-slate-200 bg-white">
@@ -495,6 +509,109 @@ function useConsequenceText() {
     assignee: (g: PlanDetail['humanGates'][number]): string =>
       g.assigneeHintCode ? t(`plan.assignee.${g.assigneeHintCode}` as MessageKey) : g.assigneeHint,
   };
+}
+
+/**
+ * 规划回退横幅。
+ *
+ * ★★ 这一段替代的是此前唯一的信号：页头一行灰色小字里那句
+ *   `stub:development（规则占位，未走 Agent：…）`。它有三宗罪 ——
+ *   在英文界面上是一整句中文、和成功时的 `opencode:default · 29s`
+ *   长得一模一样、而且排在它所反驳的那些承诺**上方**却毫无视觉重量。
+ *   现场后果是用户批准了一份「为静态页部署生产环境」的通用模板。
+ *
+ * ★ 横幅本身不阻止批准 —— 有时用户确实想拿模板往下走。
+ *   它要做的是让「这不是你的计划」无法被略过，并给出重新生成的入口。
+ *
+ * Replaces a grey subtitle that sat above the very claims it contradicted.
+ */
+function FallbackBanner({ detail: d, projectId }: { detail: PlanDetail; projectId: string }) {
+  const t = useT();
+  const fb = d.plan.fallback;
+  if (fb === null) return null;
+
+  /** ★ 认不出的码回落到兜底句，不是空白 —— 空白等于回退没发生 */
+  const known: MessageKey = `plan.fallback.${fb.code}` as MessageKey;
+  const why = hasMessage(known) ? t(known) : t('plan.fallback.unknown');
+
+  return (
+    <section
+      role="alert"
+      className="rounded border border-red-300 bg-red-50 px-3 py-2.5"
+    >
+      <h2 className="text-xs font-semibold text-red-900">{t('plan.fallback.title')}</h2>
+      <p className="mt-1 text-xs leading-5 text-red-900">{t('plan.fallback.body')}</p>
+
+      <p className="mt-1.5 text-xs leading-5 text-red-900">
+        <span className="font-medium">{t('plan.fallback.why')}：</span> {why}
+      </p>
+
+      {/*
+        ★ 原始那句中文留着，但降级成细节：它带着码里放不下的信息
+          （是哪个 Agent、zod 报了哪几个字段），排查时是唯一的材料。
+      */}
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[11px] text-red-800 underline">
+          {t('plan.fallback.detail')}
+        </summary>
+        <p className="mt-1 font-mono text-[11px] break-words text-red-900">{fb.reason}</p>
+      </details>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {d.plan.requirementId !== null && (
+          <Link
+            to={`/projects/${projectId}/requirements/${d.plan.requirementId}`}
+            className="rounded border border-red-300 bg-white px-2 py-1 text-[11px] text-red-900 hover:bg-red-100"
+          >
+            {t('plan.fallback.regenerate')}
+          </Link>
+        )}
+        <Link
+          to={`/projects/${projectId}/settings/agents`}
+          className="text-[11px] text-red-800 underline"
+        >
+          {t('plan.fallback.fixAgent')}
+        </Link>
+        <span className="text-[11px] text-red-800">{t('plan.fallback.claimsSuppressed')}</span>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 「这几个任务没有 Agent 能接」。
+ *
+ * ★★ 这条警告的价值全在**时机**上。同样的判定，总览页在批准之后会算
+ *   （「本项目没有 Agent 能接这个」），而那时用户已经在
+ *   「N 个任务会自动跑」这句话上签过字了。判定搬到批准前，
+ *   用的还是服务端那一个 resolveExecutor。
+ */
+function NoAgentWarning({ detail: d, projectId }: { detail: PlanDetail; projectId: string }) {
+  const t = useT();
+  const blocked = d.metrics.tasksWithoutAgent;
+  if (blocked.length === 0) return null;
+
+  return (
+    <section role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2.5">
+      <h2 className="text-xs font-semibold text-amber-900">
+        {t('plan.noAgent.title', { count: blocked.length })}
+      </h2>
+      <p className="mt-1 text-xs leading-5 text-amber-900">{t('plan.noAgent.body')}</p>
+      <ul className="mt-1.5 space-y-0.5">
+        {blocked.map((task) => (
+          <li key={task.id} className="text-xs text-amber-900">
+            · {task.title}
+          </li>
+        ))}
+      </ul>
+      <Link
+        to={`/projects/${projectId}/settings/agents`}
+        className="mt-2 inline-block text-[11px] text-amber-900 underline"
+      >
+        {t('plan.noAgent.fix')}
+      </Link>
+    </section>
+  );
 }
 
 function AutoActions({ detail: d }: { detail: PlanDetail }) {

@@ -96,8 +96,19 @@ export function RequirementListPage() {
       api
         .createRequirement(projectId!, { rawInput: draft.trim() })
         .then((r) => ({ id: r.requirement.id, next })),
+    /**
+     * ★★ 「交给 AI」必须真的交给 AI。
+     *
+     *   此前这两个按钮的区别只有 `?edit=1`：选「自己填写」落在编辑态，
+     *   选「交给 AI」落在一个**又问一遍同一个问题**的空面板上
+     *   （「让 AI 分析它」/「自己填写」）。用户刚表达完的选择，
+     *   在跳转的一瞬间就丢了 —— 而这正是那句注释在 ?edit=1 上防住、
+     *   却在另一半漏掉的事。
+     */
     onSuccess: ({ id, next }) =>
-      navigate(`/projects/${projectId}/requirements/${id}${next === 'manual' ? '?edit=1' : ''}`),
+      navigate(
+        `/projects/${projectId}/requirements/${id}?${next === 'manual' ? 'edit=1' : 'analyze=1'}`,
+      ),
     onError: (e) => setError(e instanceof ApiError ? e.message : t('requirement.compose.createFailed')),
   });
 
@@ -310,6 +321,16 @@ export function RequirementListPage() {
                       aria-label={t('requirement.list.selectOne', { title: r.title })}
                     />
                     <Button variant="ghost"
+                      /*
+                        ★ 按钮里塞了标题 + 状态 + 下一步 + 时间四段文字，读屏器
+                          会把它们连读成一长串。显式给一句「打开 X」，
+                          让听的人知道按下去会发生什么。
+                      */
+                      aria-label={
+                        r.latestPlanId
+                          ? t('requirement.list.openPlanOf', { title: r.title })
+                          : t('requirement.list.openOne', { title: r.title })
+                      }
                       onClick={() =>
                         // 已经生成过计划的，直接去计划页 —— 用户此刻要看的是计划
                         r.latestPlanId
@@ -318,7 +339,18 @@ export function RequirementListPage() {
                       }
                       className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent justify-start flex min-w-0 flex-1 flex-wrap items-center gap-2 py-1.5 text-left text-xs hover:bg-slate-50"
                     >
-                      <span className="min-w-0 flex-1 truncate text-slate-800">{r.title}</span>
+                      {/*
+                        ★ 截断的文字必须能看到全文。这一行右边还有状态、下一步、
+                          时间几个短标签，长标题在窄一点的窗口上会截成
+                          「Simple Browser-Based T…」—— 而标题正是用户
+                          在这一页用来认出这条需求的唯一依据。
+                      */}
+                      <span
+                        className="min-w-0 flex-1 truncate text-slate-800"
+                        title={r.title}
+                      >
+                        {r.title}
+                      </span>
                       <span
                         className={clsx(
                           'rounded px-1.5 py-0.5 text-[11px]',

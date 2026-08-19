@@ -233,7 +233,13 @@ describe('CodexRuntime 执行', () => {
     const rt = new CodexRuntime({ apiKey: 'sk-test' });
     const ack = await rt.dispatch(task({ workspace: null }));
     expect(ack.accepted).toBe(false);
-    expect(ack.rejectReason).toContain('代码仓库');
+    /**
+     * ★ 断言改成看**码**，不是看那句话里的哪个词。
+     *   拒收理由是要给用户照着做的指路，措辞会改（原话让人去配已经退役的
+     *   「repo 资源范围」）；码不会。盯着措辞的断言只会在改对文案时变红。
+     */
+    expect(ack.rejectCode).toBe('no_workspace');
+    expect(ack.rejectReason).toContain('工作区来源');
   });
 
   it('没有凭证时拒绝派发，不静默复用平台凭证', async () => {

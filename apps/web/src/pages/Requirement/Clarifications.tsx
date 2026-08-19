@@ -3,7 +3,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import type { Clarification } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 /**
  * 澄清问题（页面文档 03 §5.5）—— 本页最重要的设计。
@@ -69,12 +69,26 @@ export function Clarifications({
   const resolved = sorted.filter((c) => c.level === 'auto_resolved');
   const active = sorted.filter((c) => c.level !== 'auto_resolved');
   const unanswered = active.filter((c) => c.level === 'must_confirm' && !c.answer).length;
+  /** ★ 已答的算上 auto_resolved：它们对用户而言也是「不用管了」的那一类 */
+  const answeredCount = clarifications.filter(
+    (c) => c.answer !== null || c.level === 'auto_resolved',
+  ).length;
 
   return (
     <section className="rounded border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-1.5">
+        {/*
+          ★★ 标题此前恒是「Needs clarification (4)」—— 答完两条它还是 4，
+            而下面明明只剩两条开着。数字与眼前所见对不上时，用户信眼睛，
+            于是这个数字变成噪声。改成说进度：答了几条、一共几条。
+        */}
         <h2 className="text-xs font-medium text-slate-700">
-          {t('clarify.title', { count: clarifications.length })}
+          {answeredCount > 0
+            ? t('clarify.titleProgress', {
+                answered: answeredCount,
+                count: clarifications.length,
+              })
+            : t('clarify.title', { count: clarifications.length })}
         </h2>
         {unanswered > 0 && (
           <span className="text-[11px] text-red-700">{t('clarify.unanswered', { count: unanswered })}</span>
@@ -184,14 +198,30 @@ function Question({
               </Button>
             );
           })}
-          <Input
-            value={custom}
-            onChange={(e) => setCustom(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && custom.trim()) onAnswer(c.id, custom.trim(), false);
-            }}
-            placeholder={t('clarify.writeYourOwn')}
-            className="w-40" />
+          {/*
+            ★★ 这里是**设计决定**的输入口，答案会随需求一路传给每个下游 Agent。
+              此前它是一个 160px 的单行框：一句 79 字的回答只看得见结尾
+              「…through — no reordering」，用户没法复读自己写了什么。
+              改成整行宽的 textarea，并把「Enter 提交、Shift+Enter 换行」
+              这条约定写在旁边 —— 不写的话，想换行的人会先误提交一次。
+          */}
+          <div className="mt-1 basis-full">
+            <Textarea
+              value={custom}
+              rows={2}
+              aria-label={t('clarify.writeYourOwn')}
+              onChange={(e) => setCustom(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && custom.trim()) {
+                  e.preventDefault();
+                  onAnswer(c.id, custom.trim(), false);
+                }
+              }}
+              placeholder={t('clarify.writeYourOwn')}
+              className="w-full text-xs"
+            />
+            <p className="mt-0.5 text-[10px] text-slate-400">{t('clarify.submitHint')}</p>
+          </div>
           {custom.trim() && (
             <Button variant="ghost"
               disabled={pending}

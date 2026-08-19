@@ -2,6 +2,7 @@ import type {
   AcceptanceCriterion,
   AgentCapability,
   DependencyType,
+  PlanFallback,
   WorkItemType,
 } from '@apos/contracts';
 
@@ -48,6 +49,19 @@ export interface PlanningScope {
    *   stated reason rather than quietly running someone else.
    */
   agentId?: string;
+  /**
+   * 产出该用哪种语言写。
+   *
+   * ★★ brief 里此前一个字都没提语言，于是同一段英文需求，这次拿回一份
+   *   全中文的 PRD、下次拿回全英文的 —— 模型每次自己挑。同一个项目里
+   *   于是躺着两种语言的需求文档，而界面上没有任何设置左右得了它。
+   *
+   *   缺省时按 'en'：英文是这个产品的默认语言（见 i18n/locale.ts），
+   *   而「不确定就沉默」在这里等于把选择权交还给模型 —— 那正是要治的病。
+   *
+   * The brief said nothing about language, so the model picked one per call.
+   */
+  locale?: 'en' | 'zh';
 }
 
 export interface StructureInput {
@@ -100,6 +114,12 @@ export interface StructuredRequirement {
   provenance: Record<string, { source: string; span?: [number, number] }>;
   cost: number;
   model: string;
+  /**
+   * 非 null = 这份结果是规则占位，不是 Agent 产出。见 PlanFallback。
+   *
+   * ★ 与 `model` 里那句中文并存：界面读码决定怎么渲染，日志读句子。
+   */
+  fallback?: PlanFallback | null;
 }
 
 export interface PlanTaskDraft {
@@ -135,6 +155,8 @@ export interface GeneratedPlan {
   cost: number;
   durationMs: number;
   model: string;
+  /** 非 null = 这份计划是通用模板，与需求无关。见 PlanFallback */
+  fallback?: PlanFallback | null;
 }
 
 export interface PlanningProvider {

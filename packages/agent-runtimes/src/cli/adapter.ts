@@ -160,6 +160,7 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'missing_credential',
         rejectReason:
           `未配置 Agent 凭证：请为「${this.profile.label}」登记凭证（不要复用平台凭证），` +
           `或设置 ${this.profile.dedicatedEnv ?? '专用环境变量'}，` +
@@ -171,9 +172,16 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
       return {
         externalRunId: this.externalId(task.runId),
         accepted: false,
+        rejectCode: 'no_workspace',
+        /**
+         * ★ 兜底句里的指路也改了：原话让人去配「repo 资源范围」，
+         *   而那三列（allowed_tools / denied_tools / resource_scopes）
+         *   早已退役 —— 照着做找不到那个东西。现在的路径是
+         *   「工作区来源」登记 + 在项目里把该资源授给这个 Agent。
+         */
         rejectReason:
           `${this.profile.label} 必须在一个已准备好的工作目录里执行：` +
-          '请为该 Agent 配置 repo 资源范围，并在「代码仓库」中登记对应仓库。',
+          '请先在「工作区来源」里登记这个仓库或目录，再到项目的 Agent 设置里把它授权给该 Agent。',
       };
     }
 

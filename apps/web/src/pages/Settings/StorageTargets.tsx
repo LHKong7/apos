@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { t, type MessageKey } from '../../lib/i18n';
+import { hasMessage, t, type MessageKey } from '../../lib/i18n';
 import { ApiError, api } from '../../lib/api/client';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { StorageTargetRow } from '../../lib/api/types';
@@ -229,6 +229,19 @@ export function StorageTargetCard({
   );
 }
 
+/**
+ * 服务端错误的说法。
+ *
+ * ★ 服务端带了 `{ code, params }` 时按码取词，取不到才回落到它那句中文。
+ *   直接画 `error.message` 的代价是：一条本该指导用户改输入的校验错误，
+ *   在英文界面上是一整句中文。
+ */
+function apiErrorText(e: ApiError): string {
+  const d = e.details as { code?: string; params?: Record<string, string | number> } | undefined;
+  const key = `storage.error.${d?.code}` as MessageKey;
+  return d?.code && hasMessage(key) ? t(key, d.params ?? {}) : e.message;
+}
+
 export function StorageTargetForm({
   projectId,
   existing,
@@ -327,7 +340,7 @@ export function StorageTargetForm({
       footer={
         <div className="space-y-2">
           {save.error instanceof ApiError && (
-            <p className="text-xs text-rose-600">{save.error.message}</p>
+            <p className="text-xs text-rose-600">{apiErrorText(save.error)}</p>
           )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>

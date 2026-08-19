@@ -225,6 +225,33 @@ function targetWarnings(
 
 // ── 写 ────────────────────────────────────────────────────────────────
 
+/**
+ * 本地目录必须落在部署方允许的挂载根里 —— **保存前**就拦。
+ *
+ * ★★ 此前这条只是一句 warning：表单照收，行落库、状态写成 active，
+ *   然后在列表里挂一行中文小字说「挂载会被拒绝」。也就是说，
+ *   界面上明明白白写着 `Status: active` 的资源，第一次派发一定失败 ——
+ *   而那次失败（见 dispatch 的拒收路径）现场是看不见的。
+ *   允许的根就印在同一个页面顶上，这件事在保存前完全判得了。
+ *
+ * ★ 错误带码 + 参数，不是拼好的句子：前端要按语言把它显示在字段旁边。
+ *
+ * The allowed roots are printed on the same page; there is no reason to accept
+ * a path that is guaranteed to fail at dispatch and mark it "active".
+ */
+function assertMountRootAllowed(kind: string, rootPath: string | null | undefined): void {
+  if (kind !== 'local' || !rootPath) return;
+  const roots = localMountRootsFromEnv();
+  if (roots.length === 0) return; // 部署方没有限定范围
+  if (isMountRootAllowed(rootPath, roots)) return;
+
+  throw new ApiError(
+    'VALIDATION_FAILED',
+    `这个路径不在 APOS_LOCAL_MOUNT_ROOTS 允许的范围内（${roots.join('、')}）`,
+    { code: 'path_outside_mount_roots', params: { roots: roots.join('、') }, field: 'rootPath' },
+  );
+}
+
 export async function createStorageTarget(
   db: Database,
   orgId: string,
@@ -246,6 +273,8 @@ export async function createStorageTarget(
    *   这种歧义在出问题时极难自证。
    */
   await assertRefFree(db, orgId, input.ref);
+
+  assertMountRootAllowed(input.kind, input.rootPath);
 
   if (input.projectId) {
     const [p] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, input.projectId));
@@ -287,6 +316,8 @@ export async function updateStorageTarget(
   if (input.kind && input.kind !== existing.kind) {
     throw new ApiError('VALIDATION_FAILED', '不能修改存储目标的类型，请删除后重新登记');
   }
+
+  assertMountRootAllowed(existing.kind, input.rootPath ?? existing.rootPath);
 
   const credential = input.credential === undefined ? undefined : input.credential?.trim() || null;
 

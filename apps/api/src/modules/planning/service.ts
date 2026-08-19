@@ -110,6 +110,8 @@ export async function generatePlan(
   input: {
     requirementId: string;
     correlationId: string;
+    /** 产出语言，来自调用方的 X-Locale。缺省时 provider 按英文写 */
+    locale?: 'en' | 'zh';
     /**
      * 「要求修改」时用户写的意见。
      *
@@ -199,7 +201,12 @@ export async function generatePlan(
     project?.type ?? 'development',
     input.feedback,
     // ★ 带上 requirementId：规划 Run 靠它才能从需求页找回来
-    { orgId: req.orgId, projectId: req.projectId, requirementId: req.id },
+    {
+      orgId: req.orgId,
+      projectId: req.projectId,
+      requirementId: req.id,
+      ...(input.locale ? { locale: input.locale } : {}),
+    },
   );
 
   const [prev] = await db
@@ -252,6 +259,7 @@ export async function generatePlan(
       model: generated.model,
       generationCost: String(generated.cost),
       generationMs: Date.now() - started,
+      generationFallback: generated.fallback ?? null,
     })
     .returning();
 

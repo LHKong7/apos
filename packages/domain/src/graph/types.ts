@@ -83,18 +83,81 @@ export const DIAGNOSTIC_TYPES = [
 ] as const;
 export type DiagnosticType = (typeof DIAGNOSTIC_TYPES)[number];
 
+/**
+ * 诊断动作的**说法**。
+ *
+ * ★★ 为什么和 `kind` 分开。
+ *
+ *   `kind` 是行为（点下去干什么），一个 kind 会有好几种说法：
+ *   `reassign` 在阻塞诊断里叫「改派」、在审批瓶颈里叫「增加备用审批人」、
+ *   在 Agent 过载里叫「分散到其他 Agent」。按 kind 取词会把三句话压成一句，
+ *   而那三句正是用户判断「这个按钮会做什么」的全部依据。
+ */
+export type DiagnosticActionLabel =
+  | 'expedite'
+  | 'reassign'
+  | 'locateOnBoard'
+  | 'adjustPolicy'
+  | 'addBackupApprover'
+  | 'splitOffIndependentPart'
+  | 'spreadAcrossAgents'
+  | 'breakDependencyManually'
+  | 'adjustDependency';
+
+/** 诊断正文的词条码。与 DiagnosticType 不是一一对应：同一类诊断可有两种说法 */
+export type DiagnosticMessageCode =
+  | 'cycle'
+  | 'blocking_amplified'
+  | 'blocking_amplified_critical_path'
+  | 'pseudo_serial'
+  | 'approval_bottleneck'
+  | 'single_point'
+  | 'agent_overload';
+
+export type DiagnosticParams = Record<string, string | number>;
+
 export interface DiagnosticAction {
   /** 前端据此决定按钮行为 */
   kind: 'remind' | 'reassign' | 'split' | 'adjust_dependency' | 'adjust_policy' | 'locate';
+  /** 按钮说法的词条码 —— 界面按它取词 */
+  labelCode: DiagnosticActionLabel;
+  /**
+   * @deprecated 中文兜底句，给日志与存量客户端用 / Chinese fallback.
+   *   界面一律走 labelCode；认不出码时才回落到这里。
+   */
   label: string;
   nodeId?: string;
   /** 伪串行诊断指向的那条边 */
   edge?: { from: string; to: string };
 }
 
+/**
+ * 一条图诊断。
+ *
+ * ★★ `messageCode` + `params` 是界面读的那份，`message` 是日志读的那份。
+ *
+ *   此前这里只有 `message` —— domain 层拼好的一句中文。它一路显示到
+ *   执行图与总览上，于是英文界面上整段诊断是中文，而同一行里
+ *   前端自己加的按钮是英文，两种语言并排：
+ *
+ *     「现状分析与方案调研」已阻塞 16.2h，下游 4 个任务在等，占关键路径 10%
+ *     [ 改派 ] [ 在看板中定位 ] [ Locate in graph (5 nodes affected) ]
+ *
+ *   参数里只放语言中立的值（标题原文、数字、m/h/d 这类单位），
+ *   任何需要变格变位的部分留给词条自己拼。
+ *
+ * The UI reads the code, logs read the sentence.
+ */
 export interface Diagnostic {
   type: DiagnosticType;
   severity: 'info' | 'warning' | 'critical';
+  /** 界面按它取词 */
+  messageCode: DiagnosticMessageCode;
+  /** 词条里的 `{name}` 占位符对应的值 */
+  params: DiagnosticParams;
+  /**
+   * @deprecated 中文兜底句，给日志与存量客户端用 / Chinese fallback.
+   */
   message: string;
   affectedNodes: string[];
   /** ★ 每条诊断必带可执行动作 —— 不做只诊断不给方案的提示（页面文档 07 §5.8） */

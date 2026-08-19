@@ -4,6 +4,7 @@ import type { Diagnostic } from '@apos/domain';
 import { useT } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { resolveDiagnosticAction } from './diagnostic-actions';
+import { useDiagnosticText } from './diagnostic-text';
 
 /**
  * 「问题诊断」的可复用条 / A reusable diagnostics banner.
@@ -39,6 +40,7 @@ export function DiagnosticsBanner({
   className?: string;
 }) {
   const t = useT();
+  const say = useDiagnosticText();
   const navigate = useNavigate();
 
   if (diagnostics.length === 0 && !delayCause) return null;
@@ -93,16 +95,16 @@ export function DiagnosticsBanner({
             </span>
             <span className="sr-only">{t(SEVERITY[d.severity].labelKey)}</span>
             <div className="min-w-0 flex-1">
-              <p className={clsx('leading-5', SEVERITY[d.severity].className)}>{d.message}</p>
+              <p className={clsx('leading-5', SEVERITY[d.severity].className)}>{say.message(d)}</p>
               <div className="mt-0.5 flex flex-wrap gap-1.5">
                 {d.actions.map((action) => (
                   <Button
-                    key={`${action.kind}-${action.label}`}
+                    key={`${action.kind}-${action.labelCode}`}
                     variant="outline"
                     size="xs"
                     onClick={() => run(action.nodeId, action)}
                   >
-                    {action.label}
+                    {say.action(action)}
                   </Button>
                 ))}
               </div>

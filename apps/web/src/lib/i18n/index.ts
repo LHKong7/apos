@@ -49,6 +49,22 @@ function pluralKey(locale: Locale, key: MessageKey, params?: Params): MessageKey
   return CATALOGS[locale][variant] !== undefined ? variant : key;
 }
 
+/**
+ * 这个键存在吗 / Does this catalogue entry exist?
+ *
+ * ★★ 专给「服务端原因码 → 词条」这类拼出来的键用。
+ *   translate 认不出键时返回**键本身**，于是界面上会出现
+ *   `plan.fallback.some_new_code` 这样一串裸 key —— 服务端加一个新码、
+ *   前端还没跟上的那段时间里，用户看到的是一行代码标识符。
+ *   先问一句「有没有」，没有就回落到兜底句。
+ *
+ * Server reason codes are turned into keys by string concatenation, so the
+ * catalogue can legitimately lag behind. Ask first, fall back to prose.
+ */
+export function hasMessage(key: string): key is MessageKey {
+  return CATALOGS.en[key as MessageKey] !== undefined;
+}
+
 export function translate(locale: Locale, key: MessageKey, params?: Params): string {
   const resolved = pluralKey(locale, key, params);
   const template = CATALOGS[locale][resolved] ?? CATALOGS.en[resolved];

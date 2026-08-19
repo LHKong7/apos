@@ -263,9 +263,22 @@ export async function dispatchRun(
     : ({ ok: true, workspace: null, note: '未启用工作区供给' } as const);
 
   if (!acquired.ok) {
+    /**
+     * ★★ 只写错误分类，**不要**在这里把 status 改成 failed。
+     *
+     *   ingestRunEvent 开头有一道「终态之后到达的事件一律忽略」的闸门。
+     *   先把 Run 标成 failed，下面那条 run_ended 就会被这道闸门吞掉 ——
+     *   于是 endedAt 不写、run_events 没有、agent_run.failed 不发、
+     *   工作项也不流转，看上去调用了收尾其实什么都没发生。
+     *   状态与 endedAt 由 run_ended 自己落（applyRunPatch），
+     *   这里只留 decideRecovery 需要的 errorClass。
+     *
+     * Setting `failed` here would trip ingest's terminal-state guard and
+     * silently discard the run_ended below; let the event settle the run.
+     */
     await db
       .update(agentRuns)
-      .set({ status: 'failed', errorClass: 'context_insufficient', errorMessage: acquired.reason })
+      .set({ errorClass: 'context_insufficient', errorMessage: acquired.reason })
       .where(eq(agentRuns.id, runId));
 
     await ingestRunEvent(db, {
@@ -337,14 +350,53 @@ export async function dispatchRun(
 
   const ack = await adapter.dispatch(task);
   if (!ack.accepted) {
+    // ★ 同上：status 交给 run_ended 落，先写 status 会被 ingest 的终态闸门吞掉
     await db
       .update(agentRuns)
       .set({
-        status: 'failed',
         errorClass: 'runtime_error',
         errorMessage: ack.rejectReason ?? '运行时拒绝任务',
       })
       .where(eq(agentRuns.id, runId));
+
+    /**
+     * ★★ 运行时拒收也必须走 run_ended，和上面「工作区没准备好」那条一样。
+     *
+     *   此前这里只把 Run 标成 failed 就 return 了。代价是工作项停在
+     *   `executing` 上永远出不来：上面那次 ready → executing 的流转没人回滚，
+     *   run_events 一条没有，`agent_run.failed` 领域事件也不存在。
+     *   而 run-supervisor 只认 dispatching / running 两个状态，
+     *   failed 的 Run 不在它的视野里 —— 于是没有任何循环能再碰到这个工作项，
+     *   看板却还按 `status = 'executing'` 数出「1 个 Agent 在跑」。
+     *
+     *   ingestRunEvent 一步把该做的全做了：写 run_events、置 endedAt、
+     *   发 agent_run.failed、按 agent_run_failed 流转出 executing、
+     *   并让 decideRecovery 决定重试还是转人工。
+     *
+     *   ★ 这里要把 deps 传下去（上面那条不用）：工作区**已经**取到了，
+     *     不释放就会把工作树留在盘上，而 Run 已经结束、没人再来收。
+     *
+     *   Mirrors the workspace-unavailable branch above. Without this the item
+     *   stays pinned at `executing` with no event and no loop able to reach it.
+     */
+    await ingestRunEvent(
+      db,
+      {
+        runId,
+        event: {
+          runId,
+          seq: 0,
+          ts: new Date().toISOString(),
+          type: 'run_ended',
+          outcome: 'failed',
+          summary: ack.rejectReason ?? '运行时拒绝任务',
+          selfReport: '运行时拒绝接收这次派发，任务未开始。',
+        },
+        correlationId: input.correlationId,
+      },
+      deps,
+    );
+
     return { ok: false, code: 'AGENT_UNAVAILABLE', detail: ack };
   }
 
