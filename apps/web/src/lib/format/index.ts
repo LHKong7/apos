@@ -281,3 +281,26 @@ export function eventLabel(type: string): string {
   return coarse === prefixKey ? type : coarse;
 }
 
+/**
+ * 列表连接符 / Joining a list of items.
+ *
+ * ★★ 中文用顿号「、」，英文用逗号加空格。这件事此前是各处 `join('、')`
+ *   硬编码的，于是英文界面上出现 `Requirement、Research`、
+ *   `Read、Edit、Bash` —— 一个只在中文里存在的标点，夹在英文词之间。
+ *
+ * ★ 调用它的组件都用了 useT()（订阅了 locale），所以这里读当前语言
+ *   不会漏掉切换时的重渲染。
+ */
+export function joinList(items: readonly string[]): string {
+  return items.join(currentLocale() === 'zh' ? '、' : ', ');
+}
+
+/**
+ * 标签与值之间的冒号 / The colon between a label and its value.
+ *
+ * ★ 中文用全角「：」，英文用半角冒号加空格。同上，此前是硬编码的全角冒号，
+ *   英文界面上长成 `Can do：Read workspace files`。
+ */
+export function colon(): string {
+  return currentLocale() === 'zh' ? '：' : ': ';
+}

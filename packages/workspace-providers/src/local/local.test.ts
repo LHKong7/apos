@@ -243,3 +243,65 @@ describe('本地归档交货', () => {
     expect(bad.problem).toContain('不可写');
   });
 });
+
+/**
+ * ★★ 「可写」必须意味着产出回得去。
+ *
+ *   此前 writable 只决定 Run 期间那个副本能不能改，交货一律归档到
+ *   APOS_ARCHIVE_ROOT/<runId>/。用户把来源指向自己的项目目录、勾上可写，
+ *   Agent 报告「已创建 index.html」，而那个目录里空空如也 —— 文件在一个
+ *   他从没听说过的路径下（问题记录：NEW-BUG-4）。
+ */
+describe('本地交货', () => {
+  it('可写来源把变更写回源目录', async () => {
+    const m = materializer();
+    const target = join(root, 'runs', 'wb1', 'sales-data');
+    const mount = await m.materialize({
+      role: 'primary', writable: true, path: target, dir: dir(), workspaceId: 'wb1',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+    await writeFile(join(target, 'index.html'), '<h1>hi</h1>\n');
+    const changes = await m.diff(mount);
+
+    const publisher = new LocalPublisher({ archiveRoot: join(root, 'archive') });
+    const out = await publisher.publish(
+      { id: 'wb1', runId: 'wb1', root: target, writable: true, mounts: [mount] },
+      changes,
+      { runId: 'wb1', outcome: 'completed', summary: '', agentName: 'a', goal: 'g' },
+    );
+
+    // 落在用户的源目录里，不是归档目录
+    expect(await readFile(join(hostDir, 'index.html'), 'utf8')).toContain('<h1>hi</h1>');
+    if (out.kind !== 'local') throw new Error('expected a local publish result');
+    expect(out.persisted).toBe(true);
+    expect(out.archivePath).toBe(hostDir);
+  });
+
+  /** ★ 只读来源照旧归档 —— 写回一个用户标了只读的目录是越权 */
+  it('只读来源仍然归档，不碰源目录', async () => {
+    const m = materializer();
+    const target = join(root, 'runs', 'wb2', 'sales-data');
+    const mount = await m.materialize({
+      role: 'primary', writable: false, path: target, dir: dir(), workspaceId: 'wb2',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+    await writeFile(join(target, 'out.txt'), 'x\n');
+    const changes = await m.diff(mount);
+
+    const archiveRoot = join(root, 'archive');
+    const publisher = new LocalPublisher({ archiveRoot });
+    const out = await publisher.publish(
+      { id: 'wb2', runId: 'wb2', root: target, writable: false, mounts: [mount] },
+      changes,
+      { runId: 'wb2', outcome: 'completed', summary: '', agentName: 'a', goal: 'g' },
+    );
+
+    if (out.kind !== 'local') throw new Error('expected a local publish result');
+    expect(out.archivePath).toBe(join(archiveRoot, 'wb2'));
+    expect(await readFile(join(archiveRoot, 'wb2', 'out.txt'), 'utf8')).toContain('x');
+    // 源目录不该多出东西
+    await expect(readFile(join(hostDir, 'out.txt'), 'utf8')).rejects.toThrow();
+  });
+});

@@ -1980,9 +1980,9 @@ export const en = {
   'plan.staleBoundary': 'The above was computed against the Policy in force when the plan was generated. Under the current rules, {auto} kinds of operation run automatically and {human} need human confirmation. What applies at approval time is whatever is actually in force.',
   'plan.adjustRules': 'Adjust these rules → policy settings',
   /** ★ 「about 95k」少了单位：那是 token，不是钱也不是小时 */
-  'plan.confirmAgentTasks': '· {count} tasks will run automatically on agents, using about {cost} tokens',
-  'plan.confirmAgentTasks_one': '· {count} task will run automatically on an agent, using about {cost} tokens',
-  'plan.confirmAgentTasks_other': '· {count} tasks will run automatically on agents, using about {cost} tokens',
+  'plan.confirmAgentTasks': '· {count} tasks will run automatically on agents \u2014 token estimate: {cost}',
+  'plan.confirmAgentTasks_one': '· {count} task will run automatically on an agent \u2014 token estimate: {cost}',
+  'plan.confirmAgentTasks_other': '· {count} tasks will run automatically on agents \u2014 token estimate: {cost}',
   'plan.confirmHumanGates': '· {count} points will still come back to a human',
   'plan.confirmHumanGates_one': '· {count} point will still come back to a human',
   'plan.confirmHumanGates_other': '· {count} points will still come back to a human',
@@ -2153,6 +2153,13 @@ export const en = {
   'agentCfg.new': 'New Agent',
   'agentCfg.editing': 'Edit {name}',
   'agentCfg.credentialUsage': 'Credential usage',
+  /**
+   * ★ 这段说明此前由服务端拼好中文送过来（agent-admin.ts credentialHelp），
+   *   于是英文界面的凭证输入框下面挂着一整段中文。它是平台自己的话、
+   *   没有参数、也没有第二个消费者 —— 正是词条表该装的东西。
+   */
+  'agentCfg.credentialHelpText':
+    'Prefer `env:VARIABLE_NAME` \u2014 the credential then stays in the process environment and never reaches the database, and several agents sharing one variable name can be rotated in a single place. Pasting the value directly also works: with APOS_SECRET_KEY set it is stored encrypted (the key lives outside the database), without it the value is stored in plain text. The API never echoes it back either way.',
   'agentCfg.rotateHint': 'Rotating only means changing the environment variable',
   'agentCfg.health.unregistered': 'Adapter not registered in this process',
   'agentCfg.health.badCredential': 'Credential unusable',
@@ -2280,7 +2287,7 @@ export const en = {
   'storage.registerShort': 'Register storage target',
   'storage.registerAction': 'Register',
   'storage.mountRoots': 'Host directories the deployment allows mounting:',
-  'storage.mountRootsNote': '. This gate lives in the APOS_LOCAL_MOUNT_ROOTS environment variable; changing the database has no effect.',
+  'storage.mountRootsNote': 'This gate lives in the APOS_LOCAL_MOUNT_ROOTS environment variable; changing the database has no effect.',
   'storage.noMountRoots': 'The deployment has not set APOS_LOCAL_MOUNT_ROOTS, so any registered host directory can be mounted — one entry set to / hands the whole machine to the agents. Restrict the range in the deployment environment.',
   'storage.emptyMessage': 'No storage target registered yet',
   'storage.emptyHint': 'Object storage buckets and host directories are both registered here; a dataset an agent is authorized for must be registered first, or preparing the workspace fails',

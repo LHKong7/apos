@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "output_locale" text DEFAULT 'en' NOT NULL;

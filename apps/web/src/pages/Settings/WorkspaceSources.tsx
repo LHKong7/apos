@@ -184,11 +184,18 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
         {storeData.localMountRestricted ? (
           <>
             {t('storage.mountRoots')}
-            {storeData.localMountRoots.map((r) => (
-              <code key={r} className="mx-1 rounded bg-white px-1 py-0.5">
-                {r}
-              </code>
+            {/*
+              ★ 多条根目录之间要有分隔符。只靠 mx-1 的话两个 code 块之间
+                只有一点空白，读起来像一条被折行的长路径；而说明句以句号
+                开头，末尾那点又被 margin 推成一个孤零零的圆点。
+            */}
+            {storeData.localMountRoots.map((r, i) => (
+              <span key={r}>
+                {i > 0 && <span className="text-slate-400">, </span>}
+                <code className="rounded bg-white px-1 py-0.5">{r}</code>
+              </span>
             ))}
+            {' '}
             {t('storage.mountRootsNote')}
           </>
         ) : (

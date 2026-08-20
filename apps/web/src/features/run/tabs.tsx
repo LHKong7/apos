@@ -1,4 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
+import { joinList } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
@@ -72,7 +73,7 @@ export function InputTab({ detail }: { detail: RunDetail }) {
           <dt className="text-slate-400">{t('runTab.model')}</dt>
           <dd className="font-mono">{input.model ?? '—'}</dd>
           <dt className="text-slate-400">{t('runTab.toolset')}</dt>
-          <dd className="font-mono">{input.tools.join('、') || '—'}</dd>
+          <dd className="font-mono">{joinList(input.tools) || '—'}</dd>
         </dl>
       </Section>
 
@@ -84,16 +85,16 @@ export function InputTab({ detail }: { detail: RunDetail }) {
         {input.permissions ? (
           <dl className="grid grid-cols-[5rem_1fr] gap-y-1 text-slate-700">
             <dt className="text-slate-400">{t('runTab.allowed')}</dt>
-            <dd className="font-mono">{input.permissions.allowedTools.join('、') || t('runTab.none')}</dd>
+            <dd className="font-mono">{joinList(input.permissions.allowedTools) || t('runTab.none')}</dd>
             <dt className="text-slate-400">{t('runTab.denied')}</dt>
             <dd className="font-mono text-red-700">
-              {input.permissions.deniedTools.join('、') || t('runTab.none')}
+              {joinList(input.permissions.deniedTools) || t('runTab.none')}
             </dd>
             <dt className="text-slate-400">{t('runTab.resourceScopes')}</dt>
             <dd className="font-mono">
-              {input.permissions.resourceScopes
-                .map((s) => `${s.kind}:${s.ref}(${s.access})`)
-                .join('、') || t('runTab.none')}
+              {joinList(
+                input.permissions.resourceScopes.map((s) => `${s.kind}:${s.ref}(${s.access})`),
+              ) || t('runTab.none')}
             </dd>
           </dl>
         ) : (

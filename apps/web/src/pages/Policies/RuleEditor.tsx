@@ -1,4 +1,5 @@
 import { useT } from '../../lib/i18n';
+import { joinList } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { FactKey } from '@apos/contracts';
@@ -276,9 +277,12 @@ function SimulationView({ result }: { result: SimulationResponse }) {
           {result.suggestions.length > 0 && (
             <p className="mt-1 text-[11px] text-amber-900">
               {t('rule.suggestExclusion')}
-              {result.suggestions
-                .map((s) => `${FACT_LABELS[s.addCondition.fact as FactKey] ?? s.addCondition.fact} ≠ ${String(s.addCondition.value)}`)
-                .join('、')}
+              {joinList(
+                result.suggestions.map(
+                  (s) =>
+                    `${FACT_LABELS[s.addCondition.fact as FactKey] ?? s.addCondition.fact} ≠ ${String(s.addCondition.value)}`,
+                ),
+              )}
               <span className="ml-1 text-amber-700">
                 {t('rule.suggestionBasis', {
                   count: result.suggestions[0]!.wouldEliminate,

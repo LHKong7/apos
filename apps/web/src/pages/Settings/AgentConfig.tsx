@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { relativeTime, tokens } from '../../lib/format';
+import { relativeTime, tokens, joinList } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState, QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
@@ -229,7 +229,7 @@ function AgentsSection() {
 
       {unknownKeys.length > 0 && (
         <Notice tone="warning">
-          {t('agentCfg.unknownKeysNotice', { keys: unknownKeys.join('、') })}
+          {t('agentCfg.unknownKeysNotice', { keys: joinList(unknownKeys) })}
         </Notice>
       )}
 
@@ -270,7 +270,6 @@ function AgentsSection() {
         <AgentForm
           kinds={data.kinds}
           encryptsInline={data.encryptsInlineSecrets}
-          credentialHelp={data.credentialHelp}
           agent={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           /**
@@ -305,7 +304,7 @@ function CredentialUsage({ rows }: { rows: CredentialUsageRow[] }) {
         {rows.map((r) => (
           <div key={r.hint ?? '—'} className="flex flex-wrap items-center gap-2 text-[11px]">
             <code className="rounded bg-white px-1.5 py-0.5 text-slate-700">{r.hint}</code>
-            <span className="text-slate-500">{r.agents.join('、')}</span>
+            <span className="text-slate-500">{joinList(r.agents)}</span>
             <span
               className={clsx(
                 'rounded px-1.5 py-0.5',
@@ -448,7 +447,7 @@ function AgentCard({
         */}
         <Field label={t('agent.scope.field')}>
           {agent.applicableTypes.length > 0 ? (
-            agent.applicableTypes.map((t) => typeLabel(t)).join('、')
+            joinList(agent.applicableTypes.map((t) => typeLabel(t)))
           ) : (
             <span className="text-amber-700">{t('agent.scope.unset')}</span>
           )}
@@ -545,7 +544,6 @@ function AgentCard({
 function AgentForm({
   kinds,
   encryptsInline,
-  credentialHelp,
   agent,
   onClose,
   onSaved,
@@ -553,7 +551,6 @@ function AgentForm({
   kinds: RuntimeKindSpec[];
   /** 直接粘贴的敏感值是不是密文入库。两种都能存，只影响提示语 */
   encryptsInline: boolean;
-  credentialHelp: string;
   agent: AgentAdminRow | null;
   onClose: () => void;
   onSaved: (unknownConfigKeys: string[]) => void;
@@ -822,7 +819,12 @@ function AgentForm({
           {spec?.credential && (
             <Labeled
               label={sx(spec.credential.label, spec.credential.labelEn)}
-              help={credentialHelp}
+              /*
+                ★ 走词条，不用服务端送来的那句。服务端那份是中文散文，
+                  英文界面上会整段漏出来；它仍然保留在接口里给日志与
+                  存量客户端当兜底。
+              */
+              help={t('agentCfg.credentialHelpText')}
             >
               <Input
                 value={credential}
@@ -1310,7 +1312,7 @@ function splitList(v: string): string[] {
 }
 
 function formatValue(v: unknown): string {
-  if (Array.isArray(v)) return v.join('、') || t('agentCfg.emptyValue');
+  if (Array.isArray(v)) return joinList(v) || t('agentCfg.emptyValue');
   /**
    * ★ JSON 对象只列键名。
    *   值里可能有网关地址、也可能有 `secret://saved` 这种占位符 ——
@@ -1318,7 +1320,7 @@ function formatValue(v: unknown): string {
    */
   if (v && typeof v === 'object') {
     const keys = Object.keys(v as Record<string, unknown>);
-    return keys.length > 0 ? keys.join('、') : t('agentCfg.emptyValue');
+    return keys.length > 0 ? joinList(keys) : t('agentCfg.emptyValue');
   }
   /** 空串要显示成「（空）」—— 「默认 」后面跟着一片空白看着像坏了 */
   if (v === '' || v === null || v === undefined) return t('agentCfg.emptyValue');
@@ -1396,7 +1398,7 @@ function ConventionsSection({ projectId }: { projectId: string }) {
                 </span>
                 {c.appliesTo.length > 0 && (
                   <span className="text-[11px] text-slate-500">
-                    {t('agentCfg.convention.appliesTo', { types: c.appliesTo.join('、') })}
+                    {t('agentCfg.convention.appliesTo', { types: joinList(c.appliesTo) })}
                   </span>
                 )}
                 <div className="ml-auto flex gap-1">

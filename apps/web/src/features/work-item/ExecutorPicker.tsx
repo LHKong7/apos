@@ -1,4 +1,5 @@
 import { useT } from '../../lib/i18n';
+import { joinList } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -215,7 +216,7 @@ export function ExecutorPicker({
                 <span className="ml-1 tabular-nums text-slate-400">
                   {t('executor.score', { score: a.score.toFixed(2) })}
                 </span>
-                {a.reasons.length > 0 && <span className="ml-1">· {a.reasons.join('、')}</span>}
+                {a.reasons.length > 0 && <span className="ml-1">· {joinList(a.reasons)}</span>}
               </li>
             ))}
           </ul>

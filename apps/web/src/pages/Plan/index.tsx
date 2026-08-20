@@ -5,14 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import {
-  absoluteTime,
-  money,
-  relativeTime,
-  riskLabel,
-  tokens,
-  typeIcon,
-} from '../../lib/format';
+import { absoluteTime, money, relativeTime, riskLabel, tokens, typeIcon, joinList, colon } from '../../lib/format';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { GatedButton } from '../../components/Gated';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -164,7 +157,12 @@ export function PlanPage() {
             <Metric label={t('plan.metric.duration')} value={`${d.metrics.estimatedHours} h`} sub={t('plan.metric.estimateTotal')} />
             <Metric
               label={t('plan.metric.tokens')}
-              value={tokens(d.metrics.estimatedTokens)}
+              /* ★ 没估过就说「未估算」，不要画一个理直气壮的 0 */
+              value={
+                d.metrics.estimatedTokens === null
+                  ? t('plan.fallback.noEstimate')
+                  : tokens(d.metrics.estimatedTokens)
+              }
               sub={
                 d.metrics.budget === null
                   ? t('plan.noBudget')
@@ -189,7 +187,7 @@ export function PlanPage() {
             <p className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
               {t('plan.overBudget', {
                 spent: tokens(d.metrics.spent),
-                estimated: tokens(d.metrics.estimatedTokens),
+                estimated: tokens(d.metrics.estimatedTokens ?? 0),
                 budget: tokens(d.metrics.budget ?? 0),
               })}
             </p>
@@ -414,7 +412,7 @@ function ApprovedSummary({ detail: d, projectId }: { detail: PlanDetail; project
     <section className="rounded border border-green-200 bg-green-50 px-3 py-2">
       <p className="text-xs text-green-900">
         {t('plan.approvedNotice', {
-          by: d.plan.approvedBy.length > 0 ? `（${d.plan.approvedBy.join('、')}）` : '',
+          by: d.plan.approvedBy.length > 0 ? `（${joinList(d.plan.approvedBy)}）` : '',
         })}
       </p>
       {d.plan.approvedAt && (
@@ -543,7 +541,7 @@ function FallbackBanner({ detail: d, projectId }: { detail: PlanDetail; projectI
       <p className="mt-1 text-xs leading-5 text-red-900">{t('plan.fallback.body')}</p>
 
       <p className="mt-1.5 text-xs leading-5 text-red-900">
-        <span className="font-medium">{t('plan.fallback.why')}：</span> {why}
+        <span className="font-medium">{t('plan.fallback.why')}{colon()}</span> {why}
       </p>
 
       {/*
@@ -809,7 +807,10 @@ function ApproveDialog({
           <p>
             {t('plan.confirmAgentTasks', {
               count: d.metrics.agentTasks,
-              cost: tokens(d.metrics.estimatedTokens),
+              cost:
+                d.metrics.estimatedTokens === null
+                  ? t('plan.fallback.noEstimate')
+                  : tokens(d.metrics.estimatedTokens),
             })}
           </p>
           <p>{t('plan.confirmHumanGates', { count: d.metrics.humanGateCount })}</p>

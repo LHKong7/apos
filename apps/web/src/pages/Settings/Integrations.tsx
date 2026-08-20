@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { relativeTime } from '../../lib/format';
+import { relativeTime, joinList } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
@@ -174,7 +174,7 @@ export function IntegrationsPage() {
                   <p className="mt-0.5 text-[11px] text-slate-500">
                     {rt.agentCount === 0
                       ? t('integ.noAgentUses')
-                      : t('integ.agentsUsing', { count: rt.agentCount, names: rt.agentNames.join('、') })}
+                      : t('integ.agentsUsing', { count: rt.agentCount, names: joinList(rt.agentNames) })}
                   </p>
                   {!rt.registered && (
                     <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">

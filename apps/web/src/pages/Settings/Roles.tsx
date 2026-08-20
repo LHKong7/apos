@@ -1,4 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
+import { joinList, colon } from '@/lib/format';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -514,9 +515,9 @@ function RoleEditor({
         {!agentAllowed && (
           <p className="mt-1 text-[11px] text-amber-800">
             {t('roles.humanOnlyBlocking', {
-              permissions: blocking
-                .map((p) => available.find((a) => a.key === p)?.label)
-                .join('、'),
+              permissions: joinList(
+                blocking.map((p) => available.find((a) => a.key === p)?.label ?? p),
+              ),
             })}
           </p>
         )}
@@ -656,12 +657,12 @@ function RoleDiff({
         <div className="mt-1 space-y-0.5 text-[11px]">
           {added.length > 0 && (
             <p className="text-emerald-800">
-              {t('roles.diffAdded')}：{added.map(label).join('、')}
+              {t('roles.diffAdded')}{colon()}{joinList(added.map(label))}
             </p>
           )}
           {removed.length > 0 && (
             <p className="text-rose-800">
-              {t('roles.diffRemoved')}：{removed.map(label).join('、')}
+              {t('roles.diffRemoved')}{colon()}{joinList(removed.map(label))}
             </p>
           )}
         </div>
@@ -689,7 +690,7 @@ function RoleDiff({
           {impact.humanOnlyConflicts.length > 0 && (
             <p className="mt-0.5 text-amber-800">
               {t('roles.impact.humanOnly', {
-                permissions: impact.humanOnlyConflicts.map((c) => c.label).join('、'),
+                permissions: joinList(impact.humanOnlyConflicts.map((c) => c.label)),
               })}
             </p>
           )}

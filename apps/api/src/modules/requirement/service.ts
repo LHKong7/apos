@@ -77,7 +77,8 @@ export interface AnalyzeResult {
   completeness: Completeness;
   clarificationCount: number;
   mustConfirmCount: number;
-  cost: number;
+  /** null = 运行时不上报成本（不是「没花」） */
+  cost: number | null;
   /** 因为是人改过的而被保留、没有被这一轮分析覆盖的字段 */
   keptHumanFields: string[];
 }

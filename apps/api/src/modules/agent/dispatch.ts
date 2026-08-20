@@ -171,6 +171,13 @@ export async function dispatchRun(
 
   const context = await buildRunContext(db, item, input.additionalContext);
 
+  /** ★ 产出语言是项目属性 —— 调度器派发时没有请求，读不到 X-Locale */
+  const [project] = await db
+    .select({ outputLocale: projects.outputLocale })
+    .from(projects)
+    .where(eq(projects.id, item.projectId));
+  const outputLocale = project?.outputLocale ?? 'en';
+
   // 派发给某个 Agent 就意味着它是执行主体 —— 让 dispatchRun 自洽，
   // 无论是调度器调用还是手动「用这个 Agent 重试」都行为一致
   if (item.executorType !== 'agent' || item.executorId !== agent.id) {
@@ -327,6 +334,8 @@ export async function dispatchRun(
       skills: agent.skills,
     },
     workspace: acquired.workspace,
+    /** ★ 语言是项目属性 —— 调度器派发时没有请求也没有「当前用户」 */
+    outputLocale: outputLocale === 'zh' ? 'zh' : 'en',
     goal: {
       title: item.title,
       description: item.description ?? '',

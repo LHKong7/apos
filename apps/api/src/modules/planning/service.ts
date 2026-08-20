@@ -91,7 +91,8 @@ export interface PlanSummary {
   agentTaskCount: number;
   humanTaskCount: number;
   estimatedHours: number;
-  estimatedTokens: number;
+  /** null = 一条任务都没给出估算（不是估成 0） */
+  estimatedTokens: number | null;
   /** 批准后将自动发生的行为 —— 计划确认页的灵魂 */
   autoActions: AutoAction[];
   humanGates: HumanGateEntry[];
@@ -228,7 +229,19 @@ export async function generatePlan(
   });
 
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
-  const estimatedTokens = generated.tasks.reduce((s, t) => s + (t.estimatedTokens ?? 0), 0);
+  /**
+   * ★★ 一条都没估的时候要落 null，**不是 0**。
+   *
+   *   此前是 `reduce((s, t) => s + (t.estimatedTokens ?? 0), 0)`：Agent 没给
+   *   估算时把一串 null 加成 0，计划页于是理直气壮地写「Token estimate 0」，
+   *   批准弹窗跟着说「预计消耗 0 tokens」—— 与「这份计划真的不花 token」
+   *   完全无法区分（问题记录：NEW-BUG-3）。
+   *
+   * ★ 部分估了就按估到的那些求和：半份估算仍然是信息，而它天然偏小，
+   *   偏小的方向对预算闸门是安全的（会更早拦，不会更晚）。
+   */
+  const estimated = generated.tasks.map((t) => t.estimatedTokens).filter((n): n is number => typeof n === 'number');
+  const estimatedTokens = estimated.length === 0 ? null : estimated.reduce((a, b) => a + b, 0);
 
   /**
    * ★★ 计划、任务、依赖边必须在**同一个事务**里落地。
@@ -257,7 +270,7 @@ export async function generatePlan(
       autoActions: autoActions as unknown[],
       humanGates: humanGates as unknown[],
       model: generated.model,
-      generationCost: String(generated.cost),
+      generationCost: generated.cost === null ? null : String(generated.cost),
       generationMs: Date.now() - started,
       generationFallback: generated.fallback ?? null,
     })

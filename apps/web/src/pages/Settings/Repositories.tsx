@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { joinList } from '@/lib/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { t, useT, type MessageKey } from '../../lib/i18n';
@@ -226,7 +227,7 @@ export function RepositoryCard({
             {repo.sshHostKeyPinned ? (
               <span className="text-emerald-700">
                 {t('agentCfg.repo.pinned', {
-                  hosts: repo.sshHosts.length > 0 ? `（${repo.sshHosts.join('、')}）` : '',
+                  hosts: repo.sshHosts.length > 0 ? `（${joinList(repo.sshHosts)}）` : '',
                 })}
               </span>
             ) : (

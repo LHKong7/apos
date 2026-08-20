@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { joinList, colon } from '@/lib/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '@/lib/api/client';
@@ -111,7 +112,7 @@ export function AgentAccessPanel({
 
       <dl className="mt-2 space-y-1 text-[11px]">
         <div className="flex flex-wrap items-baseline gap-1">
-          <dt className="text-slate-500">{t('access.capabilities')}：</dt>
+          <dt className="text-slate-500">{t('access.capabilities')}{colon()}</dt>
           <dd className="flex flex-wrap gap-1">
             {data.explained.length === 0 ? (
               <span className="text-slate-400">{t('access.none')}</span>
@@ -130,13 +131,15 @@ export function AgentAccessPanel({
         </div>
 
         <div className="flex flex-wrap items-baseline gap-1">
-          <dt className="text-slate-500">{t('access.resources')}：</dt>
+          <dt className="text-slate-500">{t('access.resources')}{colon()}</dt>
           <dd className="text-slate-700">
             {data.resourceScopes.length === 0
               ? t('access.none')
-              : data.resourceScopes
-                  .map((s) => `${s.ref}（${t(`scopes.access.${s.access}` as MessageKey)}）`)
-                  .join('、')}
+              : joinList(
+                  data.resourceScopes.map(
+                    (s) => `${s.ref}（${t(`scopes.access.${s.access}` as MessageKey)}）`,
+                  ),
+                )}
           </dd>
         </div>
       </dl>
@@ -353,13 +356,13 @@ function ImpactSummary({ impact }: { impact: AgentAccessPreview }) {
 
       {impact.removedCapabilities.length > 0 && (
         <p className="mt-1">
-          {t('access.preview.removed')}：{impact.removedCapabilities.join('、')}
+          {t('access.preview.removed')}{colon()}{joinList(impact.removedCapabilities)}
         </p>
       )}
 
       {impact.affectedResources.length > 0 && (
         <p className="mt-1">
-          {t('access.preview.resources', { refs: impact.affectedResources.join('、') })}
+          {t('access.preview.resources', { refs: joinList(impact.affectedResources) })}
         </p>
       )}
     </div>

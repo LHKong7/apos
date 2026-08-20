@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { joinList } from '@/lib/format';
 import { useMutation } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { hasMessage, t, type MessageKey } from '../../lib/i18n';
@@ -217,7 +218,7 @@ export function StorageTargetCard({
           {result.message}
           {result.samples.length > 0 && (
             <p className="mt-1 text-slate-500">
-              {t('storage.samples', { samples: result.samples.slice(0, 5).join('、') })}
+              {t('storage.samples', { samples: joinList(result.samples.slice(0, 5)) })}
             </p>
           )}
         </div>

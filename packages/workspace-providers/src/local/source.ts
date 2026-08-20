@@ -97,6 +97,8 @@ export class LocalMaterializer implements SourceMaterializer {
       path: spec.path,
       role: spec.role,
       writable: spec.writable,
+      /** ★ 记住源目录 —— 交货要按它写回去，见 Mount.originPath */
+      originPath: source,
       source: {
         kind: 'local',
         // 寻址键 = 快照存放键；源目录记在 label 里供人辨认

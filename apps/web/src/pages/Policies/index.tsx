@@ -1,4 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
+import { colon, joinList } from '@/lib/format';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -259,7 +260,7 @@ export function PoliciesPage() {
                   <SummaryColumn
                     title={t('policy.dependsOn')}
                     icon="~"
-                    items={data.summary.depends.map((o) => `${o.label}：${o.when}`)}
+                    items={data.summary.depends.map((o) => `${o.label}${colon()}${o.when}`)}
                   />
                 </div>
               )}
@@ -361,7 +362,7 @@ export function PoliciesPage() {
                   {t('policy.wiredFacts', {
                     facts:
                       data.wiredFacts.length > 0
-                        ? data.wiredFacts.join('、')
+                        ? joinList(data.wiredFacts)
                         : t('policy.none'),
                   })}
                 </p>
@@ -578,7 +579,7 @@ function AutonomyDialog({
                 <p className="text-[11px] font-medium text-green-900">
                   {t('policy.becomesAuto', { count: preview.data.becomesAuto.length })}
                 </p>
-                <p className="text-[11px] text-green-900">{preview.data.becomesAuto.join('、')}</p>
+                <p className="text-[11px] text-green-900">{joinList(preview.data.becomesAuto)}</p>
               </div>
             )}
             {preview.data.becomesGated.length > 0 && (
@@ -586,7 +587,7 @@ function AutonomyDialog({
                 <p className="text-[11px] font-medium text-amber-900">
                   {t('policy.becomesGated', { count: preview.data.becomesGated.length })}
                 </p>
-                <p className="text-[11px] text-amber-900">{preview.data.becomesGated.join('、')}</p>
+                <p className="text-[11px] text-amber-900">{joinList(preview.data.becomesGated)}</p>
               </div>
             )}
             {preview.data.becomesAuto.length === 0 && preview.data.becomesGated.length === 0 && (

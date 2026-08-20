@@ -38,7 +38,23 @@ export class LocalPublisher implements Publisher {
       return { kind: 'local', archivePath: '', files: 0, persisted: false, note: '没有主挂载' };
     }
 
-    const dest = resolve(join(this.options.archiveRoot, ctx.runId));
+    /**
+     * ★★ 可写的宿主目录来源 → **写回源目录**；否则归档。
+     *
+     *   此前这里无条件归档到 `{archiveRoot}/{runId}/`，`writable` 只决定
+     *   Run 期间那个副本能不能改，对产出去哪儿毫无影响。于是用户把来源
+     *   指向自己的项目目录、勾上「可写」、拿到一个空文件夹，而文件躺在
+     *   一个他从没听说过的归档目录里（问题记录：NEW-BUG-4）。
+     *   界面上那个「可写」勾选框和「默认（写回该目标本身）」的交货选项
+     *   承诺的正是写回，这里把承诺兑现。
+     *
+     * ★ 只写变更集里的文件，不整目录同步：Agent 加了 index.html 就只写
+     *   index.html。整目录同步会把工作区里的临时产物一起倒回用户的项目。
+     *
+     * A writable local source is written back to; anything else is archived.
+     */
+    const writeBack = primary.writable && primary.originPath ? resolve(primary.originPath) : null;
+    const dest = writeBack ?? resolve(join(this.options.archiveRoot, ctx.runId));
 
     if (changes.truncated) {
       /**
@@ -51,7 +67,7 @@ export class LocalPublisher implements Publisher {
         archivePath: dest,
         files: 0,
         persisted: false,
-        note: `变更集不完整（目录过大或基线丢失），未归档；产出仍在 ${primary.path}`,
+        note: `变更集不完整（目录过大或基线丢失），未交付；产出仍在 ${primary.path}`,
       };
     }
 
@@ -61,7 +77,7 @@ export class LocalPublisher implements Publisher {
         archivePath: dest,
         files: 0,
         persisted: true,
-        note: `${primary.path} 里没有任何改动，无需归档`,
+        note: `${primary.path} 里没有任何改动，无需交付`,
       };
     }
 
@@ -95,9 +111,11 @@ export class LocalPublisher implements Publisher {
     }
 
     const persisted = copied > 0 && failures.length === 0;
+    /** ★ 说清楚是「写回源目录」还是「归档」—— 两者对用户是完全不同的两件事 */
+    const verb = writeBack ? '写回' : '归档';
     const note = failures.length
-      ? `归档 ${copied}/${files.length} 个文件到 ${dest}；${failures.length} 个失败：${failures.slice(0, 5).join('、')}`
-      : `已归档 ${copied} 个文件到 ${dest}`;
+      ? `${verb} ${copied}/${files.length} 个文件到 ${dest}；${failures.length} 个失败：${failures.slice(0, 5).join('、')}`
+      : `已${verb} ${copied} 个文件到 ${dest}`;
 
     return { kind: 'local', archivePath: dest, files: copied, persisted, note };
   }

@@ -235,6 +235,20 @@ export const projects = pgTable(
     status: projectStatusEnum().notNull().default('active'),
     autonomyLevel: autonomyLevelEnum().notNull().default('agent_led_approval'),
     riskLevel: riskLevelEnum().notNull().default('medium'),
+    /**
+     * Agent 产出该用哪种语言写（'en' | 'zh'）。
+     *
+     * ★★ 必须是**项目**属性，不能只看发起请求的人。
+     *
+     *   规划走 HTTP，可以读请求头；但执行是调度器自己发起的，那一刻没有
+     *   任何请求、也没有「当前用户」。此前执行 prompt 里一个字都没提语言，
+     *   于是同一个项目里 PRD 是英文、Agent 的执行报告是中文
+     *   （问题记录：NEW-BUG-5）。语言是这个项目的属性，不是某次点击的属性。
+     *
+     * The scheduler dispatches with no request and no current user, so output
+     * language has to live on the project.
+     */
+    outputLocale: text().notNull().default('en'),
 
     sponsorId: uuid().references(() => users.id),
     techLeadId: uuid().references(() => users.id),

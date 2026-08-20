@@ -137,6 +137,24 @@ export const Mount = z.object({
   role: z.enum(['primary', 'reference']),
   writable: z.boolean(),
   source: SourceRef,
+  /**
+   * 这个挂载是从宿主机哪个目录铺进来的 —— 只有 local 来源有。
+   *
+   * ★★ 交货要靠它把产出写回去。
+   *
+   *   在此之前 Mount 只带着工作区里那个**副本**的路径，源目录一旦复制完
+   *   就再没人记得它。于是一条登记为「可写」的宿主目录，Agent 干完活
+   *   之后源目录里什么都没有 —— 产出全落在 APOS_ARCHIVE_ROOT 下面。
+   *   用户把这条来源指向自己的项目目录、还特地勾了「可写」，
+   *   拿到的却是一个空文件夹（问题记录：NEW-BUG-4）。
+   *
+   * ★ 可选：git / 对象存储来源没有「源目录」这回事，它们各有各的交货通道。
+   *
+   * Where on the host this mount was copied from. Publishing needs it to write
+   * results back; without it a "writable" host directory silently receives
+   * nothing.
+   */
+  originPath: z.string().optional(),
 });
 export type Mount = z.infer<typeof Mount>;
 

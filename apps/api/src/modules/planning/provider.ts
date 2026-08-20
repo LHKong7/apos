@@ -112,7 +112,8 @@ export interface StructuredRequirement {
   assumptions: string[];
   /** 字段 → 原文片段的溯源，支撑需求页的原文对照高亮 */
   provenance: Record<string, { source: string; span?: [number, number] }>;
-  cost: number;
+  /** null = 运行时不上报成本（不是「没花」） */
+  cost: number | null;
   model: string;
   /**
    * 非 null = 这份结果是规则占位，不是 Agent 产出。见 PlanFallback。
@@ -152,7 +153,8 @@ export interface GeneratedPlan {
   tasks: PlanTaskDraft[];
   milestones: { name: string; taskRefs: string[]; dueOffsetDays: number }[];
   risks: { description: string; level: string; mitigation: string }[];
-  cost: number;
+  /** null = 运行时不上报成本（不是「没花」） */
+  cost: number | null;
   durationMs: number;
   model: string;
   /** 非 null = 这份计划是通用模板，与需求无关。见 PlanFallback */

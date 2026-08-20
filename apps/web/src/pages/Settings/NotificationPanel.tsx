@@ -1,4 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
+import { joinList } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -97,7 +98,7 @@ export function NotificationPanel({
        */}
       {noisyOn.length > 0 && (
         <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-          {t('notify.noisyWarning', { events: noisyOn.map((e) => e.label).join('、') })}
+          {t('notify.noisyWarning', { events: joinList(noisyOn.map((e) => e.label)) })}
         </p>
       )}
 

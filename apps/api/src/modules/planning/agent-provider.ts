@@ -679,14 +679,19 @@ export class AgentPlanningProvider implements PlanningProvider {
   private async closeRun(
     runId: string,
     status: 'completed' | 'failed',
-    costUsd: number,
+    costUsd: number | null,
     reason: string | null,
   ): Promise<void> {
     await this.db
       .update(agentRuns)
       .set({
         status,
-        cost: String(costUsd),
+        /**
+         * ★ agent_runs.cost 是 NOT NULL 的「参考值」列，这里只能落 0。
+         *   「没上报」这条信息由上层带走（plans.generation_cost 可空），
+         *   界面读的是那一列。要让 Run 详情也分得开，得先给这列做迁移。
+         */
+        cost: String(costUsd ?? 0),
         endedAt: new Date(),
         ...(reason === null ? {} : { errorMessage: reason, errorClass: 'runtime_error' }),
       })
@@ -753,6 +758,8 @@ export class AgentPlanningProvider implements PlanningProvider {
        *   那个端点会找不到它。这里靠 subscribe 直接收事件，
        *   给一个明确无效的地址比给一个会 404 的真地址更清楚。
        */
+      /** ★ 规划的语言由 brief 自己钉（languageRule），这里给默认值即可 */
+      outputLocale: 'en',
       callback: { eventsUrl: 'inline://planning', token: runId },
     };
   }
@@ -762,17 +769,27 @@ export class AgentPlanningProvider implements PlanningProvider {
     adapter: ReturnType<RuntimeRegistry['get']>,
     runId: string,
     agentTimeoutSeconds: number,
-  ): Promise<{ ok: true; costUsd: number } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; costUsd: number | null } | { ok: false; reason: string }> {
     const budgetMs = Math.min(
       this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       agentTimeoutSeconds * 1000,
     );
 
-    let costUsd = 0;
-    let settle: (r: { ok: true; costUsd: number } | { ok: false; reason: string }) => void;
-    const done = new Promise<{ ok: true; costUsd: number } | { ok: false; reason: string }>(
-      (r) => (settle = r),
-    );
+    /**
+     * ★★ null = 这个运行时**一次都没报过**成本，不是「花了 0 块」。
+     *
+     *   此前这里是 `let costUsd = 0`，而 opencode 这类运行时根本不发 cost
+     *   事件 —— 于是一次真实的 38 秒规划落库成 0.0000，计划页上写着 $0.00。
+     *   「不上报」和「免费」在数据里从此再也分不开，而下游每一层都有权
+     *   相信那个 0（问题记录：NEW-BUG-2）。tokens 那边早就是这个约定。
+     *
+     * null means the runtime never reported cost — not that it was free.
+     */
+    let costUsd: number | null = null;
+    let settle: (r: { ok: true; costUsd: number | null } | { ok: false; reason: string }) => void;
+    const done = new Promise<
+      { ok: true; costUsd: number | null } | { ok: false; reason: string }
+    >((r) => (settle = r));
 
     const unsubscribe = await adapter.subscribe(runId, async (e: RunEvent) => {
       /**
@@ -847,7 +864,7 @@ export class AgentPlanningProvider implements PlanningProvider {
 }
 
 type Attempt<T> =
-  | { ok: true; value: T; model: string; costUsd: number }
+  | { ok: true; value: T; model: string; costUsd: number | null }
   | { ok: false; reason: string; code: PlanFallbackCode };
 
 /**

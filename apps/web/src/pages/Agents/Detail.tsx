@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, relativeTime, riskLabel, statusLabel, tokens } from '../../lib/format';
+import { duration, relativeTime, riskLabel, statusLabel, tokens, joinList } from '../../lib/format';
 import { AgentLifecycleBadge } from '../../components/AgentStatus';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -213,7 +213,7 @@ export function AgentDetailPage() {
                 <p className="text-xs text-slate-700">
                   {d.permissions.allowedTools.length === 0
                     ? t('agentDetail.none')
-                    : d.permissions.allowedTools.join('、')}
+                    : joinList(d.permissions.allowedTools)}
                 </p>
               </div>
               <div>
@@ -224,7 +224,7 @@ export function AgentDetailPage() {
                 <p className="text-xs text-red-700">
                   {d.permissions.deniedTools.length === 0
                     ? t('agentDetail.none')
-                    : d.permissions.deniedTools.join('、')}
+                    : joinList(d.permissions.deniedTools)}
                 </p>
               </div>
             </div>

@@ -643,7 +643,8 @@ export interface PlanDetail {
     /** 非 null = 这份计划是通用模板，不是按需求生成的 */
     fallback: PlanFallback | null;
     estimatedHours: number;
-    estimatedTokens: number;
+    /** null = 没有任何任务给出估算（不是估成 0） */
+    estimatedTokens: number | null;
     createdAt: string;
     approvedAt: string | null;
     approvedBy: string[];
@@ -656,7 +657,8 @@ export interface PlanDetail {
     agentTasks: number;
     humanTasks: number;
     estimatedHours: number;
-    estimatedTokens: number;
+    /** null = 没有任何任务给出估算（不是估成 0） */
+    estimatedTokens: number | null;
     budget: number | null;
     spent: number;
     overBudget: boolean;

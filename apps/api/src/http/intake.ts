@@ -88,7 +88,8 @@ export async function getPlanDetail(db: Database, planId: string) {
   const userRows = await db.select({ id: users.id, name: users.name }).from(users);
   const userName = new Map(userRows.map((u) => [u.id, u.name]));
 
-  const estimatedTokens = plan.estimatedTokens ?? 0;
+  /** ★ null = 没估过（不是估成 0）。界面据此显示「未估算」而不是一个数 */
+  const estimatedTokens = plan.estimatedTokens;
   const budget = project.tokenBudget;
   const spent = project.tokensSpent;
 
@@ -175,7 +176,8 @@ export async function getPlanDetail(db: Database, planId: string) {
       budget,
       spent,
       /** ★ 超预算要阻断批准，所以这个判断放服务端算，不让前端各算各的 */
-      overBudget: budget !== null && spent + estimatedTokens > budget,
+      /** ★ 没估算就谈不上超预算 —— 用 0 代入会得出「一定不超」的假结论 */
+      overBudget: budget !== null && estimatedTokens !== null && spent + estimatedTokens > budget,
       humanGateCount: (plan.humanGates as unknown[]).length,
       /** 没有任何合格 Agent 能接的任务 —— 批下去会停在 ready 不动 */
       tasksWithoutAgent: unrunnable,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { joinList } from '@/lib/format';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -49,7 +50,7 @@ export function RequirementPage() {
    *   否则用户刚表达完「我要自己填」/「交给 AI」，看到的还是那个
    *   又问一遍同一个问题的空面板 —— 他的选择在跳转的一瞬间就丢了。
    */
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
 
   const [answering, setAnswering] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -105,9 +106,21 @@ export function RequirementPage() {
   useEffect(() => {
     if (params.get('analyze') !== '1' || autoAnalyzed.current) return;
     autoAnalyzed.current = true;
-    setParams({}, { replace: true });
+    /**
+     * ★★ 用 history.replaceState 抹参数，**不要**用 react-router 的 setParams。
+     *
+     *   setParams 会推一次路由状态变更，而它和紧接着 mutate() 的状态更新撞在
+     *   同一拍上：请求确实发出去了、也 200 回来了，但按钮永远停在
+     *   「Analyzing…」，要刷新一次才恢复 —— 分析明明做完了，界面却说还在跑。
+     *   这里只需要把 URL 上的一次性参数擦掉（防 F5 重跑一次真实的 Agent 调用），
+     *   不需要惊动路由。
+     *
+     * Clearing the one-shot param must not perturb the router: doing it through
+     * setParams raced the mutation and left the button stuck on "Analyzing…".
+     */
+    window.history.replaceState(null, '', location.pathname);
     analyze.mutate();
-  }, [params, setParams, analyze]);
+  }, [params, analyze]);
 
   /**
    * 人工填写 / 修改结构化字段。
@@ -349,7 +362,9 @@ export function RequirementPage() {
               {keptFields.length > 0 && !editing && (
                 <p className="mt-1 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-800">
                   {t('requirement.detail.keptFields', {
-                    fields: keptFields.map((f) => (FIELD_KEYS[f] ? t(FIELD_KEYS[f]!) : f)).join('、'),
+                    fields: joinList(
+                      keptFields.map((f) => (FIELD_KEYS[f] ? t(FIELD_KEYS[f]!) : f)),
+                    ),
                   })}
                   <Button variant="ghost"
                     className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent ml-1 underline"

@@ -1,4 +1,5 @@
 import { useT, useSpecText, type MessageKey } from '../../lib/i18n';
+import { joinList } from '@/lib/format';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { CapabilityReport } from '../../lib/api/types';
@@ -97,7 +98,7 @@ export function CapabilityPanel({
         <div className="border-t border-slate-100 px-3 py-1.5">
           <p className="text-[11px] text-slate-500">{t('cap.supported')}</p>
           <p className="text-[11px] text-slate-600">
-            {report.supported.map((s) => s.label).join('、')}
+            {joinList(report.supported.map((s) => s.label))}
           </p>
         </div>
       )}
@@ -122,7 +123,7 @@ export function CapabilityPanel({
         {report.limits.maxContextTokens !== null && (
           <span>{t('cap.context', { tokens: formatTokens(report.limits.maxContextTokens) })}</span>
         )}
-        {report.models.length > 0 && <span>{t('cap.models', { list: report.models.join('、') })}</span>}
+        {report.models.length > 0 && <span>{t('cap.models', { list: joinList(report.models) })}</span>}
       </div>
 
       {/* ── 工具清单 ──

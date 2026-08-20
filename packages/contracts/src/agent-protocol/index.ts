@@ -286,6 +286,14 @@ export const TaskDispatch = z.object({
   idempotencyKey: z.string(),
   /** 执行者是谁。进 prompt 的第二层，也让 Agent 知道自己的定位 */
   agent: AgentPersona.nullable().default(null),
+  /**
+   * 产出该用哪种语言写。来自项目的 outputLocale。
+   *
+   * ★★ prompt 里此前一个字都没提语言，于是同一个项目里 PRD 是英文、
+   *   Agent 的执行报告是中文 —— 而那份报告会显示在 Run 详情页上给人读
+   *   （问题记录：NEW-BUG-5）。
+   */
+  outputLocale: z.enum(['en', 'zh']).default('en'),
   goal: z.object({
     title: z.string(),
     description: z.string(),

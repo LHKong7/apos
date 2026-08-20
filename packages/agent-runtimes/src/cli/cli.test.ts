@@ -19,6 +19,7 @@ function task(overrides: Partial<TaskDispatch> = {}): TaskDispatch {
   return {
     runId: '33333333-3333-4333-8333-333333333333',
     idempotencyKey: 'wi-9:1',
+    outputLocale: 'en',
     agent: { name: 'cli-1', type: 'code', description: null, skills: [] },
     policyGates: [],
     workspace: {

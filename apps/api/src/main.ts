@@ -192,6 +192,29 @@ async function main() {
   }
 
   /**
+   * ★ 交货落点必须在启动时报出来。
+   *
+   *   产出最终去哪儿全看这两个值：可写的本地来源写回源目录，其余归档到
+   *   APOS_ARCHIVE_ROOT/<runId>/。此前日志只报工作区根 —— 而工作区是过程，
+   *   归档才是结果，排查「我的文件呢」时看的正是后者。
+   *   没配也要说：那种情况下 LocalPublisher 搬不到任何地方。
+   */
+  {
+    const archiveRoot = process.env['APOS_ARCHIVE_ROOT'];
+    const roots = localMountRootsFromEnv();
+    console.log(
+      archiveRoot
+        ? `[workspace] 归档根目录 ${archiveRoot}（可写的本地来源改为写回源目录）`
+        : '[workspace] 未配置 APOS_ARCHIVE_ROOT：只读来源的产出无处存放，收尾会如实报未持久化',
+    );
+    console.log(
+      roots.length > 0
+        ? `[workspace] 允许挂载的宿主目录：${roots.join('、')}`
+        : '[workspace] 未配置 APOS_LOCAL_MOUNT_ROOTS：任何被登记的本地目录都能挂载',
+    );
+  }
+
+  /**
    * 集成适配器注册表。
    *
    * ★ 只有进程内适配器有真实实现 —— 真实 provider 的 HTTP 传输层

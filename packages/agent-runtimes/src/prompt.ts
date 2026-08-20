@@ -147,6 +147,22 @@ export function buildPersona(task: TaskDispatch): string {
 export function buildPrompt(task: TaskDispatch): string {
   const parts: string[] = [];
 
+  /**
+   * ★★ 输出语言写在最前面。
+   *
+   *   不写的话模型跟着 prompt 骨架的语言走（这份骨架是中文），于是一条
+   *   英文需求会拿回一份中文的执行报告 —— 而那份报告是人在 Run 详情页上
+   *   读的东西。这里只约束**给人看的产出**：代码里的标识符、用户原话、
+   *   既有文件内容照旧，翻译它们等于改坏代码。
+   *
+   * Constrains prose written for humans, never identifiers or existing content.
+   */
+  parts.push(
+    task.outputLocale === 'zh'
+      ? '# 输出语言\n\n所有给人读的产出（最终回复、说明、注释、提交信息）一律用**简体中文**。\n代码标识符、文件路径、既有内容原样保留，不要翻译。'
+      : '# Output language\n\nWrite every human-readable output (final reply, explanations, comments, commit messages) in **English**.\nLeave code identifiers, file paths and pre-existing content exactly as they are — do not translate them.',
+  );
+
   parts.push(`# 任务：${task.goal.title}`);
   if (task.goal.description.trim()) {
     parts.push(task.goal.description.trim());
