@@ -88,7 +88,7 @@ import {
   tokenFrom,
   verifyToken,
 } from '../modules/auth';
-import { ApiError, asClientInputError, notFound, sendError } from './errors';
+import { ApiError, asClientInputError, fail, notFound, sendError } from './errors';
 import { listMembers, listOrgUsers, removeMember, setMemberRole, setOrgRole } from './members';
 import { cloneRole, createRole, deleteRole, listRoles, previewRole, updateRole } from './roles';
 import {
@@ -242,16 +242,21 @@ const FALLBACK: Record<string, string | null> = {
 function actorFrom(req: { headers: Record<string, unknown>; query?: unknown }) {
   const token = tokenFrom(req);
   if (!token) {
-    throw new ApiError('UNAUTHENTICATED', '未登录：请求缺少 Authorization: Bearer 令牌');
+    throw fail('UNAUTHENTICATED', 'auth.missing_token', '未登录：请求缺少 Authorization: Bearer 令牌');
   }
   try {
     const claims = verifyToken(token);
     if (!UUID_RE.test(claims.sub)) {
-      throw new ApiError('UNAUTHENTICATED', '令牌里的身份不是合法的用户 ID');
+      throw fail('UNAUTHENTICATED', 'auth.bad_token_subject', '令牌里的身份不是合法的用户 ID');
     }
     return { userId: claims.sub, actor: humanActor(claims.sub) };
   } catch (err) {
-    if (err instanceof TokenError) throw new ApiError('UNAUTHENTICATED', err.message);
+    if (err instanceof TokenError) throw fail(
+      'UNAUTHENTICATED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 }
@@ -351,19 +356,29 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.setErrorHandler((error: unknown, _req, reply) => {
     if (error instanceof ApiError) return sendError(reply, error);
     if (error instanceof ZodError) {
-      return sendError(reply, new ApiError('VALIDATION_FAILED', '请求参数不合法', error.issues));
+      return sendError(reply, fail(
+        'VALIDATION_FAILED',
+        'request.invalid_params',
+        '请求参数不合法',
+        { details: error.issues },
+      ));
     }
     const fastifyErr = error as { validation?: unknown; statusCode?: number; message?: string };
     if (fastifyErr.validation) {
       return sendError(
         reply,
-        new ApiError('VALIDATION_FAILED', '请求参数不合法', fastifyErr.validation),
+        fail(
+          'VALIDATION_FAILED',
+          'request.invalid_params',
+          '请求参数不合法',
+          { details: fastifyErr.validation },
+        ),
       );
     }
     // ★ 客户端错误不能被吞成 500 —— 那会让调用方以为是服务端故障
     if (fastifyErr.statusCode && fastifyErr.statusCode >= 400 && fastifyErr.statusCode < 500) {
       const code = fastifyErr.statusCode === 429 ? 'RATE_LIMITED' : 'VALIDATION_FAILED';
-      return sendError(reply, new ApiError(code, fastifyErr.message ?? '请求不合法'));
+      return sendError(reply, fail(code, 'request.invalid', fastifyErr.message ?? '请求不合法'));
     }
     // 同一条纪律的下半段：客户端输错的值要到 SQL 才被发现，
     // 抛出来的是 PostgresError 而不是 fastify 的 4xx，得单独认一下
@@ -373,7 +388,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       return sendError(reply, inputErr);
     }
     app.log.error({ err: error }, 'unhandled error');
-    return sendError(reply, new ApiError('INTERNAL', '服务器内部错误'));
+    return sendError(reply, fail('INTERNAL', 'internal', '服务器内部错误'));
   });
 
   // 不少 POST 端点本就不需要 body（如 analyze / schedule），
@@ -461,7 +476,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
      *   对调用方而言结论是「这张令牌不再代表任何人，去重新登录」，
      *   而 404 会被前端当成"某个资源不存在"接着往下走。
      */
-    if (!row) throw new ApiError('UNAUTHENTICATED', '账号不存在或已被删除，请重新登录');
+    if (!row) throw fail('UNAUTHENTICATED', 'auth.account_gone', '账号不存在或已被删除，请重新登录');
 
     /**
      * ★ 用 lenient 版：这个端点必须能回答「我是谁」，
@@ -659,7 +674,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/projects/:id', async (req) => {
     const { id } = req.params as { id: string };
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
-    if (!project) throw notFound('项目');
+    if (!project) throw notFound('project');
 
     const items = await db.select().from(workItems).where(eq(workItems.projectId, id));
     const pending = await db
@@ -805,10 +820,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   function assertCurrentOrg(req: FastifyRequest, orgId: string) {
     const { id } = req.params as { id?: string };
     if (id && id !== orgId) {
-      throw new ApiError(
+      throw fail(
         'FORBIDDEN',
+        'auth.wrong_org',
         '只能操作当前组织。请先切换到目标组织（X-Org-Id）后再试',
-        { currentOrgId: orgId, requested: id },
+        { details: { currentOrgId: orgId, requested: id } },
       );
     }
   }
@@ -856,9 +872,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
        *   是把实现细节变成了它的负担 —— 而这个值服务端本来就有。
        */
       if (body.orgId && body.orgId !== actor.orgId) {
-        throw new ApiError('FORBIDDEN', '只能在当前组织下创建项目', {
+        throw fail('FORBIDDEN', 'org.cross_org_create', '只能在当前组织下创建项目', { details: {
           orgId: actor.orgId,
-        });
+        } });
       }
 
       const { orgId: _ignored, identifier, ...fields } = body;
@@ -1200,7 +1216,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = CreateRequirement.parse(req.body);
 
       const [project] = await db.select().from(projects).where(eq(projects.id, id));
-      if (!project) throw notFound('项目');
+      if (!project) throw notFound('project');
 
       const { userId } = actorFrom(req);
       const [requirement] = await db
@@ -1313,9 +1329,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = EditRequirement.parse(req.body);
 
       const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
-      if (!before) throw notFound('需求');
+      if (!before) throw notFound('requirement');
       if (before.status === 'approved') {
-        throw new ApiError('INVALID_TRANSITION', '需求已确认，不能再编辑。如需修改请先重新打开。');
+        throw fail(
+          'INVALID_TRANSITION',
+          'requirement.confirmed_readonly',
+          '需求已确认，不能再编辑。如需修改请先重新打开。',
+        );
       }
 
       const submitted = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
@@ -1413,7 +1433,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [before] = await db.select().from(requirements).where(eq(requirements.id, id));
-      if (!before) throw notFound('需求');
+      if (!before) throw notFound('requirement');
 
       const [updated] = await db
         .update(requirements)
@@ -1470,7 +1490,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const { id } = req.params as { id: string };
 
       const [existing] = await db.select().from(requirements).where(eq(requirements.id, id));
-      if (!existing) throw notFound('需求');
+      if (!existing) throw notFound('requirement');
 
       const derivedPlans = await db
         .select({ id: plans.id })
@@ -1486,10 +1506,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
           derivedPlans.length > 0 ? `${derivedPlans.length} 个计划` : null,
           derivedItems.length > 0 ? `${derivedItems.length} 个工作项` : null,
         ].filter((s): s is string => s !== null);
-        throw new ApiError(
+        throw fail(
           'GUARD_FAILED',
+          'requirement.has_derived_work',
           `这条需求已经派生出${blockers.join(' 与 ')}，不能删除。要终止它请改用驳回。`,
-          { requirementId: id, plans: derivedPlans.length, workItems: derivedItems.length },
+          { details: { requirementId: id, plans: derivedPlans.length, workItems: derivedItems.length } },
         );
       }
 
@@ -1529,7 +1550,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/requirements/:id', async (req) => {
     const { id } = req.params as { id: string };
     const [requirement] = await db.select().from(requirements).where(eq(requirements.id, id));
-    if (!requirement) throw notFound('需求');
+    if (!requirement) throw notFound('requirement');
 
     const clarifications = await db
       .select()
@@ -1637,16 +1658,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
        */
       if (!result.ok) {
         if (result.code === 'REQUIREMENT_SETTLED') {
-          throw new ApiError(
+          throw fail(
             'INVALID_TRANSITION',
+            'requirement.confirmed_cannot_change_agent',
             '需求已确认或已驳回，不能再更换 PRD 编写 Agent。如需修改请先重新打开。',
           );
         }
-        if (result.code === 'AGENT_NOT_FOUND') throw notFound('Agent');
-        throw new ApiError(
+        if (result.code === 'AGENT_NOT_FOUND') throw notFound('agent');
+        throw fail(
           'VALIDATION_FAILED',
+          'agent.not_project_member',
           `${result.agentName} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-          { agentId: body.agentId },
+          { params: { name: result.agentName }, details: { agentId: body.agentId } },
         );
       }
 
@@ -1901,13 +1924,19 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
          *   而这一页本来就允许人自己把结构化字段填出来。
          */
         if (result.code === 'EMPTY_REQUIREMENT') {
-          throw new ApiError(
+          throw fail(
             'VALIDATION_FAILED',
+            'requirement.no_structured_content',
             '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
           );
         }
         // 必答问题未回答 —— 返回具体是哪几个，前端可直接定位
-        throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', result.questions);
+        throw fail(
+          'UNANSWERED_MUST_CONFIRM',
+          'requirement.unanswered_must_confirm',
+          '还有必答的澄清问题未回答',
+          { details: result.questions },
+        );
       }
       return result;
     },
@@ -1957,12 +1986,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       if (!approved.ok) {
         if (approved.code === 'EMPTY_REQUIREMENT') {
-          throw new ApiError(
+          throw fail(
             'VALIDATION_FAILED',
+            'requirement.no_structured_content',
             '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
           );
         }
-        throw new ApiError('UNANSWERED_MUST_CONFIRM', '还有必答的澄清问题未回答', approved.questions);
+        throw fail(
+          'UNANSWERED_MUST_CONFIRM',
+          'requirement.unanswered_must_confirm',
+          '还有必答的澄清问题未回答',
+          { details: approved.questions },
+        );
       }
 
       try {
@@ -2037,12 +2072,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [plan] = await db.select().from(plans).where(eq(plans.id, id));
-      if (!plan) throw notFound('计划');
+      if (!plan) throw notFound('plan');
       if (!plan.requirementId) {
-        throw new ApiError('INVALID_TRANSITION', '这份计划没有关联需求，无法重新规划');
+        throw fail('INVALID_TRANSITION', 'plan.no_requirement', '这份计划没有关联需求，无法重新规划');
       }
       if (plan.status === 'approved') {
-        throw new ApiError('INVALID_TRANSITION', '已批准的计划不能重新规划，请新建需求');
+        throw fail('INVALID_TRANSITION', 'plan.approved_cannot_replan', '已批准的计划不能重新规划，请新建需求');
       }
 
       await db
@@ -2094,19 +2129,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
          *   用户要做的判断完全不同。
          */
         if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
-          throw new ApiError(
-            /** ★ 不是校验失败 —— 请求是对的，只是要用户先确认一次（见 errors.ts） */
-            'CONFIRMATION_REQUIRED',
-            `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
+          throw fail(/** ★ 不是校验失败 —— 请求是对的，只是要用户先确认一次（见 errors.ts） */
+            'CONFIRMATION_REQUIRED', 'plan.unassigned_human_tasks', `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
               .map((t) => t.title)
-              .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`,
-            result,
-          );
+              .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`, { params: { count: result.tasks.length, titles: result.tasks.map((t) => t.title).join(', ') }, details: result });
         }
-        throw new ApiError(
+        throw fail(
           'BUDGET_EXCEEDED',
+          'plan.over_budget',
           `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
-          result,
+          { params: { estimated: result.estimated, budget: result.budget }, details: result },
         );
       }
       return result;
@@ -2153,7 +2185,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/projects/:id/agent-workload', async (req) => {
     const { id } = req.params as { id: string };
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
-    if (!project) throw notFound('项目');
+    if (!project) throw notFound('project');
 
     const rows = await db
       .select({
@@ -2292,11 +2324,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       if (body.paused && !body.reason?.trim()) {
-        throw new ApiError('VALIDATION_FAILED', '暂停 Agent 必须填写原因');
+        throw fail('VALIDATION_FAILED', 'agent.suspend_needs_reason', '暂停 Agent 必须填写原因');
       }
 
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-      if (!agent) throw notFound('Agent');
+      if (!agent) throw notFound('agent');
 
       await db
         .update(agents)
@@ -2927,7 +2959,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     //   项目的待决策 —— 跨组织的也在里面
     const { userId } = actorFrom(req);
     const visible = await visibleProjectIds(userId);
-    if (projectId && !visible.includes(projectId)) throw notFound('项目');
+    if (projectId && !visible.includes(projectId)) throw notFound('project');
 
     return getDecisionInbox(db, userId, scope as DecisionScope, projectId, visible);
   });
@@ -3074,7 +3106,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [row] = await db.select().from(projects).where(eq(projects.id, id));
-      if (!row) throw notFound('项目');
+      if (!row) throw notFound('project');
 
       await db
         .update(projects)
@@ -3104,7 +3136,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const q = req.query as { against?: string };
     const against = q.against === undefined ? undefined : Number(q.against);
     if (against !== undefined && !Number.isInteger(against)) {
-      throw new ApiError('VALIDATION_FAILED', 'against 必须是版本号');
+      throw fail('VALIDATION_FAILED', 'request.against_must_be_version', 'against 必须是版本号');
     }
     return comparePlans(db, id, against);
   });
@@ -3140,9 +3172,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   ) {
     const actor = await integrationActor(projectId, userId, req);
     if (!canIntegration(actor, action)) {
-      throw new ApiError('FORBIDDEN', denyReason(actor, action) ?? '权限不足', {
-        action,
-        projectRole: actor.projectRole,
+      throw fail('FORBIDDEN', 'auth.forbidden', denyReason(actor, action) ?? '权限不足', {
+        details: { action, projectRole: actor.projectRole },
       });
     }
     return actor;
@@ -3151,7 +3182,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   /** 集成 id → projectId，权限判定要先知道是哪个项目 */
   async function projectOfIntegration(id: string): Promise<string> {
     const [row] = await db.select().from(integrations).where(eq(integrations.id, id));
-    if (!row) throw notFound('集成');
+    if (!row) throw notFound('integration');
     return row.projectId;
   }
 
@@ -3332,7 +3363,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [conflict] = await db.select().from(syncConflicts).where(eq(syncConflicts.id, id));
-      if (!conflict) throw notFound('冲突');
+      if (!conflict) throw notFound('conflict');
       await assertIntegration(conflict.projectId, userId, 'resolve_conflict', req);
 
       const result = await resolveConflict(db, deps.integrations, {
@@ -3468,7 +3499,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { id } = req.params as { id: string };
     const q = req.query as { kind?: string; range?: string };
     const kind = (['rework', 'wip', 'slow'] as const).find((k) => k === q.kind);
-    if (!kind) throw new ApiError('VALIDATION_FAILED', 'kind 必须是 rework / wip / slow 之一');
+    if (!kind) throw fail(
+      'VALIDATION_FAILED',
+      'request.bad_enum_value',
+      'kind 必须是 rework / wip / slow 之一',
+    );
     const range = (ANALYTICS_RANGES as readonly string[]).includes(q.range ?? '')
       ? (q.range as AnalyticsRange)
       : '30d';
@@ -3654,7 +3689,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const template = templateById(body.templateId);
-      if (!template) throw notFound('模板');
+      if (!template) throw notFound('template');
 
       const built = template.build(body.values);
       return { ...built, explanation: explainPolicy(built.condition, built.action) };
@@ -3741,7 +3776,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [before] = await db.select().from(projects).where(eq(projects.id, id));
-      if (!before) throw notFound('项目');
+      if (!before) throw notFound('project');
 
       await db
         .update(projects)
@@ -3772,7 +3807,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/work-items/:id', async (req) => {
     const { id } = req.params as { id: string };
     const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-    if (!item) throw notFound('任务');
+    if (!item) throw notFound('work_item');
 
     const runs = await db
       .select()
@@ -3864,7 +3899,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = StatusChange.parse(req.body);
 
       const [current] = await db.select().from(workItems).where(eq(workItems.id, id));
-      if (!current) throw notFound('任务');
+      if (!current) throw notFound('work_item');
 
       /**
        * ★★ `draft → ready` 是把一个任务放进**可派发队列**，
@@ -3888,10 +3923,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       const trigger = manualTriggerFor(current.status, body.toStatus);
       if (!trigger) {
-        throw new ApiError(
+        throw fail(
           'INVALID_TRANSITION',
+          'work_item.manual_status_not_allowed',
           `当前状态 ${current.status} 不能手动切换到 ${body.toStatus}`,
-          { from: current.status, allowedTriggers: availableTriggers(WORK_ITEM_MACHINE, current.status) },
+          { params: { to: body.toStatus }, details: { from: current.status, allowedTriggers: availableTriggers(WORK_ITEM_MACHINE, current.status) } },
         );
       }
 
@@ -3930,10 +3966,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   function assertStartable(status: string) {
     const STARTABLE = ['ready', 'blocked', 'changes_requested'];
     if (!STARTABLE.includes(status)) {
-      throw new ApiError(
+      throw fail(
         'INVALID_TRANSITION',
+        'work_item.not_startable',
         `任务当前状态是 ${status}，不能直接指派开始。失败的任务请用「重试」，执行中的请先终止。`,
-        { status, startable: STARTABLE },
+        { details: { status, startable: STARTABLE } },
       );
     }
   }
@@ -3960,14 +3997,24 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     );
 
     if (!result.ok) {
-      // 工作区问题要用它自己的错误码，别混进「Agent 不可用」
-      throw new ApiError(
-        result.code === 'WORKSPACE_UNAVAILABLE' ? 'VALIDATION_FAILED' : 'AGENT_UNAVAILABLE',
-        result.code === 'WORKSPACE_UNAVAILABLE'
-          ? ((result.detail as { reason?: string })?.reason ?? '工作区不可用')
-          : '派发失败',
-        result.detail,
-      );
+      /**
+       * 工作区问题要用它自己的错误码，别混进「Agent 不可用」。
+       *
+       * ★ 两个分支是两条**码**，不是一条码配一个三元表达式挑句子。
+       *   界面要按码取词，而一条码只能对应一句话 —— 让两种完全不同的
+       *   处境共用一个码，等于把「工作区挂了」和「Agent 派不出去」
+       *   在英文界面上说成同一句。
+       */
+      throw result.code === 'WORKSPACE_UNAVAILABLE'
+        ? fail(
+            'VALIDATION_FAILED',
+            'work_item.workspace_unavailable',
+            (result.detail as { reason?: string })?.reason ?? '工作区不可用',
+            { details: result.detail },
+          )
+        : fail('AGENT_UNAVAILABLE', 'work_item.dispatch_failed', '派发失败', {
+            details: result.detail,
+          });
     }
 
     await emitAndPublish(db, {
@@ -4023,7 +4070,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = AssigneeInput.parse(req.body ?? {});
 
       const [before] = await db.select().from(workItems).where(eq(workItems.id, id));
-      if (!before) throw notFound('任务');
+      if (!before) throw notFound('work_item');
 
       const result = await setAssignee(db, id, body, { registry: deps.registry });
 
@@ -4073,19 +4120,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body ?? {});
 
       const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-      if (!item) throw notFound('任务');
+      if (!item) throw notFound('work_item');
 
       assertStartable(item.status);
 
       const agentId = body.agentId ?? (item.executorType === 'agent' ? item.executorId : null);
       if (!agentId) {
-        throw new ApiError(
-          'VALIDATION_FAILED',
-          item.executorType === 'human'
-            ? '这张卡的执行者是人，不能派给 Agent 执行'
-            : '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
-          { executorType: item.executorType },
-        );
+        /** ★ 同上：两种处境两条码。「执行者是人」和「还没指定」的下一步动作不同 */
+        throw item.executorType === 'human'
+          ? fail(
+              'VALIDATION_FAILED',
+              'work_item.human_executor',
+              '这张卡的执行者是人，不能派给 Agent 执行',
+              { details: { executorType: item.executorType } },
+            )
+          : fail(
+              'VALIDATION_FAILED',
+              'work_item.no_agent_specified',
+              '还没有指定执行 Agent —— 先设置执行者，或在请求里带上 agentId',
+              { details: { executorType: item.executorType } },
+            );
       }
 
       return startRun(req, item, agentId, body.note, actor, userId);
@@ -4118,7 +4172,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body ?? {});
 
       const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-      if (!item) throw notFound('任务');
+      if (!item) throw notFound('work_item');
 
       assertStartable(item.status);
 
@@ -4166,10 +4220,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body ?? {});
 
       const [item] = await db.select().from(workItems).where(eq(workItems.id, id));
-      if (!item) throw notFound('任务');
+      if (!item) throw notFound('work_item');
 
       const agentId = body.agentId ?? item.executorId;
-      if (!agentId) throw new ApiError('VALIDATION_FAILED', '未指定执行 Agent');
+      if (!agentId) throw fail('VALIDATION_FAILED', 'work_item.no_agent_specified', '未指定执行 Agent');
 
       // 先把任务拉回 ready，再派发
       if (item.status === 'failed') {
@@ -4188,7 +4242,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         { workspaces: deps.workspaces },
       );
 
-      if (!result.ok) throw new ApiError('AGENT_UNAVAILABLE', '派发失败', result.detail);
+      if (!result.ok) throw fail(
+        'AGENT_UNAVAILABLE',
+        'work_item.dispatch_failed',
+        '派发失败',
+        { details: result.detail },
+      );
       return result;
     },
   );
@@ -4232,7 +4291,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .select({ status: workItems.status })
         .from(workItems)
         .where(eq(workItems.id, id));
-      if (!current) throw notFound('任务');
+      if (!current) throw notFound('work_item');
 
       const trigger =
         current.status === 'executing'
@@ -4288,7 +4347,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/runs/:id/cost-breakdown', async (req) => {
     const { id } = req.params as { id: string };
     const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
-    if (!run) throw notFound('Run');
+    if (!run) throw notFound('run');
     return { steps: await getCostBreakdown(db, id) };
   });
 
@@ -4342,21 +4401,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = RunControl.parse(req.body);
 
       const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, id));
-      if (!run) throw notFound('Run');
+      if (!run) throw notFound('run');
 
       if (!(ACTIVE_RUN_STATUSES as readonly string[]).includes(run.status)) {
-        throw new ApiError('VERSION_CONFLICT', `Run 已经是 ${run.status} 状态，无法再操作`, {
-          status: run.status,
-        });
+        throw fail(
+          'VERSION_CONFLICT',
+          'run.already_final',
+          `Run 已经是 ${run.status} 状态，无法再操作`,
+          { params: { status: run.status }, details: { status: run.status, } },
+        );
       }
 
       const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
-      if (!agent) throw notFound('Agent');
+      if (!agent) throw notFound('agent');
       if (!deps.registry.has(agent.id)) {
-        throw new ApiError('AGENT_UNAVAILABLE', '该 Agent 的运行时未在本进程注册，无法控制', {
-          agentId: agent.id,
-          runtimeKind: agent.runtimeKind,
-        });
+        throw fail(
+          'AGENT_UNAVAILABLE',
+          'agent.runtime_not_registered',
+          '该 Agent 的运行时未在本进程注册，无法控制',
+          { details: { agentId: agent.id, runtimeKind: agent.runtimeKind, } },
+        );
       }
 
       const adapter = deps.registry.get(agent.id);
@@ -4382,10 +4446,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       } catch (err) {
         if (err instanceof UnsupportedFeatureError) {
           // 降级矩阵：不支持的能力如实报回，由调用方决定要不要换个动作
-          throw new ApiError(
+          throw fail(
             'UNSUPPORTED_FEATURE',
+            'runtime.action_unsupported',
             `运行时 ${adapter.kind} 不支持「${LABELS[body.action]}」`,
-            { feature: err.feature, runtimeKind: err.runtimeKind, fallback: FALLBACK[body.action] },
+            { params: { runtimeKind: adapter.kind }, details: { feature: err.feature, runtimeKind: err.runtimeKind, fallback: FALLBACK[body.action] } },
           );
         }
         throw err;
@@ -4446,7 +4511,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/decisions/:id', async (req) => {
     const { id } = req.params as { id: string };
     const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-    if (!decision) throw notFound('决策');
+    if (!decision) throw notFound('decision');
 
     const options = await db
       .select()
@@ -4492,17 +4557,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const { id } = req.params as { id: string };
 
       const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-      if (!decision) throw notFound('决策');
+      if (!decision) throw notFound('decision');
       if (decision.status !== 'pending') {
-        throw new ApiError('VERSION_CONFLICT', '该决策已被处理', { status: decision.status });
+        throw fail(
+          'VERSION_CONFLICT',
+          'decision.already_handled',
+          '该决策已被处理',
+          { details: { status: decision.status } },
+        );
       }
 
       const cooldownMs = 30 * 60_000;
       const since = decision.remindedAt ? Date.now() - decision.remindedAt.getTime() : Infinity;
       if (since < cooldownMs) {
-        throw new ApiError('RATE_LIMITED', '刚刚已经催办过了，请稍后再试', {
-          retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000),
-        });
+        throw fail(
+          'RATE_LIMITED',
+          'work_item.nudge_too_soon',
+          '刚刚已经催办过了，请稍后再试',
+          { params: { retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000) }, details: { retryAfterMinutes: Math.ceil((cooldownMs - since) / 60_000), } },
+        );
       }
 
       await db.update(decisions).set({ remindedAt: new Date() }).where(eq(decisions.id, id));
@@ -4548,16 +4621,22 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     correlationId: string,
   ) {
     const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-    if (!decision) throw notFound('决策');
+    if (!decision) throw notFound('decision');
     if (decision.status !== 'pending') {
-      throw new ApiError('VERSION_CONFLICT', '该决策已被处理', { status: decision.status });
+      throw fail(
+        'VERSION_CONFLICT',
+        'decision.already_handled',
+        '该决策已被处理',
+        { details: { status: decision.status } },
+      );
     }
     // 决策责任不可代行（docs/tech/09-security.md §2.4）
     if (decision.assigneeId && decision.assigneeId !== userId) {
-      throw new ApiError(
+      throw fail(
         'FORBIDDEN',
+        'decision.not_delegable',
         '决策责任不可代行。如需变更责任人，请使用改派功能。',
-        { assigneeId: decision.assigneeId },
+        { details: { assigneeId: decision.assigneeId } },
       );
     }
 
@@ -4640,7 +4719,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .parse(req.body);
 
       const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-      if (!decision) throw notFound('决策');
+      if (!decision) throw notFound('decision');
 
       await db
         .update(decisions)
@@ -4693,7 +4772,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
     // Run 级令牌：仅对该 runId 有效，Run 结束即失效
     if (auth !== `Bearer ${id}`) {
-      throw new ApiError('UNAUTHENTICATED', 'Run 令牌无效');
+      throw fail('UNAUTHENTICATED', 'auth.run_token_invalid', 'Run 令牌无效');
     }
 
     const payload = req.body;
@@ -4731,7 +4810,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const q = req.query as { channels?: string };
     const requested = (q.channels ?? '').split(',').filter(Boolean);
     if (requested.length === 0) {
-      throw new ApiError('VALIDATION_FAILED', '必须指定至少一个频道');
+      throw fail('VALIDATION_FAILED', 'integration.channel_required', '必须指定至少一个频道');
     }
 
     const actor = await rbac.resolveActor(req, userId, null);
@@ -4748,9 +4827,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
      *   与成员关系闸门同一个理由，回 404 不确认那些频道存不存在。
      */
     if (allowed.length === 0) {
-      throw new ApiError('NOT_FOUND', '指定的频道都不存在，或当前身份没有访问权限', {
-        channels: denied,
-      });
+      throw fail(
+        'NOT_FOUND',
+        'integration.channels_unavailable',
+        '指定的频道都不存在，或当前身份没有访问权限',
+        { details: { channels: denied, } },
+      );
     }
 
     /**
@@ -4800,7 +4882,7 @@ function toTransitionResponse(
 function mapTransitionError(result: Extract<Awaited<ReturnType<typeof transition>>, { ok: false }>) {
   switch (result.code) {
     case 'NOT_FOUND':
-      throw notFound('任务');
+      throw notFound('work_item');
     case 'INVALID_TRANSITION':
       /**
        * ★ `from` 用状态**标签**而不是枚举值。
@@ -4808,21 +4890,27 @@ function mapTransitionError(result: Extract<Awaited<ReturnType<typeof transition
        *   两个词指的是同一件事，但用户没有办法知道（问题记录 #16）。
        *   detail 里仍然带原始枚举，前端要判断时读那一栏。
        */
-      throw new ApiError(
+      throw fail(
         'INVALID_TRANSITION',
+        'work_item.transition_not_allowed',
         `当前状态「${STATUS_LABELS[result.from] ?? result.from}」不支持该操作`,
-        {
-          from: result.from,
-          fromLabel: STATUS_LABELS[result.from] ?? result.from,
-          allowedTriggers: result.allowedTriggers,
-        },
+        { details: { from: result.from, fromLabel: STATUS_LABELS[result.from] ?? result.from, allowedTriggers: result.allowedTriggers, } },
       );
     case 'GUARD_FAILED':
-      throw new ApiError('GUARD_FAILED', result.failures.map((f) => f.reason).join('；'), {
-        failures: result.failures,
+      /**
+       * ★ Guard 的失败原因是 domain 层写好的一句句中文，这里原样串起来。
+       *   界面对 GUARD_FAILED 也是原样显示 —— 这是**已知的剩余缺口**：
+       *   要真正修好得让 guards.ts 里那五条理由各自带码，见 CLAUDE.md。
+       *   码给到 `guard.failed`，至少让界面知道这是哪一类，
+       *   而具体哪几条没过仍然只有中文。
+       */
+      throw fail('GUARD_FAILED', 'guard.failed', result.failures.map((f) => f.reason).join('；'), {
+        details: { failures: result.failures },
       });
     case 'POLICY_DENIED':
-      throw new ApiError('POLICY_DENIED', result.message, { verdict: result.verdict });
+      throw fail('POLICY_DENIED', 'policy.denied', result.message, {
+        details: { verdict: result.verdict },
+      });
   }
 }
 

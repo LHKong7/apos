@@ -1,9 +1,10 @@
-import { t, useT } from '../../lib/i18n';
+import { hasMessage, t, useT, type MessageKey } from '../../lib/i18n';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { relativeTime } from '../../lib/format';
 import { Card } from './Card';
 import { TrendChart } from '../../features/analytics/charts';
+import type { QualityMetric } from '@apos/domain';
 import type { AnalyticsResponse } from '../../lib/api/types';
 
 /**
@@ -25,6 +26,14 @@ export function QualityTab({
   projectId: string;
 }) {
   const t = useT();
+  /**
+   * ★ 指标名与「怎么接上」的提示按 `key` 取词。服务端那两个字段是中文 ——
+   *   画它们等于让英文界面上这一整块是中文。认不出 key 才回落。
+   */
+  const metricCopy = (m: QualityMetric, part: 'label' | 'hint') => {
+    const key = `analytics.quality.${m.key}.${part}` as MessageKey;
+    return hasMessage(key) ? t(key, m.params ?? {}) : part === 'label' ? m.label : m.hint;
+  };
   const q = data.quality;
   const wired = q.metrics.filter((m) => m.wired);
   const notWired = q.metrics.filter((m) => !m.wired);
@@ -50,7 +59,7 @@ export function QualityTab({
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {wired.map((m) => (
             <div key={m.key} className="rounded border border-slate-200 bg-white px-3 py-2">
-              <p className="text-[11px] text-slate-500">{m.label}</p>
+              <p className="text-[11px] text-slate-500">{metricCopy(m, 'label')}</p>
               <p className="mt-0.5 text-lg font-semibold text-slate-900">
                 {format(m.value, m.unit)}
               </p>
@@ -110,9 +119,9 @@ export function QualityTab({
           <ul className="space-y-1">
             {notWired.map((m) => (
               <li key={m.key} className="text-[11px]">
-                <span className="text-slate-700">{m.label}</span>
+                <span className="text-slate-700">{metricCopy(m, 'label')}</span>
                 <span className="ml-2 rounded bg-slate-100 px-1 text-slate-500">{t('quality.notConnected')}</span>
-                <span className="mt-0.5 block text-slate-400">{m.hint}</span>
+                <span className="mt-0.5 block text-slate-400">{metricCopy(m, 'hint')}</span>
               </li>
             ))}
           </ul>

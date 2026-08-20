@@ -87,6 +87,7 @@ export function computeAnalytics(
     cost,
     previous: prev,
     rangeLabel: `近 ${days} 天`,
+    rangeDays: days,
   });
 
   return {

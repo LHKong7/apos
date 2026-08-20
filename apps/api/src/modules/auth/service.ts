@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { organizationMembers, users, type Database } from '@apos/db';
 import { humanActor, OrgRole } from '@apos/contracts';
-import { ApiError } from '../../http/errors';
+import { fail } from '../../http/errors';
 import { freeOrganizationSlug, insertOrganizationTx } from '../../http/organizations';
 import { emitAndPublish } from '../event/bus';
 import { assertPasswordAcceptable, hashPassword, verifyPassword, WeakPasswordError } from './password';
@@ -99,7 +99,7 @@ export async function login(db: Database, input: z.infer<typeof LoginInput>) {
   if (elapsed < MIN_TIME_MS) await sleep(MIN_TIME_MS - elapsed);
 
   if (!passed) {
-    throw new ApiError('UNAUTHENTICATED', '邮箱或口令不正确');
+    throw fail('UNAUTHENTICATED', 'auth.bad_credentials', '邮箱或口令不正确');
   }
 
   return {
@@ -154,14 +154,19 @@ export async function registerAccount(
     passwordHash = await hashPassword(input.password);
   } catch (err) {
     if (err instanceof WeakPasswordError) {
-      throw new ApiError('VALIDATION_FAILED', err.message);
+      throw fail('VALIDATION_FAILED', err.reason, err.message, { params: err.params });
     }
     throw err;
   }
 
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
   if (existing) {
-    throw new ApiError('VERSION_CONFLICT', '这个邮箱已经注册过了，直接登录即可', { email });
+    throw fail(
+      'VERSION_CONFLICT',
+      'auth.email_already_registered',
+      '这个邮箱已经注册过了，直接登录即可',
+      { details: { email } },
+    );
   }
 
   // slug 是读操作，放在事务外算 —— 塞进去只会白白拉长事务持有时间
@@ -252,18 +257,18 @@ export async function createAccount(
     passwordHash = await hashPassword(input.password);
   } catch (err) {
     if (err instanceof WeakPasswordError) {
-      throw new ApiError('VALIDATION_FAILED', err.message);
+      throw fail('VALIDATION_FAILED', err.reason, err.message, { params: err.params });
     }
     throw err;
   }
 
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
   if (existing) {
-    throw new ApiError(
+    throw fail(
       'VERSION_CONFLICT',
-      `邮箱 ${email} 已有账号。如果要把他加进本组织，用「添加成员」而不是新建 —— ` +
-        '同一个人开两个账号，审计里就成了两个人。',
-      { email, userId: existing.id },
+      'auth.email_taken_use_add_member',
+      `邮箱 ${email} 已有账号。如果要把他加进本组织，用「添加成员」而不是新建 —— ` + '同一个人开两个账号，审计里就成了两个人。',
+      { params: { email }, details: { email, userId: existing.id } },
     );
   }
 
@@ -329,16 +334,21 @@ export async function changeOwnPassword(
     .select({ id: users.id, passwordHash: users.passwordHash })
     .from(users)
     .where(eq(users.id, ctx.userId));
-  if (!user) throw new ApiError('UNAUTHENTICATED', '用户不存在');
+  if (!user) throw fail('UNAUTHENTICATED', 'auth.account_gone', '用户不存在');
 
   if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
-    throw new ApiError('UNAUTHENTICATED', '当前口令不正确');
+    throw fail('UNAUTHENTICATED', 'auth.wrong_password', '当前口令不正确');
   }
 
   try {
     assertPasswordAcceptable(input.newPassword);
   } catch (err) {
-    if (err instanceof WeakPasswordError) throw new ApiError('VALIDATION_FAILED', err.message);
+    if (err instanceof WeakPasswordError) throw fail(
+      'VALIDATION_FAILED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 

@@ -27,7 +27,7 @@ import {
   type ExpandedProfile,
 } from '@apos/domain';
 import { capabilityTranslator } from '@apos/agent-runtimes';
-import { ApiError, notFound } from '../../http/errors';
+import { fail, notFound } from '../../http/errors';
 
 /**
  * 项目级 Agent 权限 —— 读、预览、保存，三件事共用**同一个**求值器。
@@ -238,7 +238,7 @@ async function loadOwnedAgentInProject(
 ): Promise<AgentRow> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
   // ★ 越界与不存在都回 404：403 会把 id 变成可枚举的探针
-  if (!agent || agent.orgId !== ctx.orgId) throw notFound('Agent');
+  if (!agent || agent.orgId !== ctx.orgId) throw notFound('agent');
 
   const [member] = await db
     .select({ actorId: projectMembers.actorId })
@@ -251,10 +251,11 @@ async function loadOwnedAgentInProject(
       ),
     );
   if (!member) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'agent.not_project_member',
       `${agent.name} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-      { agentId },
+      { params: { name: agent.name }, details: { agentId } },
     );
   }
 
@@ -359,10 +360,12 @@ export async function previewAgentAccess(
   const agent = await loadOwnedAgentInProject(db, ctx, agentId);
   const profile = capabilityProfile(input.profileKey);
   if (!profile) {
-    throw new ApiError('VALIDATION_FAILED', `没有名为「${input.profileKey}」的能力档案`, {
-      profileKey: input.profileKey,
-      known: BUILTIN_CAPABILITY_PROFILES.map((p) => p.key),
-    });
+    throw fail(
+      'VALIDATION_FAILED',
+      'agent.unknown_capability_profile',
+      `没有名为「${input.profileKey}」的能力档案`,
+      { params: { profileKey: input.profileKey }, details: { profileKey: input.profileKey, known: BUILTIN_CAPABILITY_PROFILES.map((p) => p.key), } },
+    );
   }
 
   const next = expandProfile(profile, {

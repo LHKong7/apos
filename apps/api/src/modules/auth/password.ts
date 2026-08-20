@@ -1,3 +1,4 @@
+import type { ErrorReason } from '@apos/contracts';
 import { randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 
 /**
@@ -45,8 +46,19 @@ const SALT_LEN = 16;
  */
 const MAXMEM = 256 * 1024 * 1024;
 
+/**
+ * ★ 带原因码 / Carries a reason code.
+ *
+ *   这个错最终会变成一条 HTTP 报错显示给用户，所以它不能只有一句中文 ——
+ *   界面要按码取词才能同时服务中英文两套。构造时就要求给码，
+ *   而不是在 http 层反过来匹配这句话（匹配一句随时会改的话是定时炸弹）。
+ */
 export class WeakPasswordError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: ErrorReason,
+    readonly params?: Record<string, string | number>,
+  ) {
     super(message);
     this.name = 'WeakPasswordError';
   }
@@ -57,10 +69,12 @@ const MIN_LENGTH = 8;
 
 export function assertPasswordAcceptable(password: string): void {
   if (password.length < MIN_LENGTH) {
-    throw new WeakPasswordError(`口令至少 ${MIN_LENGTH} 位`);
+    throw new WeakPasswordError(`口令至少 ${MIN_LENGTH} 位`, 'auth.password_too_short', {
+      min: MIN_LENGTH,
+    });
   }
   if (password.length > 200) {
-    throw new WeakPasswordError('口令过长（上限 200 位）');
+    throw new WeakPasswordError('口令过长（上限 200 位）', 'auth.password_too_long');
   }
 }
 

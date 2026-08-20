@@ -44,7 +44,7 @@ export async function getAnalytics(
   now = Date.now(),
 ) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const window = windowFor(range, now);
   const prevWindow = previousWindow(window);

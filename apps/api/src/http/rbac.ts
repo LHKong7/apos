@@ -19,7 +19,7 @@ import {
   type Permission,
   type RbacActor,
 } from '@apos/domain';
-import { ApiError } from './errors';
+import { fail } from './errors';
 
 /**
  * 授权闸门 —— docs/tech/09-security.md §2.1 的 ①② 层在 HTTP 上的落地。
@@ -102,19 +102,26 @@ export async function resolveCurrentOrg(
 
   if (rows.length === 0) {
     const [exists] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
-    throw new ApiError(
-      'UNAUTHENTICATED',
-      exists
-        ? '这个账号还不属于任何组织。请先创建一个组织，或让管理员把你加进已有组织。'
-        : '用户不存在',
-      { userId },
-    );
+    /** ★ 两条码：「账号在但没组织」和「账号没了」，下一步动作完全不同 */
+    throw exists
+      ? fail(
+          'UNAUTHENTICATED',
+          'org.no_membership_yet',
+          '这个账号还不属于任何组织。请先创建一个组织，或让管理员把你加进已有组织。',
+          { details: { userId } },
+        )
+      : fail('UNAUTHENTICATED', 'auth.account_gone', '用户不存在', { details: { userId } });
   }
 
   if (requested) {
     const hit = rows.find((r) => r.orgId === requested);
     if (!hit) {
-      throw new ApiError('NOT_FOUND', '组织不存在，或当前身份不是它的成员', { orgId: requested });
+      throw fail(
+        'NOT_FOUND',
+        'org.not_a_member',
+        '组织不存在，或当前身份不是它的成员',
+        { details: { orgId: requested } },
+      );
     }
     return { orgId: hit.orgId, orgRole: (hit.orgRole as OrgRole) ?? 'member' };
   }
@@ -492,10 +499,11 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
     const actor = await projectAccess(req, projectId, userId);
     if (actor) return actor;
 
-    throw new ApiError(
+    throw fail(
       'NOT_FOUND',
+      'project.not_visible',
       '项目不存在，或当前身份没有访问权限。可以试试切换右上角的身份',
-      { projectId },
+      { details: { projectId } },
     );
   }
 
@@ -544,10 +552,8 @@ export function createRbac({ db, projectOfResource, requireUserId }: RbacDeps) {
   ) {
     const verdict = check(actor, permission);
     if (verdict.allowed) return;
-    throw new ApiError('FORBIDDEN', verdict.reason ?? '权限不足', {
-      permission,
-      projectRole: actor.projectRole,
-      ...details,
+    throw fail('FORBIDDEN', 'auth.forbidden', verdict.reason ?? '权限不足', {
+      details: { permission, projectRole: actor.projectRole, ...details },
     });
   }
 

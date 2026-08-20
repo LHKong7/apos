@@ -1,5 +1,5 @@
 import { useT, useSpecText, type MessageKey } from '../../lib/i18n';
-import { joinList } from '@/lib/format';
+import { featureLabel, joinList } from '@/lib/format';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { CapabilityReport } from '../../lib/api/types';
@@ -74,7 +74,8 @@ export function CapabilityPanel({
             <li key={m.feature} className="px-3 py-1.5">
               <p className="text-xs">
                 <span className={clsx('font-medium', SEVERITY_TONE[m.severity] ?? 'text-slate-600')}>
-                  ✗ {m.label}
+                  {/* ★ 能力项名走词条：`m.label` 是服务端的中文 */}
+                  ✗ {featureLabel(m.feature)}
                 </span>
                 <span
                   className={clsx(
@@ -98,7 +99,7 @@ export function CapabilityPanel({
         <div className="border-t border-slate-100 px-3 py-1.5">
           <p className="text-[11px] text-slate-500">{t('cap.supported')}</p>
           <p className="text-[11px] text-slate-600">
-            {joinList(report.supported.map((s) => s.label))}
+            {joinList(report.supported.map((s) => featureLabel(s.feature)))}
           </p>
         </div>
       )}

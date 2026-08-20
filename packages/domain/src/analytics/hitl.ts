@@ -144,13 +144,17 @@ export function computeHitl(
     });
     // 最慢那一档里如果只有一类决策，直接点名 —— 这是最有行动价值的一句话
     const types = new Set(inBucket.map((d) => d.type));
+    /**
+     * ★ 同时给类型码和中文说法：界面按码取词（`decision.type.*` 那组词条
+     *   本来就有），`slowest` 那句中文留给日志与认不出码的界面兜底。
+     */
+    const onlyType =
+      b.max === Infinity && inBucket.length > 0 && types.size === 1 ? [...types][0]! : null;
     return {
       label: b.label,
       count: inBucket.length,
-      slowest:
-        b.max === Infinity && inBucket.length > 0 && types.size === 1
-          ? decisionLabel([...types][0]!)
-          : null,
+      slowestType: onlyType,
+      slowest: onlyType === null ? null : decisionLabel(onlyType),
     };
   });
 

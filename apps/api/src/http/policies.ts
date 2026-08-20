@@ -27,7 +27,7 @@ import {
   type HistoricalSample,
   type SimulationResult,
 } from '@apos/domain';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * Policy 配置（页面文档 13 §9）。
@@ -123,7 +123,7 @@ export async function savePolicy(
 
   if (opts.policyId) {
     const target = existing.find((p) => p.id === opts.policyId);
-    if (!target) throw notFound('规则');
+    if (!target) throw notFound('policy');
     assertEditable(target);
   }
 
@@ -178,11 +178,11 @@ export async function savePolicy(
   if (isAutoApprove(candidate.action) && candidate.enabled) {
     simulation = await runSimulation(db, projectId, candidate, '90d');
     if (simulation.mismatches.length > 0 && !opts.acknowledgeMismatches) {
-      throw new ApiError(
+      throw fail(
         'POLICY_DENIED',
-        `这条规则会自动放行 ${simulation.wouldAutoHandle} 次评估，` +
-          `而其中 ${simulation.mismatches.length} 个任务，人类当时是驳回或要求修改的。请先看看这些案例。`,
-        { simulation, loosenedScenarios: loosened, requiresAcknowledgement: true },
+        'policy.loosening_contradicts_history',
+        `这条规则会自动放行 ${simulation.wouldAutoHandle} 次评估，` + `而其中 ${simulation.mismatches.length} 个任务，人类当时是驳回或要求修改的。请先看看这些案例。`,
+        { params: { approvals: simulation.wouldAutoHandle, mismatches: simulation.mismatches.length }, details: { simulation, loosenedScenarios: loosened, requiresAcknowledgement: true } },
       );
     }
   }
@@ -252,7 +252,7 @@ export async function togglePolicy(
   const project = await loadProject(db, projectId);
   const existing = await loadProjectPolicies(db, project.orgId, projectId);
   const target = existing.find((p) => p.id === policyId);
-  if (!target) throw notFound('规则');
+  if (!target) throw notFound('policy');
   assertEditable(target);
 
   // 停用一条收紧类规则等于放宽，同样要过模拟这道闸
@@ -446,7 +446,7 @@ export async function autonomyPreview(db: Database, projectId: string, to: Auton
 
 async function loadProject(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
   return project;
 }
 
@@ -533,10 +533,11 @@ async function loadHits(db: Database, projectId: string, all: Policy[]) {
 
 function assertEditable(policy: Policy): void {
   if (policy.projectId === null) {
-    throw new ApiError(
+    throw fail(
       'FORBIDDEN',
+      'policy.org_scoped_readonly',
       `「${policy.name}」是组织级规则，项目内不可修改或删除。如需例外，请联系组织管理员申请。`,
-      { policyId: policy.id, scope: 'org' },
+      { params: { name: policy.name }, details: { policyId: policy.id, scope: 'org' } },
     );
   }
 }
@@ -561,12 +562,31 @@ function assertNotLooseningOrgRules(before: Policy[], after: Policy[], level: Au
     const next = evaluate(scenario.context, nextAll);
     if (!isAutoApprove(next.action)) continue;
 
-    throw new ApiError(
-      'POLICY_DENIED',
-      `组织规则「${org.matchedPolicyName}」要求这类操作必须人工确认，项目级规则不能放宽它。` +
-        `冲突场景：${describe(scenario.context)}。如需例外，请联系组织管理员申请。`,
-      { orgPolicyId: org.matchedPolicyId, scenario: scenario.key },
-    );
+    /**
+     * ★ 有名字和没名字是两条词条，不是一条带空槽的。
+     *   `matchedPolicyName` 类型上可空（没有规则命中时为 null）。塞一个空串
+     *   进去会得到「组织规则「」要求…」——  一句读起来像 bug 的话。
+     *   两种语言里「某条组织规则」都不是在原句上挖个洞就能得到的，
+     *   所以它必须是独立的一句。
+     */
+    throw org.matchedPolicyName
+      ? fail(
+          'POLICY_DENIED',
+          'policy.org_rule_cannot_be_loosened',
+          `组织规则「${org.matchedPolicyName}」要求这类操作必须人工确认，项目级规则不能放宽它。` +
+            `冲突场景：${describe(scenario.context)}。如需例外，请联系组织管理员申请。`,
+          {
+            params: { name: org.matchedPolicyName },
+            details: { orgPolicyId: org.matchedPolicyId, scenario: scenario.key },
+          },
+        )
+      : fail(
+          'POLICY_DENIED',
+          'policy.org_rule_cannot_be_loosened_unnamed',
+          `一条组织规则要求这类操作必须人工确认，项目级规则不能放宽它。` +
+            `冲突场景：${describe(scenario.context)}。如需例外，请联系组织管理员申请。`,
+          { details: { orgPolicyId: org.matchedPolicyId, scenario: scenario.key } },
+        );
   }
 }
 
@@ -598,7 +618,7 @@ export async function deletePolicy(db: Database, projectId: string, policyId: st
   const project = await loadProject(db, projectId);
   const rows = await loadProjectPolicies(db, project.orgId, projectId);
   const target = rows.find((p) => p.id === policyId);
-  if (!target) throw notFound('规则');
+  if (!target) throw notFound('policy');
   assertEditable(target);
 
   // 删除等于放宽，同样要过组织规则那道闸
@@ -614,10 +634,11 @@ export async function deletePolicy(db: Database, projectId: string, policyId: st
     .where(and(eq(decisions.triggeredByPolicy, policyId), eq(decisions.status, 'pending')));
 
   if (pending.length > 0) {
-    throw new ApiError(
+    throw fail(
       'POLICY_DENIED',
+      'policy.has_pending_decisions',
       `还有 ${pending.length} 个由这条规则触发的决策没处理完，先处理完再删除。`,
-      { pending },
+      { params: { count: pending.length }, details: { pending } },
     );
   }
 
@@ -641,11 +662,11 @@ export { isNull };
  */
 export async function getPolicyHits(db: Database, projectId: string, policyId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const all = await loadProjectPolicies(db, project.orgId, projectId);
   const policy = all.find((p) => p.id === policyId);
-  if (!policy) throw notFound('规则');
+  if (!policy) throw notFound('policy');
 
   const since = new Date(Date.now() - 30 * 86_400_000);
   const rows = await db
@@ -776,7 +797,12 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
     },
     stats: {
       hits: hits.length,
-      byAction: countBy(hits.map((h) => h.actionLabel)),
+      /**
+       * ★ 按**动作枚举**分组，不按中文标签分组。
+       *   用标签当分组键有两处坏处：界面拿到的是中文（英文界面上照样是中文），
+       *   而且标签改一个字，历史统计就会分裂成两组。
+       */
+      byAction: countBy(hits.map((h) => h.action)),
       decisionsCreated: hits.filter((h) => h.decision).length,
       resolved: resolved.length,
       approved,

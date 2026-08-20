@@ -1,9 +1,8 @@
 import { useT } from '../../lib/i18n';
-import { joinList } from '@/lib/format';
+import { joinList, policyFactLabel } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { FactKey } from '@apos/contracts';
-import { FACT_LABELS } from '@apos/domain';
+
 import { ApiError, api } from '../../lib/api/client';
 import type { PolicyRow, PolicyTemplateRow, SimulationResponse } from '../../lib/api/types';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -280,7 +279,7 @@ function SimulationView({ result }: { result: SimulationResponse }) {
               {joinList(
                 result.suggestions.map(
                   (s) =>
-                    `${FACT_LABELS[s.addCondition.fact as FactKey] ?? s.addCondition.fact} ≠ ${String(s.addCondition.value)}`,
+                    `${policyFactLabel(s.addCondition.fact)} ≠ ${String(s.addCondition.value)}`,
                 ),
               )}
               <span className="ml-1 text-amber-700">

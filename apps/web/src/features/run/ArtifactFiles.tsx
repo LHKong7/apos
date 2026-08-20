@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -42,7 +42,12 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
      * ★ 目录没了要说出来，而不是显示一个空列表。
      *   空列表读起来像「这次没产出」，而真相是产出被回收了。
      */
-    return <p className="mt-1 text-[11px] text-amber-700">{d.reason}</p>;
+    /** ★ 按码取词；服务端那句中文只作认不出码时的兜底 */
+    return (
+      <p className="mt-1 text-[11px] text-amber-700">
+        {d.reasonCode ? t(`artifact.reason.${d.reasonCode}` as MessageKey) : d.reason}
+      </p>
+    );
   }
 
   const files = d.files.filter((f) => !f.isDirectory);
@@ -121,7 +126,14 @@ export function ArtifactFiles({ artifactId }: { artifactId: string }) {
             content.data && (
               <div className="space-y-1 text-[11px] text-slate-500">
                 {/* ★ 不给预览时要说清楚为什么，并给出下载这条路 */}
-                <p>{content.data.reason}</p>
+                <p>
+                  {content.data.reasonCode
+                    ? t(
+                        `artifact.reason.${content.data.reasonCode}` as MessageKey,
+                        content.data.reasonParams ?? {},
+                      )
+                    : content.data.reason}
+                </p>
                 <a
                   href={`/api/v1/artifacts/${artifactId}/download/${open
                     .split('/')

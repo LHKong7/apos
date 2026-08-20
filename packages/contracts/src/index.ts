@@ -1,5 +1,6 @@
 export * from './common/actor';
 export * from './common/enums';
+export * from './common/error-reason';
 export * from './common/roles';
 export * from './work-item/index';
 export * from './policy/index';

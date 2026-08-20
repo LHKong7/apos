@@ -171,7 +171,9 @@ describe('延期预测', () => {
     });
 
     expect(r.estimatedSlipDays).toBeNull();
-    expect(r.contributions.find((c) => c.key === 'workload')?.detail).toContain('算不出速率');
+    expect(r.contributions.find((c) => c.key === 'workload_unknown_rate')?.detail).toContain(
+      '算不出速率',
+    );
   });
 
   it('有排期且做不完时给出预计晚几天', () => {
@@ -184,7 +186,7 @@ describe('延期预测', () => {
     });
 
     expect(r.estimatedSlipDays).toBeGreaterThan(0);
-    expect(r.contributions.some((c) => c.key === 'workload')).toBe(true);
+    expect(r.contributions.some((c) => c.key === 'workload_projected')).toBe(true);
   });
 
   it('没有排期时不给天数，但仍给风险等级', () => {

@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { hasMessage, useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { Insight, InsightAction } from '@apos/domain';
@@ -29,6 +29,23 @@ export function InsightsPanel({
   const t = useT();
   const [openEvidence, setOpenEvidence] = useState<number | null>(null);
 
+  /**
+   * ★★ 每条发现的说法按 `code` 从词条表取，不画服务端的 `message` / `evidence` ——
+   *   那两个字段是中文。句子里的数字（百分比、时长、token 数）在服务端就已经
+   *   格式化成语言中立的形态放进 `params`，这边只负责按各自语言的语序组织。
+   *
+   * ★ 认不出的码回落到中文原句：服务端加了一条新发现而词条还没跟上时，
+   *   用户要看到的是一句能读的话，而不是一行 `analytics.insight.x.message`。
+   */
+  const copy = (i: Insight, part: 'message' | 'evidence') => {
+    const key = `analytics.insight.${i.code}.${part}` as MessageKey;
+    return hasMessage(key) ? t(key, i.params) : part === 'message' ? i.message : i.evidence;
+  };
+  const actionLabel = (a: InsightAction) => {
+    const key = `analytics.insightAction.${a.code}` as MessageKey;
+    return hasMessage(key) ? t(key, a.params ?? {}) : a.label;
+  };
+
   if (insights.length === 0) {
     return (
       <div className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
@@ -58,14 +75,14 @@ export function InsightsPanel({
             >
               <span aria-hidden>{meta.icon}</span>
               <div className="min-w-0 flex-1">
-                <p className={clsx('leading-5', meta.className)}>{insight.message}</p>
+                <p className={clsx('leading-5', meta.className)}>{copy(insight, 'message')}</p>
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                   {insight.actions.map((action) => (
                     <Button variant="outline" size="xs"
-                      key={`${action.kind}-${action.label}`}
+                      key={`${action.kind}-${action.code}`}
                       onClick={() => onAction(action, insight)}>
-                      {action.label} →
+                      {actionLabel(action)} →
                     </Button>
                   ))}
                   {/*
@@ -83,7 +100,7 @@ export function InsightsPanel({
 
                 {openEvidence === i && (
                   <p className={clsx('mt-1 rounded px-2 py-1 text-[11px] text-slate-600', meta.bg)}>
-                    {insight.evidence}
+                    {copy(insight, 'evidence')}
                   </p>
                 )}
               </div>

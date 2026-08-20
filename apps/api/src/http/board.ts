@@ -173,7 +173,7 @@ export async function getBoard(
 ): Promise<{ columns: BoardColumn[]; summary: BoardSummary }> {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
   // 抛普通 Error 会被错误处理器归为 500，让调用方以为是服务端故障
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const conditions = [eq(workItems.projectId, projectId), isNull(workItems.deletedAt)];
   if (filters.riskLevel?.length) {

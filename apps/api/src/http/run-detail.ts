@@ -38,7 +38,7 @@ export type EventLevel = 'brief' | 'detailed';
  */
 export async function getRunDetail(db: Database, runId: string) {
   const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
-  if (!run) throw notFound('Run');
+  if (!run) throw notFound('run');
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
   /**

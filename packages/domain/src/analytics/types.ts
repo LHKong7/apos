@@ -306,7 +306,15 @@ export interface HitlMetrics {
   overrides: number;
   blockedByHumanHours: number;
   byStage: { stage: Stage; decisions: number; items: number; percent: number }[];
-  responseBuckets: { label: string; count: number; slowest: string | null }[];
+  responseBuckets: {
+    /** 档位名（`< 1h` 这种），本来就与语言无关 */
+    label: string;
+    count: number;
+    /** 最慢那一档里若只有一类决策，这里是它的**类型码**，界面据此取词 */
+    slowestType: string | null;
+    /** 同上的中文说法 —— 日志与兜底用，界面不该画它 */
+    slowest: string | null;
+  }[];
   repeated: RepeatedDecision[];
   overrideReasons: { category: string; label: string; count: number; percent: number }[];
 }
@@ -359,6 +367,17 @@ export type InsightType = (typeof INSIGHT_TYPES)[number];
 
 export interface InsightAction {
   kind: 'create_policy' | 'view_items' | 'view_agent' | 'view_decisions' | 'view_cost' | 'view_tab';
+  /**
+   * 按钮上写什么 / Which button copy to use.
+   *
+   * ★ 不能只靠 `kind`：同一个 `create_policy` 在两处的说法不同 ——
+   *   一处是「把『部署审批』规则化」（带着那类决策的名字），
+   *   一处是「创建规则」。一个码一句话，所以码比 kind 细。
+   */
+  code: string;
+  /** 词条里 `{name}` 的实参。用户/数据里的名字原样带，不翻译 */
+  params?: Record<string, string | number>;
+  /** 中文兜底 —— 界面认不出码时用它，同时也是日志里能读的那一份 */
   label: string;
   tab?: AnalyticsTab;
   ref?: string;
@@ -366,10 +385,29 @@ export interface InsightAction {
 
 export interface Insight {
   type: InsightType;
+  /**
+   * 这条发现说的是哪一句 / Which sentence this insight is.
+   *
+   * ★★ 比 `type` 细。`improvement` 一个 type 底下有五句完全不同的话
+   *   （流动效率、前置时间、单位用量、自动化率、绝对值够好），
+   *   界面按 type 取词只能取到其中一句。
+   *
+   *   `type` 仍然留着：它决定图标、排序与「同类发现」的归并，
+   *   那些是按**类别**而不是按句子来的。
+   */
+  code: string;
   severity: 'critical' | 'warning' | 'good';
+  /** 中文兜底。界面读码，日志读句子 */
   message: string;
-  /** 判据本身 —— 让用户能反驳，而不是只能相信 */
+  /** 判据本身 —— 让用户能反驳，而不是只能相信。同样是兜底 */
   evidence: string;
+  /**
+   * `message` 与 `evidence` 里的数字 / The numbers those two sentences carry.
+   *
+   * ★ 百分比、时长、token 数都已经格式化成语言中立的形态
+   *   （`34%`、`22h`、`1.2M`），可以直接插进任一语言的句子。
+   */
+  params: Record<string, string | number>;
   actions: InsightAction[];
 }
 

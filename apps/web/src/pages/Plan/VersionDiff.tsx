@@ -1,3 +1,4 @@
+import { planFieldLabel } from '../../lib/format';
 import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -107,7 +108,8 @@ export function VersionDiff({ planId }: { planId: string }) {
               <ul className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
                 {diff.metrics.map((m) => (
                   <li key={m.field} className="text-[11px]">
-                    <span className="text-slate-600">{m.label}</span>{' '}
+                    {/* ★ 字段名走词条：`m.label` 是服务端的中文 */}
+                    <span className="text-slate-600">{planFieldLabel(m.field)}</span>{' '}
                     <span className="text-slate-400">{m.before}</span>
                     <span className="text-slate-400"> → </span>
                     <span className={clsx(m.loosened ? 'text-amber-700' : 'text-slate-800')}>
@@ -279,7 +281,7 @@ function TaskSection({
             )}
             {row.fields.map((f) => (
               <span key={f.field} className="ml-2 text-slate-500">
-                {f.label} <span className="text-slate-400">{f.before}</span> →{' '}
+                {planFieldLabel(f.field)} <span className="text-slate-400">{f.before}</span> →{' '}
                 <span className={clsx(f.loosened ? 'text-amber-700' : 'text-slate-700')}>
                   {f.after}
                 </span>

@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentRuns, artifacts, workItems } from '@apos/db';
 import { eq } from 'drizzle-orm';
@@ -150,5 +150,59 @@ describe('产物文件读取', () => {
     await expect(readArtifactFile(db, await seedArtifact(), 'nope.txt')).rejects.toThrow(
       /不存在/,
     );
+  });
+
+  /**
+   * ★★ 归档根**经由符号链接到达**时，缺失文件必须报「不存在」而不是「越界」。
+   *
+   *   旧实现里 realpath 只对 root 真正生效：target 不存在时抛 ENOENT，
+   *   `.catch` 把**没解析过**的路径原样退回，于是两条路径分属两个坐标系，
+   *   relative() 结果必然以 `..` 开头 —— 每一个 404 都被报成
+   *   「符号链接指向归档目录之外」。那句话是在指控有人攻击，
+   *   而真相只是文件没了，两者的下一步动作完全不同。
+   *
+   * ★ 这里**显式**造一条符号链接根，而不是指望 tmpdir() 恰好是符号链接：
+   *   macOS 上 /var/folders 通往 /private/var/folders 所以必现，
+   *   Linux 上 /tmp 是实目录所以必不现。让成败取决于平台，
+   *   等于把复现条件也交给了偶然 —— 这个 bug 就是这么活下来的。
+   */
+  it('★ 归档根是符号链接时，缺失文件仍报不存在而不是越界', async () => {
+    const holder = await mkdtemp(join(tmpdir(), 'apos-linkroot-'));
+    const linkRoot = join(holder, 'archive');
+    await symlink(root, linkRoot);
+    const id = await seedArtifact(linkRoot);
+
+    await expect(readArtifactFile(db, id, 'nope.txt')).rejects.toThrow(/不存在/);
+
+    /** ★ 同一条链接根下真实存在的文件照样读得到 ——
+     *   别把「不再误报越界」修成「什么都放过去」 */
+    await writeFile(join(root, 'ok.txt'), 'hi', 'utf8');
+    expect((await readArtifactFile(db, id, 'ok.txt')).preview).toBe('hi');
+
+    await rm(dirname(linkRoot), { recursive: true, force: true });
+  });
+
+  /**
+   * ★ 反向那半边：路径上的某一段是指向外面的符号链接，
+   *   即使末端文件不存在也必须判越界。旧实现在这里是**放过去**的 ——
+   *   整条路径原样退回，看着还在归档内，只因为随后 stat 失败才没读到东西。
+   *
+   * ★★ 根必须用 realpath 过的**真实路径**，否则这条断言会绿得没有意义。
+   *
+   *   macOS 上 tmpdir() 通往 /private/…，旧实现的坐标系错位会把
+   *   **任何**缺失文件都误判成越界 —— 于是这条测试在修复前也是绿的，
+   *   而它想证明的那件事（认出越界的符号链接）根本没被测到，
+   *   换到 /tmp 是实目录的 Linux 上就会漏。
+   *   把根钉成真实路径，错位那条路就不存在了，
+   *   断言只能由「真的认出了这条符号链接」来满足。
+   */
+  it('★ 路径中间是越界符号链接时，缺失文件也判越界', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'apos-outside-'));
+    await symlink(outside, join(root, 'escape'));
+    const id = await seedArtifact(await realpath(root));
+
+    await expect(readArtifactFile(db, id, 'escape/nope.txt')).rejects.toThrow(/越界/);
+
+    await rm(outside, { recursive: true, force: true });
   });
 });

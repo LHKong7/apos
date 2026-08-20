@@ -1,10 +1,18 @@
-import { useT, type MessageKey } from '../../lib/i18n';
-import { colon, joinList } from '@/lib/format';
+import { hasMessage, t, useT, type MessageKey } from '../../lib/i18n';
+import {
+  colon,
+  joinList,
+  policyEnvLabel,
+  policyFactLabel,
+  policyOperationLabel,
+  riskLabel,
+} from '@/lib/format';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { AutonomyLevel } from '@apos/contracts';
+import type { PolicyIssue } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
@@ -42,6 +50,35 @@ const TABS = [
   { key: 'rules', labelKey: 'policy.tab.rules' },
   { key: 'test', labelKey: 'policy.tab.simulate' },
 ] as const satisfies readonly { key: string; labelKey: MessageKey }[];
+
+/**
+ * 体检结论的说法。
+ *
+ * ★ `missing_data_source` 那条要拼一个列表（「依赖 CI 测试结果、安全扫描」）——
+ *   列表的连接词两种语言不同，所以必须在界面这一侧用 joinList 拼，
+ *   而不是让服务端送一个拼好的字符串过来。
+ */
+function issueText(issue: PolicyIssue): string {
+  const key = `policy.issue.${issue.type}` as MessageKey;
+  if (!hasMessage(key)) return issue.message;
+  const params: Record<string, string | number> = { ...(issue.params ?? {}) };
+  if (issue.params?.['operation'] !== undefined) {
+    params['operation'] = policyOperationLabel(String(issue.params['operation']));
+  }
+  if (issue.facts?.length) params['sources'] = joinList(issue.facts.map(policyFactLabel));
+  return t(key, params);
+}
+
+/** 反例场景：三段枚举各自取词后再拼，不用服务端那句中文 */
+function exampleText(issue: PolicyIssue): string {
+  const c = issue.exampleContext;
+  if (!c) return issue.example ?? '';
+  return [
+    policyOperationLabel(c.operationType),
+    t('policy.scenario.risk', { risk: riskLabel(c.riskLevel) }),
+    c.environment ? policyEnvLabel(c.environment) : t('policy.env.none'),
+  ].join(' · ');
+}
 
 const SEVERITY = {
   critical: { icon: '🔴', className: 'text-red-800' },
@@ -282,9 +319,16 @@ export function PoliciesPage() {
                       <li key={`${issue.type}-${i}`} className="flex items-start gap-2 text-xs">
                         <span aria-hidden>{meta.icon}</span>
                         <div className="min-w-0 flex-1">
-                          <p className={meta.className}>{issue.message}</p>
-                          {issue.example && (
-                            <p className="text-[11px] text-slate-400">{t('policy.counterExample', { example: issue.example })}</p>
+                          {/*
+                            ★ 按 `type` 取词。服务端那句 `message` 是中文，
+                              只作认不出 type 时的兜底。规则名走 params 原样带过来 ——
+                              用户起的名不翻译。
+                          */}
+                          <p className={meta.className}>{issueText(issue)}</p>
+                          {(issue.exampleContext || issue.example) && (
+                            <p className="text-[11px] text-slate-400">
+                              {t('policy.counterExample', { example: exampleText(issue) })}
+                            </p>
                           )}
                           {issue.policyIds.length > 0 && (
                             <Button variant="ghost"

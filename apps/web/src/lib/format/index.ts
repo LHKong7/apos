@@ -233,6 +233,92 @@ export function riskLabel(risk: string): string {
   return label === key ? risk : label;
 }
 
+/**
+ * Analytics 里那几张「按枚举分组」的表的行名。
+ *
+ * ★★ 服务端算这些指标时同时给了 `label` —— 一句中文。
+ *   界面画它的代价是：分析页在英文界面下整片是中文，
+ *   而这些枚举值（任务类型、错误分类、覆盖原因、决策类型）
+ *   本来就是**码**，界面照着码取词就行，根本不需要服务端替它翻译。
+ *
+ * ★ 认不出的码回落到码本身，而不是空白 —— 新增一个错误分类而词条没跟上时，
+ *   用户看到的是 `rate_limit` 而不是一行空白。丑，但看得见。
+ *
+ *   These are enum ids, so the UI resolves its own copy. Falling back to the
+ *   id keeps a new enum value visible instead of rendering an empty row.
+ */
+export function decisionTypeLabel(type: string): string {
+  const key = `decision.type.${type}` as MessageKey;
+  const label = t(key);
+  return label === key ? type : label;
+}
+
+export function failureReasonLabel(reason: string): string {
+  const key = `analytics.failureReason.${reason}` as MessageKey;
+  const label = t(key);
+  return label === key ? reason : label;
+}
+
+export function overrideReasonLabel(category: string): string {
+  const key = `analytics.overrideReason.${category}` as MessageKey;
+  const label = t(key);
+  return label === key ? category : label;
+}
+
+/** 流动时间的分档（需求澄清 / 计划 / 执行 …）。同上，`TimeBucket` 是枚举 */
+export function bucketLabel(bucket: string): string {
+  const key = `analytics.bucket.${bucket}` as MessageKey;
+  const label = t(key);
+  return label === key ? bucket : label;
+}
+
+/** 计划版本对比里那些字段的名字。`field` 是稳定键，`label` 是服务端的中文 */
+export function planFieldLabel(field: string): string {
+  const key = `planDiff.field.${field}` as MessageKey;
+  const label = t(key);
+  return label === key ? field : label;
+}
+
+/** 运行时能力项（实时事件流 / 进度上报 …）。`feature` 是枚举键 */
+export function featureLabel(feature: string): string {
+  const key = `capability.feature.${feature}` as MessageKey;
+  const label = t(key);
+  return label === key ? feature : label;
+}
+
+/**
+ * Policy 规则里那些名词：条件的 fact、操作类型、环境。
+ *
+ * ★★ 这三张表原来是从 `@apos/domain` 直接 import 的中文常量
+ *   （`FACT_LABELS` / `OPERATION_LABELS` / `ENV_LABELS`）。
+ *   前端 import 一张中文表，等于把服务端的语言硬编进界面 ——
+ *   切成英文之后整个规则编辑器还是中文。那些表留给服务端拼日志用。
+ */
+export function policyFactLabel(fact: string): string {
+  const key = `policy.fact.${fact}` as MessageKey;
+  const label = t(key);
+  return label === key ? fact : label;
+}
+
+export function policyOperationLabel(op: string): string {
+  const key = `policy.operation.${op}` as MessageKey;
+  const label = t(key);
+  return label === key ? op : label;
+}
+
+export function policyEnvLabel(env: string): string {
+  const key = `policy.env.${env}` as MessageKey;
+  const label = t(key);
+  return label === key ? env : label;
+}
+
+/** Policy 动作（放行 / 需人确认 / 拒绝 …）。`ActionType` 是枚举 */
+export function policyActionLabel(action: string): string {
+  const key = `policy.action.${action}` as MessageKey;
+  const label = t(key);
+  return label === key ? action : label;
+}
+
 /** 看板列名。与后端的 Stage 一一对应，全站只此一份。 */
 const STAGE_NAMES: Record<string, string> = {
   intake: 'Intake',

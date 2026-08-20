@@ -18,8 +18,15 @@ import type { AnalyticsInput, ItemRow } from './types';
 export type MetricSource = 'ci' | 'work_items' | 'events';
 
 export interface QualityMetric {
+  /**
+   * ★★ 界面按它从词条表取词（`analytics.quality.<key>.label` / `.hint`），
+   *   不画下面那两个中文字段。这一层只保证一个 key 一句话。
+   */
   key: string;
+  /** 中文说法 —— 日志与兜底用的那一份。界面读码，日志读句子 */
   label: string;
+  /** `label` / `hint` 里的数字，供词条按各自语言的语序组织 */
+  params?: Record<string, string | number>;
   /** null = 这项没有数据源，页面必须显示「未接入」而不是 0 */
   value: number | null;
   unit: 'percent' | 'count' | 'days';
@@ -104,6 +111,8 @@ export function computeQuality(input: AnalyticsInput): QualityMetrics {
     {
       key: 'post_release_incidents',
       label: `发布后 ${INCIDENT_WINDOW_DAYS} 天内事故`,
+      /** ★ 这条 label 里有个数字，英文句子要用它重新组织语序 */
+      params: { days: INCIDENT_WINDOW_DAYS },
       /**
        * ★ 没有发布过就是 null，不是 0。
        *   「0 起事故」和「这个周期没发过版」是完全不同的两件事，

@@ -56,7 +56,12 @@ describe('凭证引用', () => {
     expect(ref.startsWith('secret://plain/')).toBe(true);
     // 明文形态取得回原值，且自称可用 —— 它不依赖任何环境
     expect(resolveSecret(ref)).toBe('sk-ant-plain');
-    expect(describeRef(ref)).toEqual({ usable: true, kind: 'plain', problem: null });
+    expect(describeRef(ref)).toEqual({
+      usable: true,
+      kind: 'plain',
+      problem: null,
+      problemCode: null,
+    });
 
     // env: 形态不受影响，仍是推荐写法
     expect(encodeSecret('env:MY_TOKEN')).toBe('secret://env/MY_TOKEN');

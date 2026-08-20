@@ -11,7 +11,7 @@ import {
 import { humanActor, isOrgAdmin, ORG_ROLE_LABEL, OrgRole } from '@apos/contracts';
 import { DEFAULT_AGENT_PROJECT_ROLE, roleAcceptsActor, type Permission } from '@apos/domain';
 import { emitAndPublish } from '../modules/event/bus';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 import { assertNotLastAdmin } from './organizations';
 
 /**
@@ -147,7 +147,12 @@ export async function setMemberRole(
    *   跨租户隔离从「查得严」变成「谁都能开个口子」。
    */
   if (target.orgId !== project.orgId) {
-    throw new ApiError('VALIDATION_FAILED', '只能添加本组织的成员', { targetId: ctx.targetId });
+    throw fail(
+      'VALIDATION_FAILED',
+      'member.outside_org',
+      '只能添加本组织的成员',
+      { details: { targetId: ctx.targetId } },
+    );
   }
 
   const before = await currentRole(db, ctx);
@@ -172,10 +177,11 @@ export async function setMemberRole(
     if (before !== null) return { ok: true as const, role: before, changed: false };
 
     if (ctx.actorType !== 'agent') {
-      throw new ApiError(
+      throw fail(
         'VALIDATION_FAILED',
+        'member.human_role_required',
         '添加人类成员必须指定角色 —— 人的角色从业务负责人到只读都有，没有一个默认档是安全的',
-        { actorType: ctx.actorType },
+        { details: { actorType: ctx.actorType } },
       );
     }
   }
@@ -192,13 +198,20 @@ export async function setMemberRole(
    *   是两次独立的操作，任何一次都可能是最后一步。
    */
   if (!roleAcceptsActor(role, ctx.actorType)) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      ctx.actorType === 'agent'
-        ? `「${role.name}」不能由 Agent 担任 —— 它含有只能由人类行使的权限（确认需求、批准计划、处理决策这一类）`
-        : `「${role.name}」是专门给 Agent 的角色，不能指派给人`,
-      { role: effectiveRole, appliesTo: role.appliesTo },
-    );
+    /** ★ 两条码。「人的角色给了 Agent」和「Agent 的角色给了人」是两回事 */
+    throw ctx.actorType === 'agent'
+      ? fail(
+          'VALIDATION_FAILED',
+          'role.human_only',
+          `「${role.name}」不能由 Agent 担任 —— 它含有只能由人类行使的权限（确认需求、批准计划、处理决策这一类）`,
+          { params: { name: role.name }, details: { role: effectiveRole, appliesTo: role.appliesTo } },
+        )
+      : fail(
+          'VALIDATION_FAILED',
+          'role.agent_only',
+          `「${role.name}」是专门给 Agent 的角色，不能指派给人`,
+          { params: { name: role.name }, details: { role: effectiveRole, appliesTo: role.appliesTo } },
+        );
   }
 
   if (before === effectiveRole) {
@@ -243,7 +256,7 @@ export async function setMemberRole(
 export async function removeMember(db: Database, ctx: RoleChangeContext) {
   const project = await loadProject(db, ctx.projectId);
   const before = await currentRole(db, ctx);
-  if (before === null) throw notFound('项目成员');
+  if (before === null) throw notFound('project_member');
 
   await assertProjectKeepsAManager(db, project.orgId, ctx, null);
 
@@ -289,9 +302,9 @@ export async function setOrgRole(
 
   // 组织管理员的「全部权限」以组织为界 —— 越界就是多租户隔离失效
   if (!target) {
-    throw new ApiError('NOT_FOUND', '用户不存在，或不在你的组织内', {
+    throw fail('NOT_FOUND', 'member.user_outside_org', '用户不存在，或不在你的组织内', { details: {
       targetUserId: ctx.targetUserId,
-    });
+    } });
   }
   if (target.orgRole === role) return { ok: true as const, orgRole: role, changed: false };
 
@@ -398,10 +411,11 @@ async function assertProjectKeepsAManager(
 
   const remaining = managers.filter((m) => m.actorId !== ctx.targetId);
   if (managers.some((m) => m.actorId === ctx.targetId) && remaining.length === 0) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'member.last_manager',
       '这是项目里最后一位能管理成员的人，改动后将没有人能调整项目成员。请先指定另一位负责人。',
-      { targetId: ctx.targetId },
+      { details: { targetId: ctx.targetId } },
     );
   }
 }
@@ -435,7 +449,7 @@ async function loadProject(db: Database, projectId: string) {
     .select({ id: projects.id, orgId: projects.orgId })
     .from(projects)
     .where(eq(projects.id, projectId));
-  if (!row) throw notFound('项目');
+  if (!row) throw notFound('project');
   return row;
 }
 
@@ -453,7 +467,7 @@ async function loadUser(db: Database, userId: string, orgId: string) {
       and(eq(organizationMembers.userId, users.id), eq(organizationMembers.orgId, orgId)),
     )
     .where(eq(users.id, userId));
-  if (!row) throw notFound('用户');
+  if (!row) throw notFound('user');
   return { ...row, orgId: row.orgRole === null ? null : orgId };
 }
 
@@ -463,7 +477,7 @@ async function loadTarget(db: Database, actorType: MemberActorType, id: string, 
     .select({ id: agents.id, orgId: agents.orgId, name: agents.name })
     .from(agents)
     .where(eq(agents.id, id));
-  if (!row) throw notFound('Agent');
+  if (!row) throw notFound('agent');
   return row;
 }
 
@@ -473,7 +487,12 @@ async function loadRole(db: Database, orgId: string, key: string) {
     .from(roles)
     .where(and(eq(roles.orgId, orgId), eq(roles.key, key)));
   if (!row) {
-    throw new ApiError('VALIDATION_FAILED', `没有这个角色：${key}`, { role: key });
+    throw fail(
+      'VALIDATION_FAILED',
+      'member.unknown_role',
+      `没有这个角色：${key}`,
+      { params: { role: key }, details: { role: key } },
+    );
   }
   return { ...row, appliesTo: row.appliesTo as MemberActorType[] };
 }

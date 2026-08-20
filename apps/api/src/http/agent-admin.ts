@@ -35,7 +35,7 @@ import {
   maskEnvOverrides,
   SecretConfigError,
 } from '../modules/security/secrets';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * Agent 档案 —— 建 N 个 Agent，每个自带 headless CLI 类型与它的个性化配置。
@@ -165,10 +165,11 @@ export async function createAgent(
 
   const credential = input.credential?.trim() || null;
   if (spec.credential && !credential && !credentialGivenInEnv(config)) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
-      `${spec.label} 需要凭证（${spec.credential.label}）。可填 \`env:变量名\` 让凭证留在进程环境里，` +
-        '或在运行时配置的环境变量表里直接给出对应的变量。',
+      'agent.runtime_needs_credential',
+      `${spec.label} 需要凭证（${spec.credential.label}）。可填 \`env:变量名\` 让凭证留在进程环境里，` + '或在运行时配置的环境变量表里直接给出对应的变量。',
+      { params: { kind: spec.kind } },
     );
   }
 
@@ -235,7 +236,7 @@ async function loadOwnedAgent(db: Database, orgId: string, agentId: string) {
     .select()
     .from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
-  if (!row) throw notFound('Agent');
+  if (!row) throw notFound('agent');
   return row;
 }
 
@@ -284,7 +285,7 @@ export async function updateAgent(
     );
   }
   if (direction === 'grant' && !input.reason?.trim()) {
-    throw new ApiError('VALIDATION_FAILED', '放宽 Agent 权限必须填写原因');
+    throw fail('VALIDATION_FAILED', 'agent.widen_needs_reason', '放宽 Agent 权限必须填写原因');
   }
 
   /**
@@ -373,9 +374,12 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(and(eq(agentRuns.agentId, agentId), inArray(agentRuns.status, [...ACTIVE_RUN_STATUSES])));
 
   if ((active?.n ?? 0) > 0) {
-    throw new ApiError('VERSION_CONFLICT', `该 Agent 还有 ${active!.n} 个执行中的 Run，无法删除`, {
-      activeRuns: active!.n,
-    });
+    throw fail(
+      'VERSION_CONFLICT',
+      'agent.has_active_runs',
+      `该 Agent 还有 ${active!.n} 个执行中的 Run，无法删除`,
+      { params: { count: active!.n }, details: { activeRuns: active!.n, } },
+    );
   }
 
   /**
@@ -593,6 +597,8 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
   let capability: ReturnType<typeof buildCapability> | null = null;
   let reachable = false;
   let problem: string | null = null;
+  /** ★ 与 problem 配对的码。界面读码，日志读句子 */
+  let problemCode: 'probe_failed' | 'no_adapter' | null = null;
 
   if (registry.has(row.id)) {
     try {
@@ -600,9 +606,11 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
       reachable = true;
     } catch (err) {
       problem = err instanceof Error ? err.message : '能力探测失败';
+      problemCode = 'probe_failed';
     }
   } else {
     problem = `本进程没有 ${row.runtimeKind} 的适配器实现，任务派不出去`;
+    problemCode = 'no_adapter';
   }
 
   return {
@@ -624,6 +632,8 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
      *   而报错不会指向「那个环境变量没设置」。
      */
     runtimeConfigProblems: describeEnvOverrides(envOverridesOf(row.runtimeConfig)),
+    problemCode,
+    problemParams: problemCode === 'no_adapter' ? { kind: row.runtimeKind } : undefined,
     endpoint: row.endpoint,
 
     /** ★ 只回 hint 与可用性判断，永不回原值 */
@@ -631,6 +641,9 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     credentialUsable: cred.usable,
     credentialKind: cred.kind,
     credentialProblem: cred.problem,
+    /** ★ 与上面那句中文配对的码，界面据此取词 */
+    credentialProblemCode: cred.problemCode,
+    credentialProblemParams: cred.problemParams,
 
     registered: registry.has(row.id),
     reachable,
@@ -674,9 +687,12 @@ function buildCapability(manifest: Parameters<typeof checkCompatibility>[0]) {
 
 function assertKind(kind: string) {
   if (!isKnownRuntimeKind(kind)) {
-    throw new ApiError('VALIDATION_FAILED', `不支持的运行时类型：${kind}`, {
-      supported: RUNTIME_KIND_SPECS.map((k) => k.kind),
-    });
+    throw fail(
+      'VALIDATION_FAILED',
+      'agent.unsupported_runtime_kind',
+      `不支持的运行时类型：${kind}`,
+      { params: { kind }, details: { supported: RUNTIME_KIND_SPECS.map((k) => k.kind), } },
+    );
   }
   return runtimeKindSpec(kind)!;
 }
@@ -699,9 +715,12 @@ function prepareConfig(
      *   放行的表现是派发成功、CLI 启动时报一句没人看的参数错误，
      *   而界面上这个 Agent 显示为配置完好。
      */
-    throw new ApiError('VALIDATION_FAILED', `运行时配置不合法：${result.issues[0]!.message}`, {
-      issues: result.issues,
-    });
+    throw fail(
+      'VALIDATION_FAILED',
+      'agent.invalid_runtime_config',
+      `运行时配置不合法：${result.issues[0]!.message}`,
+      { details: { issues: result.issues, } },
+    );
   }
 
   // 该运行时没有环境变量表这一项（如 mock）时不要凭空塞一个 env 键进去
@@ -716,7 +735,12 @@ function prepareConfig(
       unknownKeys: result.unknownKeys,
     };
   } catch (err) {
-    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    if (err instanceof SecretConfigError) throw fail(
+      'VALIDATION_FAILED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 }
@@ -743,14 +767,19 @@ function credentialColumns(credential: string | null) {
   try {
     return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential) };
   } catch (err) {
-    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    if (err instanceof SecretConfigError) throw fail(
+      'VALIDATION_FAILED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 }
 
 async function assertOwner(db: Database, ownerId: string) {
   const [u] = await db.select({ id: users.id }).from(users).where(eq(users.id, ownerId));
-  if (!u) throw notFound('负责人');
+  if (!u) throw notFound('owner');
 }
 
 export interface AgentCeilingRecord {
@@ -772,18 +801,18 @@ function assertCeilingSane(c: AgentCeilingRecord) {
   const denied = new Set(c.deniedCapabilities);
   const conflict = (c.capabilityCeiling ?? []).filter((x) => denied.has(x));
   if (conflict.length > 0) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
-      `以下能力同时出现在上限与硬拒绝里：${conflict
-        .map((x) => CAPABILITY_SPECS[x].label)
-        .join('、')}。拒绝优先级更高，它们实际拿不到`,
-      { conflict },
+      'agent.capability_in_ceiling_and_denial',
+      `以下能力同时出现在上限与硬拒绝里：${conflict .map((x) => CAPABILITY_SPECS[x].label) .join('、')}。拒绝优先级更高，它们实际拿不到`,
+      { params: { capabilities: conflict.join(', ') }, details: { conflict } },
     );
   }
 
   if (c.capabilityCeiling !== null && c.capabilityCeiling.length === 0) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'agent.empty_capability_ceiling',
       '能力上限是空的 —— 这个 Agent 在任何项目里都干不了活。不想设上限请留空（不传），而不是给一个空清单',
     );
   }

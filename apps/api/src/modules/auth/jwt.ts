@@ -1,3 +1,4 @@
+import type { ErrorReason } from '@apos/contracts';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
@@ -31,8 +32,19 @@ export interface TokenClaims {
   exp: number;
 }
 
+/**
+ * ★ 带原因码 / Carries a reason code.
+ *
+ *   这个错最终会变成一条 HTTP 报错显示给用户，所以它不能只有一句中文 ——
+ *   界面要按码取词才能同时服务中英文两套。构造时就要求给码，
+ *   而不是在 http 层反过来匹配这句话（匹配一句随时会改的话是定时炸弹）。
+ */
 export class TokenError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: ErrorReason,
+    readonly params?: Record<string, string | number>,
+  ) {
     super(message);
     this.name = 'TokenError';
   }
@@ -101,40 +113,40 @@ export function signToken(userId: string, opts: { ttlSeconds?: number } = {}): s
  */
 export function verifyToken(token: string): TokenClaims {
   const parts = token.split('.');
-  if (parts.length !== 3) throw new TokenError('令牌格式不合法');
+  if (parts.length !== 3) throw new TokenError('令牌格式不合法', 'auth.token_malformed');
   const [head, body, mac] = parts as [string, string, string];
 
   let header: { alg?: unknown; typ?: unknown };
   try {
     header = JSON.parse(Buffer.from(head, 'base64url').toString('utf8'));
   } catch {
-    throw new TokenError('令牌格式不合法');
+    throw new TokenError('令牌格式不合法', 'auth.token_malformed');
   }
   // ★★ 算法必须是字面量 HS256。`none` 与非对称算法一律拒
-  if (header.alg !== ALG) throw new TokenError('令牌签名算法不被接受');
+  if (header.alg !== ALG) throw new TokenError('令牌签名算法不被接受', 'auth.token_bad_algorithm');
 
   const expected = Buffer.from(sign(`${head}.${body}`), 'utf8');
   const actual = Buffer.from(mac, 'utf8');
   // ★ 长度不等时 timingSafeEqual 会抛，先挡一道；长度本身不是秘密
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    throw new TokenError('令牌签名不匹配');
+    throw new TokenError('令牌签名不匹配', 'auth.token_bad_signature');
   }
 
   let claims: Partial<TokenClaims>;
   try {
     claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   } catch {
-    throw new TokenError('令牌格式不合法');
+    throw new TokenError('令牌格式不合法', 'auth.token_malformed');
   }
 
   if (typeof claims.sub !== 'string' || claims.sub === '') {
-    throw new TokenError('令牌里没有身份');
+    throw new TokenError('令牌里没有身份', 'auth.token_no_subject');
   }
   if (typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {
-    throw new TokenError('令牌缺少有效期');
+    throw new TokenError('令牌缺少有效期', 'auth.token_no_expiry');
   }
   if (claims.exp * 1000 <= Date.now()) {
-    throw new TokenError('登录已过期，请重新登录');
+    throw new TokenError('登录已过期，请重新登录', 'auth.token_expired');
   }
 
   return { sub: claims.sub, iat: claims.iat, exp: claims.exp };

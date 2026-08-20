@@ -1,7 +1,7 @@
 import type { Permission } from '@apos/domain';
 import { PERMISSION_SPECS } from '@apos/domain';
 import type { ChangeDirection } from '@apos/domain';
-import { ApiError } from './errors';
+import { fail } from './errors';
 
 /**
  * 受治理的变更 —— 一条固定顺序的流水线。
@@ -62,10 +62,11 @@ export async function executeGovernedMutation<T>(input: GovernedMutationInput<T>
   // ② 治理要求：目录说要什么就校什么，判定在事务之前
   const governance = PERMISSION_SPECS[permission].governance;
   if (governance?.reason && !input.reason?.trim()) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'agent.change_needs_reason',
       `「${PERMISSION_SPECS[permission].label}」必须填写原因`,
-      { permission },
+      { details: { permission } },
     );
   }
 

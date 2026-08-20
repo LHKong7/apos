@@ -20,7 +20,7 @@ import {
   SecretConfigError,
 } from '../modules/security/secrets';
 import { localMountRootsFromEnv } from '../modules/workspace';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 存储目标登记 —— 非 Git 的工作区来源。
@@ -165,6 +165,9 @@ export async function listStorageTargets(db: Database, orgId: string, projectId:
         credentialHint: r.credentialHint,
         credentialUsable: cred.usable,
         credentialProblem: cred.problem,
+        /** ★ 与上面那句中文配对的码，界面据此取词 */
+        credentialProblemCode: cred.problemCode,
+        credentialProblemParams: cred.problemParams,
         warnings: targetWarnings(r, mountRoots),
       };
     }),
@@ -245,10 +248,11 @@ function assertMountRootAllowed(kind: string, rootPath: string | null | undefine
   if (roots.length === 0) return; // 部署方没有限定范围
   if (isMountRootAllowed(rootPath, roots)) return;
 
-  throw new ApiError(
+  throw fail(
     'VALIDATION_FAILED',
+    'storage.path_outside_mount_roots',
     `这个路径不在 APOS_LOCAL_MOUNT_ROOTS 允许的范围内（${roots.join('、')}）`,
-    { code: 'path_outside_mount_roots', params: { roots: roots.join('、') }, field: 'rootPath' },
+    { params: { roots: roots.join('、') }, details: { code: 'path_outside_mount_roots', params: { roots: roots.join('、') }, field: 'rootPath' } },
   );
 }
 
@@ -263,7 +267,12 @@ export async function createStorageTarget(
     .from(storageTargets)
     .where(and(eq(storageTargets.orgId, orgId), eq(storageTargets.ref, input.ref)));
   if (existing.length > 0) {
-    throw new ApiError('VERSION_CONFLICT', `标识 ${input.ref} 已被占用`, { ref: input.ref });
+    throw fail(
+      'VERSION_CONFLICT',
+      'storage.ref_taken',
+      `标识 ${input.ref} 已被占用`,
+      { params: { ref: input.ref }, details: { ref: input.ref } },
+    );
   }
 
   /**
@@ -278,7 +287,7 @@ export async function createStorageTarget(
 
   if (input.projectId) {
     const [p] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, input.projectId));
-    if (!p) throw notFound('项目');
+    if (!p) throw notFound('project');
   }
 
   const [row] = await db
@@ -314,7 +323,7 @@ export async function updateStorageTarget(
    *   要换类型就删了重建 —— 这也让「授权指向它的 Agent」那道检查有机会跑。
    */
   if (input.kind && input.kind !== existing.kind) {
-    throw new ApiError('VALIDATION_FAILED', '不能修改存储目标的类型，请删除后重新登记');
+    throw fail('VALIDATION_FAILED', 'storage.type_immutable', '不能修改存储目标的类型，请删除后重新登记');
   }
 
   assertMountRootAllowed(existing.kind, input.rootPath ?? existing.rootPath);
@@ -335,11 +344,11 @@ export async function updateStorageTarget(
   if (input.writable === false && existing.writable) {
     const dependents = await deliveryDependents(db, targetId);
     if (dependents.length > 0) {
-      throw new ApiError(
+      throw fail(
         'VERSION_CONFLICT',
-        `还有 ${dependents.length} 条登记把产出交货到 ${existing.ref}，` +
-          `改成只读会让它们的产出静默落空：${dependents.join('、')}`,
-        { dependents },
+        'storage.readonly_would_drop_deliveries',
+        `还有 ${dependents.length} 条登记把产出交货到 ${existing.ref}，` + `改成只读会让它们的产出静默落空：${dependents.join('、')}`,
+        { params: { count: dependents.length, ref: existing.ref, dependents: dependents.join('、') }, details: { dependents } },
       );
     }
   }
@@ -394,10 +403,11 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
     a.scopes.some((s) => s.kind === 'dataset' && s.ref === row.ref && s.access !== 'none'),
   );
   if (referencing.length > 0) {
-    throw new ApiError(
+    throw fail(
       'VERSION_CONFLICT',
+      'storage.referenced_by_agents',
       `还有 ${referencing.length} 个 Agent 的资源范围指向存储目标 ${row.ref}`,
-      { agents: referencing.map((a) => a.name) },
+      { params: { count: referencing.length, ref: row.ref }, details: { agents: referencing.map((a) => a.name) } },
     );
   }
 
@@ -411,10 +421,11 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
    */
   const dependents = await deliveryDependents(db, targetId);
   if (dependents.length > 0) {
-    throw new ApiError(
+    throw fail(
       'VERSION_CONFLICT',
+      'storage.referenced_by_deliveries',
       `还有 ${dependents.length} 条登记把产出交货到 ${row.ref}：${dependents.join('、')}`,
-      { dependents },
+      { params: { count: dependents.length, ref: row.ref, dependents: dependents.join('、') }, details: { dependents } },
     );
   }
 
@@ -647,16 +658,24 @@ function assertShapeAfterUpdate(
     input[field] === undefined ? existing[field] : (input[field]?.trim() ?? null);
 
   if (existing.kind === 'object_storage') {
-    if (!after('endpoint')) throw new ApiError('VALIDATION_FAILED', '对象存储必须填端点地址');
-    if (!after('bucket')) throw new ApiError('VALIDATION_FAILED', '对象存储必须填 bucket');
+    if (!after('endpoint')) throw fail(
+      'VALIDATION_FAILED',
+      'storage.object_store_needs_endpoint',
+      '对象存储必须填端点地址',
+    );
+    if (!after('bucket')) throw fail(
+      'VALIDATION_FAILED',
+      'storage.object_store_needs_bucket',
+      '对象存储必须填 bucket',
+    );
   } else if (!after('rootPath')) {
-    throw new ApiError('VALIDATION_FAILED', '本地目录必须填绝对路径');
+    throw fail('VALIDATION_FAILED', 'storage.local_needs_absolute_path', '本地目录必须填绝对路径');
   }
 
   // ★ 相对路径会被 resolve 成服务进程的当前目录，而那通常是代码仓库本身
   const root = input.rootPath?.trim();
   if (existing.kind === 'local' && root && !isAbsolute(root)) {
-    throw new ApiError('VALIDATION_FAILED', '必须是绝对路径（以 / 开头）');
+    throw fail('VALIDATION_FAILED', 'storage.path_must_be_absolute', '必须是绝对路径（以 / 开头）');
   }
 }
 
@@ -684,7 +703,7 @@ async function loadOwned(db: Database, orgId: string, targetId: string) {
     .select()
     .from(storageTargets)
     .where(and(eq(storageTargets.id, targetId), eq(storageTargets.orgId, orgId)));
-  if (!row) throw notFound('存储目标');
+  if (!row) throw notFound('storage_target');
   return row;
 }
 
@@ -708,7 +727,12 @@ function credentialColumns(credential: string | null) {
   try {
     return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential, '对象存储凭证') };
   } catch (err) {
-    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    if (err instanceof SecretConfigError) throw fail(
+      'VALIDATION_FAILED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 }
@@ -734,7 +758,7 @@ export async function resolveDeliveryTarget(
 ): Promise<string | null> {
   if (!targetId) return null;
   if (selfId && targetId === selfId) {
-    throw new ApiError('VALIDATION_FAILED', '交货目标不能是它自己');
+    throw fail('VALIDATION_FAILED', 'storage.delivery_target_self', '交货目标不能是它自己');
   }
 
   const [target] = await db
@@ -742,14 +766,25 @@ export async function resolveDeliveryTarget(
     .from(storageTargets)
     .where(and(eq(storageTargets.id, targetId), eq(storageTargets.orgId, orgId)));
 
-  if (!target) throw new ApiError('VALIDATION_FAILED', '交货目标不存在，或不属于这个组织');
+  if (!target) throw fail(
+    'VALIDATION_FAILED',
+    'storage.delivery_target_missing',
+    '交货目标不存在，或不属于这个组织',
+  );
   if (target.status !== 'active') {
-    throw new ApiError('VALIDATION_FAILED', `交货目标 ${target.ref} 已停用`);
+    throw fail(
+      'VALIDATION_FAILED',
+      'storage.delivery_target_disabled',
+      `交货目标 ${target.ref} 已停用`,
+      { params: { ref: target.ref } },
+    );
   }
   if (!target.writable) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'storage.delivery_target_readonly',
       `交货目标 ${target.ref} 登记为只读，收尾时会跳过写回 —— 请先把它改成可写`,
+      { params: { ref: target.ref } },
     );
   }
   return target.id;
@@ -762,6 +797,11 @@ async function assertRefFree(db: Database, orgId: string, ref: string) {
     .from(repositories)
     .where(and(eq(repositories.orgId, orgId), eq(repositories.ref, ref)));
   if (repo) {
-    throw new ApiError('VERSION_CONFLICT', `标识 ${ref} 已被一个代码仓库占用`, { ref });
+    throw fail(
+      'VERSION_CONFLICT',
+      'storage.ref_taken_by_repository',
+      `标识 ${ref} 已被一个代码仓库占用`,
+      { params: { ref }, details: { ref } },
+    );
   }
 }

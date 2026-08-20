@@ -2,7 +2,7 @@ import { useT } from '../../lib/i18n';
 import clsx from 'clsx';
 import type { Analytics, AgentPerf } from '@apos/domain';
 import { BarChart, StatTile } from '../../features/analytics/charts';
-import { tokens } from '../../lib/format';
+import { failureReasonLabel, tokens } from '../../lib/format';
 import { Card } from './Card';
 import {
   Table,
@@ -119,7 +119,8 @@ export function AgentTab({ data }: { data: Analytics }) {
       <Card title={t('agentTab.failureReasons')} subtitle={t('agentTab.failureReasonsHint')}>
         <BarChart
           data={agent.failureReasons.map((r) => ({
-            label: r.label,
+            /** ★ 错误分类是枚举，界面按码取词 —— `r.label` 是服务端的中文 */
+            label: failureReasonLabel(r.reason),
             value: r.count,
             display: t('hitl.timesPercent', { count: r.count, percent: r.percent }),
             tone: 'waiting' as const,

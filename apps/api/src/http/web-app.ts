@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { ApiError, sendError } from './errors';
+import { fail, sendError } from './errors';
 
 /**
  * 单机部署时由 API 进程直接托管前端构建产物。
@@ -71,7 +71,12 @@ export function registerWebApp(app: FastifyInstance, distDir: string) {
    */
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {
-      return sendError(reply, new ApiError('NOT_FOUND', `没有这个接口：${req.method} ${req.url}`));
+      return sendError(reply, fail(
+        'NOT_FOUND',
+        'request.no_such_endpoint',
+        `没有这个接口：${req.method} ${req.url}`,
+        { params: { method: req.method, url: req.url } },
+      ));
     }
 
     // 缓存头由上面的 setHeaders 统一负责，这里不重复设（设了也会被覆盖）

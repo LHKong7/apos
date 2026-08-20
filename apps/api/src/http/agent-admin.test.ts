@@ -472,8 +472,18 @@ describe('运行时配置里的环境变量表', () => {
     delete process.env['MISSING_GATEWAY_TOKEN'];
     const created = await envAgent({ ANTHROPIC_AUTH_TOKEN: 'env:MISSING_GATEWAY_TOKEN' });
 
+    /**
+     * ★ 断言的是**码与参数**，不是那句中文。
+     *   界面照码取词，所以码错了才是 bug；中文句子只是日志兜底，
+     *   盯着它写断言的话，改一个标点都会红。
+     */
     expect(created.json().agent.runtimeConfigProblems).toEqual([
-      '环境变量 ANTHROPIC_AUTH_TOKEN：环境变量 MISSING_GATEWAY_TOKEN 未设置',
+      {
+        key: 'ANTHROPIC_AUTH_TOKEN',
+        problem: '环境变量 ANTHROPIC_AUTH_TOKEN：环境变量 MISSING_GATEWAY_TOKEN 未设置',
+        problemCode: 'env_not_set',
+        problemParams: { name: 'MISSING_GATEWAY_TOKEN' },
+      },
     ]);
   });
 

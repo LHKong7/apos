@@ -61,10 +61,10 @@ export async function listRequirements(db: Database, projectId: string) {
  */
 export async function getPlanDetail(db: Database, planId: string) {
   const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
-  if (!plan) throw notFound('计划');
+  if (!plan) throw notFound('plan');
 
   const [project] = await db.select().from(projects).where(eq(projects.id, plan.projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const tasks = await db
     .select()
@@ -246,7 +246,7 @@ function firstLine(text: string): string {
  */
 export async function comparePlans(db: Database, planId: string, againstVersion?: number) {
   const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
-  if (!plan) throw notFound('计划');
+  if (!plan) throw notFound('plan');
 
   const siblings = await db
     .select()

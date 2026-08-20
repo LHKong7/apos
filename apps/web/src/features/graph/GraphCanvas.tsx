@@ -177,7 +177,12 @@ export function GraphCanvas({
                   stroke="var(--graph-lane-stroke)"
                 />
                 <text x={-16} y={lane.y + 16} fontSize={11} fill="var(--graph-sub)">
-                  {lane.label}
+                  {/*
+                    ★ 「未分配」是平台自己的词，走词条；其余泳道名是执行者的
+                      名字（人或 Agent），那是用户自己起的，原样显示 ——
+                      把用户起的名翻译一遍等于给它改名。
+                  */}
+                  {lane.key === 'unassigned' ? t('graph.lane.unassigned') : lane.label}
                 </text>
               </g>
             ))}

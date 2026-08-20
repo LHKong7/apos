@@ -42,7 +42,7 @@ import {
   type SyncContext,
 } from '@apos/integrations';
 import { mergeTypeDataNested } from '../modules/work-item/json-merge';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 集成设置（页面文档 14）。
@@ -62,7 +62,7 @@ export async function listIntegrations(
   projectId: string,
 ) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const rows = await db
     .select()
@@ -260,7 +260,7 @@ export async function createIntegration(
   },
 ) {
   const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const [dup] = await db
     .select()
@@ -272,18 +272,20 @@ export async function createIntegration(
       ),
     );
   if (dup) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'integration.provider_already_connected',
       `该项目已连接 ${PROVIDER_LABELS[input.provider]}。同一项目同一系统只能连一个对象，否则同步目标含混`,
-      { existingId: dup.id },
+      { params: { provider: input.provider }, details: { existingId: dup.id } },
     );
   }
 
   if (!registry.has(input.provider)) {
-    throw new ApiError(
+    throw fail(
       'UNSUPPORTED_FEATURE',
+      'integration.transport_not_implemented',
       `${PROVIDER_LABELS[input.provider]} 的传输层还没有实现，现在连上也同步不了`,
-      { provider: input.provider },
+      { params: { provider: input.provider }, details: { provider: input.provider } },
     );
   }
 
@@ -292,9 +294,12 @@ export async function createIntegration(
 
   const test = await adapter.testConnection(conn);
   if (!test.ok) {
-    throw new ApiError('EXTERNAL_ERROR', `连接测试失败：${test.message}`, {
-      provider: input.provider,
-    });
+    throw fail(
+      'EXTERNAL_ERROR',
+      'integration.connection_test_failed',
+      `连接测试失败：${test.message}`,
+      { params: { detail: test.message }, details: { provider: input.provider, } },
+    );
   }
 
   const scopes = await adapter.grantedScopes(conn);
@@ -309,10 +314,11 @@ export async function createIntegration(
     (NEVER_GRANTED_SCOPES[input.provider] ?? []).includes(s),
   );
   if (forbidden.length > 0) {
-    throw new ApiError(
+    throw fail(
       'FORBIDDEN',
+      'integration.forbidden_scopes',
       `授权包含不允许的权限：${forbidden.join('、')}。这类操作必须经过 Policy 判定，不能由集成层直接放开`,
-      { forbidden },
+      { params: { scopes: forbidden.join(', ') }, details: { forbidden } },
     );
   }
 
@@ -377,7 +383,7 @@ export async function updateSyncMapping(
   userId: string,
 ) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   const before = await db
     .select()
@@ -390,10 +396,11 @@ export async function updateSyncMapping(
   for (const c of changes) {
     const options = FIELD_DEFAULTS[c.field].options;
     if (!options.includes(c.sourceOfTruth)) {
-      throw new ApiError(
+      throw fail(
         'VALIDATION_FAILED',
+        'integration.field_source_unsupported',
         `「${SYNC_FIELD_LABELS[c.field]}」不支持以${c.sourceOfTruth === 'apos' ? ' APOS ' : '外部系统'}为准：${FIELD_DEFAULTS[c.field].why}`,
-        { field: c.field, options },
+        { params: { field: c.field, side: c.sourceOfTruth }, details: { field: c.field, options } },
       );
     }
 
@@ -438,13 +445,16 @@ export async function runSync(
   integrationId: string,
 ) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   const provider = row.provider as IntegrationProvider;
   if (!registry.has(provider)) {
-    throw new ApiError('UNSUPPORTED_FEATURE', `${PROVIDER_LABELS[provider]} 的传输层还没有实现`, {
-      provider,
-    });
+    throw fail(
+      'UNSUPPORTED_FEATURE',
+      'integration.transport_not_implemented',
+      `${PROVIDER_LABELS[provider]} 的传输层还没有实现`,
+      { params: { provider }, details: { provider, } },
+    );
   }
   const adapter = registry.get(provider);
   const conn = { config: row.config, credentialRef: row.credentialRef };
@@ -509,9 +519,12 @@ export async function runSync(
           updatedAt: new Date(),
         })
         .where(eq(integrations.id, integrationId));
-      throw new ApiError('EXTERNAL_ERROR', `同步已暂停：${e instanceof Error ? e.message : '外部服务不可用'}`, {
-        integrationId,
-      });
+      throw fail(
+        'EXTERNAL_ERROR',
+        'integration.sync_paused',
+        `同步已暂停：${e instanceof Error ? e.message : '外部服务不可用'}`,
+        { params: { detail: e instanceof Error ? e.message : 'unavailable' }, details: { integrationId, } },
+      );
     }
 
     if (!external) continue;
@@ -759,22 +772,27 @@ export async function resolveConflict(
     .select()
     .from(syncConflicts)
     .where(eq(syncConflicts.id, input.conflictId));
-  if (!conflict) throw notFound('冲突');
+  if (!conflict) throw notFound('conflict');
   if (conflict.status !== 'pending') {
-    throw new ApiError('VERSION_CONFLICT', '该冲突已被处理', { status: conflict.status });
+    throw fail(
+      'VERSION_CONFLICT',
+      'integration.conflict_already_handled',
+      '该冲突已被处理',
+      { details: { status: conflict.status } },
+    );
   }
 
   const [row] = await db
     .select()
     .from(integrations)
     .where(eq(integrations.id, conflict.integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   const [link] = await db
     .select()
     .from(integrationObjectLinks)
     .where(eq(integrationObjectLinks.id, conflict.linkId));
-  if (!link) throw notFound('外部对象映射');
+  if (!link) throw notFound('external_object_link');
 
   const field = conflict.field as SyncField;
   const apos = conflict.aposSide as unknown as SideSnapshot;
@@ -850,7 +868,7 @@ export async function resolveConflict(
  */
 export async function disconnectImpact(db: Database, integrationId: string) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   const links = await db
     .select()
@@ -895,7 +913,7 @@ export async function disconnectImpact(db: Database, integrationId: string) {
 
 export async function disconnectIntegration(db: Database, integrationId: string) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   await db.delete(integrations).where(eq(integrations.id, integrationId));
   return { ok: true as const, projectId: row.projectId, orgId: row.orgId, provider: row.provider };
@@ -907,11 +925,14 @@ export async function updateNotificationConfig(
   config: NotificationConfig,
 ) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
   if (row.category !== 'communication') {
-    throw new ApiError('VALIDATION_FAILED', '只有协同类集成才有通知配置', {
-      category: row.category,
-    });
+    throw fail(
+      'VALIDATION_FAILED',
+      'integration.notify_needs_collab_kind',
+      '只有协同类集成才有通知配置',
+      { details: { category: row.category, } },
+    );
   }
 
   await db
@@ -939,10 +960,10 @@ export async function linkObject(
     .select()
     .from(integrations)
     .where(eq(integrations.id, input.integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
 
   const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
-  if (!item) throw notFound('任务');
+  if (!item) throw notFound('work_item');
 
   const [dup] = await db
     .select()
@@ -959,10 +980,11 @@ export async function linkObject(
      *   两个映射意味着回写有两个目标、拉取有两个来源，
      *   SoT 判定当场失去意义。
      */
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'integration.work_item_already_linked',
       `该任务已映射到 ${dup.externalKey}。一个任务只能映射一个外部对象，否则同步没有确定的方向`,
-      { existing: dup.externalKey },
+      { params: { externalKey: dup.externalKey }, details: { existing: dup.externalKey } },
     );
   }
 
@@ -1025,18 +1047,24 @@ export async function ingestCiResults(
   integrationId: string,
 ) {
   const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId));
-  if (!row) throw notFound('集成');
+  if (!row) throw notFound('integration');
   if (row.category !== 'code') {
-    throw new ApiError('VALIDATION_FAILED', '只有代码类集成能回流 CI 结果', {
-      category: row.category,
-    });
+    throw fail(
+      'VALIDATION_FAILED',
+      'integration.ci_needs_code_kind',
+      '只有代码类集成能回流 CI 结果',
+      { details: { category: row.category, } },
+    );
   }
 
   const provider = row.provider as IntegrationProvider;
   if (!registry.has(provider)) {
-    throw new ApiError('UNSUPPORTED_FEATURE', `${PROVIDER_LABELS[provider]} 的传输层还没有实现`, {
-      provider,
-    });
+    throw fail(
+      'UNSUPPORTED_FEATURE',
+      'integration.transport_not_implemented',
+      `${PROVIDER_LABELS[provider]} 的传输层还没有实现`,
+      { params: { provider }, details: { provider, } },
+    );
   }
 
   const adapter = registry.get(provider);

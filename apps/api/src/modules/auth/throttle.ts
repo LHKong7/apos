@@ -1,4 +1,4 @@
-import { ApiError } from '../../http/errors';
+import { fail } from '../../http/errors';
 
 /**
  * 注册端点的粗粒度限流。
@@ -48,10 +48,11 @@ export function assertSignupAllowed(key: string, now: number = Date.now()): void
      *   办法就是不停重试 —— 那正好让限流器一直保持在触发状态。
      */
     const retryInMinutes = Math.ceil((WINDOW_MS - (now - recent[0]!)) / 60_000);
-    throw new ApiError(
+    throw fail(
       'RATE_LIMITED',
+      'auth.signup_rate_limited',
       `注册太频繁了，请 ${retryInMinutes} 分钟后再试`,
-      { retryInMinutes },
+      { params: { retryInMinutes }, details: { retryInMinutes } },
     );
   }
 

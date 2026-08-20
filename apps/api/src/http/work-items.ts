@@ -49,7 +49,7 @@ export async function createWorkItem(
     .select({ id: projects.id, orgId: projects.orgId, identifier: projects.identifier })
     .from(projects)
     .where(eq(projects.id, ctx.projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   if (input.parentId) {
     const [parent] = await db
@@ -62,7 +62,7 @@ export async function createWorkItem(
      *   只是各显示各的。
      */
     if (!parent || parent.projectId !== ctx.projectId) {
-      throw notFound('父任务');
+      throw notFound('parent_work_item');
     }
   }
 

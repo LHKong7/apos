@@ -96,7 +96,7 @@ export async function getAgent(
   agentId: string,
 ) {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!agent) throw notFound('Agent');
+  if (!agent) throw notFound('agent');
 
   const runs = await db
     .select()
@@ -367,7 +367,7 @@ void DEGRADATION_MATRIX;
  */
 async function agentsOfProject(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const rows = await db.select().from(agents).where(eq(agents.orgId, project.orgId));
   const members = await db

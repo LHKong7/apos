@@ -22,7 +22,7 @@ import { DecisionDrawer } from '../../features/decision/DecisionDrawer';
 import { BlockedReasons } from '../../features/work-item/BlockedReasons';
 import { DiagnosticsBanner } from '../../features/graph/DiagnosticsBanner';
 import { WorkItemDrawer } from '../../features/work-item/WorkItemDrawer';
-import { useT, type MessageKey } from '../../lib/i18n';
+import { hasMessage, useT, type MessageKey } from '../../lib/i18n';
 import { Button } from '@/components/ui/button';
 
 /** 延期档位 → 词条键 / Delay level → message key */
@@ -196,6 +196,7 @@ export function OverviewPage() {
               items={d.health.contributions}
               empty={t('overview.health.empty')}
               sign="minus"
+              ns="health"
             />
           )}
           {expand === 'delay' && (
@@ -206,6 +207,7 @@ export function OverviewPage() {
               items={d.delay.contributions}
               empty={t('overview.delay.empty')}
               sign="plus"
+              ns="delay"
               note={t('overview.delay.note')}
             />
           )}
@@ -542,19 +544,41 @@ function MetricCard({
   );
 }
 
+/**
+ * 健康度 / 延期预测的逐项拆解。
+ *
+ * ★★ 每一项的说法按 `key` 从词条表取，不画服务端的 `label` / `detail` ——
+ *   那两个字段是中文，英文界面上会露出来。服务端把句子里的数字
+ *   （百分比、任务数、周数）放在 `params` 里一起送过来，
+ *   由这边的词条按各自语言的语序重新组织。
+ *
+ * ★ `ns` 是命名空间：同一个 key（`blocked`、`rework`）在健康度和延期预测里
+ *   说的是两句不同的话 —— 健康度说「扣了多少分」，延期预测说「为什么会晚」。
+ *   共用一套词条会让其中一边说错话。
+ *
+ * ★ 认不出的 key 回落到服务端那句中文，而不是空白：服务端加了新的扣分项
+ *   而词条还没跟上时，用户要看到的是一句能读的话。
+ */
 function Breakdown({
   title,
   items,
   empty,
   sign,
   note,
+  ns,
 }: {
   title: string;
   items: Contribution[];
   empty: string;
   sign: 'plus' | 'minus';
   note?: string;
+  ns: 'health' | 'delay';
 }) {
+  const t = useT();
+  const copy = (c: Contribution, part: 'label' | 'detail') => {
+    const key = `analytics.${ns}.${c.key}.${part}` as MessageKey;
+    return hasMessage(key) ? t(key, c.params) : part === 'label' ? c.label : c.detail;
+  };
   return (
     <section className="rounded border border-slate-200 bg-white px-3 py-2">
       <h3 className="text-xs font-medium text-slate-700">{title}</h3>
@@ -574,8 +598,8 @@ function Breakdown({
                 {c.delta}
                 {sign === 'plus' ? '%' : ''}
               </span>
-              <span className="w-20 shrink-0 text-slate-700">{c.label}</span>
-              <span className="min-w-0 flex-1 text-slate-500">{c.detail}</span>
+              <span className="w-20 shrink-0 text-slate-700">{copy(c, 'label')}</span>
+              <span className="min-w-0 flex-1 text-slate-500">{copy(c, 'detail')}</span>
             </li>
           ))}
         </ul>

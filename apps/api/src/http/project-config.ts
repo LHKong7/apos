@@ -32,7 +32,7 @@ import {
   resolveSecret,
   SecretConfigError,
 } from '../modules/security/secrets';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 import { resolveDeliveryTarget } from './storage-targets';
 
 /**
@@ -160,6 +160,9 @@ export async function listRepositories(db: Database, orgId: string, projectId: s
         credentialHint: r.credentialHint,
         credentialUsable: cred.usable,
         credentialProblem: cred.problem,
+        /** ★ 与上面那句中文配对的码，界面据此取词 */
+        credentialProblemCode: cred.problemCode,
+        credentialProblemParams: cred.problemParams,
         /**
          * ★ 认证形态决定了配置页该显示哪些字段：token 那套
          *   （用户名占位）和 SSH 那套（私钥、主机公钥）不重叠，
@@ -278,12 +281,17 @@ export async function createRepository(
     .from(repositories)
     .where(and(eq(repositories.orgId, orgId), eq(repositories.ref, input.ref)));
   if (existing.length > 0) {
-    throw new ApiError('VERSION_CONFLICT', `仓库标识 ${input.ref} 已被占用`, { ref: input.ref });
+    throw fail(
+      'VERSION_CONFLICT',
+      'repository.ref_taken',
+      `仓库标识 ${input.ref} 已被占用`,
+      { params: { ref: input.ref }, details: { ref: input.ref } },
+    );
   }
 
   if (input.projectId) {
     const [p] = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, input.projectId));
-    if (!p) throw notFound('项目');
+    if (!p) throw notFound('project');
   }
 
   const [row] = await db
@@ -329,7 +337,7 @@ async function loadOwnedRepo(db: Database, orgId: string, repoId: string) {
     .select()
     .from(repositories)
     .where(and(eq(repositories.id, repoId), eq(repositories.orgId, orgId)));
-  if (!row) throw notFound('仓库');
+  if (!row) throw notFound('repository');
   return row;
 }
 
@@ -593,10 +601,11 @@ export async function deleteRepository(db: Database, orgId: string, repoId: stri
     a.scopes.some((s) => s.kind === 'repo' && s.ref === row.ref && s.access !== 'none'),
   );
   if (referencing.length > 0) {
-    throw new ApiError(
+    throw fail(
       'VERSION_CONFLICT',
+      'repository.referenced_by_agents',
       `还有 ${referencing.length} 个 Agent 的资源范围指向仓库 ${row.ref}`,
-      { agents: referencing.map((a) => a.name) },
+      { params: { count: referencing.length, ref: row.ref }, details: { agents: referencing.map((a) => a.name) } },
     );
   }
 
@@ -651,7 +660,7 @@ export async function createConvention(
   input: z.infer<typeof ConventionInput>,
 ) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const [row] = await db
     .insert(projectConventions)
@@ -680,7 +689,7 @@ export async function updateConvention(
     .select()
     .from(projectConventions)
     .where(eq(projectConventions.id, conventionId));
-  if (!existing) throw notFound('工程约定');
+  if (!existing) throw notFound('project_convention');
 
   const [row] = await db
     .update(projectConventions)
@@ -704,7 +713,7 @@ export async function deleteConvention(db: Database, conventionId: string) {
     .select({ id: projectConventions.id })
     .from(projectConventions)
     .where(eq(projectConventions.id, conventionId));
-  if (!row) throw notFound('工程约定');
+  if (!row) throw notFound('project_convention');
 
   await db.delete(projectConventions).where(eq(projectConventions.id, conventionId));
   return { ok: true as const };
@@ -719,7 +728,12 @@ function credentialColumns(credential: string | null, remoteUrl: string) {
   try {
     return { credentialRef: encodeSecret(credential), credentialHint: hintOf(credential, label) };
   } catch (err) {
-    if (err instanceof SecretConfigError) throw new ApiError('VALIDATION_FAILED', err.message);
+    if (err instanceof SecretConfigError) throw fail(
+      'VALIDATION_FAILED',
+      err.reason,
+      err.message,
+      { params: err.params },
+    );
     throw err;
   }
 }
@@ -751,7 +765,12 @@ function describeSshKey(remoteUrl: string, credential: string): string | null {
   if (!plaintext) return null;
 
   const key = inspectPrivateKey(plaintext);
-  if (key.problem) throw new ApiError('VALIDATION_FAILED', `SSH 私钥不可用：${key.problem}`);
+  if (key.problem) throw fail(
+    'VALIDATION_FAILED',
+    'repository.ssh_key_unusable',
+    `SSH 私钥不可用：${key.problem}`,
+    { params: { problem: key.problem } },
+  );
 
   return key.keyType ? `ssh 私钥（${key.keyType}）` : 'ssh 私钥';
 }

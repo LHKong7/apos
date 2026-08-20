@@ -1,4 +1,4 @@
-import { t, useT, useSpecText, type MessageKey } from '../../lib/i18n';
+import { hasMessage, t, useT, useSpecText, type MessageKey } from '../../lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import type {
   AgentAdminRow,
   ConfigField,
   ConventionRow,
+  CredentialProblemFields,
   CredentialUsageRow,
   RuntimeKindSpec,
 } from '../../lib/api/types';
@@ -69,6 +70,46 @@ type Tab = 'agents' | 'binding' | 'conventions';
  *   is not recomputed when the locale changes, so resolving here would freeze
  *   these labels in whichever language rendered first.
  */
+/**
+ * Agent 健康度那一行的说法。
+ *
+ * ★★ 服务端给的是「码 + 参数 + 一句中文」三件套，界面画的必须是码那一份。
+ *   这一行说的是「这个 Agent 为什么派不出去」—— 全站最需要看懂的一句话之一，
+ *   而它原来在英文界面上是中文。中文那句留作认不出码时的兜底。
+ */
+function runtimeProblemText(agent: {
+  problem: string | null;
+  problemCode: 'probe_failed' | 'no_adapter' | null;
+  problemParams?: Record<string, string | number>;
+}): string {
+  const key = `agentCfg.problem.${agent.problemCode}` as MessageKey;
+  if (agent.problemCode && hasMessage(key)) return t(key, agent.problemParams ?? {});
+  return agent.problem ?? t('agentCfg.health.unregistered');
+}
+
+function credentialProblemText(agent: CredentialProblemFields): string {
+  const key = `credential.problem.${agent.credentialProblemCode}` as MessageKey;
+  if (agent.credentialProblemCode && hasMessage(key)) {
+    return t(key, agent.credentialProblemParams ?? {});
+  }
+  return agent.credentialProblem ?? t('agentCfg.health.badCredential');
+}
+
+/**
+ * ★ 「环境变量 X：<原因>」这句话由界面拼，不由服务端拼 ——
+ *   两层中文套在一起时，英文界面上两层都露馅。
+ */
+function envProblemText(p: {
+  key: string;
+  problem: string;
+  problemCode: 'env_not_set' | 'no_master_key' | 'master_key_mismatch' | 'legacy_fingerprint' | 'unrecognised_format' | null;
+  problemParams?: Record<string, string | number>;
+}): string {
+  const key = `credential.problem.${p.problemCode}` as MessageKey;
+  if (!p.problemCode || !hasMessage(key)) return p.problem;
+  return t('agentCfg.envProblem', { name: p.key, problem: t(key, p.problemParams ?? {}) });
+}
+
 const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
   { key: 'agents', labelKey: 'agentCfg.tab.agentsLabel', hintKey: 'agentCfg.tab.agents' },
   /**
@@ -356,15 +397,15 @@ function AgentCard({
    *   混成一句「不可用」，用户不知道该去装依赖、换 key，还是换个 Agent。
    */
   const health = !agent.registered
-    ? { tone: 'error' as const, text: agent.problem ?? t('agentCfg.health.unregistered') }
+    ? { tone: 'error' as const, text: runtimeProblemText(agent) }
     : !agent.credentialUsable && agent.credentialHint
-      ? { tone: 'error' as const, text: agent.credentialProblem ?? t('agentCfg.health.badCredential') }
+      ? { tone: 'error' as const, text: credentialProblemText(agent) }
       : /*
          * ★ 环境变量表里解不开的引用与凭证不可用是同一类问题：
          *   配置看着完好，派发时才炸，而报错不会指向那个没设置的变量。
          */
         agent.runtimeConfigProblems.length > 0
-        ? { tone: 'error' as const, text: agent.runtimeConfigProblems[0]! }
+        ? { tone: 'error' as const, text: envProblemText(agent.runtimeConfigProblems[0]!) }
         : !agent.reachable
           ? { tone: 'warning' as const, text: agent.problem ?? t('agentCfg.health.probeFailed') }
           : { tone: 'ok' as const, text: t('agentCfg.health.ready') };
@@ -925,8 +966,8 @@ function AgentForm({
           {agent && agent.runtimeConfigProblems.length > 0 && (
             <div className="mt-2 space-y-0.5">
               {agent.runtimeConfigProblems.map((p) => (
-                <p key={p} className="text-[11px] text-rose-600">
-                  ⚠ {p}
+                <p key={p.key} className="text-[11px] text-rose-600">
+                  ⚠ {envProblemText(p)}
                 </p>
               ))}
             </div>

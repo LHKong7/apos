@@ -11,10 +11,35 @@ import type { FlowMetrics, HitlMetrics } from './types';
  */
 
 export interface Contribution {
+  /**
+   * 这一项是什么 / What this contribution is.
+   *
+   * ★★ 界面按它取词（`analytics.health.<key>` / `analytics.delay.<key>`），
+   *   而不是画 `label` 与 `detail` —— 那两个字段是中文。
+   *   同一个 key 在健康度与延期预测里说的是两句不同的话，所以命名空间
+   *   由调用方给：这一层只保证「同一个命名空间下，一个 key 一句话」。
+   *
+   *   The UI resolves copy from this key. A key means one sentence within a
+   *   namespace, which is why the two computations namespace theirs apart.
+   */
   key: string;
+  /**
+   * 中文说法 / Chinese prose.
+   *
+   * ★ 留着是给日志、导出与认不出 key 的界面兜底用的 —— 界面读码，日志读句子。
+   *   删掉它会让「服务端算出了什么」在日志里彻底不可读。
+   */
   label: string;
-  /** 该项的原始表现，用人话写 */
+  /** 该项的原始表现，用人话写。同上，是兜底不是显示源 */
   detail: string;
+  /**
+   * `detail` 那句话里的数字 / The numbers `detail` interpolates.
+   *
+   * ★★ 没有它，界面就只能画那句中文。`detail` 里的百分比、任务数、周数
+   *   都是算出来的，英文句子要用同一批数字重新组织语序 ——
+   *   把它们从句子里再解析出来是不可能的，所以必须原样带出来。
+   */
+  params: Record<string, string | number>;
   /** 对总分的影响，负数是扣分 */
   delta: number;
 }
@@ -65,6 +90,7 @@ export function computeHealth(input: HealthInput): Health {
         key: 'flow_efficiency',
         label: '流动效率',
         detail: `${Math.round(eff * 100)}%，一半以上的时间在等`,
+        params: { pct: Math.round(eff * 100) },
         delta,
       });
     }
@@ -76,6 +102,7 @@ export function computeHealth(input: HealthInput): Health {
       key: 'blocked',
       label: '阻塞任务',
       detail: `${input.blockedTasks} 个任务卡住`,
+      params: { count: input.blockedTasks },
       delta: -Math.min(20, input.blockedTasks * 7),
     });
   }
@@ -86,6 +113,7 @@ export function computeHealth(input: HealthInput): Health {
       key: 'overdue_decisions',
       label: '超时决策',
       detail: `${input.overdueDecisions} 个决策已过期未处理`,
+      params: { count: input.overdueDecisions },
       delta: -Math.min(20, input.overdueDecisions * 10),
     });
   }
@@ -96,6 +124,7 @@ export function computeHealth(input: HealthInput): Health {
       key: 'rework',
       label: '返工率',
       detail: `${Math.round(input.flow.reworkRate * 100)}%，高于 15% 的经验阈值`,
+      params: { pct: Math.round(input.flow.reworkRate * 100) },
       delta: -Math.min(15, Math.round((input.flow.reworkRate - 0.15) * 60)),
     });
   }
@@ -106,6 +135,7 @@ export function computeHealth(input: HealthInput): Health {
       key: 'agent_success',
       label: 'Agent 成功率',
       detail: `${Math.round(input.agentSuccessRate * 100)}%，低于 85%`,
+      params: { pct: Math.round(input.agentSuccessRate * 100) },
       delta: -Math.min(15, Math.round((0.85 - input.agentSuccessRate) * 60)),
     });
   }
@@ -120,6 +150,7 @@ export function computeHealth(input: HealthInput): Health {
         key: 'budget_pace',
         label: '预算消耗',
         detail: `已用 ${Math.round(used * 100)}%，而进度只有 ${Math.round(doneRatio * 100)}%`,
+        params: { usedPct: Math.round(used * 100), donePct: Math.round(doneRatio * 100) },
         delta: -Math.min(15, Math.round((used - doneRatio) * 40)),
       });
     }
@@ -174,19 +205,29 @@ export function predictDelay(input: DelayInput): DelayRisk {
     if (gap > 0) {
       const add = Math.min(0.5, gap * 0.2);
       risk += add;
+      /**
+        * ★ 与下面那条分开成两个 key。同一个 key 底下不能有两句不同的话 ——
+        *   界面按 key 取词，一个 key 对应两句就只能取到其中一句。
+        */
       c.push({
-        key: 'workload',
+        key: 'workload_projected',
         label: '剩余工作量',
         detail: `按当前吞吐 ${throughputPerWeek} 项/周，还需 ${round(weeksNeeded)} 周，而排期只剩 ${round(Math.max(0, weeksLeft))} 周`,
+        params: {
+          throughput: throughputPerWeek,
+          weeksNeeded: round(weeksNeeded),
+          weeksLeft: round(Math.max(0, weeksLeft)),
+        },
         delta: round(add * 100, 0),
       });
     }
   } else if (weeksNeeded === null && input.remainingTasks > 0) {
     // 没有吞吐数据时不硬编一个数，只如实说算不出来
     c.push({
-      key: 'workload',
+      key: 'workload_unknown_rate',
       label: '剩余工作量',
       detail: `${input.remainingTasks} 项未完成，但窗口内没有完成记录，算不出速率`,
+      params: { count: input.remainingTasks },
       delta: 0,
     });
   }
@@ -198,6 +239,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       key: 'blocked',
       label: '阻塞任务',
       detail: `${input.blockedTasks} 个任务卡住，每个都在消耗排期余量`,
+      params: { count: input.blockedTasks },
       delta: round(add * 100, 0),
     });
   }
@@ -209,6 +251,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       key: 'decisions',
       label: '超时决策',
       detail: `${input.overdueDecisions} 个决策已过期，下游任务动不了`,
+      params: { count: input.overdueDecisions },
       delta: round(add * 100, 0),
     });
   }
@@ -220,6 +263,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       key: 'rework',
       label: '返工率',
       detail: `${Math.round(input.flow.reworkRate * 100)}% 的任务被打回过，实际工作量高于表面`,
+      params: { pct: Math.round(input.flow.reworkRate * 100) },
       delta: round(add * 100, 0),
     });
   }
@@ -231,6 +275,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       key: 'agent_success',
       label: 'Agent 成功率',
       detail: `${Math.round(input.agentSuccessRate * 100)}%，失败重试会吃掉时间`,
+      params: { pct: Math.round(input.agentSuccessRate * 100) },
       delta: round(add * 100, 0),
     });
   }
@@ -242,6 +287,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       key: 'flow_efficiency',
       label: '流动效率',
       detail: `${Math.round(input.flow.flowEfficiency * 100)}%，大部分时间在等而不是在做`,
+      params: { pct: Math.round(input.flow.flowEfficiency * 100) },
       delta: round(add * 100, 0),
     });
   }

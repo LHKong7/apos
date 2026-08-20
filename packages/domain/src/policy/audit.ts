@@ -30,12 +30,30 @@ export const POLICY_ISSUE_TYPES = [
 ] as const;
 export type PolicyIssueType = (typeof POLICY_ISSUE_TYPES)[number];
 
+/** 一个反例场景的**结构**。界面据此按自己的语言拼那句 `操作 · 风险高 · 生产环境` */
+export interface ScenarioShape {
+  operationType: string;
+  riskLevel: string;
+  environment: string | null;
+}
+
 export interface PolicyIssue {
+  /**
+   * ★★ 界面按它取词（`policy.issue.<type>`）。每个 type 恰好对应一句话 ——
+   *   这是它能当词条键用的前提，新增 type 时要保持。
+   */
   type: PolicyIssueType;
   severity: 'critical' | 'warning' | 'info';
+  /** 中文兜底。界面读码，日志读句子 */
   message: string;
+  /** 词条里 `{name}` 的实参。规则名是用户起的，原样带 */
+  params?: Record<string, string | number>;
   /** 一个具体的反例场景，比任何描述都好懂 */
   example: string | null;
+  /** 同上，但给的是结构 —— 界面照自己的语言拼，不用服务端那句中文 */
+  exampleContext?: ScenarioShape | null;
+  /** `missing_data_source` 专用：缺的是哪几项 fact。界面自己拼列表 */
+  facts?: string[];
   policyIds: string[];
 }
 
@@ -268,7 +286,9 @@ function findConflicts(
       type: 'conflict',
       severity: 'critical',
       message: `「${winner.name}」会先放行，「${shadowed.name}」的更严要求永远轮不到`,
+      params: { winner: winner.name, shadowed: shadowed.name },
       example: describeScenario(scenario),
+      exampleContext: scenarioShape(scenario),
       policyIds: [winner.id, shadowed.id],
     });
   }
@@ -291,6 +311,7 @@ function findUnreachable(verdicts: Verdicts, policies: Policy[]): PolicyIssue[] 
       type: 'unreachable' as const,
       severity: 'warning' as const,
       message: `「${p.name}」在任何常见场景下都不会命中，可能被更高优先级的规则完全覆盖`,
+      params: { name: p.name },
       example: null,
       policyIds: [p.id],
     }));
@@ -360,6 +381,11 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
         type: hole.byPolicy ? 'too_permissive' : 'coverage_gap',
         severity: 'critical',
         message: `高风险操作「${label}」会被自动放行：${causes.join('；')}`,
+        /**
+         * ★ 操作类型送**枚举键**而不是那个中文 `label` —— 界面自己有
+         *   `policy.operation.*` 那组词条。规则名是用户起的，原样带。
+         */
+        params: { operation: op, ...(hole.byPolicy ? { policy: hole.byPolicy.name } : {}) },
         example: null,
         policyIds: hole.byPolicy ? [hole.byPolicy.id] : [],
       });
@@ -371,6 +397,7 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
         type: 'coverage_gap',
         severity: 'warning',
         message: `高风险操作「${label}」没有任何规则覆盖，走的是自治等级的默认策略`,
+        params: { operation: op },
         example: hole.uncoveredButGated.example,
         policyIds: [],
       });
@@ -391,6 +418,7 @@ function findEverythingGated(verdicts: Verdicts): PolicyIssue[] {
       type: 'everything_gated',
       severity: 'warning',
       message: `当前配置下只有 ${Math.round(share * 100)}% 的场景能自动执行，Agent 几乎无法自主工作`,
+      params: { pct: Math.round(share * 100) },
       example: '检查是否有优先级很高、条件过宽的规则把所有场景都拦下了',
       policyIds: [],
     },
@@ -424,6 +452,7 @@ function findZeroHit(policies: Policy[], hits: HitStats[], wiredFacts: FactKey[]
       type: 'zero_hit' as const,
       severity: 'info' as const,
       message: `「${p.name}」近 30 天一次都没命中 —— 可能条件写错了，也可能这个场景确实没发生`,
+      params: { name: p.name },
       example: null,
       policyIds: [p.id],
     }));
@@ -451,6 +480,13 @@ function findMissingDataSources(policies: Policy[], wiredFacts: FactKey[]): Poli
       type: 'missing_data_source',
       severity: 'warning',
       message: `「${p.name}」依赖${missing.map((f) => FACT_SOURCES[f]).join('、')}，但这些数据源还没接入，该规则不会命中`,
+      /**
+       * ★ 缺的数据源送 **fact 键**，由界面拿自己的词条拼那个列表 ——
+       *   中文用「、」连接，英文用「, 」并且最后一项前要有 "and"。
+       *   在服务端拼好这个列表，等于把连接词也一并硬编成中文。
+       */
+      params: { name: p.name },
+      facts: missing,
       example: null,
       policyIds: [p.id],
     });
@@ -463,6 +499,18 @@ function findMissingDataSources(policies: Policy[], wiredFacts: FactKey[]): Poli
 function matchesScenario(policy: Policy, scenario: Scenario): boolean {
   const [only] = compile([policy]);
   return only ? only.match(scenario.context).matched : false;
+}
+
+/**
+ * 反例场景的结构形态 / The structured form of an example scenario.
+ *
+ * ★ 与 describeScenario() 一一对应，但给的是三个枚举键而不是拼好的中文。
+ *   `操作 · 风险高 · 生产环境` 在英文里是 `Deploy · High risk · Production` ——
+ *   词序一样，但每一段都要各自翻译，所以只能由界面来拼。
+ */
+export function scenarioShape(scenario: Scenario): ScenarioShape {
+  const { operationType, riskLevel, environment } = scenario.context;
+  return { operationType, riskLevel, environment: environment ?? null };
 }
 
 export function describeScenario(scenario: Scenario): string {

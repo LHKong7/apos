@@ -1,9 +1,9 @@
 import { createReadStream } from 'node:fs';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { artifacts, type Database } from '@apos/db';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 产物文件网关。
@@ -69,17 +69,52 @@ function changeIndex(meta: Record<string, unknown>): {
 
 async function loadLocalArtifact(db: Database, artifactId: string) {
   const [row] = await db.select().from(artifacts).where(eq(artifacts.id, artifactId));
-  if (!row) throw notFound('产物');
+  if (!row) throw notFound('artifact');
 
   const root = row.storageKey?.trim();
   if (!root) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'artifact.no_local_archive',
       '这个产物没有本地归档目录 —— git 与对象存储的产物请用它自己的链接打开',
-      { artifactId, storage: row.storage },
+      { details: { artifactId, storage: row.storage } },
     );
   }
   return { row, root: resolve(root) };
+}
+
+/**
+ * realpath 一条**可能还不存在**的路径：解析到最近的存在祖先，剩下的段原样接回。
+ *
+ * Resolve symlinks in a path that may not exist yet: realpath the nearest
+ * existing ancestor, then re-append the missing tail.
+ *
+ * ★★ 不能写成 `realpath(target).catch(() => target)`。
+ *
+ *   target 不存在时 realpath 抛 ENOENT，回落到的是**没解析过**的路径，
+ *   而 root 那一侧解析成功了 —— 两条不同坐标系的路径拿去 relative()
+ *   必然以 `..` 开头，于是「文件不存在」被报成「路径越界」。
+ *   macOS 上 `tmpdir()` 与 `/tmp` 都通往 `/private/…`，归档根只要落在那儿就必踩；
+ *   Linux 上 `/tmp` 是实目录，所以这个 bug 换台机器就消失，很难追。
+ *   代价不只是文案难看：那句话在说「有人拿符号链接往外指」，
+ *   而真相只是文件没了 —— 两者的下一步动作完全不同。
+ *
+ * ★ 顺带把符号链接目录下的缺失文件也判对了：`root/link/nope.txt`
+ *   在旧实现里整条退回、看着还在归档内；现在 `link` 会被解析出去，
+ *   越界的照样拦得住。
+ */
+async function realpathAllowingMissing(p: string): Promise<string> {
+  const missing: string[] = [];
+  let current = p;
+  for (;;) {
+    const real = await realpath(current).catch(() => null);
+    if (real !== null) return missing.length > 0 ? join(real, ...missing) : real;
+    const parent = dirname(current);
+    // ★ 一路到文件系统根都解析不出来（盘符不存在之类）：原样返回，交给上面的字符串判定
+    if (parent === current) return p;
+    missing.unshift(basename(current));
+    current = parent;
+  }
 }
 
 /**
@@ -99,15 +134,24 @@ async function safeResolve(root: string, rel: string): Promise<string> {
   const target = resolve(root, rel);
   const within = relative(root, target);
   if (within === '' || within.startsWith('..') || within.startsWith(sep) || /^[a-zA-Z]:/.test(within)) {
-    throw new ApiError('VALIDATION_FAILED', '路径越界', { path: rel });
+    throw fail(
+      'VALIDATION_FAILED',
+      'artifact.path_escapes_root',
+      '路径越界',
+      { details: { path: rel } },
+    );
   }
 
-  const { realpath } = await import('node:fs/promises');
-  const realRoot = await realpath(root).catch(() => root);
-  const real = await realpath(target).catch(() => target);
+  const realRoot = await realpathAllowingMissing(root);
+  const real = await realpathAllowingMissing(target);
   const realWithin = relative(realRoot, real);
   if (realWithin.startsWith('..') || realWithin.startsWith(sep)) {
-    throw new ApiError('VALIDATION_FAILED', '路径越界（符号链接指向归档目录之外）', { path: rel });
+    throw fail(
+      'VALIDATION_FAILED',
+      'artifact.path_escapes_via_symlink',
+      '路径越界（符号链接指向归档目录之外）',
+      { details: { path: rel } },
+    );
   }
   return target;
 }
@@ -160,6 +204,8 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
       artifactId,
       projectId: row.projectId,
       available: false as const,
+      /** ★ 码给界面，句子给日志与兜底。见 error-reason.ts 的取舍 */
+      reasonCode: 'archive_gone' as const,
       reason: '归档目录已不存在（可能随工作区一起被回收了）',
       files: [],
       truncated: false,
@@ -186,6 +232,7 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
     artifactId,
     projectId: row.projectId,
     available: true as const,
+    reasonCode: null,
     reason: null,
     files: out.sort((a, b) => a.path.localeCompare(b.path)),
     truncated: truncated || changes.truncated,
@@ -203,7 +250,7 @@ export async function readArtifactFile(db: Database, artifactId: string, rel: st
   const full = await safeResolve(root, rel);
 
   const st = await stat(full).catch(() => null);
-  if (!st || !st.isFile()) throw notFound('文件');
+  if (!st || !st.isFile()) throw notFound('file');
 
   const mime = mimeOf(rel);
   const binary = !isTextual(rel, mime);
@@ -217,6 +264,8 @@ export async function readArtifactFile(db: Database, artifactId: string, rel: st
       mime,
       /** ★ 不给内容时要说清楚为什么，并指向下载 */
       preview: null,
+      reasonCode: binary ? ('binary' as const) : ('too_large' as const),
+      reasonParams: binary ? undefined : { kb: MAX_PREVIEW_BYTES / 1024 },
       reason: binary ? '二进制文件，用下载打开' : `文件超过 ${MAX_PREVIEW_BYTES / 1024}KB，用下载打开`,
     };
   }
@@ -228,6 +277,7 @@ export async function readArtifactFile(db: Database, artifactId: string, rel: st
     size: st.size,
     mime,
     preview: await readFile(full, 'utf8'),
+    reasonCode: null,
     reason: null,
   };
 }
@@ -237,7 +287,7 @@ export async function openArtifactFile(db: Database, artifactId: string, rel: st
   const { root } = await loadLocalArtifact(db, artifactId);
   const full = await safeResolve(root, rel);
   const st = await stat(full).catch(() => null);
-  if (!st || !st.isFile()) throw notFound('文件');
+  if (!st || !st.isFile()) throw notFound('file');
 
   return { stream: createReadStream(full), size: st.size, mime: mimeOf(rel), name: rel.split('/').pop() ?? 'file' };
 }

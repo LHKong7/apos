@@ -32,7 +32,7 @@ import { notFound } from './errors';
  */
 export async function getGraph(db: Database, projectId: string, layout: LayoutKind) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const all = await db
     .select()
@@ -94,7 +94,7 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
  */
 export async function getProjectDiagnostics(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const all = await db
     .select()

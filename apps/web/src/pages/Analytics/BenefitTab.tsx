@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { hasMessage, useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -151,11 +151,21 @@ function Lines({
   lines: AnalyticsResponse['benefit']['lines'];
   currency: string;
 }) {
+  const t = useT();
+  /**
+   * ★ 行名与「这个数字怎么来的」按 `key` 取词。服务端那两个字段是中文，
+   *   而这一整块正是最需要说清楚的地方 —— 一句读不懂的依据说明，
+   *   等于没有依据说明。
+   */
+  const copy = (l: (typeof lines)[number], part: 'label' | 'basis') => {
+    const key = `analytics.benefit.${l.key}.${part}` as MessageKey;
+    return hasMessage(key) ? t(key, l.params ?? {}) : part === 'label' ? l.label : l.basis;
+  };
   return (
     <ul className="space-y-1">
       {lines.map((l) => (
         <li key={l.key} className="text-[11px]">
-          <span className="text-slate-700">{l.label}</span>
+          <span className="text-slate-700">{copy(l, 'label')}</span>
           <span className="ml-2 tabular-nums text-slate-800">
             {l.hours > 0 && `${l.hours}h`}
             {l.money !== null && (
@@ -168,7 +178,7 @@ function Lines({
             {l.money === null && l.hours === 0 && <span className="text-slate-300">—</span>}
           </span>
           {/* ★ 每一行都写清这个数字怎么来的，包括其中的假设 */}
-          <span className="mt-0.5 block text-slate-400">{l.basis}</span>
+          <span className="mt-0.5 block text-slate-400">{copy(l, 'basis')}</span>
         </li>
       ))}
     </ul>

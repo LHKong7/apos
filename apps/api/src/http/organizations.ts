@@ -11,7 +11,7 @@ import {
 } from '@apos/db';
 import { humanActor, isOrgAdmin, ORG_ROLE_LABEL, OrgRole } from '@apos/contracts';
 import { emitAndPublish } from '../modules/event/bus';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 import { syncBuiltinRoles } from './roles';
 
 /**
@@ -108,7 +108,12 @@ export async function createOrganization(
     .from(organizations)
     .where(eq(organizations.slug, slug));
   if (existing) {
-    throw new ApiError('VERSION_CONFLICT', `slug ${slug} 已被占用`, { slug });
+    throw fail(
+      'VERSION_CONFLICT',
+      'org.slug_taken',
+      `slug ${slug} 已被占用`,
+      { params: { slug }, details: { slug } },
+    );
   }
 
   const org = await db.transaction((tx) =>
@@ -190,7 +195,12 @@ export async function updateOrganization(
       .select({ id: organizations.id })
       .from(organizations)
       .where(and(eq(organizations.slug, input.slug), ne(organizations.id, ctx.orgId)));
-    if (taken) throw new ApiError('VERSION_CONFLICT', `slug ${input.slug} 已被占用`, { slug: input.slug });
+    if (taken) throw fail(
+      'VERSION_CONFLICT',
+      'org.slug_taken',
+      `slug ${input.slug} 已被占用`,
+      { params: { slug: input.slug }, details: { slug: input.slug } },
+    );
   }
 
   const [row] = await db
@@ -245,10 +255,11 @@ export async function deleteOrganization(
     .from(projects)
     .where(eq(projects.orgId, ctx.orgId));
   if (Number(n) > 0) {
-    throw new ApiError(
+    throw fail(
       'VERSION_CONFLICT',
+      'org.has_projects',
       `组织下还有 ${n} 个项目。请先删除或转移它们 —— 删组织会连同工作项、Agent、Run 与审计记录一起消失，这一步不可逆`,
-      { projectCount: Number(n) },
+      { params: { count: Number(n) }, details: { projectCount: Number(n) } },
     );
   }
 
@@ -257,8 +268,9 @@ export async function deleteOrganization(
     .from(organizationMembers)
     .where(eq(organizationMembers.userId, ctx.actorId));
   if (mine.length <= 1) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'org.last_one_for_you',
       '这是你唯一的组织，删掉之后你将不属于任何组织，界面会整个用不了。请先创建或加入另一个组织。',
     );
   }
@@ -336,12 +348,11 @@ export async function addOrganizationMember(
     .from(users)
     .where(eq(users.email, input.email.trim().toLowerCase()));
   if (!user) {
-    throw new ApiError(
+    throw fail(
       'NOT_FOUND',
-      `没有邮箱为 ${input.email} 的账号。这里只能把**已存在的账号**加进组织 —— ` +
-        '要么让他先自己注册（他会先有一个自己的组织，不影响加进来），' +
-        '要么用「账号管理」直接给他开一个号',
-      { email: input.email },
+      'org.no_account_for_email',
+      `没有邮箱为 ${input.email} 的账号。这里只能把**已存在的账号**加进组织 —— ` + '要么让他先自己注册（他会先有一个自己的组织，不影响加进来），' + '要么用「账号管理」直接给他开一个号',
+      { params: { email: input.email }, details: { email: input.email } },
     );
   }
 
@@ -381,7 +392,7 @@ export async function removeOrganizationMember(
         eq(organizationMembers.userId, targetUserId),
       ),
     );
-  if (!member) throw notFound('组织成员');
+  if (!member) throw notFound('org_member');
 
   if (isOrgAdmin(member.orgRole)) await assertNotLastAdmin(db, ctx.orgId, targetUserId);
 
@@ -428,10 +439,11 @@ export async function assertNotLastAdmin(db: Database, orgId: string, exceptUser
     );
 
   if (others.length === 0) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'org.last_admin',
       '这是组织里最后一个管理员。移除或降级后将没有人能管理身份与组织级规则，请先指定另一位管理员。',
-      { orgId },
+      { details: { orgId } },
     );
   }
 }
@@ -443,7 +455,7 @@ async function loadOrg(db: Database, orgId: string) {
     .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
     .from(organizations)
     .where(eq(organizations.id, orgId));
-  if (!row) throw notFound('组织');
+  if (!row) throw notFound('organization');
   return row;
 }
 
@@ -471,5 +483,10 @@ async function freeSlug(db: Database, name: string): Promise<string> {
     const candidate = `${base}-${i}`;
     if (!used.has(candidate)) return candidate;
   }
-  throw new ApiError('VERSION_CONFLICT', `slug ${base} 及其编号变体都被占用了，请手动指定一个`);
+  throw fail(
+    'VERSION_CONFLICT',
+    'org.slug_variants_exhausted',
+    `slug ${base} 及其编号变体都被占用了，请手动指定一个`,
+    { params: { base } },
+  );
 }

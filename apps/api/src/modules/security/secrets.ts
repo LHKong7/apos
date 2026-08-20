@@ -1,3 +1,4 @@
+import type { ErrorReason } from '@apos/contracts';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { isProtectedEnvKey, isSecretEnvKey } from '@apos/contracts';
 
@@ -37,8 +38,20 @@ const FINGERPRINT_PREFIX = 'secret://local/';
 
 const ALGO = 'aes-256-gcm';
 
+/**
+ * ★ 带原因码 / Carries a reason code.
+ *
+ *   这个错最终会变成一条 HTTP 报错显示给用户，所以它不能只有一句中文 ——
+ *   界面要按码取词才能同时服务中英文两套。构造时就要求给码，
+ *   而不是在 http 层反过来匹配这句话（匹配一句随时会改的话是定时炸弹）。
+ */
 export class SecretConfigError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: ErrorReason,
+    /** 词条里 `{name}` 的实参。用户写的变量名原样带，不翻译 */
+    readonly params?: Record<string, string | number>,
+  ) {
     super(message);
     this.name = 'SecretConfigError';
   }
@@ -67,12 +80,12 @@ export function hasMasterKey(): boolean {
  */
 export function encodeSecret(input: string): string {
   const trimmed = input.trim();
-  if (trimmed === '') throw new SecretConfigError('凭证不能为空');
+  if (trimmed === '') throw new SecretConfigError('凭证不能为空', 'secret.empty_credential');
 
   if (trimmed.startsWith('env:')) {
     const name = trimmed.slice(4).trim();
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) {
-      throw new SecretConfigError(`环境变量名不合法：${name}`);
+      throw new SecretConfigError(`环境变量名不合法：${name}`, 'secret.bad_env_var_name');
     }
     /**
      * ★★ APOS 自己的密钥一律不许被引用。
@@ -87,6 +100,8 @@ export function encodeSecret(input: string): string {
       throw new SecretConfigError(
         `${name} 是 APOS 自己的密钥，不能下发给 Agent。` +
           `Agent 要用的凭证请填它自己的值，或引用另一个专门为它设的环境变量。`,
+        'secret.protected_env_key',
+        { name },
       );
     }
     return `${ENV_PREFIX}${name}`;
@@ -151,13 +166,33 @@ export function resolveSecret(ref: string | null): string | null {
   return null;
 }
 
-/** 这条引用现在能不能用，以及用不了的话是为什么 */
-export function describeRef(ref: string | null): {
+/**
+ * 凭证故障的原因码 / Why a credential reference cannot be used.
+ *
+ * ★★ 这几句话会显示在 Agent、仓库、存储目标三处的健康度上。
+ *   只给中文句子的话，英文界面上那一行永远是中文 —— 而它恰恰是
+ *   「为什么这个 Agent 派不出去」的唯一说明。界面读码，日志读句子。
+ */
+export type CredentialProblemCode =
+  | 'env_not_set'
+  | 'no_master_key'
+  | 'master_key_mismatch'
+  | 'legacy_fingerprint'
+  | 'unrecognised_format';
+
+export interface RefDescription {
   usable: boolean;
   kind: 'none' | 'env' | 'encrypted' | 'plain' | 'fingerprint';
+  /** 中文兜底句 —— 日志与认不出码的界面用 */
   problem: string | null;
-} {
-  if (!ref) return { usable: false, kind: 'none', problem: null };
+  problemCode: CredentialProblemCode | null;
+  /** 词条里 `{name}` 的实参。变量名是部署者起的，原样带 */
+  problemParams?: Record<string, string | number>;
+}
+
+/** 这条引用现在能不能用，以及用不了的话是为什么 */
+export function describeRef(ref: string | null): RefDescription {
+  if (!ref) return { usable: false, kind: 'none', problem: null, problemCode: null };
 
   /**
    * ★ 明文形态永远可用 —— 它不依赖任何环境。「明文入库」这件事本身
@@ -165,22 +200,39 @@ export function describeRef(ref: string | null): {
    *   会让每个 Agent 都挂着一条红字，真正的故障反而被淹没。
    *   界面上由 catalog 的 encryptsInlineSecrets 统一说一次。
    */
-  if (ref.startsWith(PLAIN_PREFIX)) return { usable: true, kind: 'plain', problem: null };
+  if (ref.startsWith(PLAIN_PREFIX))
+    return { usable: true, kind: 'plain', problem: null, problemCode: null };
 
   if (ref.startsWith(ENV_PREFIX)) {
     const name = ref.slice(ENV_PREFIX.length);
     return process.env[name]
-      ? { usable: true, kind: 'env', problem: null }
-      : { usable: false, kind: 'env', problem: `环境变量 ${name} 未设置` };
+      ? { usable: true, kind: 'env', problem: null, problemCode: null }
+      : {
+          usable: false,
+          kind: 'env',
+          problem: `环境变量 ${name} 未设置`,
+          problemCode: 'env_not_set',
+          problemParams: { name },
+        };
   }
 
   if (ref.startsWith(ENC_PREFIX)) {
     if (!hasMasterKey()) {
-      return { usable: false, kind: 'encrypted', problem: '未配置 APOS_SECRET_KEY，无法解密' };
+      return {
+        usable: false,
+        kind: 'encrypted',
+        problem: '未配置 APOS_SECRET_KEY，无法解密',
+        problemCode: 'no_master_key',
+      };
     }
     return resolveSecret(ref) === null
-      ? { usable: false, kind: 'encrypted', problem: 'APOS_SECRET_KEY 与保存时不一致，需要重新录入凭证' }
-      : { usable: true, kind: 'encrypted', problem: null };
+      ? {
+          usable: false,
+          kind: 'encrypted',
+          problem: 'APOS_SECRET_KEY 与保存时不一致，需要重新录入凭证',
+          problemCode: 'master_key_mismatch',
+        }
+      : { usable: true, kind: 'encrypted', problem: null, problemCode: null };
   }
 
   if (ref.startsWith(FINGERPRINT_PREFIX)) {
@@ -188,10 +240,16 @@ export function describeRef(ref: string | null): {
       usable: false,
       kind: 'fingerprint',
       problem: '这是仅用于识别的旧式指纹引用，取不回原值，需要重新录入凭证',
+      problemCode: 'legacy_fingerprint',
     };
   }
 
-  return { usable: false, kind: 'fingerprint', problem: '无法识别的凭证引用格式' };
+  return {
+    usable: false,
+    kind: 'fingerprint',
+    problem: '无法识别的凭证引用格式',
+    problemCode: 'unrecognised_format',
+  };
 }
 
 /**
@@ -264,6 +322,8 @@ export function encodeEnvOverrides(
         throw new SecretConfigError(
           `环境变量 ${key} 没有已保存的值可以沿用。${KEPT_SECRET} 是「保持不变」的占位符，` +
             '新增这一项时请填入实际值。',
+          'secret.no_previous_value',
+          { key },
         );
       }
       out[key] = kept;
@@ -290,6 +350,8 @@ export function encodeEnvOverrides(
     if (value.startsWith('secret://')) {
       throw new SecretConfigError(
         `环境变量 ${key} 的值不能是 secret:// 引用。要从进程环境取值请写成 \`env:变量名\`。`,
+        'secret.no_secret_uri',
+        { key },
       );
     }
 
@@ -350,12 +412,27 @@ export function resolveEnvOverrides(env: Record<string, string>): {
 }
 
 /** 这份环境变量表里有哪些引用现在取不到值，以及为什么 */
-export function describeEnvOverrides(env: Record<string, string>): string[] {
+/**
+ * ★ 返回结构而不是拼好的句子。
+ *
+ *   原来是 `环境变量 ${key}：${problem}` —— 一句中文套着另一句中文。
+ *   英文界面上这两层都露馅，而它说的是「这个 Agent 为什么派不出去」。
+ *   界面拿到 `{ key, code, params }` 之后自己按语言组织。
+ */
+export function describeEnvOverrides(
+  env: Record<string, string>,
+): { key: string; problem: string; problemCode: CredentialProblemCode | null;
+     problemParams?: Record<string, string | number> }[] {
   return Object.entries(env)
     .filter(([, value]) => value.startsWith('secret://'))
     .map(([key, value]) => ({ key, ...describeRef(value) }))
     .filter((d) => !d.usable)
-    .map((d) => `环境变量 ${d.key}：${d.problem ?? '凭证不可用'}`);
+    .map((d) => ({
+      key: d.key,
+      problem: `环境变量 ${d.key}：${d.problem ?? '凭证不可用'}`,
+      problemCode: d.problemCode,
+      ...(d.problemParams ? { problemParams: d.problemParams } : {}),
+    }));
 }
 
 /** 仅用于识别的指纹，不可逆。integrations 的历史行为保留在这里 */

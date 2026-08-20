@@ -2,7 +2,7 @@ import { and, eq, gt } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { idempotencyKeys, type Database } from '@apos/db';
 import { tokenFrom, verifyToken } from '../modules/auth';
-import { ApiError } from './errors';
+import { fail } from './errors';
 
 /**
  * Idempotency-Key（docs/tech/07-api-design.md §4）。
@@ -48,7 +48,7 @@ export function registerIdempotency(app: FastifyInstance, db: Database) {
     if (typeof raw !== 'string' || raw.trim() === '') return;
     const key = raw.trim();
     if (key.length > 255) {
-      throw new ApiError('VALIDATION_FAILED', 'Idempotency-Key 过长（上限 255）');
+      throw fail('VALIDATION_FAILED', 'idempotency.key_too_long', 'Idempotency-Key 过长（上限 255）');
     }
 
     const endpoint = (req.url.split('?')[0] ?? '').toLowerCase();
@@ -94,9 +94,12 @@ export function registerIdempotency(app: FastifyInstance, db: Database) {
      *   而这些响应里带着决策内容。
      */
     if (hit.actorId && hit.actorId !== actorId) {
-      throw new ApiError('VALIDATION_FAILED', 'Idempotency-Key 已被另一个身份使用', {
-        key,
-      });
+      throw fail(
+        'VALIDATION_FAILED',
+        'idempotency.key_taken_by_other_actor',
+        'Idempotency-Key 已被另一个身份使用',
+        { details: { key, } },
+      );
     }
 
     // 让调用方能分辨「这次是重放」，排查重复提交时很有用

@@ -2,7 +2,7 @@ import { useT, type MessageKey } from '../../lib/i18n';
 import clsx from 'clsx';
 import { formatHours, type Analytics, type RepeatedDecision } from '@apos/domain';
 import { BarChart, StatTile } from '../../features/analytics/charts';
-import { stageLabel } from '../../lib/format';
+import { decisionTypeLabel, overrideReasonLabel, stageLabel } from '../../lib/format';
 import { Card } from './Card';
 import { Button } from '@/components/ui/button';
 
@@ -92,7 +92,9 @@ export function HitlTab({
                   key={r.type}
                   className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0"
                 >
-                  <span className="min-w-0 flex-1 truncate text-slate-800">{r.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-800">
+                    {decisionTypeLabel(r.type)}
+                  </span>
                   <span className="tabular-nums text-slate-600">{t('hitl.timesCount', { count: r.count })}</span>
                   <span className="tabular-nums text-slate-500">
                     {t('hitl.approvedConsistency', {
@@ -151,7 +153,15 @@ export function HitlTab({
                 display: t('hitl.timesCount', { count: b.count }),
                 tone: b.label === '> 8h' ? ('waiting' as const) : ('primary' as const),
                 ...(b.slowest
-                  ? { flag: { icon: '🔴', text: t('hitl.allOfKind', { kind: b.slowest }), tone: 'critical' as const } }
+                  ? {
+                      flag: {
+                        icon: '🔴',
+                        text: t('hitl.allOfKind', {
+                          kind: decisionTypeLabel(b.slowestType ?? ''),
+                        }),
+                        tone: 'critical' as const,
+                      },
+                    }
                   : {}),
               }))}
             emptyHint={t('hitl.noHandled')}
@@ -165,7 +175,8 @@ export function HitlTab({
       >
         <BarChart
           data={hitl.overrideReasons.map((r) => ({
-            label: r.label,
+            /** ★ 覆盖原因是枚举，界面按码取词 */
+            label: overrideReasonLabel(r.category),
             value: r.count,
             display: t('hitl.timesPercent', { count: r.count, percent: r.percent }),
             tone: 'waiting' as const,

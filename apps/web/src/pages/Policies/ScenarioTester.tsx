@@ -2,8 +2,13 @@ import { useT, type MessageKey } from '../../lib/i18n';
 import { useState } from 'react';
 import clsx from 'clsx';
 import { useMutation } from '@tanstack/react-query';
-import type { FactKey } from '@apos/contracts';
-import { ENV_LABELS, FACT_LABELS, OPERATION_LABELS } from '@apos/domain';
+
+import { OperationType } from '@apos/contracts';
+import {
+  policyEnvLabel,
+  policyFactLabel,
+  policyOperationLabel,
+} from '../../lib/format';
 import { ApiError, api } from '../../lib/api/client';
 import type { ScenarioTestResponse } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -77,9 +82,14 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(OPERATION_LABELS).map(([v, l]) => (
+                {/*
+                  ★ 遍历**枚举**而不是那张中文标签表。
+                    照着标签表遍历时，下拉框的选项顺序与内容都由一张
+                    中文常量决定 —— 换语言换不掉，加一个操作类型还得改两处。
+                */}
+                {OperationType.options.map((v) => (
                   <SelectItem key={v} value={v}>
-                    {l}
+                    {policyOperationLabel(v)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -113,7 +123,7 @@ export function ScenarioTester({ projectId }: { projectId: string }) {
                 <SelectItem value={SELECT_EMPTY}>{t('scenario.notApplicable')}</SelectItem>
                 {['dev', 'test', 'staging', 'production'].map((v) => (
                   <SelectItem key={v} value={v}>
-                    {ENV_LABELS[v] ?? v}
+                    {policyEnvLabel(v)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -181,7 +191,7 @@ function Result({ result }: { result: ScenarioTestResponse }) {
           {/* ★ 参数不叫 t —— 会遮住 i18n 的 t */}
           {result.trace.map((row, i) => {
             const meta = STATE_META[row.state];
-            const fact = FACT_LABELS[row.failedAt?.fact as FactKey] ?? row.failedAt?.fact ?? '';
+            const fact = row.failedAt?.fact ? policyFactLabel(row.failedAt.fact) : '';
             return (
               <li
                 key={row.policyId}

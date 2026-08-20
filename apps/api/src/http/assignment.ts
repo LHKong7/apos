@@ -5,7 +5,7 @@ import { ACTIVE_RUN_STATUSES, ExecutionMode } from '@apos/contracts';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { executionModeOf, resolveExecutor } from '../modules/agent/matching';
 import { mergeTypeData } from '../modules/work-item/json-merge';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 执行者分配 —— 「谁来干」与「什么时候开干」分成两件事。
@@ -80,7 +80,7 @@ export async function setAssignee(
   deps: { registry?: RuntimeRegistry } = {},
 ) {
   const [item] = await db.select().from(workItems).where(eq(workItems.id, workItemId));
-  if (!item) throw notFound('任务');
+  if (!item) throw notFound('work_item');
 
   /**
    * ★★ 有 Run 在跑时不能静默改派。
@@ -103,11 +103,11 @@ export async function setAssignee(
     (input.agentId ?? input.userId ?? null) !== item.executorId;
 
   if (active.length > 0 && changingExecutor && !input.takeover) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
-      '这张卡还有执行中的 Run。改派前要说明怎么处置它：terminate（终止后立刻交接）、' +
-        'wait（让它跑完，改派对下一次生效）、handover（终止并转人工接管）。',
-      { runIds: active.map((r) => r.id), currentExecutorId: item.executorId },
+      'work_item.reassign_needs_run_disposition',
+      '这张卡还有执行中的 Run。改派前要说明怎么处置它：terminate（终止后立刻交接）、' + 'wait（让它跑完，改派对下一次生效）、handover（终止并转人工接管）。',
+      { details: { runIds: active.map((r) => r.id), currentExecutorId: item.executorId } },
     );
   }
 
@@ -119,7 +119,7 @@ export async function setAssignee(
    *   两者会在事件流里对不上 —— 而事件流是审计的唯一依据。
    */
   if (input.takeover === 'handover' && !input.userId) {
-    throw new ApiError('VALIDATION_FAILED', '转人工接管必须指定接手的人（userId）');
+    throw fail('VALIDATION_FAILED', 'work_item.takeover_needs_user', '转人工接管必须指定接手的人（userId）');
   }
 
   /**
@@ -212,7 +212,7 @@ async function terminateRun(
  */
 async function assertAgentAssignable(db: Database, projectId: string, agentId: string) {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!agent) throw notFound('Agent');
+  if (!agent) throw notFound('agent');
 
   const [member] = await db
     .select({ actorId: projectMembers.actorId })
@@ -225,20 +225,26 @@ async function assertAgentAssignable(db: Database, projectId: string, agentId: s
       ),
     );
   if (!member) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'agent.not_project_member',
       `${agent.name} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-      { agentId },
+      { params: { name: agent.name }, details: { agentId } },
     );
   }
   if (agent.status !== 'active') {
-    throw new ApiError('VALIDATION_FAILED', `${agent.name} 当前状态是 ${agent.status}`, { agentId });
+    throw fail(
+      'VALIDATION_FAILED',
+      'agent.not_available',
+      `${agent.name} 当前状态是 ${agent.status}`,
+      { params: { name: agent.name, status: agent.status }, details: { agentId } },
+    );
   }
 }
 
 async function assertUserAssignable(db: Database, projectId: string, userId: string) {
   const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
-  if (!user) throw notFound('用户');
+  if (!user) throw notFound('user');
 
   const [member] = await db
     .select({ actorId: projectMembers.actorId })
@@ -251,7 +257,12 @@ async function assertUserAssignable(db: Database, projectId: string, userId: str
       ),
     );
   if (!member) {
-    throw new ApiError('VALIDATION_FAILED', '这个人不是项目成员，不能被指派', { userId });
+    throw fail(
+      'VALIDATION_FAILED',
+      'user.not_project_member',
+      '这个人不是项目成员，不能被指派',
+      { details: { userId } },
+    );
   }
 }
 
@@ -271,7 +282,7 @@ export async function listCandidates(
   workItemId: string,
 ) {
   const [item] = await db.select().from(workItems).where(eq(workItems.id, workItemId));
-  if (!item) throw notFound('任务');
+  if (!item) throw notFound('work_item');
 
   const match = await resolveExecutor(db, item, { registry });
 
@@ -307,9 +318,20 @@ export async function listCandidates(
         reasons: c.reasons,
         ...decorate(c.agentId),
       })),
+      /**
+       * ★★ 码、层级、参数都要带出去，不能只给那句中文 `reason`。
+       *
+       *   匹配器本来就算出了 `code` / `scope` / `params`（看板的「为什么阻塞」
+       *   就是照它们渲染的），这里却只把中文捞走了 —— 于是同一个原因，
+       *   看板上按语言显示，执行者下拉框里永远是中文。
+       *   `reason` 保留为兜底：界面认不出新码时还有一句能读的话。
+       */
       ineligible: match.rejected.map((r) => ({
         agentId: r.agentId,
         name: r.agentName,
+        code: r.code,
+        scope: r.scope,
+        params: r.params,
         reason: r.reason,
         ...decorate(r.agentId),
       })),

@@ -1,4 +1,24 @@
 import type { Diagnostic, PlanDiff, Permission } from '@apos/domain';
+
+/**
+ * 凭证为什么用不了 / Why a credential cannot be used.
+ *
+ * ★ 界面按码取词（`credential.problem.<code>`）；与它配对的那句中文
+ *   （`credentialProblem`）只作认不出码时的兜底。
+ */
+export type CredentialProblemCode =
+  | 'env_not_set'
+  | 'no_master_key'
+  | 'master_key_mismatch'
+  | 'legacy_fingerprint'
+  | 'unrecognised_format';
+
+export interface CredentialProblemFields {
+  credentialProblem: string | null;
+  credentialProblemCode: CredentialProblemCode | null;
+  credentialProblemParams?: Record<string, string | number>;
+}
+import type { RejectionCode, RejectionScope } from '@apos/contracts';
 import type {
   AssigneeHintCode,
   AutoActionCode,
@@ -1232,7 +1252,13 @@ export interface AgentAdminRow {
   /** ★ 环境变量表里的加密值已换成 `secret://saved` 占位符，原样存回表示不改 */
   runtimeConfig: Record<string, unknown>;
   /** 环境变量表里那些取不到值的引用 */
-  runtimeConfigProblems: string[];
+  /** 运行时配置里解不开的引用。结构化，界面自己拼那句话 */
+  runtimeConfigProblems: {
+    key: string;
+    problem: string;
+    problemCode: CredentialProblemCode | null;
+    problemParams?: Record<string, string | number>;
+  }[];
   endpoint: string | null;
 
   /** ★ 只有后四位。接口永不回显凭证原值 */
@@ -1240,10 +1266,15 @@ export interface AgentAdminRow {
   credentialUsable: boolean;
   credentialKind: 'none' | 'env' | 'encrypted' | 'fingerprint';
   credentialProblem: string | null;
+  credentialProblemCode: CredentialProblemCode | null;
+  credentialProblemParams?: Record<string, string | number>;
 
   registered: boolean;
   reachable: boolean;
   problem: string | null;
+  /** ★ 与 problem 配对的码。界面读码，日志读句子 */
+  problemCode: 'probe_failed' | 'no_adapter' | null;
+  problemParams?: Record<string, string | number>;
   lastCheckAt: string | null;
 
   model: string | null;
@@ -1303,6 +1334,8 @@ export interface RepositoryRow {
   credentialHint: string | null;
   credentialUsable: boolean;
   credentialProblem: string | null;
+  credentialProblemCode: CredentialProblemCode | null;
+  credentialProblemParams?: Record<string, string | number>;
   /**
    * 认证形态。token 那套（用户名占位）和 SSH 那套（私钥、主机公钥）
    * 不重叠，配置页按它二选一渲染 —— 同时摆出来只会让人填错栏。
@@ -1391,6 +1424,8 @@ export interface StorageTargetRow {
   credentialHint: string | null;
   credentialUsable: boolean;
   credentialProblem: string | null;
+  credentialProblemCode: CredentialProblemCode | null;
+  credentialProblemParams?: Record<string, string | number>;
   warnings: string[];
 }
 
@@ -1494,7 +1529,15 @@ export interface EligibleAgent extends CandidateAgent {
 }
 
 export interface IneligibleAgent extends CandidateAgent {
-  /** ★ 不可选的必须带原因：空下拉框回答不了「为什么选不了」 */
+  /** 原因码。界面按它取词（`blocked.reason.<code>`），与看板同一套 */
+  code: RejectionCode;
+  /** 这条限制配在哪一层 —— 项目 / 组织 / 平台 */
+  scope: RejectionScope;
+  params?: Record<string, string | number>;
+  /**
+   * ★ 不可选的必须带原因：空下拉框回答不了「为什么选不了」。
+   *   这句是中文兜底，界面优先用 `code` 取词。
+   */
   reason: string;
 }
 
@@ -1534,6 +1577,8 @@ export interface ArtifactFileList {
   projectId: string;
   /** ★ 目录可能已随工作区回收 —— 与「这次没产出」是两回事，所以带原因 */
   available: boolean;
+  /** 原因码。界面按它取词，认不出才回落到 `reason` 那句中文 */
+  reasonCode: 'archive_gone' | null;
   reason: string | null;
   files: {
     path: string;
@@ -1553,8 +1598,10 @@ export interface ArtifactFileContent {
   path: string;
   size: number;
   mime: string;
-  /** 二进制或超大文件为 null，此时 reason 说明为什么 */
+  /** 二进制或超大文件为 null，此时 reasonCode 说明为什么 */
   preview: string | null;
+  reasonCode: 'binary' | 'too_large' | null;
+  reasonParams?: { kb: number };
   reason: string | null;
 }
 

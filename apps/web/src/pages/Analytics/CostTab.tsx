@@ -1,7 +1,7 @@
 import { useT } from '../../lib/i18n';
 import type { Analytics } from '@apos/domain';
 import { BarChart, NotWired, StatTile, TrendChart } from '../../features/analytics/charts';
-import { tokens } from '../../lib/format';
+import { tokens, typeLabel } from '../../lib/format';
 import { Card } from './Card';
 import { Button } from '@/components/ui/button';
 
@@ -74,7 +74,8 @@ export function CostTab({ data, onOpenRun }: { data: Analytics; onOpenRun: (runI
         <Card title={t('cost.byType')}>
           <BarChart
             data={cost.byType.map((t) => ({
-              label: t.label,
+              /** ★ 服务端那个 `label` 是中文。类型是枚举，界面自己取词 */
+              label: typeLabel(t.id),
               value: t.tokens,
               display: `${tokens(t.tokens)} ${t.percent}%`,
             }))}

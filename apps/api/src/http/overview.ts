@@ -36,7 +36,7 @@ import { getProjectDiagnostics } from './graph';
  */
 export async function getOverview(db: Database, projectId: string, userId: string | null) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw notFound('项目');
+  if (!project) throw notFound('project');
 
   const now = Date.now();
   const items = await db

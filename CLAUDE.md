@@ -26,18 +26,28 @@ APOS（Autonomous Project OS）—— 面向 Human–Agent 混合团队的项目
 
 模块级常量存**词条键**不存译文（`Record<string, MessageKey>`）：常量取不到 hook，而且切语言时不会重算，译好的字符串会停在第一次渲染的那个语言。
 
-**服务端产生的用户可见文案走原因码**，不是拼好的句子。已经这么做的两处：
+**服务端产生的用户可见文案走原因码**，不是拼好的句子。全站统一是这个形态：
 
-- 调度拒绝原因（`RejectionCode` / `RejectionScope`，`packages/contracts/src/work-item/blocked.ts`）—— 落在 `work_items.blocked_detail`
+- **所有 HTTP 报错**（`ErrorReason`，`packages/contracts/src/common/error-reason.ts`）—— 抛错走 `fail(code, reason, 中文句子, { params })`（`apps/api/src/http/errors.ts`），信封里 `reason` / `params` 与 `message` 同时给
+- 「找不到」单列（`NotFoundEntity`）—— `notFound('project')` 传的是**实体键**不是中文。中文里名词在前、英文里 `not found` 在后，`${what}不存在` 这种拼法只在中文里成立
+- 调度拒绝原因（`RejectionCode` / `RejectionScope`，`work-item/blocked.ts`）—— 落在 `work_items.blocked_detail`
 - 决策的「为什么需要你 / 不处理会怎样」（`DecisionReason`，`decision-reason.ts`）—— 落在 `decisions.reason_detail`
+- Analytics 的发现与指标（`Insight.code` / `Contribution.key` / `QualityMetric.key` / `BenefitLine.key`）、Policy 体检结论（`PolicyIssue.type`）、凭证故障（`CredentialProblemCode`）
 
-两处都保留了原来的中文句子作为兜底：存量数据里只有它，而日志与通知拼一句现成的话仍然更省事。**界面读码，日志读句子。**
+各处都保留了原来的中文句子作为兜底：存量数据里只有它，而日志与通知拼一句现成的话仍然更省事。**界面读码，日志读句子。**
+
+**枚举的说法归界面**。任务类型、错误分类、决策类型、Policy 的 fact / 操作 / 环境、运行时能力项这些都是**码**，词条在 `apps/web/src/lib/format/index.ts` 的那组 `xxxLabel()` 里。domain 里那些 `XXX_LABELS` 中文表留给服务端拼日志 —— 前端 `import` 一张中文表，等于把服务端的语言硬编进界面，切了语言也换不掉。
 
 判据是「这句话有几个消费者」：只要中文界面、英文界面、和某个按钮（「一键修复」「去授权」）三者中占了两个，就必须是码。拼好的句子只服务第一种，另外两种只能反过来正则匹配它 —— 而匹配一句随时会改的话是定时炸弹。
 
 新增一条服务端文案时：平台自己写的词（基线 Policy 名、恢复策略的说法）走词条；用户写的词（自建 Policy 名、Agent 的求助理由）作为 `params` 原样带过去 —— 把用户起的名「翻译」一遍等于给它改名。
 
-**剩余缺口**：`analysisModel` 这类字符串、以及若干校验报错仍是中文句子。它们的消费者目前只有一个（中文界面上的一句提示），按上面那条判据还不到必须拆的程度。
+**剩余缺口**（都是**有意**留着的，不是漏了）：
+
+- **Guard 失败原因与 Policy 拒绝说明**仍然把 domain 那句中文原样透出（码是 `guard.failed` / `policy.denied`，**故意没有词条**）。它们带的是「哪几条前置条件没过」「那条规则自己怎么说」—— 换成一句通用译文就丢了全部信息量。名单与理由写在 `apps/web/src/lib/api/errors.ts` 的 `REASONS_WITHOUT_CATALOG`，i18n 的测试认这份名单，所以「故意没翻」和「忘了翻」在测试里是分得开的。要真修好，得让 `flow/guards.ts` 那几条理由各自带码。
+- `analysisModel` 这类字符串消费者只有一个，按上面那条判据还不到必须拆的程度。
+
+守门的两处测试：`apps/web/src/lib/api/errors.test.ts` 断言每个 `ErrorReason` 都有词条（除非在上面那份名单里）、认不出的码回落到原句而不是空白；`apps/web/src/lib/i18n/no-literals.test.ts` 扫全部界面代码，除写明理由的例外外不许出现中文字面量。
 
 ## 常用命令
 
@@ -149,7 +159,9 @@ apps/web/                      React 18 + Vite + TanStack Query + zustand + shad
 | Policy 条件/动作 | 求值测试；高风险操作补安全底线测试 |
 | 恢复策略 | 每个错误分类都要有明确决策 |
 | 任何写状态的路径 | 集成测试断言「状态变了 → 有对应事件」 |
-| 新增服务端原因码 | 每个码都要有修复入口的说法（含「没得修」）；界面认不出码时回落到兜底句而不是空白 |
+| 新增服务端原因码 | 每个码都要有修复入口的说法（含「没得修」）；界面认不出码时回落到兜底句而不是空白。`ErrorReason` 的词条完整性由 `errors.test.ts` 兜底，加码不加词条会红 |
+| 新增界面文案 | 走词条。写死中文会被 `no-literals.test.ts` 当场逮住，例外要写进它的 `ALLOWED` 并说明理由 |
+| 服务端新增一句用户可见的话 | 断言的是**码与参数**，不是那句中文 —— 盯着中文写断言的话，改一个标点都会红，而码错了才是 bug |
 | 反复推同一结论的循环 | 断言「原因没变 → 不重复写事件、不重置起点」与「原因变了 → 重新记一条」两条都成立 |
 
 测试夹具（`apps/api/src/test/db.ts`）走**真实认证路径**（`signToken` 签真令牌），没有测试模式旁路。夹具身份是组织管理员 + tech_lead，功能测试用它；**权限断言一律用 `createMember()` 造明确角色的人**，用夹具身份去测「viewer 不能改」永远是绿的。夹具也不能比真实数据宽松 —— 它一旦宽松就会把漏洞焊死。

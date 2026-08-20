@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n';
-import { BUCKET_LABELS, formatHours, type Analytics } from '@apos/domain';
+import { formatHours, type Analytics } from '@apos/domain';
+import { bucketLabel } from '../../lib/format';
 import { BarChart, NotWired, StatTile, TrendChart, type BarDatum } from '../../features/analytics/charts';
 import { Card } from './Card';
 
@@ -20,10 +21,15 @@ export function FlowTab({
   const t = useT();
   const { flow, deltas } = data;
 
-  const breakdown: BarDatum[] = flow.breakdown
+  /**
+   * ★ 分档名走词条而不是 domain 的 `BUCKET_LABELS` —— 那张表是中文，
+   *   前端直接 import 它，等于把服务端的语言硬编进界面。
+   */
+  const breakdown: (BarDatum & { bucket: string })[] = flow.breakdown
     .filter((b) => b.hours > 0)
     .map((b) => ({
-      label: BUCKET_LABELS[b.bucket],
+      bucket: b.bucket,
+      label: bucketLabel(b.bucket),
       value: b.hours,
       display: `${formatHours(b.hours)} ${b.percent}%`,
       tone: b.kind === 'waiting' ? 'waiting' : 'primary',
@@ -34,7 +40,12 @@ export function FlowTab({
     .filter((b) => b.kind === 'waiting')
     .sort((a, b) => b.hours - a.hours)[0];
   if (worstWait && worstWait.hours > 0) {
-    const row = breakdown.find((r) => r.label === BUCKET_LABELS[worstWait.bucket]);
+    /**
+     * ★ 按 bucket 找，不按 label 找。
+     *   原来是拿翻译后的字符串去比对 —— 一旦标签改一个字（或换个语言），
+     *   这里就静默找不到，瓶颈标记消失而没有任何报错。
+     */
+    const row = breakdown.find((r) => r.bucket === worstWait.bucket);
     if (row) row.flag = { icon: '⛔', text: t('flow.biggestBottleneck'), tone: 'critical' };
   }
 

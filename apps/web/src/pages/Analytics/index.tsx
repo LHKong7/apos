@@ -269,7 +269,13 @@ export function AnalyticsPage() {
               <HitlTab
                 data={data}
                 onCreatePolicy={(r) =>
-                  handleAction({ kind: 'create_policy', label: r.label, ref: r.type })
+                  handleAction({
+                    kind: 'create_policy',
+                    code: 'create_policy_for',
+                    params: { name: r.label },
+                    label: r.label,
+                    ref: r.type,
+                  })
                 }
               />
             )}

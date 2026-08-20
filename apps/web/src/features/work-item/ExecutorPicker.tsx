@@ -1,4 +1,4 @@
-import { useT } from '../../lib/i18n';
+import { hasMessage, useT, type MessageKey } from '../../lib/i18n';
 import { joinList } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -190,7 +190,14 @@ export function ExecutorPicker({
                     <SelectLabel>{t('executor.unavailable')}</SelectLabel>
                     {d.agents.ineligible.map((a) => (
                       <SelectItem key={a.agentId} value={a.agentId} disabled>
-                        {a.name} —— {a.reason}
+                        {/*
+                          ★ 原因走码，与看板的「为什么阻塞」同一套词条 ——
+                            服务端那句 `a.reason` 是中文，只作认不出码时的兜底。
+                        */}
+                        {a.name} ——{' '}
+                        {hasMessage(`blocked.reason.${a.code}` as MessageKey)
+                          ? t(`blocked.reason.${a.code}` as MessageKey, a.params ?? {})
+                          : a.reason}
                       </SelectItem>
                     ))}
                   </SelectGroup>

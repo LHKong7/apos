@@ -50,6 +50,7 @@ function target(over: Partial<StorageTargetRow> = {}): StorageTargetRow {
     credentialHint: '****1234',
     credentialUsable: true,
     credentialProblem: null,
+    credentialProblemCode: null,
     warnings: [],
     ...over,
   };
@@ -69,6 +70,7 @@ function repo(over: Partial<RepositoryRow> = {}): RepositoryRow {
     credentialHint: '****abcd',
     credentialUsable: true,
     credentialProblem: null,
+    credentialProblemCode: null,
     authKind: 'token',
     authUsername: 'x-access-token',
     authUsernameSource: 'default',

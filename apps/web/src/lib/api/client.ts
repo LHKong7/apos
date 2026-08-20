@@ -73,6 +73,20 @@ export class ApiError extends Error {
     message: string,
     readonly details: unknown,
     readonly status: number,
+    /**
+     * 原因码 / Reason code.
+     *
+     * ★★ 界面要显示的话由它决定，不是 `message`。
+     *   `message` 是服务端拼好的**中文**句子 —— 它只服务中文界面，
+     *   英文界面拿到它只能原样画出来。按码取词才能同时服务两套。
+     *   见 lib/api/errors.ts 的 reasonMessage()。
+     *
+     * ★ 可选：服务端还有一批报错没配码（改造进行中），
+     *   而且老版本服务端根本不发这个字段。认不出就回落到 message。
+     */
+    readonly reason?: string,
+    /** 词条里 `{name}` 的实参。服务端原样带过来，不翻译 */
+    readonly params?: Record<string, string | number>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -144,13 +158,24 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    const envelope = (body as { error?: { code: string; message: string; details?: unknown } })
-      ?.error;
+    const envelope = (
+      body as {
+        error?: {
+          code: string;
+          message: string;
+          details?: unknown;
+          reason?: string | null;
+          params?: Record<string, string | number> | null;
+        };
+      }
+    )?.error;
     throw new ApiError(
       envelope?.code ?? 'UNKNOWN',
       envelope?.message ?? t('api.requestFailed', { status: res.status }),
       envelope?.details,
       res.status,
+      envelope?.reason ?? undefined,
+      envelope?.params ?? undefined,
     );
   }
 

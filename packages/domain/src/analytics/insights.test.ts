@@ -337,7 +337,14 @@ const costStub: CostMetrics = {
   unmeasuredRuns: 0,
 };
 
-const base = { agent: agentStub, hitl: hitlStub, cost: costStub, previous: null, rangeLabel: '近 30 天' };
+const base = {
+  agent: agentStub,
+  hitl: hitlStub,
+  cost: costStub,
+  previous: null,
+  rangeLabel: '近 30 天',
+  rangeDays: 30,
+};
 
 describe('系统发现', () => {
   /**

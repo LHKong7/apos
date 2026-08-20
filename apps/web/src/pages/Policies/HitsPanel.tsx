@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { duration, relativeTime, riskLabel } from '../../lib/format';
+import { duration, policyActionLabel, relativeTime, riskLabel } from '../../lib/format';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { CardSkeleton, ErrorState } from '../../components/states';
 import { Button } from '@/components/ui/button';
@@ -102,7 +102,8 @@ export function HitsPanel({
               <span>{t('hits.last30d', { count: q.data.stats.hits })}</span>
               {q.data.stats.byAction.map((a) => (
                 <span key={a.label}>
-                  {a.label} {a.count}
+                  {/* ★ `a.label` 现在是动作枚举键，说法由词条给 */}
+                  {policyActionLabel(a.label)} {a.count}
                 </span>
               ))}
               {q.data.stats.decisionsCreated > 0 && (

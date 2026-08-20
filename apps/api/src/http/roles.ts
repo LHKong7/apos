@@ -18,7 +18,7 @@ import {
   type Role,
 } from '@apos/domain';
 import { emitAndPublish } from '../modules/event/bus';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 角色管理（docs/tech/09-security.md §2.2）。
@@ -166,7 +166,12 @@ export async function createRole(db: Database, ctx: RoleWriteContext, input: unk
     .from(roles)
     .where(and(eq(roles.orgId, ctx.orgId), eq(roles.key, def.key)));
   if (existing) {
-    throw new ApiError('VALIDATION_FAILED', `角色标识「${def.key}」已经被占用`, { key: def.key });
+    throw fail(
+      'VALIDATION_FAILED',
+      'role.key_taken',
+      `角色标识「${def.key}」已经被占用`,
+      { params: { key: def.key }, details: { key: def.key } },
+    );
   }
 
   const [row] = await db
@@ -206,10 +211,11 @@ export async function updateRole(
    *   文档、审计、支持全部失去共同语言。要不一样就自定义一个新角色。
    */
   if (before.builtin) {
-    throw new ApiError(
+    throw fail(
       'FORBIDDEN',
+      'role.builtin_permissions_locked',
       `「${before.name}」是内置角色，权限不可修改 —— 它就是权限矩阵本身。如需不同的组合，请新建一个角色。`,
-      { key, builtin: true },
+      { params: { name: before.name }, details: { key, builtin: true } },
     );
   }
 
@@ -333,7 +339,12 @@ export async function deleteRole(db: Database, ctx: RoleWriteContext, key: strin
   const before = await load(db, ctx.orgId, key);
 
   if (before.builtin) {
-    throw new ApiError('FORBIDDEN', `「${before.name}」是内置角色，不能删除`, { key });
+    throw fail(
+      'FORBIDDEN',
+      'role.builtin_undeletable',
+      `「${before.name}」是内置角色，不能删除`,
+      { params: { name: before.name }, details: { key } },
+    );
   }
 
   /**
@@ -346,16 +357,34 @@ export async function deleteRole(db: Database, ctx: RoleWriteContext, key: strin
    */
   const usage = (await roleUsage(db, ctx.orgId)).get(key) ?? { human: 0, agent: 0 };
   if (usage.human + usage.agent > 0) {
+    /**
+     * ★★ 三条码，不是一条码配一个拼出来的主语。
+     *
+     *   原来是把「3 人」和「2 个 Agent」用「、」拼成 `who`，再塞进一句话。
+     *   英文侧要的是 "3 people and 2 Agents" —— 连接词不同、单复数不同、
+     *   而且零的那一边根本不该出现。拼出来的主语只在中文里成立。
+     *   所以「只有人」「只有 Agent」「两者都有」是三句独立的话。
+     */
     const who = [
       usage.human > 0 ? `${usage.human} 人` : null,
       usage.agent > 0 ? `${usage.agent} 个 Agent` : null,
     ]
       .filter(Boolean)
       .join('、');
-    throw new ApiError(
+    const reason =
+      usage.human > 0 && usage.agent > 0
+        ? 'role.in_use_by_both'
+        : usage.agent > 0
+          ? 'role.in_use_by_agents'
+          : 'role.in_use_by_humans';
+    throw fail(
       'VALIDATION_FAILED',
+      reason,
       `还有 ${who} 在担任「${before.name}」，删除会让他们的权限归零。请先把他们改成别的角色。`,
-      { key, usage },
+      {
+        params: { name: before.name, humans: usage.human, agents: usage.agent },
+        details: { key, usage },
+      },
     );
   }
 
@@ -381,17 +410,19 @@ async function assertAssigneesStillFit(
 ) {
   const usage = (await roleUsage(db, orgId)).get(key) ?? { human: 0, agent: 0 };
   if (usage.agent > 0 && !appliesTo.includes('agent')) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'role.agents_hold_it',
       `还有 ${usage.agent} 个 Agent 在担任这个角色，不能把它改成「仅人类」。请先把它们改成别的角色。`,
-      { key, agents: usage.agent },
+      { params: { count: usage.agent }, details: { key, agents: usage.agent } },
     );
   }
   if (usage.human > 0 && !appliesTo.includes('human')) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'role.humans_hold_it',
       `还有 ${usage.human} 人在担任这个角色，不能把它改成「仅 Agent」。请先把他们改成别的角色。`,
-      { key, humans: usage.human },
+      { params: { count: usage.human }, details: { key, humans: usage.human } },
     );
   }
 }
@@ -399,7 +430,17 @@ async function assertAssigneesStillFit(
 function assertValid(def: RoleDefinition) {
   const errors = validateRoleDefinition(def);
   if (errors.length > 0) {
-    throw new ApiError('VALIDATION_FAILED', errors.map((e) => e.message).join('；'), { errors });
+    /**
+     * ★ 校验明细留在 `details.errors` 里，界面按字段各自显示；
+     *   顶上的那句话只说「有几处不对」—— 用「；」把 N 条中文串成一行，
+     *   在英文界面上既不是英文，也不是能逐条对应到字段的东西。
+     */
+    throw fail(
+      'VALIDATION_FAILED',
+      'role.invalid_permissions',
+      errors.map((e) => e.message).join('；'),
+      { params: { count: errors.length }, details: { errors }, },
+    );
   }
 }
 
@@ -408,7 +449,7 @@ async function load(db: Database, orgId: string, key: string) {
     .select()
     .from(roles)
     .where(and(eq(roles.orgId, orgId), eq(roles.key, key)));
-  if (!row) throw notFound('角色');
+  if (!row) throw notFound('role');
   return row;
 }
 

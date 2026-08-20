@@ -1,4 +1,4 @@
-import { ApiError } from '../../http/errors';
+import { fail } from '../../http/errors';
 
 /**
  * 自助注册的总开关（`APOS_ALLOW_SIGNUP`）。
@@ -63,8 +63,5 @@ export function signupEnabled(): boolean {
  */
 export function assertSignupEnabled(): void {
   if (signupEnabled()) return;
-  throw new ApiError(
-    'FORBIDDEN',
-    '这个实例没有开放自助注册。请联系管理员给你开一个账号，或把你加进已有组织',
-  );
+  throw fail('FORBIDDEN', 'auth.signup_disabled', '这个实例没有开放自助注册。请联系管理员给你开一个账号，或把你加进已有组织');
 }

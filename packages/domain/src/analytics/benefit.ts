@@ -27,8 +27,14 @@ export interface BenefitInput {
 }
 
 export interface BenefitLine {
+  /**
+   * ★★ 界面按它取词（`analytics.benefit.<key>.label` / `.basis`），
+   *   下面那两个中文字段是日志与兜底用的。界面读码，日志读句子。
+   */
   key: string;
   label: string;
+  /** `basis` 那句话里的数字，供词条按各自语言的语序组织 */
+  params?: Record<string, string | number>;
   /** 小时数，来自系统记录 */
   hours: number;
   /** 折算成钱；laborHourlyCost 为 null 时是 null */
@@ -131,6 +137,7 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
       money: rate === null ? null : round(agentHours * rate),
       side: 'benefit',
       basis: `${runs.filter((r) => r.status === RUN_SUCCESS).length} 次成功执行的实际时长之和（不是计划估算）`,
+      params: { runs: runs.filter((r) => r.status === RUN_SUCCESS).length },
     },
     {
       key: 'agent_spend',
@@ -147,6 +154,7 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
       money: rate === null ? null : round(overrideHours * rate),
       side: 'cost',
       basis: `${overrides.length} 次人工覆盖 × 每次 ${OVERRIDE_MINUTES} 分钟（这是个假设，不是实测）`,
+      params: { count: overrides.length, minutes: OVERRIDE_MINUTES },
     },
     {
       key: 'rework',
@@ -155,6 +163,7 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
       money: null,
       side: 'cost',
       basis: `${reworkRuns} 次重试执行的时长 —— 这部分是白干的，不该算进收益`,
+      params: { runs: reworkRuns },
     },
   ];
 

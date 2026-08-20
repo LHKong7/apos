@@ -2,7 +2,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { agents, projectAgentBindings, projectMembers, type Database } from '@apos/db';
 import { ProjectAgentRole } from '@apos/contracts';
-import { ApiError, notFound } from './errors';
+import { fail, notFound } from './errors';
 
 /**
  * 项目 Agent 绑定 —— 「这个项目的规划 / 协调 / 评审交给谁」。
@@ -96,8 +96,8 @@ export async function setProjectAgent(
   }
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
-  if (!agent) throw notFound('Agent');
-  if (agent.orgId !== ctx.orgId) throw notFound('Agent');
+  if (!agent) throw notFound('agent');
+  if (agent.orgId !== ctx.orgId) throw notFound('agent');
 
   const [member] = await db
     .select({ actorId: projectMembers.actorId })
@@ -110,10 +110,11 @@ export async function setProjectAgent(
       ),
     );
   if (!member) {
-    throw new ApiError(
+    throw fail(
       'VALIDATION_FAILED',
+      'agent.not_project_member',
       `${agent.name} 不是这个项目的成员 —— 先在「成员与角色」里把它加进来`,
-      { agentId: input.agentId },
+      { params: { name: agent.name }, details: { agentId: input.agentId } },
     );
   }
 
