@@ -24,30 +24,72 @@
 ```json
 {
   "error": {
-    "code": "GUARD_FAILED",
-    "message": "2 个前置依赖未满足",
-    "details": [
-      { "id": "wi_123", "title": "数据库索引变更", "type": "finish_to_start", "status": "blocked" }
-    ],
+    "code": "VALIDATION_FAILED",
+    "reason": "storage.delivery_target_readonly",
+    "params": { "ref": "s3-main" },
+    "message": "交货目标 s3-main 登记为只读，收尾时会跳过写回 —— 请先把它改成可写",
+    "details": { "field": "deliverTo" },
     "traceId": "req_01J..."
   }
 }
 ```
 
+信封里有**四样**东西，各有各的消费者：
+
+| 字段 | 谁读它 | 稳定性 |
+| --- | --- | --- |
+| `code` | 客户端分流（重试？刷新？跳登录？）、监控按 HTTP 语义分类 | 稳定，穷举在 `ErrorCode` |
+| `reason` | **界面取词** —— 词条键是 `error.reason.<reason>` | 稳定，穷举在 `ErrorReason`（contracts） |
+| `params` | 填进那条词条的 `{name}` 占位符 | 随 reason 定 |
+| `message` | 日志、告警、以及认不出 `reason` 的客户端 | **不稳定**，随时会改 |
+
+**界面读码，日志读句子。** `message` 永远是一句现成的中文 —— 值班的人半夜看日志时要的是一句话，不是一个要去查表的标识符。而界面要同时服务中英文两套，只能按码取词。两者同时给，不是二选一。
+
+**`message` 不是接口的一部分**。它随时会为了读起来更顺而改写。任何反过来正则匹配它的代码都是定时炸弹 —— 要分流就读 `code`，要显示就读 `reason`。
+
+**认不出 `reason` 时回落到 `message`，不是回落到空白**。服务端加了新码而客户端还没跟上，这段窗口必然存在；那时用户要看到的是一句能读的话，哪怕语言不对，也好过一行 `error.reason.some_new_code`，更好过什么都不显示。
+
+### 2.1 错误码
+
 | HTTP | code | 场景 |
 | --- | --- | --- |
 | 400 | `VALIDATION_FAILED` | 请求体不合法 |
-| 401 | `UNAUTHENTICATED` | — |
+| 401 | `UNAUTHENTICATED` | 没登录、令牌坏了、或账号没了 |
 | 403 | `FORBIDDEN` | 权限不足，`details` 说明所需角色 |
-| 404 | `NOT_FOUND` | — |
+| 404 | `NOT_FOUND` | `reason` 恒为 `not_found`，`params.entity` 说是哪种东西 |
 | 409 | `VERSION_CONFLICT` | 乐观锁冲突，`details` 带最新状态 |
 | 409 | `INVALID_TRANSITION` | 状态机不允许，`details` 带可用 triggers |
 | 409 | `GUARD_FAILED` | Guard 未通过，`details` 带失败原因（可能含 `overridable`） |
+| 409 | `CONFIRMATION_REQUIRED` | 请求没问题，但要用户先明确确认一次 |
 | 422 | `POLICY_DENIED` | Policy 拒绝，`details` 带规则名与条件 |
-| 429 | `RATE_LIMITED` | — |
-| 503 | `RUNTIME_UNAVAILABLE` | Agent 运行时不可达 |
+| 422 | `BUDGET_EXCEEDED` | 超出项目预算 |
+| 422 | `UNANSWERED_MUST_CONFIRM` | 还有必答的澄清问题没回答 |
+| 429 | `RATE_LIMITED` | `details.retryAfterMinutes` 说多久后能重试 |
+| 500 | `INTERNAL` | 服务端故障，`traceId` 是唯一线索 |
+| 501 | `UNSUPPORTED_FEATURE` | 请求没问题，是这个运行时不具备该能力（降级矩阵） |
+| 502 | `EXTERNAL_ERROR` | 外部系统故障 —— 不是我们的 bug，也不是用户输错了 |
+| 503 | `AGENT_UNAVAILABLE` | Agent 运行时不可达 |
+
+**`CONFIRMATION_REQUIRED` 与 `VALIDATION_FAILED` 分开**。后者是「你发来的东西不对」，前者是「东西没问题，但我要你看一眼再点一次」。混用 400 的代价不在功能上（功能照常），而在**日志与监控**里：一次正常的人机交互和一次真正的客户端错误长得一模一样，于是 4xx 率再也不能当告警指标用。
+
+**502 而不是 500，501 而不是 4xx**。请求走到了外部系统是那一侧的问题；运行时不具备某能力是服务端的形态问题而不是请求的问题。都挤进 500 的话，「服务挂了」这个信号就被稀释了。
 
 **403 必须说明缺什么权限**。页面文档统一采用"只读降级"而非整页 403，前端需要知道具体缺哪个角色才能渲染 tooltip。
+
+### 2.2 抛错
+
+```ts
+throw fail('VALIDATION_FAILED', 'storage.delivery_target_readonly', `交货目标 ${ref} 登记为只读…`, {
+  params: { ref },
+  details: { field: 'deliverTo' },
+});
+```
+
+参数顺序是 `code, reason, message` —— **码在前，句子在后**。反过来读起来更顺，但会让「先写句子、码回头再补」成为默认路径，而回头补的那一步从来不会发生。
+
+「找不到」用 `notFound(entity)`，实参是**实体键**不是中文：中文里名词在前、英文里 `not found` 在后，`${what}不存在` 这种拼法只在中文里成立。
+
+细节见 [12-i18n.md](12-i18n.md)。
 
 ---
 
