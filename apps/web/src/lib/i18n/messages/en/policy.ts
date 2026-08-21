@@ -338,6 +338,7 @@ export const policy = {
   'policy.switch.clear': 'Clear',
   'policy.switch.cleared': 'Switch cleared — this row is back to whatever the other rules say',
   'policy.switch.applied': '{operation}: done',
+  'policy.switch.appliedScoped': '{operation} in {env}: done. Every other environment keeps following the rules it followed before.',
   'policy.switch.dialogTitle': 'Change a switch',
   'policy.switch.heading.auto': 'Let Agents handle {operation} on their own',
   'policy.switch.heading.human': 'Make {operation} wait for a person',

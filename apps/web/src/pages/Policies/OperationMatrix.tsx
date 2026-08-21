@@ -1,5 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
-import { joinList, policyEnvLabel, policyOperationLabel, riskLabel } from '@/lib/format';
+import { joinList, policyEnvLabel, policyOperationLabel, riskName } from '@/lib/format';
 import clsx from 'clsx';
 import type { OperationOutcome } from '@apos/domain';
 import { GatedButton } from '../../components/Gated';
@@ -56,7 +56,8 @@ function useGateText() {
     if (!gate) return outcome.when ?? '';
 
     const envs = joinList(gate.environments.map(policyEnvLabel));
-    const risks = joinList(gate.riskLevels.map(riskLabel));
+    /** ★ 用光秃秃的等级名 —— 下面那两条词条自己带了「风险 / risk」 */
+    const risks = joinList(gate.riskLevels.map(riskName));
 
     if (gate.environments.length > 0 && gate.riskLevels.length > 0) {
       return t('policy.switch.gatedByBoth', { envs, risks });
@@ -198,6 +199,7 @@ function SwitchButton({
       permission={permission}
       projectId={projectId}
       disabled={busy}
+      pressed={active}
       onClick={onClick}
       className={clsx(
         'rounded border px-1.5 py-0.5 text-[11px]',

@@ -4,7 +4,7 @@ import {
   policyEnvLabel,
   policyFactLabel,
   policyOperationLabel,
-  riskLabel,
+  riskName,
 } from '@/lib/format';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -71,13 +71,20 @@ function issueText(issue: PolicyIssue): string {
   return t(key, params);
 }
 
-/** 反例场景：三段枚举各自取词后再拼，不用服务端那句中文 */
+/**
+ * 反例场景：三段枚举各自取词后再拼，不用服务端那句中文。
+ *
+ * ★ 风险那一段用 `riskName`（「高」/ "High"）而不是 `riskLabel`
+ *   （「高风险」/ "High risk"）—— `policy.scenario.risk` 这条词条
+ *   自己已经带了「风险 / risk」，塞完整说法进去会得到
+ *   「风险高风险」和 "High risk risk"。
+ */
 function exampleText(issue: PolicyIssue): string {
   const c = issue.exampleContext;
   if (!c) return issue.example ?? '';
   return [
     policyOperationLabel(c.operationType),
-    t('policy.scenario.risk', { risk: riskLabel(c.riskLevel) }),
+    t('policy.scenario.risk', { risk: riskName(c.riskLevel) }),
     c.environment ? policyEnvLabel(c.environment) : t('policy.env.none'),
   ].join(' · ');
 }

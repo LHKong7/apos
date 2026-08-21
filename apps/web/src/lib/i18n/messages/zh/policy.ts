@@ -335,6 +335,7 @@ export const policy: Record<keyof typeof en, string> = {
   'policy.switch.clear': '清除',
   'policy.switch.cleared': '开关已清除 —— 这一行回到其余规则说了算',
   'policy.switch.applied': '{operation}：已生效',
+  'policy.switch.appliedScoped': '{operation}（{env}）：已生效。其余环境仍按原来的规则走。',
   'policy.switch.dialogTitle': '切换开关',
   'policy.switch.heading.auto': '让 Agent 自己处理「{operation}」',
   'policy.switch.heading.human': '让「{operation}」停下来等人确认',

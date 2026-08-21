@@ -28,6 +28,14 @@ export interface GatedButtonProps {
   disabledReason?: string;
   type?: 'button' | 'submit';
   projectId?: string;
+  /**
+   * 开关类按钮的当前状态。
+   *
+   * ★ 「哪一档是选中的」在视觉上是靠底色说的，而底色对读屏软件不存在。
+   *   一个三态开关如果只有颜色在表态，用读屏的人根本不知道现在是哪一档 ——
+   *   而这一页管的是「Agent 能自己做什么」，读错一档的代价不小。
+   */
+  pressed?: boolean;
 }
 
 export function GatedButton({
@@ -39,6 +47,7 @@ export function GatedButton({
   disabledReason,
   type = 'button',
   projectId,
+  pressed,
 }: GatedButtonProps) {
   const perms = usePermissions(projectId);
   const denied = !perms.can(permission);
@@ -65,6 +74,7 @@ export function GatedButton({
       disabled={blocked}
       title={blocked ? reason : undefined}
       aria-disabled={blocked}
+      {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
       className={clsx('h-auto p-0 font-normal hover:bg-transparent', className, blocked && 'cursor-not-allowed opacity-50')}
     >
       {children}

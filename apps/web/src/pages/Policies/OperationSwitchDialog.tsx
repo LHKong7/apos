@@ -66,6 +66,17 @@ export function OperationSwitchDialog({
   const [result, setResult] = useState<OperationSwitchResponse | null>(null);
 
   const operation = policyOperationLabel(operationType);
+  /**
+   * ★★ 限定了环境时，「这一行仍然是视情况」是**预期结果**，不是失败。
+   *
+   *   只放开生产部署，其余环境照旧走原来的规则 —— 整行的判定当然是
+   *   「视情况」。按整行判成功与否的话，用户每次限定环境都会看到一句
+   *   「规则已保存，但它没生效」，而他要的正是这个结果。
+   *   一个把成功报成失败的提示，比不提示更糟：用户会把它改回去。
+   */
+  const scoped = environment !== ANY_ENVIRONMENT;
+  const scopedAsIntended = (res: OperationSwitchResponse) =>
+    scoped && res.outcome?.verdict === 'depends';
 
   /**
    * ★ 模板 → 条件/动作的映射只在后端有一份实现。前端跟着算一遍就有两份，
@@ -97,6 +108,14 @@ export function OperationSwitchDialog({
       setError(null);
       // ★ 真的变了才关窗；没变的话把原因摊开，让用户读完自己决定下一步
       if (res.applied) onDone(t('policy.switch.applied', { operation }));
+      else if (scopedAsIntended(res)) {
+        onDone(
+          t('policy.switch.appliedScoped', {
+            operation,
+            env: t(`policy.switch.env.${environment}` as MessageKey),
+          }),
+        );
+      }
     },
     onError: (e) => {
       if (
@@ -158,7 +177,7 @@ export function OperationSwitchDialog({
             和安全底线不许（用户改不动，任何配置都放行不了）。
             混成一句「没生效」的话，前者他找不到该看哪儿，后者他会一直试下去。
         */}
-        {result && !result.applied && (
+        {result && !result.applied && !scopedAsIntended(result) && (
           <div className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
             <p className="font-medium">
               {t('policy.switch.notApplied', {
@@ -192,13 +211,19 @@ export function OperationSwitchDialog({
             onClick={onClose}
             className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-xs text-slate-500 hover:text-slate-800"
           >
-            {result && !result.applied ? t('common.gotIt') : t('common.cancel')}
+            {result && !result.applied && !scopedAsIntended(result)
+              ? t('common.gotIt')
+              : t('common.cancel')}
           </Button>
           <Button
             variant="neutral"
             size="sm"
             onClick={() => apply.mutate(needsAck)}
-            disabled={apply.isPending || !built.data || (result !== null && !result.applied)}
+            disabled={
+              apply.isPending ||
+              !built.data ||
+              (result !== null && !result.applied && !scopedAsIntended(result))
+            }
           >
             {needsAck ? t('rule.enableAnyway') : t('policy.switch.confirm')}
           </Button>
