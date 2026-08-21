@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FACT_KEYS, Operator, type Action, type Condition } from '@apos/contracts';
-import { BASELINE_POLICIES } from './baseline';
+import { SAMPLE_RULES } from './sample-rules';
 import { explainAction, explainCondition, explainPolicy, FACT_LABELS } from './explain';
 
 describe('模板覆盖度', () => {
@@ -48,8 +48,8 @@ describe('模板覆盖度', () => {
     }
   });
 
-  it('全部组织基线规则都能生成可读解释', () => {
-    for (const p of BASELINE_POLICIES) {
+  it('每一条规则都能生成可读解释', () => {
+    for (const p of SAMPLE_RULES) {
       const text = explainPolicy(p.condition, p.action);
       expect(text, `${p.name} 解释异常`).not.toContain('undefined');
       expect(text.startsWith('当')).toBe(true);
@@ -80,7 +80,7 @@ describe('解释内容', () => {
   });
 
   it('生产数据库规则', () => {
-    const p = BASELINE_POLICIES.find((x) => x.id === 'baseline-prod-db')!;
+    const p = SAMPLE_RULES.find((x) => x.id === 'sample-prod-db')!;
     expect(explainPolicy(p.condition, p.action)).toBe(
       '当操作环境是生产、且操作类型属于数据库结构变更、数据库数据变更之一时，' +
         '系统会暂停并请 DBA 审批，需在 4 小时内处理。',

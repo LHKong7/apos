@@ -158,6 +158,10 @@ export function PoliciesPage() {
   if (!projectId) return null;
   const data = policies.data;
 
+  /** 体检结论里指向的规则，哪几条真的在下面的列表里画得出来 */
+  const projectRuleIds = new Set(data?.projectPolicies.map((p) => p.id) ?? []);
+  const locatable = (issue: PolicyIssue) => issue.policyIds.filter((id) => projectRuleIds.has(id));
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
@@ -275,13 +279,6 @@ export function PoliciesPage() {
                   {expandSummary ? t('policy.collapse') : t('policy.showFullList')}
                 </Button>
               </p>
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                {t('policy.ruleCounts', {
-                  org: data.orgPolicies.length,
-                  project: data.projectPolicies.length,
-                })}
-              </p>
-
               {expandSummary && (
                 <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 md:grid-cols-3">
                   <SummaryColumn title={t('policy.auto')} icon="✓" items={data.summary.auto.map((o) => o.label)} />
@@ -330,9 +327,14 @@ export function PoliciesPage() {
                               {t('policy.counterExample', { example: exampleText(issue) })}
                             </p>
                           )}
-                          {issue.policyIds.length > 0 && (
+                          {/*
+                            ★ 只有列表里画得出来的规则才给「定位」。
+                              列表只画项目规则，指向别处的 id 点下去毫无反应 ——
+                              一个点了不动的按钮比没有按钮更让人怀疑页面坏了。
+                          */}
+                          {locatable(issue).length > 0 && (
                             <Button variant="ghost"
-                              onClick={() => setHighlight(new Set(issue.policyIds))}
+                              onClick={() => setHighlight(new Set(locatable(issue)))}
                               className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
                             >
                               {t('policy.locateRule')}
@@ -385,18 +387,6 @@ export function PoliciesPage() {
                   }}
                   onToggle={setToggling}
                   onDelete={(p) => remove.mutate(p)}
-                  onHistory={setHistory}
-                  onViewHits={(p) => setHits({ id: p.id, name: p.name })}
-                />
-
-                <RuleList
-                  title={t('policy.orgRules')}
-                  hint={t('policy.orgRulesHint')}
-                  policies={data.orgPolicies}
-                  highlightIds={highlight}
-                  onEdit={() => setToast(t('policy.orgEditDenied'))}
-                  onToggle={() => setToast(t('policy.orgDisableDenied'))}
-                  onDelete={() => setToast(t('policy.orgDeleteDenied'))}
                   onHistory={setHistory}
                   onViewHits={(p) => setHits({ id: p.id, name: p.name })}
                 />

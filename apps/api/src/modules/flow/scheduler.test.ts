@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, artifacts, events, projects, runEvents, workItemDependencies, workItems } from '@apos/db';
+import {
+  agentRuns,
+  artifacts,
+  events,
+  policies,
+  projects,
+  runEvents,
+  workItemDependencies,
+  workItems,
+} from '@apos/db';
 import { MockRuntime, RuntimeRegistry } from '@apos/agent-runtimes';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent, waitFor, waitForRunEnd } from '../../test/agent-fixtures';
@@ -426,6 +435,27 @@ describe('执行主体匹配', () => {
 
 describe('Policy 在调度路径上生效', () => {
   it('★ 生产 DDL 任务派发时被拦下，不真正启动 Agent', async () => {
+    /**
+     * ★ 规则要自己建。平台不再自带硬编码基线 —— 库里没有规则时这个任务
+     *   会照常派发出去，那测的是调度器，不是「Policy 在调度路径上生效」。
+     */
+    await db.insert(policies).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      name: '生产数据库变更必须由 DBA 审批',
+      description: '',
+      priority: 100,
+      enabled: true,
+      createdBy: fx.userId,
+      condition: {
+        all: [
+          { fact: 'environment', op: 'eq', value: 'production' },
+          { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+        ],
+      },
+      action: { type: 'require_human_review', assignee: { kind: 'role', role: 'dba' }, dueInHours: 4 },
+    });
+
     const agent = await seedAgent(db, fx);
     const item = await createWorkItem(db, fx, {
       typeData: { environment: 'production', operationType: 'db_ddl' },

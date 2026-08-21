@@ -53,7 +53,7 @@ export const BUCKETS = {
   ],
   /** Policy 与决策 */
   policy: [
-    'policy', 'policyName', 'rule', 'ruleList', 'scenario', 'hits', 'opType', 'env',
+    'policy', 'rule', 'ruleList', 'scenario', 'hits', 'opType', 'env',
     'decision', 'decisions', 'decDrawer', 'decisionView',
   ],
   /** 设置：角色、成员、存储、仓库、集成、通知 */

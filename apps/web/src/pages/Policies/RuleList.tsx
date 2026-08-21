@@ -14,6 +14,10 @@ import { Button } from '@/components/ui/button';
  *
  * ★ 命中统计是这一页被低估的部分：命中 0 次说明规则可能写错了，
  *   命中频繁且结果一致说明可以进一步自动化，平均等待长说明它是流程瓶颈。
+ *
+ * ★ 只画项目规则。平台不再自带任何硬编码基线，组织级规则也还没有创建入口 ——
+ *   于是「只读的那一档」在界面上没有一行是它，作用域徽标与只读提示
+ *   一起删掉了。将来长出组织级入口时，它们要跟着入口一起回来。
  */
 export function RuleList({
   title,
@@ -66,7 +70,10 @@ export function RuleList({
             )}
           >
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-slate-400">{p.projectId === null ? t('ruleList.orgLevel') : t('ruleList.projectLevel')}</span>
+              {/*
+                ★ 作用域徽标去掉了：这份列表只画项目规则，
+                  给每一行都贴一个「项目」等于没贴。
+              */}
               <span className="font-medium text-slate-900">{p.name}</span>
               <span className="text-[11px] text-slate-400">{t('ruleList.priority', { n: p.priority })}</span>
               <span className={clsx('text-[11px]', p.enabled ? 'text-green-700' : 'text-slate-400')}>
@@ -88,32 +95,26 @@ export function RuleList({
                 {t('ruleList.hits30d', { count: p.hits30d })}
               </Button>
 
-              {p.editable ? (
-                <>
-                  {/*
-                    ★ 编辑按 policy.tighten 判 —— 那是「改规则」的下限。
-                      这次改动到底算收紧还是放宽，要把新旧规则各跑一遍场景
-                      才知道，前端算不了，也不该算。所以这里只挡掉
-                      「连收紧都不够格」的人，真正的方向判定在保存时由服务端做，
-                      驳回文案会说清楚是因为放宽。
-                  */}
-                  <Action permission="policy.tighten" onClick={() => onEdit(p)}>
-                    {t('common.edit')}
-                  </Action>
-                  {/* ★ 停用就是把治理拿掉，与放宽同档 */}
-                  <Action
-                    permission={p.enabled ? 'policy.loosen' : 'policy.tighten'}
-                    onClick={() => onToggle(p)}
-                  >
-                    {p.enabled ? t('policy.disable') : t('policy.enable')}
-                  </Action>
-                  <Action permission="policy.loosen" onClick={() => onDelete(p)}>
-                    {t('common.delete')}
-                  </Action>
-                </>
-              ) : (
-                <span className="text-slate-400">{t('ruleList.orgReadOnly')}</span>
-              )}
+              {/*
+                ★ 编辑按 policy.tighten 判 —— 那是「改规则」的下限。
+                  这次改动到底算收紧还是放宽，要把新旧规则各跑一遍场景
+                  才知道，前端算不了，也不该算。所以这里只挡掉
+                  「连收紧都不够格」的人，真正的方向判定在保存时由服务端做，
+                  驳回文案会说清楚是因为放宽。
+              */}
+              <Action permission="policy.tighten" onClick={() => onEdit(p)}>
+                {t('common.edit')}
+              </Action>
+              {/* ★ 停用就是把治理拿掉，与放宽同档 */}
+              <Action
+                permission={p.enabled ? 'policy.loosen' : 'policy.tighten'}
+                onClick={() => onToggle(p)}
+              >
+                {p.enabled ? t('policy.disable') : t('policy.enable')}
+              </Action>
+              <Action permission="policy.loosen" onClick={() => onDelete(p)}>
+                {t('common.delete')}
+              </Action>
               {/* 变更历史是只读的 —— 谁都该看得到规则怎么变成今天这样 */}
               <Action permission="policy.view" onClick={() => onHistory(p)}>
                 {t('ruleList.changeHistory')}

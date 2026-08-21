@@ -28,7 +28,6 @@ import {
   resolveTransition,
   availableTriggers,
   WORK_ITEM_MACHINE,
-  BASELINE_POLICIES,
   type GuardFailure,
   type WorkItemTrigger,
 } from '@apos/domain';
@@ -320,7 +319,7 @@ export class VersionConflictError extends Error {
 }
 
 /**
- * 取出对该项目生效的原始规则（组织级 + 项目级 + 不可删的基线）。
+ * 取出对该项目生效的原始规则（库里的组织级 + 项目级，一条都没有就是零条）。
  *
  * ★ 与 compile 分开是因为有第二个用途：派发前要把「哪些规则会拦下这次工作」
  *   渲染成人话下发给 Agent（modules/agent/dispatch.ts），而渲染需要
@@ -343,7 +342,7 @@ export async function loadPolicies(tx: Tx, orgId: string, projectId: string) {
       ),
     );
 
-  const stored = rows.map((r) => ({
+  return rows.map((r) => ({
     id: r.id,
     orgId: r.orgId,
     projectId: r.projectId,
@@ -354,15 +353,6 @@ export async function loadPolicies(tx: Tx, orgId: string, projectId: string) {
     condition: r.condition,
     action: r.action,
   }));
-
-  // 组织基线规则始终生效，即使数据库中未落库（防误删）
-  const storedIds = new Set(stored.map((p) => p.id));
-  const baseline = BASELINE_POLICIES.filter((p) => !storedIds.has(p.id)).map((p) => ({
-    ...p,
-    orgId,
-  }));
-
-  return [...baseline, ...stored];
 }
 
 async function loadCompiledPolicies(tx: Tx, orgId: string, projectId: string) {
@@ -411,8 +401,8 @@ async function createDecisionFor(
        *   上面那两句中文留给日志、通知与存量客户端；界面读这一栏，
        *   才能在英文界面上给出一句完整的英文，而不是
        *   「If ignored: 任务无法进入…」那种半句翻译（问题记录 #34）。
-       * ★ Policy 名字作为参数原样带过去 —— 用户自己起的名不该被翻译，
-       *   平台自带的九条基线规则由前端按 id 认领词条。
+       * ★ Policy 名字作为参数原样带过去 —— 规则全部由用户自己建，
+       *   名字是用户数据，翻译它等于给它改名。
        */
       reasonDetail: {
         /** ★ 原样带过去，让界面自己拼「—— 需要你确认」那半句（见 DecisionReason） */
@@ -460,21 +450,36 @@ function stallConsequence(intendedStatus: WorkItemStatus, downstream: number): s
 }
 
 /**
- * 决策类型。导出是为了能被测试锁住：产出的每一个值都必须在
+ * 决策类型。
+ *
+ * ★ 以前这里按规则 id 的 `baseline-` 前缀分出 release_approval /
+ *   budget_overrun / agent_failure 这些细分类型。硬编码基线删掉之后，
+ *   规则全部来自用户，id 是 UUID —— 从 id 里已经推不出、也不该推出
+ *   「这条规则管的是发布还是预算」。规则的**意图**只有写规则的人知道，
+ *   照着 id 猜出来的分类只会在决策中心上贴一个可能是错的标签。
+ *   所以统一落 `approval`：标签变泛，但不会说错话。
+ *   （细分类型本身保留 —— 计划审批、需求签署这些路径仍然在用。）
+ *
+ * 导出是为了能被测试锁住：产出的每一个值都必须在
  * decisionLabel()（packages/domain analytics/hitl.ts）里有中文名，
  * 否则决策中心和 Analytics 上会直接印出裸 key。
+ *
+ * The decision type. Rule ids are user-created UUIDs now, so nothing about a
+ * rule's intent can be read off its id; everything a policy gates falls under
+ * the generic `approval` type rather than a guessed-at label.
  */
-export function decisionTypeFor(verdict: PolicyVerdict): string {
-  const id = verdict.matchedPolicyId ?? '';
-  if (id.startsWith('baseline-prod-db')) return 'high_risk_operation';
-  if (id.startsWith('baseline-prod-deploy')) return 'release_approval';
-  if (id.startsWith('baseline-budget')) return 'budget_overrun';
-  if (id.startsWith('baseline-consecutive-failures')) return 'agent_failure';
-  if (id.startsWith('baseline-')) return 'high_risk_operation';
+export function decisionTypeFor(_verdict: PolicyVerdict): string {
   return 'approval';
 }
 
-/** 基线规则用的是可读 ID（baseline-xxx），不是 UUID，不能写进外键字段 */
+/**
+ * ★ 守卫保留。现在所有规则 id 都是 UUID，但 `matchedPolicyId` 仍然可空
+ *   （没有规则命中时），而 `triggeredByPolicy` 是外键列 —— 写一个非 UUID
+ *   进去是运行时错误，不是类型错误。
+ *
+ * Kept: every rule id is a UUID now, but `matchedPolicyId` is still nullable
+ * and `triggeredByPolicy` is a foreign key column.
+ */
 function isUuid(v: string | null): v is string {
   return (
     v !== null &&

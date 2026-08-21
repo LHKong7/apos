@@ -1,16 +1,31 @@
 import type { Policy } from '@apos/contracts';
 
 /**
- * 组织级基线规则 —— 产品文档 10.4 的九类高风险操作。
+ * 一套真实形状的治理规则，**只在测试里用** —— 不从 `index.ts` 导出。
  *
- * 这些规则不可删除、不可被项目规则放宽。优先级 1–20 保留给它们，
- * 项目级规则（100+）永远排在后面，因此走不到项目规则。
- * docs/tech/09-security.md §4
+ * ★★ 这份数据以前叫 `BASELINE_POLICIES`，是硬编码进产品的十条组织基线：
+ *   不可删、不可放宽、永远参与求值。它被删掉了 —— 生效的规则只能是
+ *   用户自己录进库里的那些，一条都没有就是零条。
+ *
+ *   但它作为**测试夹具**仍然值钱：求值顺序、优先级遮蔽、派发前的规则预警、
+ *   体检的冲突与覆盖检测，全都需要一套条件互相交叠、动作严格程度不一的
+ *   真实规则才测得出来。现编几条 `riskLevel == 'low'` 测不出这些。
+ *
+ *   所以搬到这里，身份从「产品行为」变成「测试数据」。它不再影响任何
+ *   运行时路径，改它只会改测试。
+ *
+ * A realistic set of governance rules used **only by tests**; deliberately not
+ * exported from the package index. This data used to be `BASELINE_POLICIES` —
+ * ten organisation-level rules hard-coded into the product. Those are gone: the
+ * rules in force are exactly the ones a user has entered, and none means none.
+ * As a fixture it is still worth keeping, because priority shadowing, conflict
+ * detection and gate selection only show up against rules whose conditions
+ * overlap and whose actions differ in strictness.
  */
 
 const ORG = '00000000-0000-0000-0000-000000000000';
 
-function baseline(
+function rule(
   id: string,
   name: string,
   priority: number,
@@ -31,9 +46,9 @@ function baseline(
   };
 }
 
-export const BASELINE_POLICIES: Policy[] = [
-  baseline(
-    'baseline-payment',
+export const SAMPLE_RULES: Policy[] = [
+  rule(
+    'sample-payment',
     '执行付款需多人会签',
     1,
     { fact: 'operationType', op: 'eq', value: 'payment' },
@@ -49,8 +64,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '涉及资金流出的操作必须由业务负责人与财务共同批准',
   ),
 
-  baseline(
-    'baseline-permission-change',
+  rule(
+    'sample-permission-change',
     '修改权限需组织管理员批准',
     2,
     { fact: 'operationType', op: 'eq', value: 'permission_change' },
@@ -62,8 +77,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '权限变更会改变治理边界本身，必须由组织管理员确认',
   ),
 
-  baseline(
-    'baseline-delete-resource',
+  rule(
+    'sample-delete-resource',
     '删除资源需多人会签',
     3,
     { fact: 'operationType', op: 'eq', value: 'delete_resource' },
@@ -79,8 +94,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '删除操作通常不可逆，需要两人确认',
   ),
 
-  baseline(
-    'baseline-security-policy',
+  rule(
+    'sample-security-policy',
     '修改安全策略需组织管理员批准',
     4,
     { fact: 'operationType', op: 'eq', value: 'security_policy_change' },
@@ -92,8 +107,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '安全策略变更需安全负责人确认',
   ),
 
-  baseline(
-    'baseline-prod-db',
+  rule(
+    'sample-prod-db',
     '生产数据库变更必须由 DBA 审批',
     5,
     {
@@ -106,8 +121,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '生产库的结构或数据变更风险高且难以回滚',
   ),
 
-  baseline(
-    'baseline-sensitive-data',
+  rule(
+    'sample-sensitive-data',
     '访问受限数据需数据负责人批准',
     6,
     { fact: 'dataSensitivity', op: 'eq', value: 'restricted' },
@@ -119,8 +134,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '受限级数据默认不进入 Agent 上下文，如需访问必须单独批准',
   ),
 
-  baseline(
-    'baseline-send-external',
+  rule(
+    'sample-send-external',
     '对外发送信息需人工确认',
     7,
     { fact: 'operationType', op: 'eq', value: 'send_external' },
@@ -132,8 +147,8 @@ export const BASELINE_POLICIES: Policy[] = [
     '发给外部客户或公开渠道的内容不可撤回',
   ),
 
-  baseline(
-    'baseline-prod-deploy',
+  rule(
+    'sample-prod-deploy',
     '生产环境发布需发布负责人审批',
     8,
     {
@@ -147,11 +162,11 @@ export const BASELINE_POLICIES: Policy[] = [
       assignee: { kind: 'role', role: 'release_manager' },
       dueInHours: 4,
     },
-    '生产发布默认需要审批（产品文档 8.8.6）',
+    '生产发布默认需要审批',
   ),
 
-  baseline(
-    'baseline-budget-exceeded',
+  rule(
+    'sample-budget-exceeded',
     '预算超限需 Sponsor 批准',
     9,
     { fact: 'budgetUsedPct', op: 'gte', value: 100 },
@@ -160,15 +175,15 @@ export const BASELINE_POLICIES: Policy[] = [
       assignee: { kind: 'project_role', role: 'sponsor' },
       dueInHours: 8,
     },
-    '产品文档 8.7.5：预算超限的决策责任人是项目 Sponsor',
+    '预算超限的决策责任人是项目 Sponsor',
   ),
 
-  baseline(
-    'baseline-consecutive-failures',
+  rule(
+    'sample-consecutive-failures',
     'Agent 连续失败 3 次转人工',
     10,
     { fact: 'consecutiveFailures', op: 'gte', value: 3 },
     { type: 'pause', resumeCondition: 'human_decision' },
-    '产品文档 8.9.3：反复失败说明存在系统性问题，继续重试只是烧钱',
+    '反复失败说明存在系统性问题，继续重试只是烧钱',
   ),
 ];

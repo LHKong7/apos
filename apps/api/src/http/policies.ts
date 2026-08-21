@@ -13,7 +13,6 @@ import {
 import { actionLabel } from '@apos/contracts';
 import type { Action, AutonomyLevel, Condition, FactKey, Policy, PolicyContext } from '@apos/contracts';
 import {
-  BASELINE_POLICIES,
   ENV_LABELS,
   OPERATION_LABELS,
   auditPolicies,
@@ -62,7 +61,7 @@ export async function getPolicies(db: Database, projectId: string) {
     explanation: explainPolicy(p.condition, p.action),
     hits30d: hitMap.get(p.id)?.hits30d ?? 0,
     avgWaitSeconds: hitMap.get(p.id)?.avgWaitSeconds ?? null,
-    /** 组织基线未落库时也要出现在列表里，但不能被编辑 */
+    /** 组织级规则在项目内只读（目前没有创建入口，将来有） */
     editable: p.projectId !== null,
   });
 
@@ -466,26 +465,19 @@ export async function loadProjectPolicies(
     )
     .orderBy(policies.priority);
 
-  const stored: Policy[] = rows.map((r) => ({
-    id: r.id,
-    orgId: r.orgId,
-    projectId: r.projectId,
-    name: r.name,
-    description: r.description,
-    priority: r.priority,
-    enabled: r.enabled,
-    condition: r.condition,
-    action: r.action,
-  }));
-
-  // 与 Flow Engine 用同一份兜底：基线规则即使未落库也始终生效
-  const storedIds = new Set(stored.map((p) => p.id));
-  const baseline = BASELINE_POLICIES.filter((p) => !storedIds.has(p.id)).map((p) => ({
-    ...p,
-    orgId,
-  }));
-
-  return [...baseline, ...stored].sort((a, b) => a.priority - b.priority);
+  return rows
+    .map((r) => ({
+      id: r.id,
+      orgId: r.orgId,
+      projectId: r.projectId,
+      name: r.name,
+      description: r.description,
+      priority: r.priority,
+      enabled: r.enabled,
+      condition: r.condition,
+      action: r.action,
+    }))
+    .sort((a, b) => a.priority - b.priority);
 }
 
 /**
@@ -518,7 +510,7 @@ async function loadHits(db: Database, projectId: string, all: Policy[]) {
     (await db
       .select({ id: policies.id, createdAt: policies.createdAt })
       .from(policies)
-      .where(inArray(policies.id, all.map((p) => p.id).filter((id) => !id.startsWith('baseline-'))))
+      .where(inArray(policies.id, all.map((p) => p.id)))
     ).map((r) => [r.id, r.createdAt.getTime()]),
   );
 
@@ -695,18 +687,14 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
   /**
    * 这条规则触发的决策及其结局。
    *
-   * ★ 基线规则用的是可读 ID（baseline-xxx）而不是 UUID，写不进外键列，
-   *   所以它们的决策只能靠 work item 回连 —— 不这么做的话，
-   *   九条基线规则的命中明细里永远是空的决策列，
-   *   而基线规则恰恰是最需要复核的那批。
+   * ★ 规则 id 现在一律是 UUID，`decisions.triggered_by_policy` 直接对得上。
+   *   （硬编码基线用的是 `baseline-xxx` 这种可读 id，写不进外键列，
+   *   曾经只能靠 work item 回连 —— 那条兜底随基线一起删掉了。）
    */
   const decisionRows = itemIds.length > 0
     ? await db.select().from(decisions).where(inArray(decisions.workItemId, itemIds))
     : [];
-  const isUuid = UUID_LIKE.test(policyId);
-  const relevant = decisionRows.filter((d) =>
-    isUuid ? d.triggeredByPolicy === policyId : d.workItemId !== null,
-  );
+  const relevant = decisionRows.filter((d) => d.triggeredByPolicy === policyId);
   const decisionByItem = new Map<string, typeof relevant>();
   for (const d of relevant) {
     if (!d.workItemId) continue;
@@ -793,7 +781,7 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
       id: policy.id,
       name: policy.name,
       enabled: policy.enabled,
-      editable: !policy.id.startsWith('baseline-') && policy.projectId !== null,
+      editable: policy.projectId !== null,
     },
     stats: {
       hits: hits.length,
@@ -828,8 +816,6 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
     truncated: hits.length > 100,
   };
 }
-
-const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DECISION_STATUS_LABELS: Record<string, string> = {
   pending: '待处理',

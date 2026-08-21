@@ -24,6 +24,54 @@ beforeEach(async () => {
   fx = await seedFixture(db);
 });
 
+/**
+ * 两条真实形状的高风险规则。
+ *
+ * ★★ 平台不再自带硬编码基线 —— 库里没有规则时，闸门清单本来就该是空的。
+ *   所以这组测试必须自己先把规则建出来，否则测的是「没有规则时会怎样」，
+ *   而那证明不了接线是通的。
+ */
+async function seedGovernanceRules() {
+  await db.insert(policies).values([
+    {
+      orgId: fx.orgId,
+      projectId: null,
+      name: '生产环境发布需发布负责人审批',
+      description: '',
+      priority: 8,
+      enabled: true,
+      createdBy: fx.userId,
+      condition: {
+        all: [
+          { fact: 'environment', op: 'eq', value: 'production' },
+          { fact: 'operationType', op: 'eq', value: 'deploy' },
+        ],
+      },
+      action: {
+        type: 'require_human_review',
+        assignee: { kind: 'role', role: 'release_manager' },
+        dueInHours: 4,
+      },
+    },
+    {
+      orgId: fx.orgId,
+      projectId: null,
+      name: '生产数据库变更必须由 DBA 审批',
+      description: '',
+      priority: 5,
+      enabled: true,
+      createdBy: fx.userId,
+      condition: {
+        all: [
+          { fact: 'environment', op: 'eq', value: 'production' },
+          { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+        ],
+      },
+      action: { type: 'require_human_review', assignee: { kind: 'role', role: 'dba' }, dueInHours: 4 },
+    },
+  ]);
+}
+
 async function dispatchedTask(): Promise<TaskDispatch> {
   const agent = await seedAgent(db, fx);
   const item = await createWorkItem(db, fx);
@@ -43,10 +91,11 @@ async function dispatchedTask(): Promise<TaskDispatch> {
 describe('派发时下发 Policy 闸门', () => {
   /**
    * ★ 派发时 operationType 还是默认的 code_change、environment 还是 null，
-   *   照当前上下文直接求值的话八条基线规则一条都不命中。这条盯的正是
+   *   照当前上下文直接求值的话这两条规则一条都不命中。这条盯的正是
    *   「未定的 fact 按可能处理」这个语义有没有活着穿过整条链路。
    */
-  it('★ 基线规则里会拦人的那几条要到达 Agent', async () => {
+  it('★ 会拦人的规则要到达 Agent', async () => {
+    await seedGovernanceRules();
     const task = await dispatchedTask();
     const names = task.policyGates.map((g) => g.name);
 
@@ -54,7 +103,14 @@ describe('派发时下发 Policy 闸门', () => {
     expect(names).toContain('生产数据库变更必须由 DBA 审批');
   });
 
+  /** ★ 一条规则都没有时，清单就是空的 —— 不是「一份默认清单」 */
+  it('★ 库里没有规则时下发空清单', async () => {
+    const task = await dispatchedTask();
+    expect(task.policyGates).toEqual([]);
+  });
+
   it('带上渲染好的人话，Agent 不需要自己解释规则', async () => {
+    await seedGovernanceRules();
     const task = await dispatchedTask();
     const deploy = task.policyGates.find((g) => g.name === '生产环境发布需发布负责人审批');
 
@@ -63,10 +119,11 @@ describe('派发时下发 Policy 闸门', () => {
   });
 
   /**
-   * ★ 项目自己配的规则也要进 —— 只发基线的话，用户在 Policy 页上写的东西
-   *   对 Agent 完全不存在，而那恰恰是他最想让 Agent 知道的部分。
+   * ★ 项目自己配的规则也要进 —— 只发组织级规则的话，用户在 Policy 页上
+   *   写的东西对 Agent 完全不存在，而那恰恰是他最想让 Agent 知道的部分。
    */
-  it('★ 项目级规则与基线一起下发', async () => {
+  it('★ 项目级规则与组织级规则一起下发', async () => {
+    await seedGovernanceRules();
     await db.insert(policies).values({
       orgId: fx.orgId,
       projectId: fx.projectId,

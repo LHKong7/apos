@@ -555,11 +555,106 @@ async function main() {
     console.log(`  失败卡片    ${failing!.title}（${dispatched.ok ? '已失败' : '派发失败'}）`);
   }
 
-  // 待决策卡片：高风险 + 超时，用来验证 decision_overdue 的强化展示
+  /**
+   * 项目级 Policy。
+   *
+   * ★★ 必须排在下面那张「待决策卡片」**之前**。
+   *
+   *   平台不再自带任何硬编码基线规则 —— 生效的规则只有库里这几条。
+   *   规则还没落库时那张卡片走的是自治等级的默认动作，
+   *   决策的 `triggered_by_policy` 会是空的，于是 Policy 页的命中明细、
+   *   「这条规则拦对了没有」那套结论在演示数据上全是空的。
+   *   顺序在这里不是风格问题，是演示数据有没有内容的问题。
+   *
+   *   Must run before the "awaiting decision" card below: with the hard-coded
+   *   baselines gone, the only rules in force are these, and a decision raised
+   *   before they exist carries no `triggered_by_policy` — leaving every
+   *   hit-detail view on the Policy page empty.
+   */
+  {
+    const { policies } = await import('@apos/db');
+    await db.insert(policies).values([
+      {
+        orgId,
+        projectId,
+        name: '生产库变更需 DBA 审批',
+        description: '生产库的结构或数据变更风险高且难以回滚',
+        priority: 100,
+        condition: {
+          all: [
+            { fact: 'environment', op: 'eq', value: 'production' },
+            { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+          ],
+        },
+        action: {
+          type: 'require_human_review',
+          assignee: { kind: 'role', role: 'dba' },
+          dueInHours: 4,
+        },
+        createdBy: lead!.id,
+      },
+      {
+        orgId,
+        projectId,
+        name: '低风险任务自动批准',
+        description: '测试通过且 token 用量可控的低风险任务无需人工审批',
+        priority: 110,
+        condition: {
+          all: [
+            { fact: 'riskLevel', op: 'eq', value: 'low' },
+            { fact: 'runTokens', op: 'lt', value: 200_000 },
+          ],
+        },
+        action: { type: 'allow_and_notify', notify: [{ kind: 'project_role', role: 'pm' }] },
+        createdBy: lead!.id,
+      },
+      {
+        orgId,
+        projectId,
+        name: '预算用掉八成后提醒技术负责人',
+        description: '在真正超限之前先打个招呼，别等到卡住才发现',
+        priority: 120,
+        condition: { fact: 'budgetUsedPct', op: 'gte', value: 80 },
+        action: { type: 'ask', assignee: { kind: 'project_role', role: 'tech_lead' } },
+        createdBy: lead!.id,
+      },
+      {
+        // 刻意留一条依赖未接入数据源的规则 —— 它看起来配好了，实际永远不命中。
+        // 这正是 Policy 页体检要抓的那类失效
+        orgId,
+        projectId,
+        name: '安全扫描通过才允许部署',
+        description: '',
+        priority: 130,
+        condition: {
+          all: [
+            { fact: 'securityScan', op: 'eq', value: 'passed' },
+            { fact: 'operationType', op: 'eq', value: 'deploy' },
+          ],
+        },
+        action: { type: 'allow' },
+        createdBy: lead!.id,
+      },
+    ]);
+    console.log('  项目规则    4 条（含一条依赖未接入数据源的，供体检验证）');
+  }
+
+  /**
+   * 待决策卡片：高风险 + 超时，用来验证 decision_overdue 的强化展示。
+   *
+   * ★ 把它标成「生产库的结构变更」，让上面那条**项目规则**真的命中它 ——
+   *   决策于是带着 `triggered_by_policy`，Policy 页上「这条规则拦了几次、
+   *   拦对了没有」才有东西可看。不标的话它只是撞上了自治等级的默认动作，
+   *   卡片长得一样，但背后什么都追不到。
+   */
   if (risky) {
     await db
       .update(workItems)
-      .set({ riskLevel: 'high', ownerId: dba!.id })
+      .set({
+        riskLevel: 'high',
+        ownerId: dba!.id,
+        typeData: { ...risky.typeData, environment: 'production', operationType: 'db_ddl' },
+      })
       .where(eq(workItems.id, risky.id));
 
     const moved = await transition(db, {
@@ -580,62 +675,6 @@ async function main() {
       })
       .where(eq(decisions.workItemId, risky.id));
     console.log(`  待决策卡片  ${risky.title}（${moved.ok ? moved.to : '流转失败'}）`);
-  }
-
-  /**
-   * 项目级 Policy。
-   *
-   * 只有组织基线的话，Policy 页上「项目自定义」永远是空的，
-   * 而「只能收紧不能放宽」「冲突检测」这些真正要验的东西
-   * 全都需要至少一条项目规则才跑得到。
-   */
-  {
-    const { policies } = await import('@apos/db');
-    await db.insert(policies).values([
-      {
-        orgId,
-        projectId,
-        name: '低风险任务自动批准',
-        description: '测试通过且 token 用量可控的低风险任务无需人工审批',
-        priority: 100,
-        condition: {
-          all: [
-            { fact: 'riskLevel', op: 'eq', value: 'low' },
-            { fact: 'runTokens', op: 'lt', value: 200_000 },
-          ],
-        },
-        action: { type: 'allow_and_notify', notify: [{ kind: 'project_role', role: 'pm' }] },
-        createdBy: lead!.id,
-      },
-      {
-        orgId,
-        projectId,
-        name: '预算用掉八成后提醒技术负责人',
-        description: '在真正超限之前先打个招呼，别等到卡住才发现',
-        priority: 110,
-        condition: { fact: 'budgetUsedPct', op: 'gte', value: 80 },
-        action: { type: 'ask', assignee: { kind: 'project_role', role: 'tech_lead' } },
-        createdBy: lead!.id,
-      },
-      {
-        // 刻意留一条依赖未接入数据源的规则 —— 它看起来配好了，实际永远不命中。
-        // 这正是 Policy 页体检要抓的那类失效
-        orgId,
-        projectId,
-        name: '安全扫描通过才允许部署',
-        description: '',
-        priority: 120,
-        condition: {
-          all: [
-            { fact: 'securityScan', op: 'eq', value: 'passed' },
-            { fact: 'operationType', op: 'eq', value: 'deploy' },
-          ],
-        },
-        action: { type: 'allow' },
-        createdBy: lead!.id,
-      },
-    ]);
-    console.log('  项目规则    3 条（含一条依赖未接入数据源的，供体检验证）');
   }
 
   // ── 60 天历史（只给 Analytics 用，不走真实链路，原因见 seed-history.ts）──

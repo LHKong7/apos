@@ -6,6 +6,7 @@ import {
   agentRuns,
   decisions,
   events,
+  policies,
   projectMembers,
   requirementClarifications,
   requirements,
@@ -2025,8 +2026,32 @@ describe('★ Run 控制：能力不足要如实报，不能悄悄降级', () =>
 });
 
 describe('★ 等待审批的任务留在原阶段，不假装「已做完在审核」', () => {
+  /**
+   * ★ 拦住生产库变更的那条规则得自己建 —— 平台不再自带任何硬编码基线，
+   *   库里没有规则时这些任务会一路走过去，测的就不是「等审批时停在哪一列」了。
+   */
+  async function seedProdDbRule() {
+    await db.insert(policies).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      name: '生产数据库变更必须由 DBA 审批',
+      description: '',
+      priority: 100,
+      enabled: true,
+      createdBy: fx.userId,
+      condition: {
+        all: [
+          { fact: 'environment', op: 'eq', value: 'production' },
+          { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+        ],
+      },
+      action: { type: 'require_human_review', assignee: { kind: 'role', role: 'dba' }, dueInHours: 4 },
+    });
+  }
+
   it('执行前审批的任务留在 Execution 列并带 Human Gate 标识', async () => {
-    // 生产 DDL 任务：plan_approved 时会被基线 Policy 拦下
+    await seedProdDbRule();
+    // 生产 DDL 任务：plan_approved 时会被这条 Policy 拦下
     const item = await createWorkItem(db, fx, {
       status: 'draft',
       stage: 'intake',
@@ -2064,6 +2089,7 @@ describe('★ 等待审批的任务留在原阶段，不假装「已做完在审
   });
 
   it('执行后审批的任务留在 Review 列', async () => {
+    await seedProdDbRule();
     const item = await createWorkItem(db, fx, {
       status: 'executing',
       typeData: { environment: 'production', operationType: 'db_ddl' },

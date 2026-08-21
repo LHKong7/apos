@@ -21,7 +21,6 @@ import {
   type PolicyContext,
 } from '@apos/contracts';
 import {
-  BASELINE_POLICIES,
   compile,
   evaluate,
   explainAction,
@@ -388,14 +387,8 @@ export async function generatePlan(
 async function loadRules(db: Database, orgId: string, projectId: string) {
   const rows = await db.select().from(policies).where(eq(policies.orgId, orgId));
   const scoped = rows.filter((r) => r.projectId === null || r.projectId === projectId);
-  const storedIds = new Set(scoped.map((p) => p.id));
-  const baseline = BASELINE_POLICIES.filter((p) => !storedIds.has(p.id)).map((p) => ({
-    ...p,
-    orgId,
-  }));
-  return compile([
-    ...baseline,
-    ...scoped.map((r) => ({
+  return compile(
+    scoped.map((r) => ({
       id: r.id,
       orgId: r.orgId,
       projectId: r.projectId,
@@ -406,7 +399,7 @@ async function loadRules(db: Database, orgId: string, projectId: string) {
       condition: r.condition,
       action: r.action,
     })),
-  ]);
+  );
 }
 
 /**

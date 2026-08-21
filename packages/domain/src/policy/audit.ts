@@ -125,7 +125,7 @@ export function auditPolicies(
     issues: [
       ...findConflicts(verdicts, policies, byId),
       ...findUnreachable(verdicts, policies),
-      ...findAutoPassedRisks(verdicts),
+      ...findAutoPassedRisks(verdicts, policies.length > 0),
       ...findEverythingGated(verdicts),
       ...findMissingDataSources(policies, wiredFacts),
       ...findZeroHit(policies, hits, wiredFacts),
@@ -322,8 +322,26 @@ function findUnreachable(verdicts: Verdicts, policies: Policy[]): PolicyIssue[] 
  *
  * ★ 页面文档 §5.8 特别点名这一类。用户配了几条规则就以为安全了，
  *   而漏配的场景悄悄走默认 —— 出事时没人知道「原来这里根本没规则」。
+ *
+ * ★★ 两处刻意的克制，都是硬编码基线删掉之后才谈得上的：
+ *
+ *   1. 一条规则都没有时**不报**（`hasRules`）。零规则不是「配漏了」，
+ *      是还没开始配 —— 对着一个空项目喊出九条「高风险操作没人管」，
+ *      说的每一条都对，合起来却只是把「你还没配规则」说了九遍。
+ *      空列表该由引导向导接手，不是由体检来吓人。
+ *   2. `coverage_gap` 一律降到 info。它说的是「这里走的是默认策略」，
+ *      而默认策略是自治等级的一部分、是用户自己选的，不是事故。
+ *      真正的事故是 `too_permissive`：**有一条规则**明确把高风险操作
+ *      放行了 —— 那条仍然是 critical。
+ *
+ *   Nothing is reported when the project has no rules at all: zero rules means
+ *   "not configured yet", not "misconfigured", and nine criticals on an empty
+ *   project is the same sentence nine times. `coverage_gap` drops to info
+ *   because falling through to the autonomy default is a choice the user made;
+ *   `too_permissive` — a rule that actively waves a high-risk operation
+ *   through — stays critical.
  */
-function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
+function findAutoPassedRisks(verdicts: Verdicts, hasRules: boolean): PolicyIssue[] {
   interface Hole {
     /** 被某条规则明确放行 */
     byPolicy: { name: string; id: string; example: string } | null;
@@ -377,9 +395,11 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
       if (hole.byPolicy) causes.push(`「${hole.byPolicy.name}」会放行它（${hole.byPolicy.example}）`);
       if (hole.byDefault) causes.push(`没有规则覆盖时默认放行（${hole.byDefault.example}）`);
 
+      if (!hole.byPolicy && !hasRules) continue;
+
       issues.push({
         type: hole.byPolicy ? 'too_permissive' : 'coverage_gap',
-        severity: 'critical',
+        severity: hole.byPolicy ? 'critical' : 'info',
         message: `高风险操作「${label}」会被自动放行：${causes.join('；')}`,
         /**
          * ★ 操作类型送**枚举键**而不是那个中文 `label` —— 界面自己有
@@ -392,10 +412,10 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
       continue;
     }
 
-    if (hole.uncoveredButGated) {
+    if (hole.uncoveredButGated && hasRules) {
       issues.push({
         type: 'coverage_gap',
-        severity: 'warning',
+        severity: 'info',
         message: `高风险操作「${label}」没有任何规则覆盖，走的是自治等级的默认策略`,
         params: { operation: op },
         example: hole.uncoveredButGated.example,

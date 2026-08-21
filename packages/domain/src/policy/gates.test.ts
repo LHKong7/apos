@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Policy, PolicyContext } from '@apos/contracts';
-import { BASELINE_POLICIES } from './baseline';
+import { SAMPLE_RULES } from './sample-rules';
 import { selectPolicyGates } from './gates';
 
 function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
@@ -52,11 +52,11 @@ describe('selectPolicyGates', () => {
   /**
    * ★ 这条是这个功能存在的理由。派发时 operationType 还是默认的
    *   code_change、environment 还是 null —— 照当前上下文直接求值的话，
-   *   八条基线规则一条都不命中，Agent 什么警告都收不到，然后一路做到
+   *   八条高风险规则一条都不命中，Agent 什么警告都收不到，然后一路做到
    *   生产发布才在流转那一步被冻住。
    */
   it('★ 未定的 fact 按「可能」处理，生产发布类规则要出现在派发时的警告里', () => {
-    const gates = selectPolicyGates(BASELINE_POLICIES, ctx());
+    const gates = selectPolicyGates(SAMPLE_RULES, ctx());
 
     expect(names(gates)).toContain('生产环境发布需发布负责人审批');
     expect(names(gates)).toContain('生产数据库变更必须由 DBA 审批');
@@ -64,10 +64,10 @@ describe('selectPolicyGates', () => {
   });
 
   it('已被固定 fact 排除的规则不提 —— 连续失败次数在这次执行里不会变', () => {
-    const gates = selectPolicyGates(BASELINE_POLICIES, ctx({ consecutiveFailures: 0 }));
+    const gates = selectPolicyGates(SAMPLE_RULES, ctx({ consecutiveFailures: 0 }));
     expect(names(gates)).not.toContain('Agent 连续失败 3 次转人工');
 
-    const retry = selectPolicyGates(BASELINE_POLICIES, ctx({ consecutiveFailures: 3 }));
+    const retry = selectPolicyGates(SAMPLE_RULES, ctx({ consecutiveFailures: 3 }));
     expect(names(retry)).toContain('Agent 连续失败 3 次转人工');
   });
 
@@ -78,12 +78,12 @@ describe('selectPolicyGates', () => {
    */
   it('★ 项目没设预算时不警告预算超限 —— 那条规则在这个项目上不可能命中', () => {
     const noBudget = selectPolicyGates(
-      BASELINE_POLICIES,
+      SAMPLE_RULES,
       ctx({ projectTokenBudget: null, budgetUsedPct: null }),
     );
     expect(names(noBudget)).not.toContain('预算超限需 Sponsor 批准');
 
-    const withBudget = selectPolicyGates(BASELINE_POLICIES, ctx());
+    const withBudget = selectPolicyGates(SAMPLE_RULES, ctx());
     expect(names(withBudget)).toContain('预算超限需 Sponsor 批准');
   });
 
@@ -96,7 +96,7 @@ describe('selectPolicyGates', () => {
    */
   it('★ 任务已标明 deploy/production 时只警告会命中的那条，不再撒网', () => {
     const gates = selectPolicyGates(
-      BASELINE_POLICIES,
+      SAMPLE_RULES,
       ctx({ operationType: 'deploy', environment: 'production' }),
     );
 
@@ -108,7 +108,7 @@ describe('selectPolicyGates', () => {
 
   it('标了非生产环境时，生产类规则整条排除', () => {
     const gates = selectPolicyGates(
-      BASELINE_POLICIES,
+      SAMPLE_RULES,
       ctx({ operationType: 'deploy', environment: 'test' }),
     );
     expect(names(gates)).not.toContain('生产环境发布需发布负责人审批');
@@ -119,7 +119,7 @@ describe('selectPolicyGates', () => {
    *   「没标过」与「确实是改代码」分不开，此时宁可多报。
    */
   it('★ 没标过性的任务仍然广泛警告', () => {
-    const gates = selectPolicyGates(BASELINE_POLICIES, ctx());
+    const gates = selectPolicyGates(SAMPLE_RULES, ctx());
     expect(names(gates)).toContain('执行付款需多人会签');
     expect(names(gates)).toContain('生产环境发布需发布负责人审批');
   });
@@ -159,7 +159,7 @@ describe('selectPolicyGates', () => {
   });
 
   it('按 priority 升序返回，与 evaluate 的首次命中顺序一致', () => {
-    const gates = selectPolicyGates(BASELINE_POLICIES, ctx());
+    const gates = selectPolicyGates(SAMPLE_RULES, ctx());
     expect(gates[0]?.name).toBe('执行付款需多人会签');
   });
 

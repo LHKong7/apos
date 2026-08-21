@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { artifacts, decisions, events, policies, workItemDependencies, workItems } from '@apos/db';
 import { humanActor, SYSTEM_ACTOR, agentActor } from '@apos/contracts';
-import { BASELINE_POLICIES, decisionLabel } from '@apos/domain';
+import { decisionLabel } from '@apos/domain';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { decisionTypeFor, transition } from './transition';
 
@@ -37,6 +37,49 @@ async function withArtifact(itemId: string) {
 
 /** transition 不经过 Scheduler，需要显式执行主体才能过 executorAssigned guard */
 const assigned = { executorType: 'agent' as const, executorId: randomUUID() };
+
+/**
+ * 往库里放一条规则。
+ *
+ * ★★ 平台不再自带任何硬编码基线 —— 生效的规则只有库里这些，一条都没有
+ *   就是零条。所以每个「Policy 会拦住它」的用例都必须自己先把那条规则
+ *   建出来；不建就等于在测「没有规则时会发生什么」，而那是另一回事。
+ *
+ * ★ `projectId: null` = 组织级规则。它和项目规则的差别只有一个：优先级
+ *   排在前面（1–99 vs 100+），因此项目规则挡不住它。
+ */
+async function insertRule(
+  scope: 'org' | 'project',
+  rule: { name: string; priority: number; condition: unknown; action: unknown },
+  fixture?: Fixture,
+): Promise<string> {
+  const f = fixture ?? fx;
+  const [row] = await db
+    .insert(policies)
+    .values({
+      orgId: f.orgId,
+      projectId: scope === 'org' ? null : f.projectId,
+      name: rule.name,
+      priority: rule.priority,
+      condition: rule.condition as never,
+      action: rule.action as never,
+      createdBy: f.userId,
+    })
+    .returning({ id: policies.id });
+  return row!.id;
+}
+
+const PROD_DB_RULE = {
+  name: '生产数据库变更必须由 DBA 审批',
+  priority: 5,
+  condition: {
+    all: [
+      { fact: 'environment', op: 'eq', value: 'production' },
+      { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+    ],
+  },
+  action: { type: 'require_human_review', assignee: { kind: 'role', role: 'dba' }, dueInHours: 4 },
+};
 
 async function eventsFor(subjectId: string) {
   return db
@@ -185,7 +228,8 @@ describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
 });
 
 describe('Policy 拦截与决策创建', () => {
-  it('★ 生产数据库变更被基线规则拦截，任务进入 awaiting_decision', async () => {
+  it('★ 生产数据库变更被规则拦截，任务进入 awaiting_decision', async () => {
+    const ruleId = await insertRule('org', PROD_DB_RULE);
     const item = await createWorkItem(db, fx, {
       status: 'executing',
       typeData: { environment: 'production', operationType: 'db_ddl' },
@@ -204,7 +248,7 @@ describe('Policy 拦截与决策创建', () => {
 
     // 目标本是 reviewing，被 Policy 改道
     expect(result.to).toBe('awaiting_decision');
-    expect(result.verdict.matchedPolicyId).toBe('baseline-prod-db');
+    expect(result.verdict.matchedPolicyId).toBe(ruleId);
     expect(result.createdDecisionId).toBeTruthy();
 
     const [decision] = await db
@@ -236,16 +280,14 @@ describe('Policy 拦截与决策创建', () => {
     expect(result.createdDecisionId).toBeNull();
   });
 
-  it('★ 项目级规则无法绕过组织基线', async () => {
-    // 项目试图放行生产 DDL
-    await db.insert(policies).values({
-      orgId: fx.orgId,
-      projectId: fx.projectId,
+  it('★ 项目级规则排在组织规则之后，绕不过它', async () => {
+    const orgRuleId = await insertRule('org', PROD_DB_RULE);
+    // 项目试图放行生产 DDL —— 优先级 100 永远排在组织规则之后
+    await insertRule('project', {
       name: '放行一切',
       priority: 100,
       condition: { all: [] },
       action: { type: 'allow' },
-      createdBy: fx.userId,
     });
 
     const item = await createWorkItem(db, fx, {
@@ -263,7 +305,7 @@ describe('Policy 拦截与决策创建', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.verdict.matchedPolicyId).toBe('baseline-prod-db');
+    expect(result.verdict.matchedPolicyId).toBe(orgRuleId);
     expect(result.to).toBe('awaiting_decision');
   });
 
@@ -490,20 +532,28 @@ describe('NOT_FOUND', () => {
 
 describe('决策类型的中文名', () => {
   /**
-   * ★ 每条基线规则命中后都会生成一个决策，决策类型必须有中文名。
+   * ★ 规则命中后会生成一个决策，决策类型必须有中文名。
    *   这两处分别在 apps/api 和 packages/domain，谁也不 import 谁 ——
    *   之前它们就是这么各写各的：运行时发 high_risk_operation，
    *   标签表里只有 db_change，页面上于是印出一串下划线。
    */
-  it('每条基线规则产出的决策类型都有中文名', () => {
-    for (const p of BASELINE_POLICIES) {
-      const type = decisionTypeFor({ matchedPolicyId: p.id } as never);
-      expect(decisionLabel(type), `${p.id} → ${type} 没有中文名`).not.toBe(type);
-    }
+  it('规则命中产出的决策类型有中文名', () => {
+    const type = decisionTypeFor({ matchedPolicyId: randomUUID() } as never);
+    expect(decisionLabel(type), `${type} 没有中文名`).not.toBe(type);
   });
 
   it('没有命中规则时的兜底类型也有中文名', () => {
     const type = decisionTypeFor({ matchedPolicyId: null } as never);
     expect(decisionLabel(type)).not.toBe(type);
+  });
+
+  /**
+   * ★ 规则 id 是用户建规则时生成的 UUID，从它推不出这条规则管的是发布
+   *   还是预算。以前按 `baseline-` 前缀分出的那些细分类型因此全部下线 ——
+   *   猜出来的分类会在决策中心上贴一个可能是错的标签。
+   */
+  it('★ 不再从规则 id 猜决策类型', () => {
+    expect(decisionTypeFor({ matchedPolicyId: randomUUID() } as never)).toBe('approval');
+    expect(decisionTypeFor({ matchedPolicyId: null } as never)).toBe('approval');
   });
 });
