@@ -23,6 +23,7 @@ import { RuleList } from './RuleList';
 import { RuleEditor } from './RuleEditor';
 import { OperationMatrix, type OperationRow } from './OperationMatrix';
 import { OperationSwitchDialog } from './OperationSwitchDialog';
+import { FirstRunWizard } from './FirstRunWizard';
 import { ScenarioTester } from './ScenarioTester';
 import { HitsPanel } from './HitsPanel';
 import { Button } from '@/components/ui/button';
@@ -136,6 +137,14 @@ export function PoliciesPage() {
     operationType: string;
     verdict: 'auto' | 'human';
   } | null>(null);
+  /**
+   * 用户在引导向导上点了「我自己来」。
+   *
+   * ★ 只记在内存里，不落 localStorage：这一页刷新一次就该重新给出建议 ——
+   *   一个跳过过一次就再也不出现的引导，等于把「这个项目还没设边界」
+   *   这件事永久藏了起来。
+   */
+  const [wizardSkipped, setWizardSkipped] = useState(false);
 
   const policies = useQuery({
     queryKey: qk.policies(projectId!),
@@ -374,6 +383,21 @@ export function PoliciesPage() {
 
             {tab === 'test' ? (
               <ScenarioTester projectId={projectId} />
+            ) : data.projectPolicies.length === 0 && !wizardSkipped ? (
+              /*
+                ★★ 一条规则都没有时，列表区不是「空列表 + 一排模板按钮」。
+                  那两样东西一起说的是「这里本该有东西，你自己去配」——
+                  而用户此刻既不知道该配什么，也不知道配多少算够，
+                  最常见的结局是关掉页面，项目就这么零规则跑下去。
+              */
+              <FirstRunWizard
+                projectId={projectId}
+                onSkip={() => setWizardSkipped(true)}
+                onDone={(message) => {
+                  setToast(message);
+                  void refresh();
+                }}
+              />
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
