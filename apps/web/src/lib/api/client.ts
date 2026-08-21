@@ -299,6 +299,8 @@ export const api = {
       riskLevel?: string;
       ownerId?: string | null;
       parentId?: string | null;
+      /** 这个任务算哪一类操作 —— 不给就按「改代码」评估 Policy */
+      operationType?: string;
     },
   ) =>
     request<{ item: { id: string; ref: string; status: string }; notice: string }>(

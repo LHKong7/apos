@@ -85,6 +85,8 @@ export const board = {
   'createItem.type': 'Type',
   'createItem.priority': 'Priority',
   'createItem.risk': 'Risk',
+  'createItem.operationType': 'What kind of operation is this?',
+  'createItem.operationTypeHint': 'Decides which rules apply to it. Leave it on “Change code” for ordinary work; mark the sensitive ones — a deletion filed as a code change is judged as a code change.',
   'createItem.riskLow': 'Low',
   'createItem.riskMedium': 'Medium',
   'createItem.riskHigh': 'High',

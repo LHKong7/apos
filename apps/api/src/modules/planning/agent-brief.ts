@@ -180,8 +180,13 @@ ${languageRule(locale)}
       // database.read|database.write|secret.read
       "requiredCapabilities": ["workspace.read"],
       "requiresHuman": false,
-      "operationType": "deploy",            // 可选：deploy / db_ddl 等敏感操作
-      "environment": "production",          // 可选
+      // 下面四项都可选，但**只能填枚举里的值**，拼错会整份计划打回重来。
+      // read|code_change|db_ddl|db_dml|deploy|delete_resource|permission_change|
+      // access_sensitive_data|send_external|payment|security_policy_change|high_cost_resource
+      "operationType": "deploy",
+      "environment": "production",          // dev|test|staging|production
+      "dataSensitivity": "internal",        // public|internal|confidential|restricted
+      "externalFacing": false,              // 产出会发给外部客户或公开渠道吗
       "acceptanceCriteria": [{ "text": "…", "verification": "auto" }],
       "dependsOn": [{ "ref": "design", "type": "finish_to_start" }]
     }
@@ -199,6 +204,13 @@ ${languageRule(locale)}
   界面上表现为两张卡永久卡住。
 - 生产环境的发布与数据库结构变更必须 \`"requiresHuman": true\`，
   并标上 \`operationType\` 与 \`environment\`。
+- \`operationType\` / \`environment\` / \`dataSensitivity\` **只能取上面列出的值**。
+  拼错或自造一个值会让整份计划被拒收 —— 不确定就别填这一项，
+  填一个近似的值比留空危险得多：治理规则会因此静默地匹配不上。
+- 会读到用户数据、密钥或线上库的任务标 \`dataSensitivity\`；
+  产出会发给外部客户或公开渠道的任务标 \`"externalFacing": true\`。
+  这两项决定了「访问敏感数据要不要人批」「对外内容要不要人确认」
+  这类规则拦不拦得住它，不标就等于这些规则对这个任务不存在。
 - 任务粒度控制在 2–16 小时。太粗无法并行也无法追踪进度，
   太细会让依赖图膨胀到没人看得懂。
 - **按这个需求真正需要什么来拆**，不要套「调研→设计→开发→测试→发布」

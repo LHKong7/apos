@@ -1,4 +1,4 @@
-import { AgentCapability } from '@apos/contracts';
+import { AgentCapability, DataSensitivity, Environment, OperationType } from '@apos/contracts';
 import { z } from 'zod';
 
 /**
@@ -134,8 +134,35 @@ export const AgentPlanOutput = z.object({
         requiredTools: z.array(z.string()).default([]),
         /** 计划阶段就要标出必须由人做的任务（产品文档 8.8.6：生产发布默认由人执行） */
         requiresHuman: z.boolean().default(false),
-        operationType: z.string().optional(),
-        environment: z.string().optional(),
+        /**
+         * ★★ 严格枚举，认不出的值**拒收**，不静默兜底。
+         *
+         *   这是安全底线上的一个口子：`operationType` 兜底成 `code_change`
+         *   的话，模型写出 `"delete_resrouce"`（拼错一个字母）就等于
+         *   把「删资源永远不自动放行」整条绕过去了 —— 而绕过去的现场
+         *   毫无迹象：任务照常跑完，规则一条都没命中。
+         *
+         *   拒收换来的是一次重试或一次澄清，代价小得多。
+         *
+         * Strict enums: an unrecognised value is rejected rather than quietly
+         * defaulted. Defaulting `operationType` to `code_change` means one
+         * typo — "delete_resrouce" — walks straight past the safety floor,
+         * leaving no trace: the task simply runs and no rule matches.
+         */
+        operationType: OperationType.optional(),
+        environment: Environment.optional(),
+        /**
+         * ★ 这两项此前没有任何生产者：`buildPolicyContext` 从 typeData 里读，
+         *   而没有任何代码往 typeData 里写。于是「访问受限数据要审批」
+         *   「对外内容要人确认」这两类规则永远不会命中 —— 用户以为配好了。
+         *   规划阶段是唯一知道这两件事的地方，所以由它来标。
+         *
+         * Neither fact had a producer, so any rule keyed on them could never
+         * match — while looking configured. Planning is the only place that
+         * knows, so planning is where they get marked.
+         */
+        dataSensitivity: DataSensitivity.optional(),
+        externalFacing: z.boolean().optional(),
         acceptanceCriteria: z
           .array(
             z.object({

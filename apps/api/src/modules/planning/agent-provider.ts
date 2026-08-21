@@ -237,6 +237,8 @@ export class AgentPlanningProvider implements PlanningProvider {
         requiresHuman: t.requiresHuman,
         ...(t.operationType ? { operationType: t.operationType } : {}),
         ...(t.environment ? { environment: t.environment } : {}),
+        ...(t.dataSensitivity ? { dataSensitivity: t.dataSensitivity } : {}),
+        ...(t.externalFacing !== undefined ? { externalFacing: t.externalFacing } : {}),
         acceptanceCriteria: t.acceptanceCriteria.map((c, i) => ({
           id: `${t.ref}-ac-${i + 1}`,
           text: c.text,

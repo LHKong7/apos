@@ -1,4 +1,5 @@
 import { useT, type MessageKey } from '../../lib/i18n';
+import { policyOperationLabel } from '@/lib/format';
 import { useState } from 'react';
 import { confirmClose, useUnsavedGuard } from '../../lib/useUnsavedGuard';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -43,6 +44,38 @@ const TYPES: { value: string; labelKey: MessageKey }[] = [
   { value: 'knowledge', labelKey: 'createItem.type.knowledge' },
 ];
 
+/**
+ * 这个任务算哪一类操作（Policy 的 `operationType` fact）。
+ *
+ * ★★ 默认 `code_change` —— 对「随手记一个 bug」是对的，对「清理一批线上
+ *   资源」是错的：后者会被当成改代码来评估，「删资源永远要人确认」
+ *   那条安全底线根本轮不到。手工建卡是唯一没有规划阶段替它标操作类型的
+ *   入口，所以要问一句。
+ *
+ * ★ 排在「敏感操作」那一档里的几个放前面 —— 这一栏真正要接住的就是它们。
+ *   十二个平铺的选项里，用户十有八九直接跳过默认值。
+ *
+ * Which operation class this item is. It defaults to `code_change`, which is
+ * right for jotting down a bug and wrong for "clean up some production
+ * resources" — that would be judged as a code change and never reach the
+ * delete-resource floor. Manual creation is the one entry point with no
+ * planning stage to mark this.
+ */
+const OPERATION_TYPES = [
+  'code_change',
+  'deploy',
+  'db_ddl',
+  'db_dml',
+  'delete_resource',
+  'permission_change',
+  'access_sensitive_data',
+  'send_external',
+  'payment',
+  'security_policy_change',
+  'high_cost_resource',
+  'read',
+];
+
 const PRIORITIES: { value: number; labelKey: MessageKey }[] = [
   { value: 0, labelKey: 'priority.p0' },
   { value: 1, labelKey: 'priority.p1' },
@@ -63,6 +96,7 @@ export function CreateWorkItemDialog({
   const [type, setType] = useState('task');
   const [priority, setPriority] = useState(2);
   const [riskLevel, setRiskLevel] = useState('low');
+  const [operationType, setOperationType] = useState('code_change');
 
   /**
    * ★ 「改过」= 用户真的写进去了东西，不是「打开过这个弹窗」。
@@ -84,6 +118,7 @@ export function CreateWorkItemDialog({
         type,
         priority,
         riskLevel,
+        operationType,
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: qk.boardAll(projectId) });
@@ -169,6 +204,25 @@ export function CreateWorkItemDialog({
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        <div>
+          <Label htmlFor="new-item-operation" className="text-slate-700">
+            {t('createItem.operationType')}
+          </Label>
+          <Select value={operationType} onValueChange={setOperationType}>
+            <SelectTrigger id="new-item-operation" className="mt-1 bg-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPERATION_TYPES.map((op) => (
+                <SelectItem key={op} value={op}>
+                  {policyOperationLabel(op)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-[11px] text-slate-400">{t('createItem.operationTypeHint')}</p>
         </div>
 
         <Label className="block">

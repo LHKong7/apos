@@ -229,6 +229,38 @@ describe('手工建任务', () => {
     expect((await create({ title: '试试' }, viewer)).statusCode).toBe(403);
   });
 
+  /**
+   * ★★ 手工建卡是唯一没有规划阶段替它标操作类型的入口。
+   *
+   *   不问这一句的话，「清理一批线上资源」会被当成改代码来评估 ——
+   *   「删资源永远要人确认」那条安全底线根本轮不到，
+   *   而现场毫无迹象：任务照常跑，规则一条都没命中。
+   */
+  it('★ 标出来的操作类型落进 typeData，Policy 读得到', async () => {
+    const id = (await create({ title: '清理一批线上资源', operationType: 'delete_resource' }))
+      .json().item.id;
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, id));
+    expect(row!.typeData).toMatchObject({ operationType: 'delete_resource' });
+  });
+
+  /**
+   * ★ 认不出的值直接拒收，不兜底成 code_change ——
+   *   兜底是往**宽**的一侧猜，而这一栏的全部意义就是别让人猜。
+   */
+  it('★ 拼错的操作类型被拒收，不静默兜底', async () => {
+    const res = await create({ title: '清理资源', operationType: 'delete_resrouce' });
+    expect(res.statusCode).toBe(400);
+
+    const rows = await db.select().from(workItems).where(eq(workItems.projectId, fx.projectId));
+    expect(rows.some((r) => r.title === '清理资源')).toBe(false);
+  });
+
+  it('不填操作类型时 typeData 里就没有这一项 —— 由评估那一步兜底成改代码', async () => {
+    const id = (await create({ title: '随手记一个 bug' })).json().item.id;
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, id));
+    expect(row!.typeData).not.toHaveProperty('operationType');
+  });
+
   /** ★ 审计时「它是怎么来的」要答得上：计划分解的还是人手建的 */
   it('★ 手工建的任务留下 origin 痕迹', async () => {
     const id = (await create({ title: '手建的' })).json().item.id;
