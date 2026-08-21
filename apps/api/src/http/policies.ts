@@ -10,11 +10,28 @@ import {
   workItems,
   type Database,
 } from '@apos/db';
-import { actionLabel } from '@apos/contracts';
-import type { Action, AutonomyLevel, Condition, FactKey, Policy, PolicyContext } from '@apos/contracts';
 import {
+  AUTHORED_PRIORITY_MIN,
+  NEVER_AUTO_APPROVE,
+  OPERATION_SWITCH_PRIORITY,
+  actionLabel,
+} from '@apos/contracts';
+import type {
+  Action,
+  AutonomyLevel,
+  Condition,
+  Environment,
+  FactKey,
+  OperationType,
+  Policy,
+  PolicyContext,
+} from '@apos/contracts';
+import {
+  ANY_ENVIRONMENT,
+  AUTO_APPROVE_FOR_OPERATION,
   ENV_LABELS,
   OPERATION_LABELS,
+  REQUIRE_HUMAN_FOR_OPERATION,
   auditPolicies,
   buildScenarios,
   compile,
@@ -23,6 +40,9 @@ import {
   isAutoApprove,
   previewAutonomy,
   simulate,
+  switchedOperationOf,
+  templateById,
+  type OperationOutcome,
   type HistoricalSample,
   type SimulationResult,
 } from '@apos/domain';
@@ -238,6 +258,212 @@ export async function savePolicy(
   });
 
   return { policy: candidate, direction, loosenedScenarios: loosened, simulation };
+}
+
+/**
+ * 操作开关矩阵 —— 一行一个操作类型，右边一个开关（页面文档 13，本轮新增）。
+ *
+ * ★★ 这是这一页的主入口，理由是概念上少了一层翻译。
+ *
+ *   用户脑子里想的是「部署这件事，Agent 能不能自己干」。旧的路径要求他先把
+ *   这句话翻译成「一条条件为 operationType == deploy、动作为 allow 的规则」，
+ *   再回过头去摘要里确认自己翻译对了没有。看得见的那一行（摘要）
+ *   和改得动的那一行（规则）不是同一行 —— 这个断层是这一页最大的成本。
+ *   开关把两者合成一行：看得见的就是改得动的。
+ *
+ * ★★ 一次切换 = **一条规则**，不是一次合并。
+ *
+ *   诱人的做法是把已有规则一起改掉，好让这一行「干净地」变成用户要的状态。
+ *   不这么做：用户手写的规则是他表达过的意图，一次点击不该把它悄悄改写。
+ *   开关只在**最前面**加一条（或改它自己上次加的那条），已有规则一条不动。
+ *   于是「删掉这条规则即还原」永远成立，而这是一键操作能被信任的前提。
+ *
+ * ★★ 但也因此，切换**可能不生效** —— 已有规则或安全底线仍然可能拦在前面。
+ *   所以这里保存完必须重新体检一遍，把「这一行现在真的是什么状态」如实返回。
+ *   报「已保存」而不报结果，正是这一页最该避免的那种谎：
+ *   用户以为放开了，实际没有。
+ *
+ * The switch matrix: one row per operation type, one switch per row. A switch
+ * adds exactly one rule at the front of the project band (or edits the one it
+ * added last time) and never rewrites hand-authored rules, so "delete that rule
+ * to undo" always holds. Because of that a switch can fail to take effect — an
+ * existing rule or the safety floor may still win — so the outcome is
+ * re-audited after saving and reported truthfully rather than as "saved".
+ */
+export interface OperationSwitchInput {
+  operationType: OperationType;
+  verdict: 'auto' | 'human';
+  /** 只想管住某一个环境时给它；不给 = 所有环境（条件里不写 environment） */
+  environment?: Environment | typeof ANY_ENVIRONMENT;
+  /** verdict = human 时谁来确认 */
+  approver?: string;
+  dueInHours?: number;
+  /**
+   * 规则名。由界面按用户当下的语言拼好送上来 —— 名字是**落库的数据**，
+   * 服务端拼一句中文的话，英文界面上会永久看到一条中文规则名。
+   */
+  name?: string;
+}
+
+export async function setOperationSwitch(
+  db: Database,
+  projectId: string,
+  input: OperationSwitchInput,
+  actorId: string,
+  opts: {
+    acknowledgeMismatches?: boolean;
+    assertCan?: (permission: 'policy.tighten' | 'policy.loosen') => void;
+  } = {},
+) {
+  const project = await loadProject(db, projectId);
+  const existing = await loadProjectPolicies(db, project.orgId, projectId);
+
+  const templateId =
+    input.verdict === 'auto' ? AUTO_APPROVE_FOR_OPERATION : REQUIRE_HUMAN_FOR_OPERATION;
+  const template = templateById(templateId);
+  /* c8 ignore next —— 模板 id 是常量，取不到只可能是模板表被改坏了 */
+  if (!template) throw notFound('template');
+
+  const built = template.build({
+    operationType: input.operationType,
+    environment: input.environment ?? ANY_ENVIRONMENT,
+    approver: input.approver ?? 'tech_lead',
+    dueInHours: input.dueInHours ?? 8,
+  });
+
+  const current = findOperationSwitch(existing, input.operationType);
+  const label = OPERATION_LABELS[input.operationType] ?? input.operationType;
+
+  const saved = await savePolicy(
+    db,
+    projectId,
+    {
+      name: input.name?.trim() || defaultSwitchName(input.verdict, label),
+      description: '',
+      /**
+       * ★ 复用它自己上次那条的优先级，不重新分配 —— 重排会让「这次点击
+       *   顺带改变了另外几条规则的先后」，而用户以为自己只翻了一个开关。
+       */
+      priority: current?.priority ?? OPERATION_SWITCH_PRIORITY,
+      condition: built.condition,
+      action: built.action,
+    },
+    actorId,
+    {
+      ...(current ? { policyId: current.id } : {}),
+      ...(opts.acknowledgeMismatches !== undefined
+        ? { acknowledgeMismatches: opts.acknowledgeMismatches }
+        : {}),
+      ...(opts.assertCan ? { assertCan: opts.assertCan } : {}),
+    },
+  );
+
+  /**
+   * ★ 保存完再体检一遍。
+   *   这一步不是锦上添花：切换的结果取决于整套规则怎么排，而那个答案
+   *   只有把规则集重新跑一遍才知道。省掉它，界面就只能说「已保存」。
+   */
+  const after = await loadProjectPolicies(db, project.orgId, projectId);
+  const { summary } = auditPolicies(after, project.autonomyLevel as AutonomyLevel);
+  const outcome = findOutcome(summary, input.operationType);
+  const applied = outcome?.verdict === input.verdict;
+
+  /**
+   * 没生效时，是谁挡在前面 —— 只报「没生效」等于把排查工作原样退回给用户。
+   */
+  const shadowedBy = applied
+    ? []
+    : (outcome?.matchedPolicyIds ?? [])
+        .filter((id) => id !== saved.policy.id)
+        .map((id) => after.find((p) => p.id === id))
+        .filter((p): p is Policy => Boolean(p))
+        .map((p) => ({ id: p.id, name: p.name, scope: p.projectId === null ? 'org' : 'project' }));
+
+  return {
+    ...saved,
+    outcome,
+    applied,
+    shadowedBy,
+    /**
+     * ★ 没生效的两种成因要分开报。
+     *   「被另一条规则挡住」用户改得动（去看那条规则）；
+     *   「安全底线不许」用户改不动，任何配置都放行不了删资源 / 改权限 / 付款。
+     *   混成一句「没生效」的话，前者他找不到该看哪儿，
+     *   后者他会一直试下去 —— 两种都是白花时间。
+     */
+    blockedBy: applied
+      ? null
+      : shadowedBy.length > 0
+        ? ('other_rules' as const)
+        : input.verdict === 'auto' &&
+            (NEVER_AUTO_APPROVE as readonly string[]).includes(input.operationType)
+          ? ('safety_floor' as const)
+          : ('autonomy_default' as const),
+  };
+}
+
+/** 关掉开关 = 删掉它建的那条规则，这一行回到「其余规则说了算」 */
+export async function clearOperationSwitch(
+  db: Database,
+  projectId: string,
+  operationType: OperationType,
+  actorId?: string,
+) {
+  const project = await loadProject(db, projectId);
+  const existing = await loadProjectPolicies(db, project.orgId, projectId);
+  const current = findOperationSwitch(existing, operationType);
+  if (!current) throw notFound('policy');
+
+  // 删除同样要过「不能放宽组织规则」和「还有没处理完的决策」两道闸
+  return deletePolicy(db, projectId, current.id, actorId);
+}
+
+/**
+ * 这一行的开关规则是哪一条。
+ *
+ * ★ 只认**项目级**规则：组织规则在项目里改不动，把它当成这一行的开关
+ *   会让用户点了以后收到一句「组织级规则不可修改」——
+ *   而他看到的分明是一个可点的开关。
+ */
+function findOperationSwitch(policies: Policy[], operationType: OperationType): Policy | undefined {
+  return policies.find(
+    (p) => p.projectId !== null && switchedOperationOf(p.condition) === operationType,
+  );
+}
+
+function findOutcome(
+  summary: { auto: OperationOutcome[]; human: OperationOutcome[]; depends: OperationOutcome[] },
+  operationType: OperationType,
+): OperationOutcome | null {
+  return (
+    [...summary.auto, ...summary.human, ...summary.depends].find(
+      (o) => o.operationType === operationType,
+    ) ?? null
+  );
+}
+
+/** 界面没送名字时的兜底。中文，与其它服务端兜底文案一致 */
+function defaultSwitchName(verdict: 'auto' | 'human', label: string): string {
+  return verdict === 'auto' ? `${label}：自动执行` : `${label}：需人确认`;
+}
+
+/**
+ * 手写项目规则的下一个优先级。
+ *
+ * ★★ 优先级是这一页最贵的一个概念：它要求用户同时理解「越小越先」、
+ *   「命中即停」、和「组织规则占了前面那一段」三件事，才能填对一个数字。
+ *   而绝大多数人填完之后从不回来改它 —— 这个输入框换来的是一次困惑，
+ *   不是一次配置。所以它从编辑界面消失，由服务端往后追加。
+ *
+ * ★ 从 AUTHORED_PRIORITY_MIN 起，把 100 那一格留给开关矩阵：
+ *   开关是用户刚刚做出的表态，该排在半年前写的规则前面。
+ */
+export function nextAuthoredPriority(existing: Policy[]): number {
+  const used = existing
+    .filter((p) => p.projectId !== null)
+    .map((p) => p.priority)
+    .filter((n) => n >= AUTHORED_PRIORITY_MIN);
+  return used.length === 0 ? AUTHORED_PRIORITY_MIN : Math.max(...used) + 1;
 }
 
 export async function togglePolicy(
@@ -606,7 +832,12 @@ function describe(ctx: PolicyContext): string {
   ].join(' · ');
 }
 
-export async function deletePolicy(db: Database, projectId: string, policyId: string) {
+export async function deletePolicy(
+  db: Database,
+  projectId: string,
+  policyId: string,
+  actorId?: string,
+) {
   const project = await loadProject(db, projectId);
   const rows = await loadProjectPolicies(db, project.orgId, projectId);
   const target = rows.find((p) => p.id === policyId);
@@ -634,7 +865,33 @@ export async function deletePolicy(db: Database, projectId: string, policyId: st
     );
   }
 
-  await db.delete(policies).where(eq(policies.id, policyId));
+  await db.transaction(async (tx) => {
+    /**
+     * ★★ 删除本身也要留一条审计。
+     *
+     *   删掉一条规则是这一页上后果最大的动作 —— 它把一道闸整个拿掉。
+     *   只删不记的话，事后查「这里以前是不是有条规则拦着」的唯一线索，
+     *   是这条规则最后一次**修改**的记录，而那条记录看起来完全正常。
+     *   一次删除在历史上于是长得和「什么都没发生」一样。
+     *
+     * ★ `after: null` 就是「它没了」。变更历史因此能一路读到尽头，
+     *   而不是在最后一次修改处突然断掉。
+     *
+     * The deletion itself is audited. Removing a rule takes a whole gate away,
+     * and an unrecorded removal leaves the rule's last *edit* as the final
+     * entry — a history that reads exactly like nothing happened.
+     */
+    const [row] = await tx.select().from(policies).where(eq(policies.id, policyId));
+    await tx.delete(policies).where(eq(policies.id, policyId));
+    await tx.insert(policyVersions).values({
+      policyId,
+      version: (row?.version ?? 1) + 1,
+      snapshot: { before: target, after: null },
+      changedBy: actorId ?? target.orgId,
+      direction: 'loosen',
+    });
+  });
+
   return { ok: true as const };
 }
 

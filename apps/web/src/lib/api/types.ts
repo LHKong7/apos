@@ -546,6 +546,27 @@ export interface PolicyTemplateRow {
 
 export type SimulationResponse = import('@apos/domain').SimulationResult;
 
+/**
+ * 一次开关切换的结果。
+ *
+ * ★★ `applied` 与 `policy` 是两回事，界面必须分开读。
+ *   规则存下来了（`policy`）不等于这一行变成了用户要的状态（`applied`）——
+ *   已有规则或安全底线仍然可能拦在前面。把两者混成一句「已保存」，
+ *   正是这一页最该避免的那种谎。
+ */
+export interface OperationSwitchResponse {
+  policy: PolicyRow;
+  direction: string;
+  loosenedScenarios: number;
+  simulation: SimulationResponse | null;
+  outcome: import('@apos/domain').OperationOutcome | null;
+  applied: boolean;
+  /** 挡在前面的规则（不含刚建的这条） */
+  shadowedBy: { id: string; name: string; scope: 'org' | 'project' }[];
+  /** 没生效的成因。null = 生效了 */
+  blockedBy: 'other_rules' | 'safety_floor' | 'autonomy_default' | null;
+}
+
 export interface ScenarioTestResponse {
   context: import('@apos/contracts').PolicyContext;
   action: import('@apos/contracts').Action;

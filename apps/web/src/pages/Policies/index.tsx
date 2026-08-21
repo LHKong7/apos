@@ -1,6 +1,5 @@
 import { hasMessage, t, useT, type MessageKey } from '../../lib/i18n';
 import {
-  colon,
   joinList,
   policyEnvLabel,
   policyFactLabel,
@@ -12,7 +11,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { AutonomyLevel } from '@apos/contracts';
-import type { PolicyIssue } from '@apos/domain';
+import { switchedOperationOf, type PolicyIssue } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
@@ -22,6 +21,8 @@ import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { PolicyRow, PolicyTemplateRow } from '../../lib/api/types';
 import { RuleList } from './RuleList';
 import { RuleEditor } from './RuleEditor';
+import { OperationMatrix, type OperationRow } from './OperationMatrix';
+import { OperationSwitchDialog } from './OperationSwitchDialog';
 import { ScenarioTester } from './ScenarioTester';
 import { HitsPanel } from './HitsPanel';
 import { Button } from '@/components/ui/button';
@@ -131,6 +132,10 @@ export function PoliciesPage() {
   const [hits, setHits] = useState<{ id: string; name: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
+  const [switching, setSwitching] = useState<{
+    operationType: string;
+    verdict: 'auto' | 'human';
+  } | null>(null);
 
   const policies = useQuery({
     queryKey: qk.policies(projectId!),
@@ -155,12 +160,41 @@ export function PoliciesPage() {
     onError: (e) => setToast(e instanceof ApiError ? e.message : t('policy.deleteFailed')),
   });
 
+  /** 关掉一行的开关 = 删掉它建的那条规则，不用弹窗确认：它本来就是「还原」 */
+  const clearing = useMutation({
+    mutationFn: (operationType: string) => api.clearOperationSwitch(projectId!, operationType),
+    onSuccess: () => {
+      setToast(t('policy.switch.cleared'));
+      void refresh();
+    },
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('policy.actionFailed')),
+  });
+
   if (!projectId) return null;
   const data = policies.data;
 
   /** 体检结论里指向的规则，哪几条真的在下面的列表里画得出来 */
   const projectRuleIds = new Set(data?.projectPolicies.map((p) => p.id) ?? []);
   const locatable = (issue: PolicyIssue) => issue.policyIds.filter((id) => projectRuleIds.has(id));
+
+  /**
+   * 开关矩阵的行。
+   *
+   * ★ 顺序按操作类型的**枚举**排，不按当前判定分组。
+   *   按判定分组的话，翻一个开关会让那一行跳到别的位置去 ——
+   *   用户下一秒想改回来，得先重新找到它。开关面板的行必须是稳定的。
+   */
+  const matrixRows: OperationRow[] = data
+    ? [...data.summary.auto, ...data.summary.human, ...data.summary.depends]
+        .sort((a, b) => a.operationType.localeCompare(b.operationType))
+        .map((outcome) => ({
+          outcome,
+          switchRule:
+            data.projectPolicies.find(
+              (p) => switchedOperationOf(p.condition) === outcome.operationType,
+            ) ?? null,
+        }))
+    : [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -280,23 +314,13 @@ export function PoliciesPage() {
                 </Button>
               </p>
               {expandSummary && (
-                <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 md:grid-cols-3">
-                  <SummaryColumn title={t('policy.auto')} icon="✓" items={data.summary.auto.map((o) => o.label)} />
-                  <SummaryColumn
-                    title={t('policy.needsHuman')}
-                    icon="⚠"
-                    items={data.summary.human.map((o) => `${o.label}${o.by ? ` → ${o.by}` : ''}`)}
-                  />
-                  {/*
-                    ★ 「视情况」必须说清楚是什么情况。
-                      只写「看情况」的摘要还不如不给 —— 用户仍然得自己去读规则。
-                  */}
-                  <SummaryColumn
-                    title={t('policy.dependsOn')}
-                    icon="~"
-                    items={data.summary.depends.map((o) => `${o.label}${colon()}${o.when}`)}
-                  />
-                </div>
+                <OperationMatrix
+                  rows={matrixRows}
+                  projectId={projectId}
+                  busyOperation={clearing.isPending ? clearing.variables : null}
+                  onSet={(operationType, verdict) => setSwitching({ operationType, verdict })}
+                  onClear={(operationType) => clearing.mutate(operationType)}
+                />
               )}
             </section>
 
@@ -426,6 +450,23 @@ export function PoliciesPage() {
         />
       )}
 
+      {switching && (
+        <OperationSwitchDialog
+          projectId={projectId}
+          operationType={switching.operationType}
+          verdict={switching.verdict}
+          onClose={() => {
+            setSwitching(null);
+            void refresh();
+          }}
+          onDone={(message) => {
+            setSwitching(null);
+            setToast(message);
+            void refresh();
+          }}
+        />
+      )}
+
       {toggling && (
         <ToggleDialog
           policy={toggling}
@@ -469,28 +510,6 @@ export function PoliciesPage() {
           </Button>
         </div>
       )}
-    </div>
-  );
-}
-
-function SummaryColumn({ title, icon, items }: { title: string; icon: string; items: string[] }) {
-  const t = useT();
-  return (
-    <div>
-      <p className="text-[11px] font-medium text-slate-600">
-        {title}（{items.length}）
-      </p>
-      <ul className="mt-0.5 space-y-0.5">
-        {items.length === 0 && <li className="text-[11px] text-slate-400">{t('policy.none')}</li>}
-        {items.map((t) => (
-          <li key={t} className="text-[11px] leading-4 text-slate-600">
-            <span aria-hidden className="mr-1">
-              {icon}
-            </span>
-            {t}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

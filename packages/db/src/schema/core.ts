@@ -1474,10 +1474,31 @@ export const policies = pgTable(
   (t) => [index('policies_lookup_idx').on(t.orgId, t.projectId, t.priority)],
 );
 
+/**
+ * 规则的变更历史。
+ *
+ * ★★ `policyId` 上**没有**外键，这是有意的。
+ *
+ *   规则删得掉，而「谁在什么时候把它改成什么样、最后又删了它」删不得 ——
+ *   Policy 变更是高敏感操作，必须完整审计（产品文档 10.5）。
+ *   挂上外键后只有两种结局：级联删除（审计跟着规则一起消失），
+ *   或者删不动（这正是之前的状态 —— 任何一条经手过保存的规则都删不掉，
+ *   报的还是一句数据库层的外键报错）。两种都不能要。
+ *
+ * ★ 代价说清楚：这张表里会留下指向已删规则的行。查历史时取不到规则本身，
+ *   但快照里存着它当时的完整样子，够用。
+ *
+ * The change history deliberately has no foreign key on `policyId`: a rule can
+ * be deleted, but the record of who changed it into what — and then removed it
+ * — cannot. A foreign key leaves only two outcomes, cascading the audit trail
+ * away with the rule, or making every rule that was ever saved undeletable.
+ * The cost is rows pointing at rules that no longer exist; each carries a full
+ * snapshot of the rule as it stood, which is what the history needs anyway.
+ */
 export const policyVersions = pgTable(
   'policy_versions',
   {
-    policyId: uuid().notNull().references(() => policies.id),
+    policyId: uuid().notNull(),
     version: integer().notNull(),
     snapshot: jsonb().$type<Record<string, unknown>>().notNull(),
     changedBy: uuid().notNull(),

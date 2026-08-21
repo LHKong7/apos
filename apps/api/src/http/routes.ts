@@ -27,9 +27,11 @@ import {
   ACTIVE_RUN_STATUSES,
   Action,
   Condition,
+  Environment,
   humanActor,
   IntegrationProvider,
   NotificationConfig,
+  OperationType,
   OrgRole,
   ProjectRole,
   STATUS_LABELS,
@@ -175,13 +177,17 @@ import { comparePlans, getPlanDetail, listRequirements } from './intake';
 import { listDeliveries } from '../modules/notification/service';
 import {
   autonomyPreview,
+  clearOperationSwitch,
   deletePolicy,
   evaluateScenario,
   getPolicies,
   getPolicyHistory,
   getPolicyHits,
+  loadProjectPolicies,
+  nextAuthoredPriority,
   runSimulation,
   savePolicy,
+  setOperationSwitch,
   togglePolicy,
 } from './policies';
 import { getCostBreakdown, getRunDetail, getRunEvents } from './run-detail';
@@ -3524,13 +3530,38 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   const PolicyDraftBody = z.object({
     name: z.string().min(1, '规则必须有名字'),
     description: z.string().optional(),
-    priority: z.number().int().min(1),
+    /**
+     * ★★ 可选。不给就由服务端往后追加（nextAuthoredPriority）。
+     *
+     *   优先级要求用户同时理解「越小越先」「命中即停」「组织规则占了前面
+     *   那一段」三件事才填得对，而填错的表现是规则安静地不生效。
+     *   界面上已经不再问这个数字；接口保留它，是因为改一条老规则时
+     *   要能把它原样送回来，而不是在保存时被悄悄挪到队尾。
+     */
+    priority: z.number().int().min(1).optional(),
     condition: z.unknown(),
     action: z.unknown(),
     enabled: z.boolean().optional(),
     /** 模拟发现了与人类判断不一致的历史案例后，用户看过并坚持要保存 */
     acknowledgeMismatches: z.boolean().optional(),
   });
+
+  /** 建新规则时没给优先级：往手写规则那一段的末尾追加 */
+  async function resolvePriority(projectId: string, given: number | undefined) {
+    if (given !== undefined) return given;
+    const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+    if (!project) throw notFound('project');
+    return nextAuthoredPriority(await loadProjectPolicies(db, project.orgId, projectId));
+  }
+
+  async function currentPriority(policyId: string) {
+    const [row] = await db
+      .select({ priority: policies.priority })
+      .from(policies)
+      .where(eq(policies.id, policyId));
+    if (!row) throw notFound('policy');
+    return row.priority;
+  }
 
   /**
    * ★ 收紧还是放宽，要把新旧规则各跑一遍场景才知道 ——
@@ -3571,7 +3602,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         {
           name: body.name,
           description: body.description,
-          priority: body.priority,
+          priority: await resolvePriority(id, body.priority),
           condition: Condition.parse(body.condition),
           action: Action.parse(body.action),
           enabled: body.enabled,
@@ -3606,7 +3637,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         {
           name: body.name,
           description: body.description,
-          priority: body.priority,
+          /** ★ 改一条老规则时不给优先级 = 保持原样，不是挪到队尾 */
+          priority: body.priority ?? (await currentPriority(policyId)),
           condition: Condition.parse(body.condition),
           action: Action.parse(body.action),
           enabled: body.enabled,
@@ -3660,9 +3692,78 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       },
     },
     async (req) => {
-      actorFrom(req);
+      const { userId } = actorFrom(req);
       const { id, policyId } = req.params as { id: string; policyId: string };
-      return deletePolicy(db, id, policyId);
+      return deletePolicy(db, id, policyId, userId);
+    },
+  );
+
+  /**
+   * 操作开关矩阵（本轮新增）。
+   *
+   * ★★ 权限判定与「新建规则」完全一致：路由表只挡掉「连收紧都不够格」的人，
+   *   这次切换算收紧还是放宽，要把新旧规则各跑一遍场景才知道，
+   *   所以交给 savePolicy 的回调（§2.3 的不对称设计）。
+   *
+   *   开关看着像个轻量操作，但它生成的是一条真规则 ——
+   *   给它开一条更松的权限路径，等于把整套不对称设计从后门绕过去。
+   *
+   * The switch matrix reuses exactly the save path of "new rule": the route
+   * table only rejects those who cannot even tighten, and the tighten/loosen
+   * call is made inside savePolicy once the direction is known. A switch looks
+   * lightweight but produces a real rule; a laxer path here would be a back
+   * door around the whole asymmetric design.
+   */
+  app.put(
+    '/api/v1/projects/:id/policies/operation-switch',
+    { config: { auth: { permission: 'policy.tighten' } } },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          operationType: OperationType,
+          verdict: z.enum(['auto', 'human']),
+          /** 'any' = 所有环境，条件里不写 environment */
+          environment: z.union([Environment, z.literal('any')]).optional(),
+          approver: z.string().min(1).optional(),
+          dueInHours: z.number().positive().optional(),
+          /** 界面按用户当下的语言拼好的规则名 —— 名字是落库的数据 */
+          name: z.string().min(1).max(200).optional(),
+          acknowledgeMismatches: z.boolean().optional(),
+        })
+        .parse(req.body);
+
+      return setOperationSwitch(
+        db,
+        id,
+        {
+          operationType: body.operationType,
+          verdict: body.verdict,
+          ...(body.environment ? { environment: body.environment } : {}),
+          ...(body.approver ? { approver: body.approver } : {}),
+          ...(body.dueInHours ? { dueInHours: body.dueInHours } : {}),
+          ...(body.name ? { name: body.name } : {}),
+        },
+        userId,
+        {
+          ...(body.acknowledgeMismatches !== undefined
+            ? { acknowledgeMismatches: body.acknowledgeMismatches }
+            : {}),
+          assertCan: await policyGuard(req, id),
+        },
+      );
+    },
+  );
+
+  /** 关掉开关 = 删掉它建的那条规则，这一行回到「其余规则说了算」 */
+  app.delete(
+    '/api/v1/projects/:id/policies/operation-switch/:operationType',
+    { config: { auth: { permission: 'policy.loosen' } } },
+    async (req) => {
+      const { userId } = actorFrom(req);
+      const { id, operationType } = req.params as { id: string; operationType: string };
+      return clearOperationSwitch(db, id, OperationType.parse(operationType), userId);
     },
   );
 
@@ -4920,7 +5021,8 @@ function mapTransitionError(result: Extract<Awaited<ReturnType<typeof transition
  * 这样「模板 → 规则」的映射只有一份实现，前端改不了它。
  */
 function serializeTemplates() {
-  return POLICY_TEMPLATES.map((t) => ({
+  /** ★ 开关矩阵背后的两个模板不出现在这里 —— 同一件事不给两个入口 */
+  return POLICY_TEMPLATES.filter((t) => !t.matrixOnly).map((t) => ({
     id: t.id,
     scenario: t.scenario,
     name: t.name,

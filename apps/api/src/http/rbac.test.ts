@@ -160,6 +160,7 @@ const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'DELETE /api/v1/organizations/:id/members/:userId': 'organization.members.manage',
   'DELETE /api/v1/projects/:id/members/:memberId': 'project.members.manage',
   'DELETE /api/v1/projects/:id/policies/:policyId': 'policy.loosen',
+  'DELETE /api/v1/projects/:id/policies/operation-switch/:operationType': 'policy.loosen',
   'DELETE /api/v1/requirements/:id': 'requirement.delete',
   'GET /api/v1/projects/:id/members': 'project.view',
   'PATCH /api/v1/admin/agents/:id': 'agent.update',
@@ -226,6 +227,12 @@ const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'PUT /api/v1/projects/:id/agents': 'project.settings.update',
   'PUT /api/v1/projects/:id/agents/:agentId/access': 'agent.permissions.restrict',
   'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
+  /**
+   * ★ 开关矩阵与「新建规则」同一档：路由表挡掉连收紧都不够格的人，
+   *   真正的方向判定在 savePolicy 里（§2.3 的不对称设计）。
+   *   给它一条更松的路径，等于把那套设计从后门绕过去。
+   */
+  'PUT /api/v1/projects/:id/policies/operation-switch': 'policy.tighten',
   'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',};
 
 /** 取决于请求内容的那几条，逐个单测（见下面「勾了 overrideGuards」那组） */

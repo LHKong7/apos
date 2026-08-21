@@ -2,6 +2,7 @@ import {
   HIGH_RISK_OPERATIONS,
   NEVER_AUTO_APPROVE,
   type Action,
+  type ActionType,
   type AutonomyLevel,
   type FactKey,
   type Policy,
@@ -57,14 +58,40 @@ export interface PolicyIssue {
   policyIds: string[];
 }
 
+/**
+ * 「什么情况下才需要人」的**结构**（verdict = depends 时）。
+ *
+ * ★★ 与 `when` 那句中文一一对应，但给的是枚举键。
+ *   「在生产环境，或风险等级为高时需要人确认」这句话里，
+ *   连接词、语序、量词三样在两种语言里都不同 —— 服务端拼好一句，
+ *   英文界面上就只能整句照抄中文。而这一行是这一页的第一屏。
+ *
+ * The structured form of `when`: enum keys rather than a sentence, because the
+ * conjunctions and clause order differ between languages and this line sits on
+ * the page's first screen.
+ */
+export interface GateShape {
+  /** 只要落在这些环境就一定需要人 */
+  environments: string[];
+  /** 只要是这些风险等级就一定需要人 */
+  riskLevels: string[];
+  /** 上面两项都空时的退路：多少种情况里有多少种需要人 */
+  gatedCount: number;
+  totalCount: number;
+}
+
 export interface OperationOutcome {
   operationType: string;
   label: string;
   verdict: 'auto' | 'human' | 'depends';
-  /** verdict = human 时，谁来决定 */
+  /** verdict = human 时，谁来决定。中文兜底，界面读 `byAction` */
   by: string | null;
-  /** verdict = depends 时，什么情况下需要人 */
+  /** ★ 拦下它的是哪一类动作 —— 界面有 `policy.action.*` 那组词条 */
+  byAction: ActionType | null;
+  /** verdict = depends 时，什么情况下需要人。中文兜底，界面读 `gate` */
   when: string | null;
+  /** 同上，但给的是结构 —— 界面照自己的语言拼 */
+  gate: GateShape | null;
   matchedPolicyIds: string[];
 }
 
@@ -160,7 +187,16 @@ function summarize(verdicts: Verdicts): PolicySummary {
 
     const label = OPERATION_LABELS[operationType] ?? operationType;
     if (autoCount === list.length) {
-      out.push({ operationType, label, verdict: 'auto', by: null, when: null, matchedPolicyIds });
+      out.push({
+        operationType,
+        label,
+        verdict: 'auto',
+        by: null,
+        byAction: null,
+        when: null,
+        gate: null,
+        matchedPolicyIds,
+      });
     } else if (autoCount === 0) {
       const sample = list.find((v) => !isAutoApprove(v.verdict.action))!;
       out.push({
@@ -168,16 +204,21 @@ function summarize(verdicts: Verdicts): PolicySummary {
         label,
         verdict: 'human',
         by: assigneeOf(sample.verdict.action),
+        byAction: sample.verdict.action.type,
         when: null,
+        gate: null,
         matchedPolicyIds,
       });
     } else {
+      const gate = describeGate(list);
       out.push({
         operationType,
         label,
         verdict: 'depends',
         by: null,
-        when: describeGate(list),
+        byAction: null,
+        when: gate.text,
+        gate: gate.shape,
         matchedPolicyIds,
       });
     }
@@ -202,9 +243,11 @@ function summarize(verdicts: Verdicts): PolicySummary {
  *   做法：先找出「只要满足它就一定需要人」的单值条件，
  *   再看这些条件的并集能不能盖住全部需要人的场景。能盖住就直接说出来。
  */
-function describeGate(list: Verdicts): string {
+function describeGate(list: Verdicts): { text: string; shape: GateShape } {
   const gated = list.filter((v) => !isAutoApprove(v.verdict.action));
-  if (gated.length === 0) return '';
+  const counts = { gatedCount: gated.length, totalCount: list.length };
+  const empty: GateShape = { environments: [], riskLevels: [], ...counts };
+  if (gated.length === 0) return { text: '', shape: empty };
 
   const gatedKeys = new Set(gated.map((v) => v.scenario.key));
   const sufficient: { axis: 'env' | 'risk'; value: string; covers: Set<string> }[] = [];
@@ -226,16 +269,21 @@ function describeGate(list: Verdicts): string {
 
   const covered = new Set(sufficient.flatMap((s) => [...s.covers]));
   if (sufficient.length > 0 && gated.every((v) => covered.has(v.scenario.key))) {
-    const envs = sufficient.filter((s) => s.axis === 'env').map((s) => ENV_TEXT[s.value] ?? s.value);
-    const risks = sufficient.filter((s) => s.axis === 'risk').map((s) => RISK_TEXT[s.value] ?? s.value);
+    const envKeys = sufficient.filter((s) => s.axis === 'env').map((s) => s.value);
+    const riskKeys = sufficient.filter((s) => s.axis === 'risk').map((s) => s.value);
+    const envs = envKeys.map((v) => ENV_TEXT[v] ?? v);
+    const risks = riskKeys.map((v) => RISK_TEXT[v] ?? v);
 
     const parts: string[] = [];
     if (envs.length > 0) parts.push(`在${envs.join('、')}`);
     if (risks.length > 0) parts.push(`风险等级为${risks.join('、')}`);
-    return `${parts.join('，或')}时需要人确认`;
+    return {
+      text: `${parts.join('，或')}时需要人确认`,
+      shape: { environments: envKeys, riskLevels: riskKeys, ...counts },
+    };
   }
 
-  return `${gated.length} / ${list.length} 种情况需要人确认`;
+  return { text: `${gated.length} / ${list.length} 种情况需要人确认`, shape: empty };
 }
 
 const ENV_TEXT: Record<string, string> = {
