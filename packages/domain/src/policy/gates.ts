@@ -35,7 +35,7 @@ import { explainPolicy } from './explain';
  * exactly like the feature not shipping and raises no error.
  */
 export const AGENT_DETERMINED_FACTS: readonly FactKey[] = [
-  // 这次工作最终算哪一类操作、碰到哪个环境和哪级数据 —— 十条基线规则里有八条靠它们
+  // 这次工作最终算哪一类操作、碰到哪个环境和哪级数据 —— 高风险规则几乎都靠它们
   'operationType',
   'environment',
   'dataSensitivity',

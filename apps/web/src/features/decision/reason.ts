@@ -13,9 +13,10 @@ import { useT, type MessageKey } from '@/lib/i18n';
  *   少一句解释没人会注意到，而那句解释正是「为什么需要你」——
  *   这一页的全部意义所在。
  *
- * ★ Policy 名字分两种：平台自带的九条基线规则有稳定 id，可以翻译；
- *   项目自己建的规则名字是用户数据，原样显示。把后者也「翻译」一遍
- *   等于给用户起的名字改名。
+ * ★ Policy 名字一律原样显示 —— 规则全部由用户在项目里自己建，名字是
+ *   用户数据。把它「翻译」一遍等于给用户起的名字改名。
+ *   （平台曾经自带十条硬编码基线规则，它们的名字是平台文案、按 id 认词条；
+ *   基线删掉之后这条分支跟着消失。）
  */
 export function useDecisionReason(): {
   whyHuman: (reason: DecisionReason | null | undefined, fallback: string) => string;
@@ -34,11 +35,7 @@ export function useDecisionReason(): {
       if (!w) return fallback;
 
       if (w.code === 'policy_requires_human') {
-        const policyId = String(w.params?.['policyId'] ?? '');
-        const authored = String(w.params?.['policy'] ?? '');
-        /** ★ 基线规则按 id 认词条；认不出来就是用户自建的规则，用它自己的名字 */
-        const name = (policyId.startsWith('baseline-') && tryKey(`policyName.${policyId}`)) || authored;
-        return t('decision.why.policy', { policy: name });
+        return t('decision.why.policy', { policy: String(w.params?.['policy'] ?? '') });
       }
       if (w.code === 'recovery_escalated') {
         /**

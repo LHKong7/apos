@@ -21,7 +21,6 @@ import {
   type PolicyContext,
 } from '@apos/contracts';
 import {
-  BASELINE_POLICIES,
   compile,
   evaluate,
   explainAction,
@@ -322,6 +321,13 @@ export async function generatePlan(
           requiresHuman: task.requiresHuman,
           ...(task.operationType ? { operationType: task.operationType } : {}),
           ...(task.environment ? { environment: task.environment } : {}),
+          /**
+           * ★ 这两项此前没人写进 typeData，于是 buildPolicyContext 永远读到
+           *   null / false ——「访问受限数据要审批」「对外内容要人确认」
+           *   两类规则因此永远不会命中，而用户以为自己配好了。
+           */
+          ...(task.dataSensitivity ? { dataSensitivity: task.dataSensitivity } : {}),
+          ...(task.externalFacing !== undefined ? { externalFacing: task.externalFacing } : {}),
         },
       })
       .returning({ id: workItems.id });
@@ -388,14 +394,8 @@ export async function generatePlan(
 async function loadRules(db: Database, orgId: string, projectId: string) {
   const rows = await db.select().from(policies).where(eq(policies.orgId, orgId));
   const scoped = rows.filter((r) => r.projectId === null || r.projectId === projectId);
-  const storedIds = new Set(scoped.map((p) => p.id));
-  const baseline = BASELINE_POLICIES.filter((p) => !storedIds.has(p.id)).map((p) => ({
-    ...p,
-    orgId,
-  }));
-  return compile([
-    ...baseline,
-    ...scoped.map((r) => ({
+  return compile(
+    scoped.map((r) => ({
       id: r.id,
       orgId: r.orgId,
       projectId: r.projectId,
@@ -406,7 +406,7 @@ async function loadRules(db: Database, orgId: string, projectId: string) {
       condition: r.condition,
       action: r.action,
     })),
-  ]);
+  );
 }
 
 /**
@@ -473,12 +473,17 @@ function predictPolicyOutcomes(
       workItemType: task.type,
       riskLevel: task.riskLevel,
       reversible: task.operationType !== 'db_ddl' && task.operationType !== 'delete_resource',
-      externalFacing: false,
-      environment: (task.environment as PolicyContext['environment']) ?? null,
-      dataSensitivity: null,
+      /**
+       * ★ 预演用的上下文要和真正执行时的那份一致。此前这两项在预演里
+       *   写死成 false / null，于是计划页预告的「批准后会发生什么」
+       *   与实际执行时的判定可能相反 —— 而预演的全部价值就是那个一致。
+       */
+      externalFacing: task.externalFacing ?? false,
+      environment: task.environment ?? null,
+      dataSensitivity: task.dataSensitivity ?? null,
       impactTaskCount: plan.tasks.filter((t) => t.dependsOn.some((d) => d.ref === task.ref)).length,
       impactServices: [],
-      operationType: (task.operationType as PolicyContext['operationType']) ?? 'code_change',
+      operationType: task.operationType ?? 'code_change',
       agentType: task.requiresHuman ? null : 'code',
       agentConfidence: null,
       agentSuccessRate: null,

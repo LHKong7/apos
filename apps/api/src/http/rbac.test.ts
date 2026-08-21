@@ -13,6 +13,7 @@ import {
   projectMembers,
 } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
+import { AUTHORED_PRIORITY_MIN } from '@apos/contracts';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
@@ -160,6 +161,7 @@ const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'DELETE /api/v1/organizations/:id/members/:userId': 'organization.members.manage',
   'DELETE /api/v1/projects/:id/members/:memberId': 'project.members.manage',
   'DELETE /api/v1/projects/:id/policies/:policyId': 'policy.loosen',
+  'DELETE /api/v1/projects/:id/policies/operation-switch/:operationType': 'policy.loosen',
   'DELETE /api/v1/requirements/:id': 'requirement.delete',
   'GET /api/v1/projects/:id/members': 'project.view',
   'PATCH /api/v1/admin/agents/:id': 'agent.update',
@@ -226,6 +228,12 @@ const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'PUT /api/v1/projects/:id/agents': 'project.settings.update',
   'PUT /api/v1/projects/:id/agents/:agentId/access': 'agent.permissions.restrict',
   'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
+  /**
+   * ★ 开关矩阵与「新建规则」同一档：路由表挡掉连收紧都不够格的人，
+   *   真正的方向判定在 savePolicy 里（§2.3 的不对称设计）。
+   *   给它一条更松的路径，等于把那套设计从后门绕过去。
+   */
+  'PUT /api/v1/projects/:id/policies/operation-switch': 'policy.tighten',
   'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',};
 
 /** 取决于请求内容的那几条，逐个单测（见下面「勾了 overrideGuards」那组） */
@@ -508,6 +516,35 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
       payload: draft(),
     });
     expect(res.statusCode).toBe(201);
+  });
+
+  /**
+   * ★★ 不给优先级也能建 —— 界面上已经不问这个数字了。
+   *
+   *   接口如果仍然必填，表现是引导向导与规则编辑器一保存就 400，
+   *   而错误信息说的是一个用户根本没见过的字段。
+   */
+  it('★ 不给优先级时由服务端往后追加', async () => {
+    const lead = await createMember(db, fx, { projectRole: 'tech_lead' });
+    const payload = draft({
+      name: '不带优先级的规则',
+      condition: { fact: 'riskLevel', op: 'eq', value: 'critical' },
+      action: {
+        type: 'require_human_review',
+        assignee: { kind: 'project_role', role: 'tech_lead' },
+        dueInHours: 4,
+      },
+    });
+    delete (payload as { priority?: number }).priority;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${fx.projectId}/policies`,
+      headers: as(lead),
+      payload,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().policy.priority).toBe(AUTHORED_PRIORITY_MIN);
   });
 
   /** 停用一条规则就是把治理拿掉 —— 与放宽同档，不能只按「改了个开关」算 */

@@ -1,4 +1,4 @@
-import { AgentCapability } from '@apos/contracts';
+import { AgentCapability, DataSensitivity, Environment, OperationType } from '@apos/contracts';
 import { z } from 'zod';
 
 /**
@@ -81,6 +81,33 @@ export const AgentStructuredOutput = z.object({
 });
 export type AgentStructuredOutput = z.infer<typeof AgentStructuredOutput>;
 
+/**
+ * 显式的 `null` 与「整个省略」同义。
+ *
+ * ★★ 这不是把安全底线放松了一档，是把**同一条信息**的两种写法收敛成一种。
+ *
+ *   `null` 在这里表达的是「我不知道」，而省略表达的也是「我不知道」——
+ *   两者携带的信息完全相同。收下一个再拒掉另一个，拒的不是风险，
+ *   是模型的书写习惯：紧挨着的 `estimatedTokens` 注释上写着「估不出来填
+ *   null」，模型很自然地把这个习惯推广到旁边几个可选字段，于是
+ *   `"operationType": null` 让整份计划被判废，用户拿回一份与需求无关的
+ *   通用模板 —— 而它和一份**根本没写这一项**的计划在治理上一模一样。
+ *
+ * ★ 该拒的仍然拒：`"delete_resrouce"` 这种**认不出来的字符串**照旧整份打回。
+ *   那才是真正危险的那类值 —— 它看起来像个答案，实际让所有治理规则
+ *   静默地匹配不上。null 不会伪装成答案。
+ *
+ * An explicit `null` means exactly what omitting the key means — "I don't
+ * know" — so accepting one while rejecting the other polices a writing habit,
+ * not a risk. (The habit is taught two fields up, where `estimatedTokens`
+ * documents "write null if you cannot estimate".) An unrecognised *string*
+ * is still rejected outright: that is the value that looks like an answer
+ * while silently matching no governance rule.
+ */
+function nullAsAbsent<T extends z.ZodTypeAny>(schema: T) {
+  return schema.nullish().transform((v) => (v === null ? undefined : v));
+}
+
 export const AgentPlanOutput = z.object({
   tasks: z
     .array(
@@ -134,8 +161,35 @@ export const AgentPlanOutput = z.object({
         requiredTools: z.array(z.string()).default([]),
         /** 计划阶段就要标出必须由人做的任务（产品文档 8.8.6：生产发布默认由人执行） */
         requiresHuman: z.boolean().default(false),
-        operationType: z.string().optional(),
-        environment: z.string().optional(),
+        /**
+         * ★★ 严格枚举，认不出的**字符串**拒收，不静默兜底。
+         *
+         *   这是安全底线上的一个口子：`operationType` 兜底成 `code_change`
+         *   的话，模型写出 `"delete_resrouce"`（拼错一个字母）就等于
+         *   把「删资源永远不自动放行」整条绕过去了 —— 而绕过去的现场
+         *   毫无迹象：任务照常跑完，规则一条都没命中。
+         *
+         *   拒收换来的是一次修正轮（agent-provider 的重试循环），代价小得多。
+         *
+         * Strict enums: an unrecognised value is rejected rather than quietly
+         * defaulted. Defaulting `operationType` to `code_change` means one
+         * typo — "delete_resrouce" — walks straight past the safety floor,
+         * leaving no trace: the task simply runs and no rule matches.
+         */
+        operationType: nullAsAbsent(OperationType),
+        environment: nullAsAbsent(Environment),
+        /**
+         * ★ 这两项此前没有任何生产者：`buildPolicyContext` 从 typeData 里读，
+         *   而没有任何代码往 typeData 里写。于是「访问受限数据要审批」
+         *   「对外内容要人确认」这两类规则永远不会命中 —— 用户以为配好了。
+         *   规划阶段是唯一知道这两件事的地方，所以由它来标。
+         *
+         * Neither fact had a producer, so any rule keyed on them could never
+         * match — while looking configured. Planning is the only place that
+         * knows, so planning is where they get marked.
+         */
+        dataSensitivity: nullAsAbsent(DataSensitivity),
+        externalFacing: nullAsAbsent(z.boolean()),
         acceptanceCriteria: z
           .array(
             z.object({

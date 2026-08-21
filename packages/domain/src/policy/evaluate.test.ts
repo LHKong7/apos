@@ -6,7 +6,7 @@ import {
   type Policy,
   type PolicyContext,
 } from '@apos/contracts';
-import { BASELINE_POLICIES } from './baseline';
+import { SAMPLE_RULES } from './sample-rules';
 import { applyOperator, compile, evaluate, matchCondition } from './evaluate';
 
 function ctx(overrides: Partial<PolicyContext> = {}): PolicyContext {
@@ -251,9 +251,9 @@ describe('★ 安全底线 —— CI 阻断性测试', () => {
     }
   });
 
-  it('组织基线规则拦截全部九类高风险操作', () => {
+  it('一套覆盖齐全的规则能拦下全部九类高风险操作', () => {
     const rules = compile([
-      ...BASELINE_POLICIES,
+      ...SAMPLE_RULES,
       // 项目级试图放行一切，但优先级 100+ 走不到
       policy({ id: 'proj-allow-all', priority: 100, condition: { all: [] }, action: { type: 'allow' } }),
     ]);
@@ -267,14 +267,14 @@ describe('★ 安全底线 —— CI 阻断性测试', () => {
         rules,
       );
 
-      expect(verdict.requiresHuman, `高风险操作 ${op} 未被基线规则拦截`).toBe(true);
-      expect(verdict.matchedPolicyId).toMatch(/^baseline-/);
+      expect(verdict.requiresHuman, `高风险操作 ${op} 未被拦截`).toBe(true);
+      expect(verdict.matchedPolicyId).toMatch(/^sample-/);
     }
   });
 
-  it('项目规则无法绕过组织基线：生产 DDL 永远需要 DBA', () => {
+  it('项目规则无法绕过更高优先级的组织规则：生产 DDL 永远需要 DBA', () => {
     const rules = compile([
-      ...BASELINE_POLICIES,
+      ...SAMPLE_RULES,
       policy({
         id: 'proj-bypass',
         priority: 100,
@@ -284,31 +284,31 @@ describe('★ 安全底线 —— CI 阻断性测试', () => {
     ]);
 
     const verdict = evaluate(ctx({ operationType: 'db_ddl', environment: 'production' }), rules);
-    expect(verdict.matchedPolicyId).toBe('baseline-prod-db');
+    expect(verdict.matchedPolicyId).toBe('sample-prod-db');
     expect(verdict.action).toMatchObject({
       type: 'require_human_review',
       assignee: { kind: 'role', role: 'dba' },
     });
   });
 
-  it('非生产环境的 DDL 不被基线拦截（避免过度限制）', () => {
-    const rules = compile(BASELINE_POLICIES);
+  it('非生产环境的 DDL 不被拦截（避免过度限制）', () => {
+    const rules = compile(SAMPLE_RULES);
     const verdict = evaluate(ctx({ operationType: 'db_ddl', environment: 'test' }), rules);
     expect(verdict.matchedPolicyId).toBeNull();
     expect(verdict.action.type).toBe('allow');
   });
 
   it('连续失败 3 次触发暂停升级', () => {
-    const rules = compile(BASELINE_POLICIES);
+    const rules = compile(SAMPLE_RULES);
     const verdict = evaluate(ctx({ consecutiveFailures: 3 }), rules);
-    expect(verdict.matchedPolicyId).toBe('baseline-consecutive-failures');
+    expect(verdict.matchedPolicyId).toBe('sample-consecutive-failures');
     expect(verdict.action.type).toBe('pause');
   });
 
   it('预算用尽触发 Sponsor 审批', () => {
-    const rules = compile(BASELINE_POLICIES);
+    const rules = compile(SAMPLE_RULES);
     const verdict = evaluate(ctx({ budgetUsedPct: 105 }), rules);
-    expect(verdict.matchedPolicyId).toBe('baseline-budget-exceeded');
+    expect(verdict.matchedPolicyId).toBe('sample-budget-exceeded');
   });
 });
 

@@ -16,6 +16,7 @@ import type {
   PoliciesResponse,
   PolicyRow,
   PolicyTemplateRow,
+  OperationSwitchResponse,
   PolicyHitsResponse,
   DecisionInbox,
   DisconnectImpact,
@@ -298,6 +299,8 @@ export const api = {
       riskLevel?: string;
       ownerId?: string | null;
       parentId?: string | null;
+      /** 这个任务算哪一类操作 —— 不给就按「改代码」评估 Policy */
+      operationType?: string;
     },
   ) =>
     request<{ item: { id: string; ref: string; status: string }; notice: string }>(
@@ -712,7 +715,8 @@ export const api = {
     body: {
       name: string;
       description?: string;
-      priority: number;
+      /** ★ 不给 = 由服务端往后追加。界面上已经不再问这个数字（见 rule.priority 的下线） */
+      priority?: number;
       condition: unknown;
       action: unknown;
       enabled?: boolean;
@@ -735,6 +739,36 @@ export const api = {
 
   deletePolicy: (projectId: string, policyId: string) =>
     request<{ ok: true }>(`/projects/${projectId}/policies/${policyId}`, { method: 'DELETE' }),
+
+  /**
+   * 操作开关矩阵：把一整类操作切到「自动」或「需人」。
+   *
+   * ★ 返回的不只是「存下了」，还有**这一行现在真的是什么状态**（applied /
+   *   blockedBy）。开关可能被别的规则或安全底线挡下 ——
+   *   只报成功的话，用户会以为自己放开了，实际没有。
+   */
+  setOperationSwitch: (
+    projectId: string,
+    body: {
+      operationType: string;
+      verdict: 'auto' | 'human';
+      environment?: string;
+      approver?: string;
+      dueInHours?: number;
+      name?: string;
+      acknowledgeMismatches?: boolean;
+    },
+  ) =>
+    request<OperationSwitchResponse>(`/projects/${projectId}/policies/operation-switch`, {
+      method: 'PUT',
+      json: body,
+    }),
+
+  clearOperationSwitch: (projectId: string, operationType: string) =>
+    request<{ ok: true }>(
+      `/projects/${projectId}/policies/operation-switch/${operationType}`,
+      { method: 'DELETE' },
+    ),
 
   buildFromTemplate: (
     projectId: string,

@@ -263,6 +263,28 @@ export type Policy = z.infer<typeof Policy>;
 export const ORG_PRIORITY_MAX = 99;
 export const PROJECT_PRIORITY_MIN = 100;
 
+/**
+ * 操作开关矩阵生成的规则占的那一格。
+ *
+ * ★★ 每个操作类型至多一条 —— 再切一次是**改这一条**，不是叠一条新的。
+ *   叠加的话，「部署 → 自动 → 需人 → 自动」会留下三条规则，
+ *   而「删掉那条规则即还原」这个承诺当场作废：用户不知道该删哪一条，
+ *   也看不出哪一条还在生效。一行一条，行为才可预期、可回滚。
+ *
+ * ★ 它们排在手写项目规则**前面**（100 < 101+）：开关是用户刚刚做出的
+ *   最新表态，被一条半年前写的规则默默盖掉是最难查的一类问题。
+ *   互不冲突 —— 每条各锁一个 operationType，两条永远不会同时命中。
+ *
+ * The slot occupied by rules the operation switch matrix generates: at most one
+ * per operation type, updated in place rather than stacked, so "delete that one
+ * rule to undo" stays true. They sit ahead of hand-authored project rules
+ * because a switch is the user's most recent statement of intent.
+ */
+export const OPERATION_SWITCH_PRIORITY = PROJECT_PRIORITY_MIN;
+
+/** 手写项目规则从这里往上排（自动分配，见 http/policies.ts 的 nextAuthoredPriority） */
+export const AUTHORED_PRIORITY_MIN = PROJECT_PRIORITY_MIN + 1;
+
 export interface TraceEntry {
   policyId: string;
   name: string;

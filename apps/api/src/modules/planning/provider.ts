@@ -1,7 +1,10 @@
 import type {
   AcceptanceCriterion,
   AgentCapability,
+  DataSensitivity,
   DependencyType,
+  Environment,
+  OperationType,
   PlanFallback,
   WorkItemType,
 } from '@apos/contracts';
@@ -143,8 +146,12 @@ export interface PlanTaskDraft {
   requiredTools: string[];
   /** 计划阶段就标记出必须由人做的任务 */
   requiresHuman: boolean;
-  operationType?: string;
-  environment?: string;
+  /** ★ 严格枚举而不是 string：拼错的值必须在解析那一步就被拒收 */
+  operationType?: OperationType;
+  environment?: Environment;
+  /** 规划阶段标出来的数据敏感级与「是否对外」—— 此前这两项没有生产者 */
+  dataSensitivity?: DataSensitivity;
+  externalFacing?: boolean;
   acceptanceCriteria: AcceptanceCriterion[];
   dependsOn: { ref: string; type: DependencyType }[];
 }

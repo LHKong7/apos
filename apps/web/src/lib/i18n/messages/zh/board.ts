@@ -85,6 +85,8 @@ export const board: Record<keyof typeof en, string> = {
   'createItem.type': '类型',
   'createItem.priority': '优先级',
   'createItem.risk': '风险',
+  'createItem.operationType': '这算哪一类操作？',
+  'createItem.operationTypeHint': '决定哪些规则管得着它。日常工作留在「修改代码」就行；敏感的那几类要标出来 —— 一次删资源如果记成改代码，就会被当成改代码来判。',
   'createItem.riskLow': '低',
   'createItem.riskMedium': '中',
   'createItem.riskHigh': '高',

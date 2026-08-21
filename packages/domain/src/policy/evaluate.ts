@@ -118,10 +118,31 @@ export function matchCondition(cond: Condition, ctx: PolicyContext): ConditionMa
       };
 }
 
+/**
+ * ★★ 同优先级时更严的先评估。
+ *
+ *   `evaluate` 命中即停，所以两条优先级相同、又都能匹配同一个上下文的规则，
+ *   谁排前面谁说了算。不定序的话这个「谁」由数据库返回行的顺序决定 ——
+ *   同一份配置在两台机器上可能给出相反的判定，而这种问题几乎不可能复现。
+ *
+ *   平局倒向**更严**的那一条：并列意味着用户没有表态哪条更重要，
+ *   而在治理配置上，没表态时选安全的那一侧是唯一说得过去的默认。
+ *
+ * Ties in priority resolve towards the stricter action. Since evaluation stops
+ * at the first match, an unbroken tie lets row order decide the verdict — the
+ * same configuration could rule differently on two machines, and that class of
+ * bug is close to unreproducible. A tie means the user never said which rule
+ * matters more, and on governance config the safe side is the only defensible
+ * default.
+ */
+function byPriorityThenStrictness(a: Policy, b: Policy): number {
+  return a.priority - b.priority || ACTION_STRICTNESS[b.action.type] - ACTION_STRICTNESS[a.action.type];
+}
+
 export function compile(policies: Policy[]): CompiledRule[] {
   return policies
     .filter((p) => p.enabled)
-    .sort((a, b) => a.priority - b.priority)
+    .sort(byPriorityThenStrictness)
     .map((p) => ({
       id: p.id,
       name: p.name,

@@ -273,9 +273,9 @@ describe('recovery-worker', () => {
 
   /**
    * ★ 连续失败计数要在 Run **执行期间**改，不能在派发前改。
-   *   baseline policy 有一条「consecutiveFailures >= 3 就不许自动派发」，
-   *   派发前设好的话任务会被直接拦成 blocked，压根跑不到失败那一步 ——
-   *   那测的就是 Policy，不是恢复策略了。
+   *   派发前就把它设到 3，任何一条「连续失败就转人工」的规则都会把任务
+   *   直接拦成 blocked，压根跑不到失败那一步 —— 那测的就是 Policy，
+   *   不是恢复策略了。这里要测的是后者，所以计数只能在跑起来之后再动。
    */
   it('连续失败三次时暂停并升级，不再自动重试', async () => {
     const runtime = new MockRuntime(

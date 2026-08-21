@@ -1,18 +1,17 @@
 import { hasMessage, t, useT, type MessageKey } from '../../lib/i18n';
 import {
-  colon,
   joinList,
   policyEnvLabel,
   policyFactLabel,
   policyOperationLabel,
-  riskLabel,
+  riskName,
 } from '@/lib/format';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { AutonomyLevel } from '@apos/contracts';
-import type { PolicyIssue } from '@apos/domain';
+import { switchedOperationOf, type PolicyIssue } from '@apos/domain';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
 import { CardSkeleton, ErrorState } from '../../components/states';
@@ -22,6 +21,9 @@ import { Modal } from '../../features/work-item/ManualMoveDialog';
 import type { PolicyRow, PolicyTemplateRow } from '../../lib/api/types';
 import { RuleList } from './RuleList';
 import { RuleEditor } from './RuleEditor';
+import { OperationMatrix, type OperationRow } from './OperationMatrix';
+import { OperationSwitchDialog } from './OperationSwitchDialog';
+import { FirstRunWizard } from './FirstRunWizard';
 import { ScenarioTester } from './ScenarioTester';
 import { HitsPanel } from './HitsPanel';
 import { Button } from '@/components/ui/button';
@@ -69,13 +71,20 @@ function issueText(issue: PolicyIssue): string {
   return t(key, params);
 }
 
-/** 反例场景：三段枚举各自取词后再拼，不用服务端那句中文 */
+/**
+ * 反例场景：三段枚举各自取词后再拼，不用服务端那句中文。
+ *
+ * ★ 风险那一段用 `riskName`（「高」/ "High"）而不是 `riskLabel`
+ *   （「高风险」/ "High risk"）—— `policy.scenario.risk` 这条词条
+ *   自己已经带了「风险 / risk」，塞完整说法进去会得到
+ *   「风险高风险」和 "High risk risk"。
+ */
 function exampleText(issue: PolicyIssue): string {
   const c = issue.exampleContext;
   if (!c) return issue.example ?? '';
   return [
     policyOperationLabel(c.operationType),
-    t('policy.scenario.risk', { risk: riskLabel(c.riskLevel) }),
+    t('policy.scenario.risk', { risk: riskName(c.riskLevel) }),
     c.environment ? policyEnvLabel(c.environment) : t('policy.env.none'),
   ].join(' · ');
 }
@@ -130,7 +139,20 @@ export function PoliciesPage() {
   const [history, setHistory] = useState<PolicyRow | null>(null);
   const [hits, setHits] = useState<{ id: string; name: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [highlight, setHighlight] = useState<Set<string>>(new Set());
+  /** ★ 体检默认收起 —— 第一屏是摘要与开关，不是一张问题清单 */
+  const [expandIssues, setExpandIssues] = useState(false);
+  const [switching, setSwitching] = useState<{
+    operationType: string;
+    verdict: 'auto' | 'human';
+  } | null>(null);
+  /**
+   * 用户在引导向导上点了「我自己来」。
+   *
+   * ★ 只记在内存里，不落 localStorage：这一页刷新一次就该重新给出建议 ——
+   *   一个跳过过一次就再也不出现的引导，等于把「这个项目还没设边界」
+   *   这件事永久藏了起来。
+   */
+  const [wizardSkipped, setWizardSkipped] = useState(false);
 
   const policies = useQuery({
     queryKey: qk.policies(projectId!),
@@ -155,8 +177,55 @@ export function PoliciesPage() {
     onError: (e) => setToast(e instanceof ApiError ? e.message : t('policy.deleteFailed')),
   });
 
+  /** 关掉一行的开关 = 删掉它建的那条规则，不用弹窗确认：它本来就是「还原」 */
+  const clearing = useMutation({
+    mutationFn: (operationType: string) => api.clearOperationSwitch(projectId!, operationType),
+    onSuccess: () => {
+      setToast(t('policy.switch.cleared'));
+      void refresh();
+    },
+    onError: (e) => setToast(e instanceof ApiError ? e.message : t('policy.actionFailed')),
+  });
+
   if (!projectId) return null;
   const data = policies.data;
+
+  /**
+   * 体检结论分两堆：指向某条规则的贴到那条规则上，剩下的单独列。
+   *
+   * ★ 判据是「有没有一条画得出来的规则可指」。列表只画项目规则 ——
+   *   指向别处的 id 既贴不上去，也没有可跳转的目标，只能留在下面那一堆里。
+   */
+  const projectRuleIds = new Set(data?.projectPolicies.map((p) => p.id) ?? []);
+  const attachable = (issue: PolicyIssue) => issue.policyIds.filter((id) => projectRuleIds.has(id));
+  const globalIssues = (data?.issues ?? []).filter((i) => attachable(i).length === 0);
+  const issuesOf = (p: PolicyRow) =>
+    (data?.issues ?? [])
+      .filter((i) => attachable(i).includes(p.id))
+      .map((i) => ({
+        severity: i.severity,
+        text: issueText(i),
+        example: i.exampleContext || i.example ? exampleText(i) : null,
+      }));
+
+  /**
+   * 开关矩阵的行。
+   *
+   * ★ 顺序按操作类型的**枚举**排，不按当前判定分组。
+   *   按判定分组的话，翻一个开关会让那一行跳到别的位置去 ——
+   *   用户下一秒想改回来，得先重新找到它。开关面板的行必须是稳定的。
+   */
+  const matrixRows: OperationRow[] = data
+    ? [...data.summary.auto, ...data.summary.human, ...data.summary.depends]
+        .sort((a, b) => a.operationType.localeCompare(b.operationType))
+        .map((outcome) => ({
+          outcome,
+          switchRule:
+            data.projectPolicies.find(
+              (p) => switchedOperationOf(p.condition) === outcome.operationType,
+            ) ?? null,
+        }))
+    : [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -275,88 +344,101 @@ export function PoliciesPage() {
                   {expandSummary ? t('policy.collapse') : t('policy.showFullList')}
                 </Button>
               </p>
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                {t('policy.ruleCounts', {
-                  org: data.orgPolicies.length,
-                  project: data.projectPolicies.length,
-                })}
-              </p>
-
               {expandSummary && (
-                <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 md:grid-cols-3">
-                  <SummaryColumn title={t('policy.auto')} icon="✓" items={data.summary.auto.map((o) => o.label)} />
-                  <SummaryColumn
-                    title={t('policy.needsHuman')}
-                    icon="⚠"
-                    items={data.summary.human.map((o) => `${o.label}${o.by ? ` → ${o.by}` : ''}`)}
-                  />
-                  {/*
-                    ★ 「视情况」必须说清楚是什么情况。
-                      只写「看情况」的摘要还不如不给 —— 用户仍然得自己去读规则。
-                  */}
-                  <SummaryColumn
-                    title={t('policy.dependsOn')}
-                    icon="~"
-                    items={data.summary.depends.map((o) => `${o.label}${colon()}${o.when}`)}
-                  />
-                </div>
+                <OperationMatrix
+                  rows={matrixRows}
+                  projectId={projectId}
+                  busyOperation={clearing.isPending ? clearing.variables : null}
+                  onSet={(operationType, verdict) => setSwitching({ operationType, verdict })}
+                  onClear={(operationType) => clearing.mutate(operationType)}
+                />
               )}
             </section>
 
-            {/* ── 体检 ── */}
-            {data.issues.length > 0 && (
+            {/*
+              ── 体检：只剩「不指向任何一条规则」的那几条，且默认收起 ──
+
+              ★★ 指向某条规则的结论已经贴到那条规则自己身上了（见 RuleList）。
+                留在这里的是「高风险操作没人管」这类**没有规则可指**的发现 ——
+                它们没有可跳转的目标，只能单独列。
+              ★ 默认收起：第一屏该回答「Agent 现在能干什么」，
+                不是先摆一张问题清单。
+            */}
+            {globalIssues.length > 0 && (
               <section className="rounded border border-slate-200 bg-white px-3 py-2">
-                <h2 className="text-xs font-medium text-slate-700">
-                  {t('policy.issuesFound', { count: data.issues.length })}
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  {t('policy.issuesHint')}
-                </p>
-                <ul className="mt-1 space-y-1">
-                  {data.issues.map((issue, i) => {
-                    const meta = SEVERITY[issue.severity];
-                    return (
-                      <li key={`${issue.type}-${i}`} className="flex items-start gap-2 text-xs">
-                        <span aria-hidden>{meta.icon}</span>
-                        <div className="min-w-0 flex-1">
-                          {/*
-                            ★ 按 `type` 取词。服务端那句 `message` 是中文，
-                              只作认不出 type 时的兜底。规则名走 params 原样带过来 ——
-                              用户起的名不翻译。
-                          */}
-                          <p className={meta.className}>{issueText(issue)}</p>
-                          {(issue.exampleContext || issue.example) && (
-                            <p className="text-[11px] text-slate-400">
-                              {t('policy.counterExample', { example: exampleText(issue) })}
-                            </p>
-                          )}
-                          {issue.policyIds.length > 0 && (
-                            <Button variant="ghost"
-                              onClick={() => setHighlight(new Set(issue.policyIds))}
-                              className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
-                            >
-                              {t('policy.locateRule')}
-                            </Button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xs font-medium text-slate-700">
+                    {t('policy.issuesFound', { count: globalIssues.length })}
+                  </h2>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setExpandIssues((v) => !v)}
+                    className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
+                  >
+                    {expandIssues ? t('policy.collapse') : t('policy.showFullList')}
+                  </Button>
+                </div>
+
+                {expandIssues && (
+                  <>
+                    <p className="text-[11px] text-slate-400">{t('policy.issuesHint')}</p>
+                    <ul className="mt-1 space-y-1">
+                      {globalIssues.map((issue, i) => {
+                        const meta = SEVERITY[issue.severity];
+                        return (
+                          <li key={`${issue.type}-${i}`} className="flex items-start gap-2 text-xs">
+                            <span aria-hidden>{meta.icon}</span>
+                            <div className="min-w-0 flex-1">
+                              {/*
+                                ★ 按 `type` 取词。服务端那句 `message` 是中文，
+                                  只作认不出 type 时的兜底。规则名走 params 原样带过来 ——
+                                  用户起的名不翻译。
+                              */}
+                              <p className={meta.className}>{issueText(issue)}</p>
+                              {(issue.exampleContext || issue.example) && (
+                                <p className="text-[11px] text-slate-400">
+                                  {t('policy.counterExample', { example: exampleText(issue) })}
+                                </p>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                )}
               </section>
             )}
 
             {tab === 'test' ? (
               <ScenarioTester projectId={projectId} />
+            ) : data.projectPolicies.length === 0 && !wizardSkipped ? (
+              /*
+                ★★ 一条规则都没有时，列表区不是「空列表 + 一排模板按钮」。
+                  那两样东西一起说的是「这里本该有东西，你自己去配」——
+                  而用户此刻既不知道该配什么，也不知道配多少算够，
+                  最常见的结局是关掉页面，项目就这么零规则跑下去。
+              */
+              <FirstRunWizard
+                projectId={projectId}
+                onSkip={() => setWizardSkipped(true)}
+                onDone={(message) => {
+                  setToast(message);
+                  void refresh();
+                }}
+              />
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-slate-500">{t('policy.fromTemplate')}</span>
                   {/*
-                    ★ 模板自己就标了方向，正好对上 §2.3 的两档权限：
-                      放宽类模板对 pm 是灰的，收紧类不是。这一排按钮
-                      因此成了整套不对称设计最直观的一处展示 ——
-                      用户不用读文档就能看出「收紧比放宽容易」。
+                    ★★ 「收紧 / 放宽」这两个词不再出现在按钮上。
+                      它们是治理模型的内部词汇：用户要判断一个 ↑ 还是 ↓
+                      对自己意味着什么，得先知道这套模型分了两档权限。
+                      而这件事**不需要**他知道 —— 他真正会撞上的只有一种情形：
+                      某个按钮是灰的。那时权限差异会以「你为什么点不了、该找谁」
+                      的形式出现，那句话服务端已经算好了。
+                      灰按钮 + 原因说得清的事，不必先教一套术语。
                   */}
                   {templates.data?.templates.map((t) => (
                     <GatedButton
@@ -369,7 +451,7 @@ export function PoliciesPage() {
                       }}
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
                     >
-                      {t.direction === 'loosen' ? '↓' : '↑'} {t.name}
+                      {t.name}
                     </GatedButton>
                   ))}
                 </div>
@@ -378,25 +460,13 @@ export function PoliciesPage() {
                   title={t('policy.projectRules')}
                   hint={t('policy.projectRulesHint')}
                   policies={data.projectPolicies}
-                  highlightIds={highlight}
+                  issuesOf={issuesOf}
                   onEdit={(p) => {
                     setEditing(p);
                     setCreating(true);
                   }}
                   onToggle={setToggling}
                   onDelete={(p) => remove.mutate(p)}
-                  onHistory={setHistory}
-                  onViewHits={(p) => setHits({ id: p.id, name: p.name })}
-                />
-
-                <RuleList
-                  title={t('policy.orgRules')}
-                  hint={t('policy.orgRulesHint')}
-                  policies={data.orgPolicies}
-                  highlightIds={highlight}
-                  onEdit={() => setToast(t('policy.orgEditDenied'))}
-                  onToggle={() => setToast(t('policy.orgDisableDenied'))}
-                  onDelete={() => setToast(t('policy.orgDeleteDenied'))}
                   onHistory={setHistory}
                   onViewHits={(p) => setHits({ id: p.id, name: p.name })}
                 />
@@ -431,6 +501,23 @@ export function PoliciesPage() {
             setEditing(null);
             setTemplate(null);
             setToast(t('policy.saved'));
+            void refresh();
+          }}
+        />
+      )}
+
+      {switching && (
+        <OperationSwitchDialog
+          projectId={projectId}
+          operationType={switching.operationType}
+          verdict={switching.verdict}
+          onClose={() => {
+            setSwitching(null);
+            void refresh();
+          }}
+          onDone={(message) => {
+            setSwitching(null);
+            setToast(message);
             void refresh();
           }}
         />
@@ -479,28 +566,6 @@ export function PoliciesPage() {
           </Button>
         </div>
       )}
-    </div>
-  );
-}
-
-function SummaryColumn({ title, icon, items }: { title: string; icon: string; items: string[] }) {
-  const t = useT();
-  return (
-    <div>
-      <p className="text-[11px] font-medium text-slate-600">
-        {title}（{items.length}）
-      </p>
-      <ul className="mt-0.5 space-y-0.5">
-        {items.length === 0 && <li className="text-[11px] text-slate-400">{t('policy.none')}</li>}
-        {items.map((t) => (
-          <li key={t} className="text-[11px] leading-4 text-slate-600">
-            <span aria-hidden className="mr-1">
-              {icon}
-            </span>
-            {t}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -685,6 +750,11 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
             <li key={h.version} className="border-b border-slate-100 py-1 text-xs last:border-0">
               <span className="text-slate-700">v{h.version}</span>
               <span className="ml-2 text-slate-500">{h.changedAt.slice(0, 16).replace('T', ' ')}</span>
+              {/*
+                ★ 说结果，不说术语。「放宽 / 收紧」是治理模型的内部词汇，
+                  而变更历史要回答的是「这一次改动之后，人少批了还是多批了」——
+                  后者不用先学一套词汇就读得懂，信息量还一点没少。
+              */}
               {h.direction && (
                 <span
                   className={clsx(
@@ -692,7 +762,9 @@ function HistoryDialog({ policy, onClose }: { policy: PolicyRow; onClose: () => 
                     h.direction === 'loosen' ? 'text-amber-700' : 'text-slate-500',
                   )}
                 >
-                  {h.direction === 'loosen' ? t('policy.loosen') : t('policy.tighten')}
+                  {h.direction === 'loosen'
+                    ? t('policy.history.fewerChecks')
+                    : t('policy.history.moreChecks')}
                 </span>
               )}
             </li>

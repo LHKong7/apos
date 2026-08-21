@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Action, Condition, Policy } from '@apos/contracts';
 import { auditPolicies, previewAutonomy } from './audit';
-import { BASELINE_POLICIES } from './baseline';
+import { SAMPLE_RULES } from './sample-rules';
 
 let seq = 0;
 function policy(
@@ -39,19 +39,19 @@ describe('规则集摘要', () => {
    *   用户不会去读 12 条规则再自己推导边界 —— 他要的就是这一句。
    */
   it('★ 把一堆规则翻译成「哪些自动、哪些找人」', () => {
-    const { summary } = auditPolicies(BASELINE_POLICIES, 'agent_led_approval');
+    const { summary } = auditPolicies(SAMPLE_RULES, 'agent_led_approval');
 
     const autoLabels = summary.auto.map((o) => o.label);
     const humanLabels = summary.human.map((o) => o.label);
 
     expect(autoLabels.length + humanLabels.length + summary.depends.length).toBeGreaterThan(0);
-    // 付款在基线里是会签，任何情况下都不该出现在「自动执行」里
+    // 付款在这套规则里是会签，任何情况下都不该出现在「自动执行」里
     expect(autoLabels).not.toContain('执行付款');
     expect([...humanLabels, ...summary.depends.map((o) => o.label)]).toContain('执行付款');
   });
 
   it('需要人时说清楚是谁', () => {
-    const { summary } = auditPolicies(BASELINE_POLICIES, 'agent_led_approval');
+    const { summary } = auditPolicies(SAMPLE_RULES, 'agent_led_approval');
     const payment = summary.human.find((o) => o.operationType === 'payment');
     if (payment) expect(payment.by).toBeTruthy();
   });
@@ -84,7 +84,7 @@ describe('规则集摘要', () => {
    *   一句正确但毫无用处的话，用户看完还得自己去读规则。
    */
   it('★ 分界是「A 或 B」时也要说清楚，而不是退化成一个分数', () => {
-    const { summary } = auditPolicies(BASELINE_POLICIES, 'agent_led_approval');
+    const { summary } = auditPolicies(SAMPLE_RULES, 'agent_led_approval');
     const deploy = summary.depends.find((o) => o.operationType === 'deploy')!;
 
     expect(deploy.when).toBe('在生产环境，或风险等级为高、极高时需要人确认');
@@ -148,12 +148,12 @@ describe('覆盖缺口', () => {
   });
 
   /**
-   * ★ 基线规则只管住了**生产环境**的库变更与部署。开发环境的同类操作
+   * ★ 这套规则只管住了**生产环境**的库变更与部署。开发环境的同类操作
    *   没有任何规则，走的是自治等级的默认策略 —— 这正是「覆盖缺口」
    *   要抓的东西：规则看起来配了，实际只盖住了一半。
    */
   it('★ 只在生产环境设了闸时，其他环境仍算缺口', () => {
-    const { issues } = auditPolicies(BASELINE_POLICIES, 'agent_led_approval');
+    const { issues } = auditPolicies(SAMPLE_RULES, 'agent_led_approval');
     const gaps = issues.filter((i) => i.type === 'coverage_gap');
 
     const dbGap = issues.find((i) => i.message.includes('数据库结构变更'))!;
@@ -181,7 +181,7 @@ describe('覆盖缺口', () => {
   });
 
   it('付款这类全场景覆盖的操作不报缺口', () => {
-    const { issues } = auditPolicies(BASELINE_POLICIES, 'agent_led_approval');
+    const { issues } = auditPolicies(SAMPLE_RULES, 'agent_led_approval');
     const gaps = issues.filter((i) => i.type === 'coverage_gap');
     expect(gaps.some((g) => g.message.includes('执行付款'))).toBe(false);
   });
@@ -314,14 +314,14 @@ describe('自治等级切换预览', () => {
    *   用户要的是具体清单：哪几类操作从此不再找我。
    */
   it('★ 给出具体哪几类操作的判定会变', () => {
-    const preview = previewAutonomy(BASELINE_POLICIES, 'human_led', 'agent_autonomous');
+    const preview = previewAutonomy(SAMPLE_RULES, 'human_led', 'agent_autonomous');
 
     expect(preview.autoAfter).toBeGreaterThan(preview.autoBefore);
     expect(preview.becomesAuto.length).toBeGreaterThan(0);
   });
 
   it('收紧方向也能预览', () => {
-    const preview = previewAutonomy(BASELINE_POLICIES, 'agent_autonomous', 'human_led');
+    const preview = previewAutonomy(SAMPLE_RULES, 'agent_autonomous', 'human_led');
     expect(preview.becomesGated.length).toBeGreaterThan(0);
   });
 });

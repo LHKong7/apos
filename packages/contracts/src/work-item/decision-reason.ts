@@ -76,18 +76,3 @@ export const DecisionReason = z.object({
   subjectTitle: z.string().nullable().optional(),
 });
 export type DecisionReason = z.infer<typeof DecisionReason>;
-
-/**
- * 基线 Policy 的 id → 词条键后缀。
- *
- * ★★ 只有**基线**规则的名字是平台写的，因此可以翻译；项目自己建的规则
- *   名字是用户数据，一律原样显示。分不清这两者的下场是要么把用户起的名
- *   硬翻成别的话，要么让平台自带的九条规则永远只有中文名。
- *
- * Only baseline policy names are platform-authored and therefore translatable;
- * project-authored names are user data and must be shown verbatim.
- */
-export function baselinePolicyKey(policyId: string | null | undefined): string | null {
-  if (!policyId || !policyId.startsWith('baseline-')) return null;
-  return policyId;
-}

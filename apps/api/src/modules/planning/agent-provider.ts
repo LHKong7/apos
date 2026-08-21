@@ -23,7 +23,7 @@ import type { EffectiveAgentAccess } from '@apos/domain';
 import { resolveAgentAccess } from '../agent/access';
 import { WorkspaceService } from '../workspace';
 import { AgentPlanOutput, AgentStructuredOutput, validatePlanGraph } from './agent-output';
-import { buildPlanBrief, buildStructureBrief, OUTPUT_FILE } from './agent-brief';
+import { buildPlanBrief, buildRepairBrief, buildStructureBrief, OUTPUT_FILE } from './agent-brief';
 import type {
   GeneratedPlan,
   PlanningProvider,
@@ -91,6 +91,25 @@ function planningEventSummary(e: RunEvent): string {
 const PLANNING_TYPE = 'requirement';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * 一次规划最多跑几轮（含第一轮）。
+ *
+ * ★ 是 2 不是 3。第二轮拿着 zod 的原话去改，模型改不对的多半也不是
+ *   「再看一遍就会了」的那种错 —— 而每多一轮，用户就多等一次完整的
+ *   Agent 执行，成本也多一份。真正救得回来的收益全在第二轮。
+ */
+const MAX_PLANNING_ROUNDS = 2;
+
+/**
+ * 值得再来一轮的失败码。
+ *
+ * ★★ 判据是「同一个 Agent 拿着更多信息再跑一次，结果可能不一样吗」。
+ *   产物不合格属于这一类：报错说清了哪个字段错在哪，改对它是模型做得到的事。
+ *   而挑不到 Agent、运行时拒收、超时、压根没写出文件 —— 再跑一次是同样的
+ *   结果，重试它们只是把用户的等待时间翻倍。
+ */
+const REPAIRABLE_CODES = new Set<PlanFallbackCode>(['output_invalid', 'output_inconsistent']);
 
 /**
  * 用真实 Agent 运行时做需求结构化与计划生成。
@@ -237,6 +256,8 @@ export class AgentPlanningProvider implements PlanningProvider {
         requiresHuman: t.requiresHuman,
         ...(t.operationType ? { operationType: t.operationType } : {}),
         ...(t.environment ? { environment: t.environment } : {}),
+        ...(t.dataSensitivity ? { dataSensitivity: t.dataSensitivity } : {}),
+        ...(t.externalFacing !== undefined ? { externalFacing: t.externalFacing } : {}),
         acceptanceCriteria: t.acceptanceCriteria.map((c, i) => ({
           id: `${t.ref}-ac-${i + 1}`,
           text: c.text,
@@ -258,6 +279,38 @@ export class AgentPlanningProvider implements PlanningProvider {
 
   // ── 内部 ────────────────────────────────────────────────────────────
 
+  /**
+   * 一次规划 = 最多两轮。
+   *
+   * ★★ 在此之前这里只有一轮：产物不合格就整场作废，直接回退到规则占位。
+   *   而 `agent-output.ts` 上写着「拒收换来的是一次重试或一次澄清」——
+   *   那句话当时没有对应实现。代价具体是这样：模型把 `type` 写成
+   *   `"design"`（任务书自己的示例把 `design` 当 ref 用，它抄过去了），
+   *   于是**产品里最贵的那次调用**整场作废，用户拿回一份与需求无关的
+   *   通用模板，界面上只有一行灰字说明发生过什么。
+   *
+   *   而这类错误几乎全是**格式**错误，不是理解错误：把 zod 报的那几句
+   *   原样递回去，模型通常一轮就改对了。一轮修正的成本，远小于
+   *   把一次完整的需求分析扔掉。
+   *
+   * ★★ 只有 `output_invalid` / `output_inconsistent` 值得再来一轮。
+   *   其余的码（挑不到 Agent、运行时拒收、超时、压根没写出文件）
+   *   再跑一次也是同样的结果 —— 重试它们只是把用户的等待时间翻倍。
+   *
+   * ★ 同一个 Agent，不换人。换一个 Agent 意味着这一轮拿不到上一轮的产物
+   *   （工作区是按 Agent 的授权挂的），而修正轮的全部价值就是「照着上一版改」。
+   *
+   * ★ 每一轮开一条**独立**的 agent_runs 记录。合并成一条的话，
+   *   「第一轮为什么废了」会被第二轮的结果覆盖掉 —— 而那正是事后唯一
+   *   能看出「这个 Agent 老是写错枚举」的地方。成本按轮累加。
+   *
+   * At most two rounds. There used to be one: a rejected artifact discarded the
+   * most expensive call in the product and dropped the user into a generic
+   * template, even though the failure is almost always formatting rather than
+   * comprehension. Only the two "the artifact is wrong" codes are retried —
+   * re-running the others just doubles the wait. Same agent, separate run rows,
+   * cost accumulated across rounds.
+   */
   private async run<T>(input: {
     scope: PlanningScope | undefined;
     kind: 'structure' | 'plan';
@@ -277,9 +330,49 @@ export class AgentPlanningProvider implements PlanningProvider {
       );
     }
 
+    const model = `${agent.runtimeKind}:${agent.model ?? 'default'}`;
+    let brief = input.brief;
+    let spent: number | null = null;
+    let repaired = false;
+
+    for (let round = 1; ; round += 1) {
+      const attempt = await this.runOnce({ ...input, scope: input.scope, agent, brief, round });
+      spent = addCost(spent, attempt.costUsd);
+
+      if (attempt.ok) return { ok: true, value: attempt.value, model, costUsd: spent };
+
+      const canRepair = REPAIRABLE_CODES.has(attempt.code) && round < MAX_PLANNING_ROUNDS;
+      if (!canRepair) {
+        /**
+         * ★ 「重试过仍不合格」必须写进 reason。这句话一路显示到需求页与
+         *   计划页上，而「试过一次没救回来」和「一次都没试」对用户是
+         *   两个不同的结论：前者说明该去看看那个 Agent 的模型选型，
+         *   后者说明该去看看平台。
+         */
+        return fail(attempt.code, repaired ? `${attempt.reason}（重试过仍不合格）` : attempt.reason);
+      }
+
+      repaired = true;
+      brief = buildRepairBrief(input.brief, attempt.reason, attempt.raw);
+      this.diag(
+        `[planning] ${input.kind} 第 ${round} 轮产出不合格，带着报错再试一轮：${attempt.reason}`,
+      );
+    }
+  }
+
+  /** 单轮：开 Run → 挂工作区 → 派发 → 收产物 → 校验。失败时把原始产物带回去给修正轮 */
+  private async runOnce<T>(input: {
+    scope: PlanningScope;
+    kind: 'structure' | 'plan';
+    brief: string;
+    schema: { parse: (v: unknown) => T };
+    check?: (value: T) => string[];
+    agent: typeof agents.$inferSelect;
+    round: number;
+  }): Promise<Round<T>> {
+    const agent = input.agent;
     const runId = randomUUID();
     const dir = join(this.root(), 'planning', runId);
-    const model = `${agent.runtimeKind}:${agent.model ?? 'default'}`;
 
     /**
      * ★★ 规划也是一次真的 Agent 执行，必须留痕。
@@ -293,10 +386,21 @@ export class AgentPlanningProvider implements PlanningProvider {
      */
     await this.openRun(runId, agent, input.scope, input.kind, input.scope.requirementId ?? null);
 
-    /** 每一条失败路径都要落到那一行上，否则它会永远停在 dispatching */
-    const failRun = async (code: PlanFallbackCode, reason: string): Promise<Attempt<T>> => {
-      await this.closeRun(runId, 'failed', 0, reason);
-      return fail(code, reason);
+    /**
+     * 每一条失败路径都要落到那一行上，否则它会永远停在 dispatching。
+     *
+     * ★ 带上 `raw`：这一轮写出来的东西是修正轮唯一能照着改的底稿。
+     *   丢掉它，下一轮就只能从头重写 —— 于是很可能重犯同一个错。
+     * ★ 也带上 `costUsd`：废掉的这一轮**照样花了钱**，不计进去的话
+     *   计划页上那个成本数字会比实际少一轮。
+     */
+    const failRun = async (
+      code: PlanFallbackCode,
+      reason: string,
+      extra: { costUsd?: number | null; raw?: string | null } = {},
+    ): Promise<Round<T>> => {
+      await this.closeRun(runId, 'failed', extra.costUsd ?? 0, reason);
+      return { ok: false, code, reason, costUsd: extra.costUsd ?? null, raw: extra.raw ?? null };
     };
 
     let acquired: Awaited<ReturnType<WorkspaceService['acquireLocal']>> | null = null;
@@ -374,23 +478,35 @@ export class AgentPlanningProvider implements PlanningProvider {
       if (!outcome.ok) return failRun('run_failed', outcome.reason);
 
       const raw = await readFile(join(dir, OUTPUT_FILE), 'utf8').catch(() => null);
-      if (raw === null) return failRun('output_missing', `Agent 结束了但没有写出 ${OUTPUT_FILE}`);
+      if (raw === null) {
+        return failRun('output_missing', `Agent 结束了但没有写出 ${OUTPUT_FILE}`, {
+          costUsd: outcome.costUsd,
+        });
+      }
 
       let parsed: T;
       try {
         parsed = input.schema.parse(JSON.parse(stripFence(raw)));
       } catch (err) {
-        return failRun('output_invalid', `${OUTPUT_FILE} 不符合约定格式：${describe(err)}`);
+        return failRun('output_invalid', `${OUTPUT_FILE} 不符合约定格式：${describe(err)}`, {
+          costUsd: outcome.costUsd,
+          raw,
+        });
       }
 
       const problems = input.check?.(parsed) ?? [];
       if (problems.length > 0) {
-        return failRun('output_inconsistent', `产出的计划不自洽：${problems.join('；')}`);
+        return failRun('output_inconsistent', `产出的计划不自洽：${problems.join('；')}`, {
+          costUsd: outcome.costUsd,
+          raw,
+        });
       }
 
-      this.diag(`[planning] ${input.kind} 由 ${agent.name} 完成，工作区 ${dir}`);
+      this.diag(
+        `[planning] ${input.kind} 由 ${agent.name} 完成（第 ${input.round} 轮），工作区 ${dir}`,
+      );
       await this.closeRun(runId, 'completed', outcome.costUsd, null);
-      return { ok: true, value: parsed, model, costUsd: outcome.costUsd };
+      return { ok: true, value: parsed, costUsd: outcome.costUsd };
     } catch (err) {
       return failRun('unexpected_error', describe(err));
     } finally {
@@ -866,6 +982,35 @@ export class AgentPlanningProvider implements PlanningProvider {
 type Attempt<T> =
   | { ok: true; value: T; model: string; costUsd: number | null }
   | { ok: false; reason: string; code: PlanFallbackCode };
+
+/**
+ * 单轮的结果。比 {@link Attempt} 多两样，都是给下一轮用的：
+ * `raw`（上一版产物，修正轮照着它改）与 `costUsd`（废掉的那一轮照样花了钱）。
+ */
+type Round<T> =
+  | { ok: true; value: T; costUsd: number | null }
+  | {
+      ok: false;
+      code: PlanFallbackCode;
+      reason: string;
+      costUsd: number | null;
+      raw: string | null;
+    };
+
+/**
+ * 跨轮累计成本。
+ *
+ * ★ `null` 的含义是「运行时没上报」，不是 0 —— 两者混起来的话，
+ *   一个从不上报成本的运行时会让计划页上出现一个理直气壮的 `$0.00`。
+ *   所以只要有任何一轮报了数，总数就是那几轮的和；一轮都没报才是 null。
+ *
+ * `null` means "the runtime did not report", not zero: collapsing the two puts
+ * a confident `$0.00` on the plan page for runtimes that never report.
+ */
+function addCost(total: number | null, round: number | null): number | null {
+  if (round === null) return total;
+  return (total ?? 0) + round;
+}
 
 /**
  * ★ 每条失败路径都要带上码。

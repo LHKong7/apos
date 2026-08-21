@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { projects, workItems, type Database } from '@apos/db';
-import { humanActor, STATUS_STAGE, WorkItemType } from '@apos/contracts';
+import { humanActor, OperationType, STATUS_STAGE, WorkItemType } from '@apos/contracts';
 import { emitAndPublish } from '../modules/event/bus';
 import { allocateNumbers, formatRef } from '../modules/work-item/numbering';
 import { notFound } from './errors';
@@ -38,6 +38,24 @@ export const WorkItemInput = z.object({
   ownerId: z.string().uuid().nullable().optional(),
   estimatedHours: z.number().min(0).max(10_000).nullable().optional(),
   parentId: z.string().uuid().nullable().optional(),
+  /**
+   * 这个任务算哪一类操作（Policy 的 `operationType` fact）。
+   *
+   * ★★ 不给就是 `code_change`（在 buildPolicyContext 里兜底）—— 而这个兜底
+   *   对「随手记一个 bug」是对的，对「清理一批线上资源」是错的：
+   *   后者会被当成改代码来评估，删资源那条安全底线根本轮不到。
+   *   手工建卡是唯一没有规划阶段替它标操作类型的入口，所以要问一句。
+   *
+   * ★ 严格枚举，认不出的值直接 400。兜底成 `code_change` 等于往**宽**的
+   *   一侧猜，而这一栏的全部意义就是别让人猜。
+   *
+   * Which operation class this item is. Absent means `code_change`, which is
+   * right for "jot down a bug" and wrong for "clean up some production
+   * resources": the latter would be judged as a code change and never reach
+   * the delete-resource floor. Manual creation is the one entry point with no
+   * planning stage to mark this, so it asks.
+   */
+  operationType: OperationType.optional(),
 });
 
 export async function createWorkItem(
@@ -92,7 +110,11 @@ export async function createWorkItem(
           ? null
           : String(input.estimatedHours),
       /** ★ 留痕：这条不是计划分解出来的。审计时「它是怎么来的」要答得上 */
-      typeData: { origin: 'manual', createdBy: ctx.actorId },
+      typeData: {
+        origin: 'manual',
+        createdBy: ctx.actorId,
+        ...(input.operationType ? { operationType: input.operationType } : {}),
+      },
     })
     .returning();
 

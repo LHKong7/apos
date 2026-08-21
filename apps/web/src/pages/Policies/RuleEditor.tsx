@@ -1,10 +1,10 @@
 import { useT } from '../../lib/i18n';
-import { joinList, policyFactLabel } from '@/lib/format';
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { ApiError, api } from '../../lib/api/client';
 import type { PolicyRow, PolicyTemplateRow, SimulationResponse } from '../../lib/api/types';
+import { SimulationView } from './SimulationView';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +44,19 @@ export function RuleEditor({
 }) {
   const t = useT();
   const [name, setName] = useState(editing?.name ?? template?.name ?? '');
-  const [priority, setPriority] = useState(editing?.priority ?? 100);
+  /**
+   * ★★ 优先级从这里消失了，默认由服务端往后追加。
+   *
+   *   它要求用户同时理解三件事才填得对：越小越先、命中即停、
+   *   组织规则占了前面那一段。而填错的表现是规则安静地不生效 ——
+   *   一个填错了不报错、还看不出来的输入框，换来的是一次困惑，
+   *   不是一次配置。绝大多数人填完之后也从不回来改它。
+   *
+   *   `null` = 「按默认排」。真要手动排的人展开「高级」还能改到，
+   *   改一条老规则时不动它就保持原样。
+   */
+  const [priority, setPriority] = useState<number | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const [values, setValues] = useState<Record<string, string | number>>(() =>
     Object.fromEntries((template?.params ?? []).map((p) => [p.key, p.default])),
   );
@@ -90,7 +102,8 @@ export function RuleEditor({
         projectId,
         {
           name,
-          priority,
+          /** ★ 不给 = 新规则往后追加、老规则保持原样。都由服务端定 */
+          ...(priority === null ? {} : { priority }),
           condition: draft.condition,
           action: draft.action,
           acknowledgeMismatches: acknowledge,
@@ -131,17 +144,6 @@ export function RuleEditor({
             className="mt-0.5" />
         </Label>
 
-        <Label className="mt-2 block text-xs text-slate-600">
-          {t('rule.priority')}
-          <Input
-            type="number"
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value))}
-            className="mt-0.5 w-24" />
-          <span className="ml-2 text-[11px] text-slate-400">
-            {t('rule.priorityHint')}
-          </span>
-        </Label>
 
         {params.length > 0 && (
           <fieldset className="mt-3 rounded border border-slate-200 p-2">
@@ -200,6 +202,36 @@ export function RuleEditor({
           </div>
         )}
 
+        {/*
+          ★ 优先级收进「高级」。露出来的默认是「自动」，不是一个数字 ——
+            数字会让人以为自己必须懂它。
+        */}
+        <div className="mt-2">
+          <Button
+            variant="ghost"
+            onClick={() => setAdvanced((v) => !v)}
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
+          >
+            {advanced ? t('rule.hideAdvanced') : t('rule.advanced')}
+          </Button>
+          {advanced && (
+            <Label className="mt-1 block text-xs text-slate-600">
+              {t('rule.priority')}
+              <Input
+                type="number"
+                min={1}
+                value={priority ?? editing?.priority ?? ''}
+                placeholder={t('rule.priorityAuto')}
+                onChange={(e) =>
+                  setPriority(e.target.value === '' ? null : Number(e.target.value))
+                }
+                className="mt-0.5 w-24"
+              />
+              <span className="ml-2 text-[11px] text-slate-400">{t('rule.priorityHint')}</span>
+            </Label>
+          )}
+        </div>
+
         {/* ── 模拟：本页最重要的功能 ── */}
         <div className="mt-3 rounded border border-slate-200 p-2">
           <div className="flex items-center gap-2">
@@ -238,75 +270,3 @@ export function RuleEditor({
     </Modal>
   );
 }
-
-/**
- * 模拟结果（§5.7）。
- *
- * ★ 「其中 N 次人类当时是驳回的」比任何说明都更能帮用户发现规则漏洞。
- *   所以这块的排版把不一致案例放在最显眼的位置，
- *   而不是先报一串「会自动处理 47 次」的好消息。
- */
-function SimulationView({ result }: { result: SimulationResponse }) {
-  const t = useT();
-  const CONFIDENCE = { high: 'rule.sampleAmple', medium: 'rule.sampleFair', low: 'rule.sampleThin' } as const;
-
-  return (
-    <div className="mt-1.5 space-y-1.5 text-xs">
-      <p className="text-slate-600">
-        {t('rule.simulationSummary', {
-          total: result.totalSamples,
-          handled: result.wouldAutoHandle,
-        })}
-        <span className="ml-1 text-[11px] text-slate-400">（{CONFIDENCE[result.confidence]}）</span>
-      </p>
-
-      {result.mismatches.length > 0 ? (
-        <div className="rounded bg-amber-50 px-2 py-1.5">
-          <p className="font-medium text-amber-900">
-            {t('rule.mismatchWarning', { count: result.mismatches.length })}
-          </p>
-          <ul className="mt-1 space-y-0.5">
-            {result.mismatches.slice(0, 5).map((m) => (
-              <li key={m.eventId} className="text-[11px] text-amber-900">
-                · {m.occurredAt.slice(0, 10)} {m.workItemTitle}
-                {m.humanNote && <span className="text-amber-700">（{m.humanNote}）</span>}
-              </li>
-            ))}
-          </ul>
-          {result.suggestions.length > 0 && (
-            <p className="mt-1 text-[11px] text-amber-900">
-              {t('rule.suggestExclusion')}
-              {joinList(
-                result.suggestions.map(
-                  (s) =>
-                    `${policyFactLabel(s.addCondition.fact)} ≠ ${String(s.addCondition.value)}`,
-                ),
-              )}
-              <span className="ml-1 text-amber-700">
-                {t('rule.suggestionBasis', {
-                  count: result.suggestions[0]!.wouldEliminate,
-                })}
-              </span>
-            </p>
-          )}
-        </div>
-      ) : (
-        <p className="rounded bg-green-50 px-2 py-1 text-[11px] text-green-900">
-          {t('rule.noMismatches')}
-        </p>
-      )}
-
-      {/* ★ 局限必须说出来。模拟基于历史事件回放，上下文缺失时会有偏差 */}
-      {result.caveats.length > 0 && (
-        <ul className="space-y-0.5">
-          {result.caveats.map((c) => (
-            <li key={c} className="text-[11px] text-slate-400">
-              · {c}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-

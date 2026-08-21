@@ -13,7 +13,10 @@ import { useLocaleStore } from '../../lib/i18n';
  */
 
 const reason = (over: Partial<DecisionReason> = {}): DecisionReason => ({
-  whyHuman: { code: 'policy_requires_human', params: { policy: '生产环境发布需发布负责人审批', policyId: 'baseline-prod-deploy' } },
+  whyHuman: {
+    code: 'policy_requires_human',
+    params: { policy: 'Release sign-off', policyId: 'b3e1c2d4-0000-4000-8000-000000000000' },
+  },
   consequence: { code: 'stalled_with_downstream', params: { status: 'ready', count: 3 } },
   subjectTitle: null,
   ...over,
@@ -29,15 +32,15 @@ describe('决策理由', () => {
     const why = whyHuman(reason(), 'FALLBACK');
     const what = consequence(reason(), 'FALLBACK');
 
-    expect(why).toContain('Production releases need');
+    expect(why).toContain('Policy “Release sign-off” requires a person');
     expect(why).not.toMatch(/[一-龥]/);
     expect(what).toContain('3 downstream tasks');
     expect(what).not.toMatch(/[一-龥]/);
   });
 
   /**
-   * ★★ 平台自带的九条基线规则名字是平台文案，可以翻译；项目自建规则的
-   *   名字是用户数据，原样显示 —— 把用户起的名「翻译」一遍等于给它改名。
+   * ★★ 规则全部由用户自己建，名字是用户数据，一律原样显示 ——
+   *   把用户起的名「翻译」一遍等于给它改名。
    */
   it('★ 用户自建的 Policy 名原样显示，不翻译', () => {
     const { whyHuman } = hook();
@@ -76,7 +79,8 @@ describe('决策理由', () => {
   it('中文界面照常给中文', () => {
     useLocaleStore.setState({ locale: 'zh' });
     const { whyHuman } = hook();
-    expect(whyHuman(reason(), 'FALLBACK')).toContain('生产环境发布需发布负责人审批');
+    /** ★ 变的是模板那半句，规则名两种语言里都原样带过去 */
+    expect(whyHuman(reason(), 'FALLBACK')).toBe('Policy「Release sign-off」要求人工介入');
   });
 
   /** ★ 恢复策略按动作挑说法，认不出来时用服务端带过来的那一句 */

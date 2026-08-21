@@ -234,6 +234,25 @@ export function riskLabel(risk: string): string {
 }
 
 /**
+ * 光秃秃的风险等级名（「高」/ "High"），不带「风险」二字。
+ *
+ * ★★ 与 {@link riskLabel} 是两条不同的词条，不是一条能省下来的重复。
+ *   `riskLabel` 给的是可以独立成句的完整说法（「高风险」/ "High risk"），
+ *   而这个给的是要被塞进别人句子里的那一半 ——
+ *   「风险{risk}」「Needs a person at {risks} risk」都自带了「风险 / risk」，
+ *   再塞一个完整说法进去会得到「风险高风险」和 "at High risk risk"。
+ *
+ * The bare risk level name, for slotting into a sentence that already supplies
+ * the word "risk" itself. Distinct from `riskLabel`, which is the standalone
+ * form; using the standalone form in a slot yields "High risk risk".
+ */
+export function riskName(risk: string): string {
+  const key = `scenario.risk${risk.charAt(0).toUpperCase()}${risk.slice(1)}` as MessageKey;
+  const label = t(key);
+  return label === key ? risk : label;
+}
+
+/**
  * Analytics 里那几张「按枚举分组」的表的行名。
  *
  * ★★ 服务端算这些指标时同时给了 `label` —— 一句中文。

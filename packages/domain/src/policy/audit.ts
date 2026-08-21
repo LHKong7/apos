@@ -2,6 +2,7 @@ import {
   HIGH_RISK_OPERATIONS,
   NEVER_AUTO_APPROVE,
   type Action,
+  type ActionType,
   type AutonomyLevel,
   type FactKey,
   type Policy,
@@ -57,14 +58,40 @@ export interface PolicyIssue {
   policyIds: string[];
 }
 
+/**
+ * 「什么情况下才需要人」的**结构**（verdict = depends 时）。
+ *
+ * ★★ 与 `when` 那句中文一一对应，但给的是枚举键。
+ *   「在生产环境，或风险等级为高时需要人确认」这句话里，
+ *   连接词、语序、量词三样在两种语言里都不同 —— 服务端拼好一句，
+ *   英文界面上就只能整句照抄中文。而这一行是这一页的第一屏。
+ *
+ * The structured form of `when`: enum keys rather than a sentence, because the
+ * conjunctions and clause order differ between languages and this line sits on
+ * the page's first screen.
+ */
+export interface GateShape {
+  /** 只要落在这些环境就一定需要人 */
+  environments: string[];
+  /** 只要是这些风险等级就一定需要人 */
+  riskLevels: string[];
+  /** 上面两项都空时的退路：多少种情况里有多少种需要人 */
+  gatedCount: number;
+  totalCount: number;
+}
+
 export interface OperationOutcome {
   operationType: string;
   label: string;
   verdict: 'auto' | 'human' | 'depends';
-  /** verdict = human 时，谁来决定 */
+  /** verdict = human 时，谁来决定。中文兜底，界面读 `byAction` */
   by: string | null;
-  /** verdict = depends 时，什么情况下需要人 */
+  /** ★ 拦下它的是哪一类动作 —— 界面有 `policy.action.*` 那组词条 */
+  byAction: ActionType | null;
+  /** verdict = depends 时，什么情况下需要人。中文兜底，界面读 `gate` */
   when: string | null;
+  /** 同上，但给的是结构 —— 界面照自己的语言拼 */
+  gate: GateShape | null;
   matchedPolicyIds: string[];
 }
 
@@ -125,7 +152,7 @@ export function auditPolicies(
     issues: [
       ...findConflicts(verdicts, policies, byId),
       ...findUnreachable(verdicts, policies),
-      ...findAutoPassedRisks(verdicts),
+      ...findAutoPassedRisks(verdicts, policies.length > 0),
       ...findEverythingGated(verdicts),
       ...findMissingDataSources(policies, wiredFacts),
       ...findZeroHit(policies, hits, wiredFacts),
@@ -160,7 +187,16 @@ function summarize(verdicts: Verdicts): PolicySummary {
 
     const label = OPERATION_LABELS[operationType] ?? operationType;
     if (autoCount === list.length) {
-      out.push({ operationType, label, verdict: 'auto', by: null, when: null, matchedPolicyIds });
+      out.push({
+        operationType,
+        label,
+        verdict: 'auto',
+        by: null,
+        byAction: null,
+        when: null,
+        gate: null,
+        matchedPolicyIds,
+      });
     } else if (autoCount === 0) {
       const sample = list.find((v) => !isAutoApprove(v.verdict.action))!;
       out.push({
@@ -168,16 +204,21 @@ function summarize(verdicts: Verdicts): PolicySummary {
         label,
         verdict: 'human',
         by: assigneeOf(sample.verdict.action),
+        byAction: sample.verdict.action.type,
         when: null,
+        gate: null,
         matchedPolicyIds,
       });
     } else {
+      const gate = describeGate(list);
       out.push({
         operationType,
         label,
         verdict: 'depends',
         by: null,
-        when: describeGate(list),
+        byAction: null,
+        when: gate.text,
+        gate: gate.shape,
         matchedPolicyIds,
       });
     }
@@ -202,9 +243,11 @@ function summarize(verdicts: Verdicts): PolicySummary {
  *   做法：先找出「只要满足它就一定需要人」的单值条件，
  *   再看这些条件的并集能不能盖住全部需要人的场景。能盖住就直接说出来。
  */
-function describeGate(list: Verdicts): string {
+function describeGate(list: Verdicts): { text: string; shape: GateShape } {
   const gated = list.filter((v) => !isAutoApprove(v.verdict.action));
-  if (gated.length === 0) return '';
+  const counts = { gatedCount: gated.length, totalCount: list.length };
+  const empty: GateShape = { environments: [], riskLevels: [], ...counts };
+  if (gated.length === 0) return { text: '', shape: empty };
 
   const gatedKeys = new Set(gated.map((v) => v.scenario.key));
   const sufficient: { axis: 'env' | 'risk'; value: string; covers: Set<string> }[] = [];
@@ -226,16 +269,21 @@ function describeGate(list: Verdicts): string {
 
   const covered = new Set(sufficient.flatMap((s) => [...s.covers]));
   if (sufficient.length > 0 && gated.every((v) => covered.has(v.scenario.key))) {
-    const envs = sufficient.filter((s) => s.axis === 'env').map((s) => ENV_TEXT[s.value] ?? s.value);
-    const risks = sufficient.filter((s) => s.axis === 'risk').map((s) => RISK_TEXT[s.value] ?? s.value);
+    const envKeys = sufficient.filter((s) => s.axis === 'env').map((s) => s.value);
+    const riskKeys = sufficient.filter((s) => s.axis === 'risk').map((s) => s.value);
+    const envs = envKeys.map((v) => ENV_TEXT[v] ?? v);
+    const risks = riskKeys.map((v) => RISK_TEXT[v] ?? v);
 
     const parts: string[] = [];
     if (envs.length > 0) parts.push(`在${envs.join('、')}`);
     if (risks.length > 0) parts.push(`风险等级为${risks.join('、')}`);
-    return `${parts.join('，或')}时需要人确认`;
+    return {
+      text: `${parts.join('，或')}时需要人确认`,
+      shape: { environments: envKeys, riskLevels: riskKeys, ...counts },
+    };
   }
 
-  return `${gated.length} / ${list.length} 种情况需要人确认`;
+  return { text: `${gated.length} / ${list.length} 种情况需要人确认`, shape: empty };
 }
 
 const ENV_TEXT: Record<string, string> = {
@@ -322,8 +370,26 @@ function findUnreachable(verdicts: Verdicts, policies: Policy[]): PolicyIssue[] 
  *
  * ★ 页面文档 §5.8 特别点名这一类。用户配了几条规则就以为安全了，
  *   而漏配的场景悄悄走默认 —— 出事时没人知道「原来这里根本没规则」。
+ *
+ * ★★ 两处刻意的克制，都是硬编码基线删掉之后才谈得上的：
+ *
+ *   1. 一条规则都没有时**不报**（`hasRules`）。零规则不是「配漏了」，
+ *      是还没开始配 —— 对着一个空项目喊出九条「高风险操作没人管」，
+ *      说的每一条都对，合起来却只是把「你还没配规则」说了九遍。
+ *      空列表该由引导向导接手，不是由体检来吓人。
+ *   2. `coverage_gap` 一律降到 info。它说的是「这里走的是默认策略」，
+ *      而默认策略是自治等级的一部分、是用户自己选的，不是事故。
+ *      真正的事故是 `too_permissive`：**有一条规则**明确把高风险操作
+ *      放行了 —— 那条仍然是 critical。
+ *
+ *   Nothing is reported when the project has no rules at all: zero rules means
+ *   "not configured yet", not "misconfigured", and nine criticals on an empty
+ *   project is the same sentence nine times. `coverage_gap` drops to info
+ *   because falling through to the autonomy default is a choice the user made;
+ *   `too_permissive` — a rule that actively waves a high-risk operation
+ *   through — stays critical.
  */
-function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
+function findAutoPassedRisks(verdicts: Verdicts, hasRules: boolean): PolicyIssue[] {
   interface Hole {
     /** 被某条规则明确放行 */
     byPolicy: { name: string; id: string; example: string } | null;
@@ -377,9 +443,11 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
       if (hole.byPolicy) causes.push(`「${hole.byPolicy.name}」会放行它（${hole.byPolicy.example}）`);
       if (hole.byDefault) causes.push(`没有规则覆盖时默认放行（${hole.byDefault.example}）`);
 
+      if (!hole.byPolicy && !hasRules) continue;
+
       issues.push({
         type: hole.byPolicy ? 'too_permissive' : 'coverage_gap',
-        severity: 'critical',
+        severity: hole.byPolicy ? 'critical' : 'info',
         message: `高风险操作「${label}」会被自动放行：${causes.join('；')}`,
         /**
          * ★ 操作类型送**枚举键**而不是那个中文 `label` —— 界面自己有
@@ -392,10 +460,10 @@ function findAutoPassedRisks(verdicts: Verdicts): PolicyIssue[] {
       continue;
     }
 
-    if (hole.uncoveredButGated) {
+    if (hole.uncoveredButGated && hasRules) {
       issues.push({
         type: 'coverage_gap',
-        severity: 'warning',
+        severity: 'info',
         message: `高风险操作「${label}」没有任何规则覆盖，走的是自治等级的默认策略`,
         params: { operation: op },
         example: hole.uncoveredButGated.example,
