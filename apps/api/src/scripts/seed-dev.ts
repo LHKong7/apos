@@ -397,13 +397,22 @@ async function main() {
   const plan = await generatePlan(db, provider, { requirementId: requirement!.id, correlationId });
 
   console.log('批准计划…');
+  /**
+   * ★ 两个 acknowledge 都要给，而且报错要说清是哪一个。
+   *
+   *   `approvePlan` 有两道闸：预算超限、以及「有人工任务还没指定执行者」。
+   *   种子只给了前一个，于是它一直死在后一个上，抛的却是「预算不足」——
+   *   一句和真实原因完全无关的话，照着它查永远查不到。
+   *   演示计划里本来就有人工任务，待认领队列正是要展示的形态之一。
+   */
   const approved = await approvePlan(db, {
     planId: plan.planId,
     approverId: lead!.id,
     correlationId,
     acknowledgedOverrun: true,
+    acknowledgedUnassigned: true,
   });
-  if (!approved.ok) throw new Error('计划批准失败：预算不足');
+  if (!approved.ok) throw new Error(`计划批准失败：${approved.code}`);
 
   /**
    * 多轮调度。

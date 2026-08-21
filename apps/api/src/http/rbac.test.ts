@@ -13,6 +13,7 @@ import {
   projectMembers,
 } from '@apos/db';
 import { RuntimeRegistry } from '@apos/agent-runtimes';
+import { AUTHORED_PRIORITY_MIN } from '@apos/contracts';
 import { buildApp } from '../app';
 import { EventBus } from '../modules/event/bus';
 import { StubPlanningProvider } from '../modules/planning/stub-provider';
@@ -515,6 +516,35 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
       payload: draft(),
     });
     expect(res.statusCode).toBe(201);
+  });
+
+  /**
+   * ★★ 不给优先级也能建 —— 界面上已经不问这个数字了。
+   *
+   *   接口如果仍然必填，表现是引导向导与规则编辑器一保存就 400，
+   *   而错误信息说的是一个用户根本没见过的字段。
+   */
+  it('★ 不给优先级时由服务端往后追加', async () => {
+    const lead = await createMember(db, fx, { projectRole: 'tech_lead' });
+    const payload = draft({
+      name: '不带优先级的规则',
+      condition: { fact: 'riskLevel', op: 'eq', value: 'critical' },
+      action: {
+        type: 'require_human_review',
+        assignee: { kind: 'project_role', role: 'tech_lead' },
+        dueInHours: 4,
+      },
+    });
+    delete (payload as { priority?: number }).priority;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${fx.projectId}/policies`,
+      headers: as(lead),
+      payload,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().policy.priority).toBe(AUTHORED_PRIORITY_MIN);
   });
 
   /** 停用一条规则就是把治理拿掉 —— 与放宽同档，不能只按「改了个开关」算 */
