@@ -137,6 +137,89 @@ ${input.rawInput}
 `;
 }
 
+/**
+ * 上一版产物在修正任务书里最多带这么多字符。
+ *
+ * ★ 带全的诱惑很大 —— 但一份被判废的计划可能有几十 KB，整个塞回去会把
+ *   真正要读的那句「哪里错了」挤到几千行之后。Agent 需要的是**定位**，
+ *   而问题清单已经把字段路径说清楚了；产物只是用来对照。
+ */
+const PREVIOUS_OUTPUT_LIMIT = 8_000;
+
+/**
+ * 修正轮的任务书。
+ *
+ * ★★ 为什么要有这一轮：`agent-output.ts` 的注释里写着「拒收换来的是一次
+ *   重试或一次澄清」，但在此之前**根本没有重试** —— 一个枚举值拼错，
+ *   产品里最贵的那次调用整场作废，用户直接掉进一份与需求无关的规则模板。
+ *   而模型犯的多半是格式错误，不是理解错误：把 zod 报的那几句原样递回去，
+ *   它通常一次就改对了。
+ *
+ * ★★ 必须带上**报错**与**上一版产物**两样，缺一样这一轮就白跑：
+ *   只给报错，Agent 不知道自己当时写了什么，只能从头重写一遍
+ *   （于是很可能重犯同一个错）；只给产物，它不知道哪里不合格。
+ *
+ * ★ 原任务书整份附在后面，不做删减。Agent 这一轮是新开的一次会话，
+ *   它没有上一轮的记忆 —— schema 与那几条硬要求必须再给一遍。
+ *
+ * The repair brief for the retry round. Without it, one misspelled enum threw
+ * away the most expensive call in the product and dropped the user into a
+ * generic template. The failure is almost always formatting rather than
+ * comprehension, so handing back the exact validator complaint usually fixes it
+ * in one round. Both the complaint and the previous output are required: the
+ * complaint alone leaves the agent rewriting from scratch (and often repeating
+ * the mistake), the output alone does not say what was wrong.
+ */
+export function buildRepairBrief(
+  originalBrief: string,
+  problems: string,
+  previousOutput: string | null,
+): string {
+  const truncated =
+    previousOutput === null
+      ? null
+      : previousOutput.length > PREVIOUS_OUTPUT_LIMIT
+        ? `${previousOutput.slice(0, PREVIOUS_OUTPUT_LIMIT)}\n…（太长，只截取前 ${PREVIOUS_OUTPUT_LIMIT} 个字符）`
+        : previousOutput;
+
+  const previous =
+    truncated === null
+      ? '（上一版没有写出产物文件）'
+      : `\`\`\`json\n${truncated}\n\`\`\``;
+
+  return `# 上一版产物没通过校验，请修正后重新交付
+
+## 哪里不合格
+
+\`\`\`
+${problems}
+\`\`\`
+
+## 上一版你写出来的内容
+
+${previous}
+
+## 这一轮怎么做
+
+1. 对照上面的报错，**只改错的地方**。已经写对的部分（任务拆分、依赖关系、
+   工期估算）原样保留 —— 重写一份新的计划意味着上一轮的分析白做了，
+   而且很可能重新犯一个别的错。
+2. 报错指着某个**枚举字段**时（\`type\`、\`riskLevel\`、\`verification\`、
+   \`level\`、\`operationType\`、\`environment\`、\`dataSensitivity\` 这一类），
+   回到下面的 schema 照着允许的取值改。**不确定的可选字段整行删掉**，
+   不要写 \`null\`，也不要猜一个看起来差不多的值 —— 猜出来的值会让
+   治理规则静默地匹配不上，比留空危险得多。
+3. 改完把完整的 JSON 重新写进 \`${OUTPUT_FILE}\` —— 是整份文件，
+   不是补丁、不是差异。
+
+下面是原始任务书，schema 与要求与上一轮完全相同。
+
+---
+
+${originalBrief}
+`;
+}
+
 export function buildPlanBrief(
   req: StructuredRequirement,
   projectType: string,
@@ -164,14 +247,15 @@ ${languageRule(locale)}
 {
   "tasks": [
     {
-      "ref": "research",                    // 计划内唯一的临时 ID，用于表达依赖
+      // ref 是你自己起的临时 ID，只用来表达依赖。它和 "type" 没有关系，
+      // 不要把 ref 的字面量拿去当 type 用。
+      "ref": "step-1",
       "title": "任务标题",
       "description": "做什么、做到什么程度",
-      "type": "research",                   // requirement|feature|story|task|bug|research|
-                                            // review|test|incident|decision|approval|release|knowledge
+      "type": "research",                   // 见下面「type 只有这 13 个值」
       "phase": "Research",                  // 自定义阶段名，用于分组
       "estimatedHours": 4,
-      "estimatedTokens": 75000,             // 预计消耗的 token 数，估不出来填 null
+      "estimatedTokens": 75000,             // 预计消耗的 token 数；只有这一项估不出来时可以写 null
       "riskLevel": "low",                   // low|medium|high|critical
       "requiredSkills": ["需求分析"],
       // 语义能力，**不是**工具名。可选值：workspace.read|workspace.write|
@@ -180,33 +264,68 @@ ${languageRule(locale)}
       // database.read|database.write|secret.read
       "requiredCapabilities": ["workspace.read"],
       "requiresHuman": false,
-      // 下面四项都可选，但**只能填枚举里的值**，拼错会整份计划打回重来。
+      "acceptanceCriteria": [{ "text": "…", "verification": "auto" }],
+      "dependsOn": []                       // 没有前置任务就是空数组
+    },
+    {
+      "ref": "step-2",
+      "title": "上线到生产",
+      "description": "…",
+      "type": "release",
+      "phase": "Release",
+      "estimatedHours": 2,
+      "estimatedTokens": 20000,
+      "riskLevel": "high",
+      "requiredSkills": [],
+      "requiredCapabilities": ["environment.deploy"],
+      "requiresHuman": true,
+      // 下面四项都是可选的，只能填枚举里的值。
       // read|code_change|db_ddl|db_dml|deploy|delete_resource|permission_change|
       // access_sensitive_data|send_external|payment|security_policy_change|high_cost_resource
       "operationType": "deploy",
       "environment": "production",          // dev|test|staging|production
-      "dataSensitivity": "internal",        // public|internal|confidential|restricted
-      "externalFacing": false,              // 产出会发给外部客户或公开渠道吗
-      "acceptanceCriteria": [{ "text": "…", "verification": "auto" }],
-      "dependsOn": [{ "ref": "design", "type": "finish_to_start" }]
+      // dataSensitivity 与 externalFacing 这个任务用不上，就整个不写这两行 ——
+      // 不确定的可选字段**省略**，不要写 "dataSensitivity": null
+      "acceptanceCriteria": [{ "text": "…", "verification": "human" }],
+      "dependsOn": [{ "ref": "step-1", "type": "finish_to_start" }]
     }
   ],
-  "milestones": [{ "name": "里程碑名", "taskRefs": ["research"], "dueOffsetDays": 3 }],
+  "milestones": [{ "name": "里程碑名", "taskRefs": ["step-1", "step-2"], "dueOffsetDays": 3 }],
   "risks": [{ "description": "风险", "level": "medium", "mitigation": "缓解措施" }]
 }
 \`\`\`
+
+## \`type\` 只有这 13 个值
+
+\`requirement\` \`feature\` \`story\` \`task\` \`bug\` \`research\` \`review\`
+\`test\` \`incident\` \`decision\` \`approval\` \`release\` \`knowledge\`
+
+写别的值（\`design\`、\`implementation\`、\`deploy\`…）会让**整份计划被拒收**。
+常见的几类工作对应到哪个值：
+
+| 你想表达 | 用哪个 type |
+| --- | --- |
+| 方案设计、技术选型、写设计文档 | \`task\` |
+| 调研、可行性分析、看现有代码 | \`research\` |
+| 写代码、改配置 | \`task\`（或 \`feature\` / \`bug\`，看它属于什么） |
+| 上线、发版 | \`release\` |
+| 评审、Code Review | \`review\` |
 
 ## 几条硬要求
 
 - \`dependsOn\` 里的 \`ref\` **必须指向本计划内真实存在的任务**。指向不存在的
   ref 会让那条依赖被静默丢弃，于是一个还不该开始的任务被派出去执行。
+- **\`ref\` 与 \`type\` 是两回事**。ref 是你自己起的 ID（\`step-1\`、\`api-contract\`
+  都行），type 只能取上面那 13 个值里的一个。别把 ref 的字面量填进 type。
 - **依赖不能成环**。A 依赖 B、B 依赖 A 的话，两个任务会永远互相等待，
   界面上表现为两张卡永久卡住。
 - 生产环境的发布与数据库结构变更必须 \`"requiresHuman": true\`，
   并标上 \`operationType\` 与 \`environment\`。
 - \`operationType\` / \`environment\` / \`dataSensitivity\` **只能取上面列出的值**。
-  拼错或自造一个值会让整份计划被拒收 —— 不确定就别填这一项，
-  填一个近似的值比留空危险得多：治理规则会因此静默地匹配不上。
+  拼错或自造一个值会让整份计划被拒收 —— 填一个近似的值比不填危险得多：
+  治理规则会因此静默地匹配不上。
+- **不确定的可选字段整个省略，不要写 \`null\`。** 只有 \`estimatedTokens\`
+  这一项允许 \`null\`；其余可选字段不知道就别写那一行。
 - 会读到用户数据、密钥或线上库的任务标 \`dataSensitivity\`；
   产出会发给外部客户或公开渠道的任务标 \`"externalFacing": true\`。
   这两项决定了「访问敏感数据要不要人批」「对外内容要不要人确认」
