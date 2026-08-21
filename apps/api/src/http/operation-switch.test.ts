@@ -1,9 +1,16 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { policies } from '@apos/db';
-import { OPERATION_SWITCH_PRIORITY } from '@apos/contracts';
+import { AUTHORED_PRIORITY_MIN, OPERATION_SWITCH_PRIORITY } from '@apos/contracts';
 import { resetDb, seedFixture, testDb, type Fixture } from '../test/db';
-import { clearOperationSwitch, getPolicies, savePolicy, setOperationSwitch } from './policies';
+import {
+  clearOperationSwitch,
+  getPolicies,
+  loadProjectPolicies,
+  nextAuthoredPriority,
+  savePolicy,
+  setOperationSwitch,
+} from './policies';
 
 /**
  * 操作开关矩阵。
@@ -251,5 +258,65 @@ describe('操作开关矩阵', () => {
       .where(eq(policyVersions.policyId, policy.id));
     expect(versions).toHaveLength(1);
     expect(versions[0]!.changedBy).toBe(fx.userId);
+  });
+});
+
+/**
+ * 优先级自动分配（P3）。
+ *
+ * ★★ 优先级从编辑界面消失了，由服务端往后追加。这里钉住两件事：
+ *   新规则排在已有规则**后面**（不会悄悄插队），
+ *   以及 100 那一格始终留给开关矩阵 —— 开关是用户刚刚做出的表态，
+ *   被一条半年前写的规则默默盖掉是最难查的一类问题。
+ */
+describe('优先级自动分配', () => {
+  const authored = async () => nextAuthoredPriority(await loadProjectPolicies(db, fx.orgId, fx.projectId));
+
+  it('一条规则都没有时从 AUTHORED_PRIORITY_MIN 起', async () => {
+    expect(await authored()).toBe(AUTHORED_PRIORITY_MIN);
+  });
+
+  it('★ 往后追加，不插队', async () => {
+    await savePolicy(
+      db,
+      fx.projectId,
+      {
+        name: '第一条',
+        priority: await authored(),
+        condition: { fact: 'riskLevel', op: 'eq', value: 'high' },
+        action: { type: 'ask', assignee: { kind: 'project_role', role: 'pm' } },
+      },
+      fx.userId,
+    );
+    const second = await authored();
+    expect(second).toBe(AUTHORED_PRIORITY_MIN + 1);
+  });
+
+  /**
+   * ★★ 开关那一格不参与追加。
+   *   把它算进去的话，下一条手写规则会排到开关**后面**、
+   *   却在编号上看起来紧挨着它 —— 而两者的先后正是判定结果的全部。
+   */
+  it('★ 开关矩阵占的那一格不参与追加', async () => {
+    await setOperationSwitch(db, fx.projectId, { operationType: 'deploy', verdict: 'human' }, fx.userId);
+    const rows = await projectRules();
+    expect(rows[0]!.priority).toBe(OPERATION_SWITCH_PRIORITY);
+    expect(await authored()).toBe(AUTHORED_PRIORITY_MIN);
+  });
+
+  /** 组织规则不参与 —— 它们占的是 1–99，那一段项目改不着 */
+  it('组织规则不参与追加', async () => {
+    await db.insert(policies).values({
+      orgId: fx.orgId,
+      projectId: null,
+      name: '组织规则',
+      description: '',
+      priority: 10,
+      enabled: true,
+      createdBy: fx.userId,
+      condition: { fact: 'operationType', op: 'eq', value: 'payment' },
+      action: { type: 'pause', resumeCondition: 'human_decision' },
+    });
+    expect(await authored()).toBe(AUTHORED_PRIORITY_MIN);
   });
 });

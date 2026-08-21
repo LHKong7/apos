@@ -44,7 +44,19 @@ export function RuleEditor({
 }) {
   const t = useT();
   const [name, setName] = useState(editing?.name ?? template?.name ?? '');
-  const [priority, setPriority] = useState(editing?.priority ?? 100);
+  /**
+   * ★★ 优先级从这里消失了，默认由服务端往后追加。
+   *
+   *   它要求用户同时理解三件事才填得对：越小越先、命中即停、
+   *   组织规则占了前面那一段。而填错的表现是规则安静地不生效 ——
+   *   一个填错了不报错、还看不出来的输入框，换来的是一次困惑，
+   *   不是一次配置。绝大多数人填完之后也从不回来改它。
+   *
+   *   `null` = 「按默认排」。真要手动排的人展开「高级」还能改到，
+   *   改一条老规则时不动它就保持原样。
+   */
+  const [priority, setPriority] = useState<number | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const [values, setValues] = useState<Record<string, string | number>>(() =>
     Object.fromEntries((template?.params ?? []).map((p) => [p.key, p.default])),
   );
@@ -90,7 +102,8 @@ export function RuleEditor({
         projectId,
         {
           name,
-          priority,
+          /** ★ 不给 = 新规则往后追加、老规则保持原样。都由服务端定 */
+          ...(priority === null ? {} : { priority }),
           condition: draft.condition,
           action: draft.action,
           acknowledgeMismatches: acknowledge,
@@ -131,17 +144,6 @@ export function RuleEditor({
             className="mt-0.5" />
         </Label>
 
-        <Label className="mt-2 block text-xs text-slate-600">
-          {t('rule.priority')}
-          <Input
-            type="number"
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value))}
-            className="mt-0.5 w-24" />
-          <span className="ml-2 text-[11px] text-slate-400">
-            {t('rule.priorityHint')}
-          </span>
-        </Label>
 
         {params.length > 0 && (
           <fieldset className="mt-3 rounded border border-slate-200 p-2">
@@ -199,6 +201,36 @@ export function RuleEditor({
             )}
           </div>
         )}
+
+        {/*
+          ★ 优先级收进「高级」。露出来的默认是「自动」，不是一个数字 ——
+            数字会让人以为自己必须懂它。
+        */}
+        <div className="mt-2">
+          <Button
+            variant="ghost"
+            onClick={() => setAdvanced((v) => !v)}
+            className="h-auto p-0 font-normal whitespace-normal hover:bg-transparent text-[11px] text-slate-500 underline hover:text-slate-800"
+          >
+            {advanced ? t('rule.hideAdvanced') : t('rule.advanced')}
+          </Button>
+          {advanced && (
+            <Label className="mt-1 block text-xs text-slate-600">
+              {t('rule.priority')}
+              <Input
+                type="number"
+                min={1}
+                value={priority ?? editing?.priority ?? ''}
+                placeholder={t('rule.priorityAuto')}
+                onChange={(e) =>
+                  setPriority(e.target.value === '' ? null : Number(e.target.value))
+                }
+                className="mt-0.5 w-24"
+              />
+              <span className="ml-2 text-[11px] text-slate-400">{t('rule.priorityHint')}</span>
+            </Label>
+          )}
+        </div>
 
         {/* ── 模拟：本页最重要的功能 ── */}
         <div className="mt-3 rounded border border-slate-200 p-2">

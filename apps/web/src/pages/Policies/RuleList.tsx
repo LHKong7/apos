@@ -5,6 +5,24 @@ import type { Permission, PolicyRow } from '../../lib/api/types';
 import { Button } from '@/components/ui/button';
 
 /**
+ * 体检结论里指向某一条规则的那几句，跟着规则一起显示。
+ *
+ * ★★ 以前它们住在页面顶部一个独立的「体检」区里，每条后面挂一个
+ *   「定位规则」按钮 —— 也就是说，看到问题的地方和能改的地方隔着一整屏。
+ *   而这一页真正的首屏该是「Agent 现在能干什么」，不是一张问题清单。
+ *   问题贴在它说的那条规则上，看到即改得到，中间不需要跳。
+ *
+ * Health-check findings render on the rule they are about, rather than in a
+ * separate panel at the top with a "locate the rule" button — seeing a problem
+ * and fixing it should not be a screen apart.
+ */
+export interface RuleIssue {
+  severity: 'critical' | 'warning' | 'info';
+  text: string;
+  example: string | null;
+}
+
+/**
  * 规则列表（页面文档 13 §5.3）。
  *
  * ★ 每条规则显示的是**人话解释**，不是条件表达式。
@@ -28,7 +46,7 @@ export function RuleList({
   onDelete,
   onHistory,
   onViewHits,
-  highlightIds,
+  issuesOf,
 }: {
   title: string;
   hint: string;
@@ -38,7 +56,8 @@ export function RuleList({
   onDelete: (p: PolicyRow) => void;
   onHistory: (p: PolicyRow) => void;
   onViewHits: (p: PolicyRow) => void;
-  highlightIds: Set<string>;
+  /** 体检结论里指向这条规则的那几句 */
+  issuesOf: (p: PolicyRow) => RuleIssue[];
 }) {
   const t = useT();
   if (policies.length === 0) {
@@ -60,12 +79,13 @@ export function RuleList({
       </div>
 
       <ul>
-        {policies.map((p) => (
+        {policies.map((p) => {
+          const issues = issuesOf(p);
+          return (
           <li
             key={p.id}
             className={clsx(
               'border-b border-slate-100 px-3 py-2 last:border-0',
-              highlightIds.has(p.id) && 'bg-amber-50',
               !p.enabled && 'opacity-60',
             )}
           >
@@ -73,9 +93,11 @@ export function RuleList({
               {/*
                 ★ 作用域徽标去掉了：这份列表只画项目规则，
                   给每一行都贴一个「项目」等于没贴。
+                ★ 优先级也去掉了：它要求用户同时理解「越小越先」「命中即停」
+                  「组织规则占了前面那一段」，而这一行不是解释这三件事的地方。
+                  真要手动排的人在编辑器的「高级」里改得到。
               */}
               <span className="font-medium text-slate-900">{p.name}</span>
-              <span className="text-[11px] text-slate-400">{t('ruleList.priority', { n: p.priority })}</span>
               <span className={clsx('text-[11px]', p.enabled ? 'text-green-700' : 'text-slate-400')}>
                 {p.enabled ? t('ruleList.enabled') : t('ruleList.disabled')}
               </span>
@@ -83,6 +105,21 @@ export function RuleList({
 
             {/* ★ 这一行才是给人读的。条件表达式在编辑器里，列表上不出现 */}
             <p className="mt-0.5 text-xs leading-5 text-slate-600">{p.explanation}</p>
+
+            {issues.map((issue, i) => (
+              <p
+                key={`${issue.text}-${i}`}
+                className={clsx(
+                  'mt-0.5 text-[11px] leading-4',
+                  SEVERITY_CLASS[issue.severity],
+                )}
+              >
+                {SEVERITY_ICON[issue.severity]} {issue.text}
+                {issue.example && (
+                  <span className="text-slate-400"> · {issue.example}</span>
+                )}
+              </p>
+            ))}
 
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
               <Button variant="ghost"
@@ -121,11 +158,19 @@ export function RuleList({
               </Action>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </section>
   );
 }
+
+const SEVERITY_ICON = { critical: '🔴', warning: '🟡', info: '⚪' } as const;
+const SEVERITY_CLASS = {
+  critical: 'text-red-800',
+  warning: 'text-amber-800',
+  info: 'text-slate-500',
+} as const;
 
 function Action({
   children,
