@@ -1,70 +1,72 @@
-# Autonomous Project OS 产品功能文档
+# Autonomous Project OS — Product Functional Specification
 
-面向 Human–Agent 混合团队的自主项目操作系统
+*[中文版本 / Chinese version](autonomous-project-os.zh.md)*
 
-- 文档版本：V0.2
-- 产品阶段：概念设计 / MVP 规划
-- 目标用户：企业研发团队、产品团队、项目型组织、OPC、一人公司及小型创业团队
+An autonomous project operating system for hybrid Human–Agent teams
+
+- Document version: V0.2
+- Product stage: concept design / MVP planning
+- Target users: enterprise engineering teams, product teams, project-driven organizations, OPCs, one-person companies, and small startup teams
 
 ---
 
-## 一、产品概述
+## 1. Product Overview
 
-### 1.1 产品名称
+### 1.1 Product Name
 
 Autonomous Project OS
 
-中文暂定名：
+Chinese working name:
 
-自主项目操作系统
+自主项目操作系统 (Autonomous Project Operating System)
 
-简称：
+Short name:
 
 APOS
 
 ---
 
-### 1.2 产品定位
+### 1.2 Product Positioning
 
-Autonomous Project OS 是一款面向 Human–Agent 混合团队的自主项目管理与交付平台。
+Autonomous Project OS is an autonomous project management and delivery platform built for hybrid Human–Agent teams.
 
-用户通过自然语言、表单、文档或外部系统录入需求后，系统中的 Project Agent 可以自动完成：
+Once a user files a requirement — through natural language, a form, a document, or an external system — the Project Agent in the system can carry out, on its own:
 
-- 需求理解与澄清；
-- 项目规划；
-- 任务拆解；
-- 依赖分析；
-- 人员与 Agent 分配；
-- 多 Agent 协同执行；
-- 项目进度跟踪；
-- 风险和阻塞识别；
-- 交付物验证；
-- 项目知识沉淀。
+- understanding and clarifying the requirement;
+- project planning;
+- work breakdown;
+- dependency analysis;
+- assignment to people and Agents;
+- multi-Agent coordinated execution;
+- progress tracking;
+- risk and blocker detection;
+- verification of deliverables;
+- capture of project knowledge.
 
-系统不会让 Agent 无限制地自主执行，而是通过 Policy Engine 和 Human-in-the-Loop 机制，在需求目标、方案选择、高风险操作、生产发布和业务验收等关键阶段引入人类决策。
+The system does not let Agents run unbounded. A Policy Engine and Human-in-the-Loop mechanisms bring human judgment in at the moments that matter: requirement goals, solution choices, high-risk operations, production releases, and business acceptance.
 
-一句话定义：
+In one sentence:
 
-> 让 Agent 负责项目的持续推进，让人类在目标、风险和责任边界上保持控制。
+> Let Agents drive the project forward; let humans stay in control of goals, risk, and the boundaries of accountability.
 
 ---
 
-## 二、产品背景
+## 2. Background
 
-传统项目管理工具主要解决以下问题：
+Traditional project management tools solve for:
 
-- 记录需求；
-- 创建任务；
-- 分配负责人；
-- 展示项目进度；
-- 提醒任务延期；
-- 统计完成情况。
+- recording requirements;
+- creating tasks;
+- assigning owners;
+- displaying progress;
+- flagging overdue work;
+- tallying completion.
 
-这类产品的基本假设是：
+The founding assumption behind that class of product is:
 
-> 人是任务的主要执行者，系统只是记录和展示工具。
+> People are the ones doing the work; the system is a place to record and display it.
 
-随着 Code Agent、Research Agent、Test Agent、Browser Agent、Data Agent 等智能体进入企业，项目团队将逐渐变成：
+As Code Agents, Research Agents, Test Agents, Browser Agents, and Data Agents enter the enterprise, project teams gradually turn into:
 
 ```
 Human
@@ -80,175 +82,175 @@ Review Agent
 Research Agent
 ```
 
-此时，传统项目管理工具面临几个问题：
+At that point, traditional project management tools run into several problems:
 
-1. Agent 无法作为正式执行主体进入项目管理体系；
-2. 看板只能记录状态，无法主动推动项目；
-3. Agent 的任务、运行过程和产物缺少统一管理；
-4. 多个 Agent 之间缺少统一调度和依赖管理；
-5. 人类无法清晰知道何时需要介入；
-6. Agent 的权限、成本、风险和责任边界缺乏治理；
-7. 项目结束后，执行经验难以沉淀为可复用资产。
+1. Agents cannot be registered as first-class executors inside the project management system;
+2. a board records state but cannot push a project forward;
+3. Agent tasks, runs, and outputs have nowhere to live under unified management;
+4. there is no shared scheduling or dependency management across multiple Agents;
+5. humans cannot tell when they are actually needed;
+6. Agent permissions, cost, risk, and accountability boundaries go ungoverned;
+7. when the project ends, hard-won execution experience never becomes a reusable asset.
 
-Autonomous Project OS 的目标不是为传统看板增加一个聊天机器人，而是重新设计一套适合 Human–Agent 混合团队的项目运行系统。
+The goal of Autonomous Project OS is not to bolt a chatbot onto a traditional board. It is to redesign the project runtime for hybrid Human–Agent teams.
 
 ---
 
-## 三、产品愿景
+## 3. Vision
 
 ### 3.1 Vision
 
-构建企业内部的人机协同项目操作系统，让项目能够在明确的人类治理边界内自主规划、自主推进、自主恢复并持续学习。
+Build the in-house Human–Agent project operating system: projects that plan themselves, drive themselves, recover themselves, and keep learning — all inside explicit human governance boundaries.
 
 ---
 
-### 3.2 产品核心理念
+### 3.2 Core Principles
 
-#### Agent 推进，人类治理
+#### Agents drive, humans govern
 
-Agent 负责高频、重复、可验证的执行工作，人类负责：
+Agents take the high-frequency, repetitive, verifiable work. Humans take:
 
-- 定义目标；
-- 判断价值；
-- 确认关键约束；
-- 处理高风险决策；
-- 承担最终责任；
-- 验收业务结果；
-- 制定和优化规则。
+- defining goals;
+- judging value;
+- confirming critical constraints;
+- handling high-risk decisions;
+- carrying final accountability;
+- accepting business outcomes;
+- writing and refining the rules.
 
-#### Flow 优先，而不是任务数量优先
+#### Flow first, not task count first
 
-系统不只关心完成了多少任务，还需要持续观察：
+The system cares about more than how many tasks got finished. It has to keep watching:
 
-- 工作是否顺畅流动；
-- 哪个阶段形成瓶颈；
-- 哪些任务等待时间过长；
-- 哪些 Agent 持续失败；
-- 哪些决策长期无人处理；
-- 哪些环节返工率过高；
-- 项目是否正在偏离目标。
+- whether work is flowing smoothly;
+- which stage is the bottleneck;
+- which tasks have been waiting too long;
+- which Agents keep failing;
+- which decisions have sat untouched;
+- where the rework rate is too high;
+- whether the project is drifting off target.
 
-#### Policy 驱动，而不是每一步都审批
+#### Policy-driven, not approve-every-step
 
-Human-in-the-Loop 不等于让人逐条确认 Agent 的所有操作。
+Human-in-the-Loop does not mean a person confirms every single Agent action.
 
-系统根据任务风险、权限、成本、置信度和业务影响，动态决定：
+Based on task risk, permissions, cost, confidence, and business impact, the system dynamically chooses among:
 
-- 自动执行；
-- 执行后通知；
-- Agent 交叉审核；
-- 人类抽样审核；
-- 人类强制审批；
-- 多人会签；
-- 人工接管。
+- execute automatically;
+- execute and notify;
+- Agent cross-review;
+- human spot check;
+- mandatory human approval;
+- multi-party sign-off;
+- human takeover.
 
-#### 所有行为可追溯
+#### Everything is traceable
 
-每次计划、分配、执行、修改、审批和发布，都需要留下完整记录。
+Every plan, assignment, execution, edit, approval, and release leaves a complete record.
 
-系统需要回答：
+The system must be able to answer:
 
-- 谁做了什么；
-- 为什么这样做；
-- 使用了哪些上下文；
-- 调用了哪些工具；
-- 产生了哪些结果；
-- 谁批准了关键决策；
-- 失败后如何恢复；
-- 最终交付是否达成目标。
-
----
-
-## 四、目标用户
-
-### 4.1 企业研发团队
-
-适用于存在产品、研发、测试、运维、安全等角色的研发组织。
-
-主要诉求：
-
-- 自动拆解和分配研发任务；
-- 对接内部研发 Agent；
-- 管理多人和多 Agent 协作；
-- 控制生产发布和数据权限；
-- 识别项目风险和交付瓶颈；
-- 降低项目经理的协调成本。
+- who did what;
+- why they did it;
+- what context was used;
+- which tools were called;
+- what came out of it;
+- who approved the critical decisions;
+- how the system recovered after a failure;
+- whether the final delivery met the goal.
 
 ---
 
-### 4.2 OPC 与一人公司
+## 4. Target Users
 
-适用于主要由一名创始人或少量核心成员运营的公司。
+### 4.1 Enterprise engineering teams
 
-主要诉求：
+For engineering organizations with distinct product, development, QA, ops, and security roles.
 
-- 一个人管理多个项目；
-- 通过多个 Agent 承担产品、研发、测试、调研和运营工作；
-- 减少人工更新任务和催进度；
-- 快速完成从想法到交付的全过程；
-- 在关键决策上保持控制。
+What they need:
 
----
-
-### 4.3 小型创业团队
-
-适用于人员少、迭代快、角色边界模糊的团队。
-
-主要诉求：
-
-- 快速创建项目；
-- 自动形成执行计划；
-- 将任务动态分配给人或 Agent；
-- 降低项目管理工具的配置成本；
-- 避免复杂 Jira 流程带来的管理负担。
+- automatic breakdown and assignment of engineering work;
+- integration with in-house engineering Agents;
+- management of multi-person and multi-Agent collaboration;
+- control over production releases and data access;
+- detection of project risks and delivery bottlenecks;
+- lower coordination overhead for the project manager.
 
 ---
 
-### 4.4 企业项目管理者
+### 4.2 OPCs and one-person companies
 
-包括项目经理、产品负责人、技术负责人和业务负责人。
+For companies run by a single founder or a handful of core members.
 
-主要诉求：
+What they need:
 
-- 查看项目健康度；
-- 处理需要人类参与的关键决策；
-- 及时识别延期、阻塞和成本异常；
-- 了解 Agent 正在做什么；
-- 对高风险操作保持控制。
+- one person running several projects;
+- multiple Agents covering product, engineering, QA, research, and operations work;
+- less manual task updating and progress-chasing;
+- getting from idea to delivery quickly, end to end;
+- staying in control at the decisive moments.
 
 ---
 
-## 五、核心使用流程
+### 4.3 Small startup teams
 
-Autonomous Project OS 的完整项目生命周期如下：
+For small teams that iterate fast and where role boundaries are fuzzy.
+
+What they need:
+
+- fast project creation;
+- an execution plan that forms itself;
+- dynamic assignment of work to people or Agents;
+- low configuration cost for the project management tool;
+- freedom from the administrative weight of a full Jira process.
+
+---
+
+### 4.4 Enterprise project leaders
+
+Project managers, product owners, engineering leads, and business owners.
+
+What they need:
+
+- a read on project health;
+- a place to handle the decisions that require a human;
+- early warning on delays, blockers, and cost anomalies;
+- visibility into what the Agents are doing;
+- control over high-risk operations.
+
+---
+
+## 5. Core Usage Flow
+
+The full project lifecycle in Autonomous Project OS:
 
 ```
-需求进入
+Requirement arrives
    ↓
-AI 分析与澄清
+AI analysis and clarification
    ↓
-人类确认需求目标
+Human confirms the requirement goal
    ↓
-AI 生成项目计划
+AI generates the project plan
    ↓
-人类确认关键方案与约束
+Human confirms key solutions and constraints
    ↓
-任务拆解与资源分配
+Work breakdown and resource assignment
    ↓
-Human / Agent 混合执行
+Mixed Human / Agent execution
    ↓
-持续监控与异常恢复
+Continuous monitoring and failure recovery
    ↓
-自动测试与多层评审
+Automated testing and layered review
    ↓
-人类确认高风险交付
+Human confirms high-risk delivery
    ↓
-发布与业务验收
+Release and business acceptance
    ↓
-经验沉淀与策略优化
+Knowledge capture and policy refinement
 ```
 
-建议系统使用六个主要项目阶段：
+The recommended set of six project stages:
 
 ```
 Intake
@@ -259,458 +261,458 @@ Release
 Done
 ```
 
-Human Gate 通过卡片状态、决策任务和审批标识体现，而不是全部展开为独立看板列。
+Human Gates show up as card states, decision items, and approval markers — not as a separate board column for each one.
 
 ---
 
-## 六、核心领域对象
+## 6. Core Domain Objects
 
-Autonomous Project OS 不应只围绕 Task 建模，而应包括以下核心对象。
+Autonomous Project OS should not model everything around Task. It needs the following core objects.
 
 ### 6.1 Project
 
-项目的顶层容器。
+The top-level container for a project.
 
-包含：
+Holds:
 
-- 项目名称；
-- 项目目标；
-- 项目类型；
-- 业务负责人；
-- 技术负责人；
-- 项目成员；
-- 项目 Agent；
-- 时间范围；
-- 预算；
-- 风险等级；
-- 自治模式；
-- 项目状态；
-- 关联知识库；
-- 关联代码仓库；
-- 外部系统连接。
+- project name;
+- project goal;
+- project type;
+- business owner;
+- engineering lead;
+- project members;
+- project Agents;
+- time range;
+- budget;
+- risk level;
+- autonomy mode;
+- project status;
+- linked knowledge bases;
+- linked code repositories;
+- external system connections.
 
 ---
 
 ### 6.2 Requirement
 
-描述业务目标和交付需求。
+Describes the business goal and what has to be delivered.
 
-包含：
+Holds:
 
-- 原始需求；
-- 结构化需求说明；
-- 业务背景；
-- 目标用户；
-- 业务价值；
-- 成功指标；
-- 优先级；
-- 验收标准；
-- 约束条件；
-- 截止时间；
-- 相关文档；
-- 需求来源；
-- 澄清问题；
-- 已确认假设。
+- the raw requirement;
+- the structured requirement statement;
+- business background;
+- target users;
+- business value;
+- success metrics;
+- priority;
+- acceptance criteria;
+- constraints;
+- deadline;
+- related documents;
+- requirement source;
+- clarifying questions;
+- confirmed assumptions.
 
 ---
 
 ### 6.3 Work Item
 
-项目中的统一工作对象。
+The single unit of work in a project.
 
-Work Item 可以根据业务配置不同类型：
+Work Items can be configured with different types per business need:
 
-- Requirement；
-- Feature；
-- Story；
-- Task；
-- Bug；
-- Research；
-- Review；
-- Test；
-- Incident；
-- Decision；
-- Approval；
-- Release；
-- Knowledge Item。
+- Requirement;
+- Feature;
+- Story;
+- Task;
+- Bug;
+- Research;
+- Review;
+- Test;
+- Incident;
+- Decision;
+- Approval;
+- Release;
+- Knowledge Item.
 
-Work Item 统一包含：
+Every Work Item carries:
 
-- 标题；
-- 描述；
-- 类型；
-- 状态；
-- 优先级；
-- 父子关系；
-- 依赖关系；
-- 负责人；
-- 执行主体；
-- 计划时间；
-- 实际时间；
-- 风险等级；
-- 验收标准；
-- 关联产物；
-- 执行记录。
+- title;
+- description;
+- type;
+- status;
+- priority;
+- parent/child relationships;
+- dependencies;
+- owner;
+- executor;
+- planned dates;
+- actual dates;
+- risk level;
+- acceptance criteria;
+- linked artifacts;
+- execution record.
 
 ---
 
 ### 6.4 Agent
 
-Agent 是系统中的一等执行主体，不是普通工具。
+An Agent is a first-class executor in the system, not just another tool.
 
-包含：
+Holds:
 
-- Agent 名称；
-- Agent 类型；
-- 模型；
-- 能力描述；
-- Skill 列表；
-- 可调用工具；
-- 权限范围；
-- 可访问资源；
-- 成本配置；
-- 历史成功率；
-- 当前负载；
-- 适用任务；
-- 最大并发；
-- 超时和重试策略；
-- 人类负责人。
+- Agent name;
+- Agent type;
+- model;
+- capability description;
+- Skill list;
+- callable tools;
+- permission scope;
+- accessible resources;
+- cost configuration;
+- historical success rate;
+- current load;
+- suitable task types;
+- max concurrency;
+- timeout and retry policy;
+- human owner.
 
 ---
 
 ### 6.5 Human
 
-人类用户同样是执行主体和决策主体。
+Human users are executors and decision-makers in equal measure.
 
-包含：
+Holds:
 
-- 用户身份；
-- 所属组织和团队；
-- 项目角色；
-- 专业能力；
-- 可审批事项；
-- 数据权限；
-- 决策责任；
-- 当前工作负载；
-- 通知偏好。
+- user identity;
+- organization and team;
+- project role;
+- domain expertise;
+- what they can approve;
+- data permissions;
+- decision accountability;
+- current workload;
+- notification preferences.
 
 ---
 
 ### 6.6 Plan
 
-由 Project Agent 生成的项目执行计划。
+The project execution plan generated by the Project Agent.
 
-包含：
+Holds:
 
-- 项目范围；
-- 工作拆解结构；
-- 执行阶段；
-- 依赖图；
-- 关键路径；
-- Agent 分配建议；
-- 人类参与节点；
-- 时间和成本预估；
-- 风险清单；
-- 里程碑；
-- 验收方式；
-- 发布方案；
-- 回滚方案。
+- project scope;
+- work breakdown structure;
+- execution stages;
+- dependency graph;
+- critical path;
+- suggested Agent assignments;
+- human participation points;
+- time and cost estimates;
+- risk register;
+- milestones;
+- acceptance approach;
+- release plan;
+- rollback plan.
 
 ---
 
 ### 6.7 Decision
 
-需要由人类或授权 Agent 处理的结构化决策。
+A structured decision that a human — or an authorized Agent — has to resolve.
 
-包含：
+Holds:
 
-- 决策问题；
-- 触发原因；
-- 推荐方案；
-- 备选方案；
-- 影响分析；
-- 风险等级；
-- 相关证据；
-- 决策责任人；
-- 决策时限；
-- 决策结果；
-- 附加约束；
-- 审批记录。
+- the question to decide;
+- what triggered it;
+- the recommended option;
+- alternatives;
+- impact analysis;
+- risk level;
+- supporting evidence;
+- the accountable decision-maker;
+- the decision deadline;
+- the outcome;
+- any added constraints;
+- the approval record.
 
 ---
 
 ### 6.8 Artifact
 
-项目执行过程中产生的交付物。
+Deliverables produced while the project runs.
 
-例如：
+For example:
 
-- 代码；
-- Pull Request；
-- 测试报告；
-- 产品文档；
-- 技术方案；
-- 数据分析；
-- 页面截图；
-- 部署记录；
-- 发布说明；
-- 会议纪要。
+- code;
+- pull requests;
+- test reports;
+- product documentation;
+- technical designs;
+- data analyses;
+- page screenshots;
+- deployment records;
+- release notes;
+- meeting notes.
 
 ---
 
 ### 6.9 Event
 
-系统内所有行为统一记录为事件。
+Every behavior in the system is recorded uniformly as an event.
 
-例如：
+For example:
 
-- 需求创建；
-- 计划生成；
-- 任务分配；
-- Agent 启动；
-- 工具调用；
-- 执行失败；
-- 人类审批；
-- 状态变化；
-- 代码提交；
-- 发布完成；
-- 业务验收。
+- requirement created;
+- plan generated;
+- task assigned;
+- Agent started;
+- tool invoked;
+- execution failed;
+- human approved;
+- status changed;
+- code committed;
+- release completed;
+- business acceptance.
 
-Event 是项目可追溯、可回放和可审计的基础。
+Events are what make a project traceable, replayable, and auditable.
 
 ---
 
 ### 6.10 Policy
 
-定义项目中的自动化边界。
+Defines the automation boundary inside a project.
 
-例如：
+For example:
 
 ```
-涉及生产数据库修改
-→ 必须由 DBA 审批
+Touches the production database
+→ requires DBA approval
 
-低风险文案调整
-+ 自动测试通过
-+ 成本低于阈值
-→ 自动批准
+Low-risk copy change
++ automated tests pass
++ cost below threshold
+→ auto-approve
 ```
 
 ---
 
-## 七、产品信息架构
+## 7. Information Architecture
 
 ```
 Autonomous Project OS
 │
 ├── Home
-│   ├── 我的项目
-│   ├── 待我决策
-│   ├── 我的任务
-│   ├── Agent 动态
-│   └── 风险提醒
+│   ├── My projects
+│   ├── Awaiting my decision
+│   ├── My tasks
+│   ├── Agent activity
+│   └── Risk alerts
 │
 ├── Projects
-│   ├── 项目总览
-│   ├── 智能看板
-│   ├── 项目计划
-│   ├── 执行图
-│   ├── 项目成员
-│   ├── Agent 团队
-│   ├── 决策记录
-│   ├── 项目知识
-│   └── 项目设置
+│   ├── Project overview
+│   ├── Autonomous Board
+│   ├── Project plan
+│   ├── Execution Graph
+│   ├── Project members
+│   ├── Agent team
+│   ├── Decision log
+│   ├── Project knowledge
+│   └── Project settings
 │
 ├── Decision Center
-│   ├── 待处理
-│   ├── 即将超时
-│   ├── 高风险
-│   ├── 已完成
-│   └── 决策策略
+│   ├── Open
+│   ├── Nearing timeout
+│   ├── High risk
+│   ├── Resolved
+│   └── Decision policies
 │
 ├── Agents
-│   ├── Agent 列表
+│   ├── Agent list
 │   ├── Agent Workspace
 │   ├── Skill
 │   ├── Tool
-│   ├── 运行记录
-│   └── Agent 评估
+│   ├── Run history
+│   └── Agent evaluation
 │
 ├── Knowledge
-│   ├── 项目知识
-│   ├── 组织知识
-│   ├── 决策知识
+│   ├── Project knowledge
+│   ├── Organization knowledge
+│   ├── Decision knowledge
 │   ├── Skill
-│   └── 最佳实践
+│   └── Best practices
 │
 ├── Analytics
-│   ├── 项目健康度
-│   ├── Flow 分析
-│   ├── Agent 效能
+│   ├── Project health
+│   ├── Flow analysis
+│   ├── Agent performance
 │   ├── Human Intervention
-│   ├── 成本分析
-│   └── 知识复用
+│   ├── Cost analysis
+│   └── Knowledge reuse
 │
 └── Administration
-    ├── 组织管理
-    ├── 身份与权限
+    ├── Organization management
+    ├── Identity and permissions
     ├── Policy Engine
-    ├── 模型与 Agent 接入
-    ├── 外部系统集成
-    ├── 数据安全
-    └── 审计日志
+    ├── Model and Agent onboarding
+    ├── External system integrations
+    ├── Data security
+    └── Audit log
 ```
 
 ---
 
-## 八、核心功能设计
+## 8. Core Feature Design
 
-### 8.1 Home 工作台
+### 8.1 Home Workspace
 
-用户登录后进入个人工作台。
+Signing in lands the user on a personal workspace.
 
-工作台需要根据用户角色展示不同内容。
+What that workspace shows depends on the user's role.
 
-#### 管理者视角
+#### Manager view
 
-展示：
+Shows:
 
-- 项目健康度；
-- 高风险项目；
-- 延期预测；
-- 等待人类处理的决策；
-- Agent 成本趋势；
-- 团队负载；
-- 项目交付情况。
+- project health;
+- high-risk projects;
+- delay forecasts;
+- decisions waiting on a human;
+- Agent cost trend;
+- team load;
+- delivery status.
 
-#### 项目负责人视角
+#### Project lead view
 
-展示：
+Shows:
 
-- 当前项目状态；
-- 关键路径；
-- 阻塞任务；
-- 待批准计划；
-- 待处理异常；
-- Agent 工作进度；
-- 即将到期里程碑。
+- current project status;
+- critical path;
+- blocked tasks;
+- plans awaiting approval;
+- open exceptions;
+- Agent work in progress;
+- milestones coming due.
 
-#### 开发者视角
+#### Developer view
 
-展示：
+Shows:
 
-- 分配给自己的任务；
-- Agent 已完成、等待 Review 的任务；
-- 需要人工接管的任务；
-- 相关代码和上下文；
-- 今日需要处理的决策。
+- tasks assigned to them;
+- tasks an Agent finished that are waiting on review;
+- tasks that need a human to take over;
+- the relevant code and context;
+- decisions to handle today.
 
-#### OPC 视角
+#### OPC view
 
-展示：
+Shows:
 
-- 所有项目总览；
-- Agent 当前工作；
-- 需要本人处理的事项；
-- 今日预计交付；
-- 成本消耗；
-- 项目风险。
-
----
-
-### 8.2 Requirement Center 需求中心
-
-#### 8.2.1 多渠道需求录入
-
-支持通过以下方式创建需求：
-
-- 手动填写；
-- 自然语言对话；
-- 上传 PRD 或文档；
-- 从会议纪要提取；
-- 从邮件提取；
-- 从客户反馈导入；
-- 从 Jira、Plane、Linear 等系统同步；
-- 通过 API 或 Webhook 创建。
-
-#### 8.2.2 AI 需求结构化
-
-Agent 自动将原始描述转换为：
-
-- 需求标题；
-- 业务背景；
-- 用户问题；
-- 业务目标；
-- 用户故事；
-- 功能范围；
-- 非功能要求；
-- 验收标准；
-- 潜在风险；
-- 依赖关系；
-- 需要澄清的问题。
-
-#### 8.2.3 需求完整度检查
-
-系统对需求进行评分：
-
-- 目标完整度；
-- 范围清晰度；
-- 验收标准完整度；
-- 依赖明确度；
-- 风险识别程度；
-- 技术上下文完整度。
-
-#### 8.2.4 AI 澄清
-
-Agent 自动提出关键澄清问题。
-
-问题按照影响程度分类：
-
-- 可自动从知识库解决；
-- 可根据默认规则处理；
-- 可记录假设后继续；
-- 必须由人类确认。
-
-#### 8.2.5 Human Gate：需求确认
-
-人类可以：
-
-- 批准需求；
-- 修改后批准；
-- 补充说明；
-- 要求重新分析；
-- 驳回；
-- 暂缓；
-- 委派其他人确认。
-
-只有完成需求确认，项目才能正式进入 Planning 阶段。
+- an overview of every project;
+- what the Agents are working on right now;
+- items that need them personally;
+- what is expected to ship today;
+- cost burn;
+- project risks.
 
 ---
 
-### 8.3 Project Agent 项目智能体
+### 8.2 Requirement Center
 
-Project Agent 是项目级的管理与调度智能体。
+#### 8.2.1 Multi-channel requirement intake
 
-#### 8.3.1 项目规划
+Requirements can be created by:
 
-根据需求和组织上下文，自动生成：
+- filling in a form;
+- natural language conversation;
+- uploading a PRD or other document;
+- extraction from meeting notes;
+- extraction from email;
+- import from customer feedback;
+- sync from Jira, Plane, Linear, and similar systems;
+- creation through the API or a webhook.
 
-- 项目范围；
-- 阶段划分；
-- 任务拆解；
-- 工作量预估；
-- 技术方案建议；
-- Agent 与人员需求；
-- 依赖关系；
-- 关键路径；
-- 时间计划；
-- 风险清单；
-- 里程碑；
-- 预算预估。
+#### 8.2.2 AI requirement structuring
 
-#### 8.3.2 动态任务拆解
+The Agent automatically turns a raw description into:
 
-Project Agent 可以将需求拆分为多层 Work Item：
+- requirement title;
+- business background;
+- the user's problem;
+- business goal;
+- user stories;
+- functional scope;
+- non-functional requirements;
+- acceptance criteria;
+- potential risks;
+- dependencies;
+- open questions that need clarification.
+
+#### 8.2.3 Requirement completeness check
+
+The system scores each requirement on:
+
+- goal completeness;
+- scope clarity;
+- completeness of acceptance criteria;
+- clarity of dependencies;
+- how well risks have been identified;
+- completeness of technical context.
+
+#### 8.2.4 AI clarification
+
+The Agent raises the clarifying questions that matter.
+
+Questions are classified by how much they matter:
+
+- answerable from the knowledge base automatically;
+- resolvable by a default rule;
+- can proceed after recording an assumption;
+- must be confirmed by a human.
+
+#### 8.2.5 Human Gate: requirement sign-off
+
+A human can:
+
+- approve the requirement;
+- edit and then approve;
+- add context;
+- ask for re-analysis;
+- reject;
+- defer;
+- delegate confirmation to someone else.
+
+Only once the requirement is signed off does the project formally enter Planning.
+
+---
+
+### 8.3 Project Agent
+
+The Project Agent is the project-level management and scheduling Agent.
+
+#### 8.3.1 Project planning
+
+From the requirement and the organization's context, it generates:
+
+- project scope;
+- stage breakdown;
+- work breakdown;
+- effort estimates;
+- suggested technical approach;
+- Agent and staffing needs;
+- dependencies;
+- critical path;
+- schedule;
+- risk register;
+- milestones;
+- budget estimate.
+
+#### 8.3.2 Dynamic work breakdown
+
+The Project Agent can decompose a requirement into a multi-level Work Item tree:
 
 ```
 Requirement
@@ -728,100 +730,100 @@ Requirement
 └── Release
 ```
 
-任务拆解不应只发生一次。
+Breakdown should not be a one-shot event.
 
-当执行过程中发现新问题时，Project Agent 可以：
+When new problems surface during execution, the Project Agent can:
 
-- 创建补充任务；
-- 拆分复杂任务；
-- 合并重复任务；
-- 调整依赖；
-- 修改优先级；
-- 更新计划。
+- create follow-up tasks;
+- split a task that turned out to be complex;
+- merge duplicates;
+- adjust dependencies;
+- change priorities;
+- update the plan.
 
-#### 8.3.3 执行图生成
+#### 8.3.3 Execution Graph generation
 
-Project Agent 将任务关系生成 Execution Graph。
+The Project Agent turns task relationships into an Execution Graph.
 
-节点可以是：
+A node can be:
 
-- 人类任务；
-- Agent 任务；
-- 审批节点；
-- 自动化节点；
-- 等待节点；
-- 验证节点；
-- 发布节点。
+- a human task;
+- an Agent task;
+- an approval node;
+- an automation node;
+- a wait node;
+- a verification node;
+- a release node.
 
-边表示：
+An edge represents:
 
-- 前置依赖；
-- 数据依赖；
-- 审批依赖；
-- 触发关系；
-- 重试关系；
-- 回退关系。
+- a finish-to-start dependency;
+- a data dependency;
+- an approval dependency;
+- a trigger relationship;
+- a retry relationship;
+- a rollback relationship.
 
-#### 8.3.4 智能调度
+#### 8.3.4 Intelligent scheduling
 
-Project Agent 根据以下条件分配任务：
+The Project Agent assigns work based on:
 
-- Agent 能力；
-- Skill 匹配；
-- 历史成功率；
-- 当前负载；
-- 上下文匹配度；
-- 权限范围；
-- 模型成本；
-- 任务时限；
-- 风险等级；
-- 是否需要人类经验。
+- Agent capability;
+- Skill match;
+- historical success rate;
+- current load;
+- context fit;
+- permission scope;
+- model cost;
+- task deadline;
+- risk level;
+- whether human experience is required.
 
-任务可以分配给：
+A task can be assigned to:
 
-- 单个人类；
-- 单个 Agent；
-- 多个 Agent 并行执行；
-- Agent 执行、人类审核；
-- 人类执行、Agent 辅助；
-- Agent 集群；
-- 外部服务。
+- one person;
+- one Agent;
+- several Agents running in parallel;
+- an Agent to execute with a human to review;
+- a human to execute with an Agent assisting;
+- an Agent cluster;
+- an external service.
 
-#### 8.3.5 进度维护
+#### 8.3.5 Progress maintenance
 
-Project Agent 自动读取 Agent Run、代码仓库、测试系统和外部项目系统的状态，更新任务进度。
+The Project Agent reads state from Agent Runs, code repositories, test systems, and external project systems, and updates task progress itself.
 
-用户不需要手动拖动大部分卡片。
+Users do not have to drag most cards by hand.
 
-系统需要明确区分：
+The system has to distinguish clearly between:
 
-- 系统自动更新；
-- Agent 更新；
-- 人类更新；
-- 外部系统同步。
+- automatic system updates;
+- Agent updates;
+- human updates;
+- external system sync.
 
-#### 8.3.6 项目摘要
+#### 8.3.6 Project summaries
 
-Project Agent 可自动生成：
+The Project Agent can generate:
 
-- 每日项目摘要；
-- 周报；
-- 里程碑报告；
-- 风险报告；
-- 延期原因；
-- Agent 工作报告；
-- 管理层汇报；
-- 项目复盘。
+- a daily project summary;
+- weekly reports;
+- milestone reports;
+- risk reports;
+- delay explanations;
+- Agent work reports;
+- executive updates;
+- project retrospectives.
 
 ---
 
-### 8.4 Autonomous Board 智能看板
+### 8.4 Autonomous Board
 
-看板是项目 Flow 的主要可视化界面，但不是产品唯一核心。
+The board is the main visualization of project Flow — but it is not the whole product.
 
-#### 8.4.1 默认阶段
+#### 8.4.1 Default stages
 
-默认提供：
+Out of the box:
 
 ```
 Intake
@@ -832,895 +834,895 @@ Release
 Done
 ```
 
-企业可根据项目类型配置不同流程。
+An enterprise can configure different workflows per project type.
 
-#### 8.4.2 卡片内容
+#### 8.4.2 Card content
 
-每张卡片展示：
+Each card shows:
 
-- 标题；
-- Work Item 类型；
-- 优先级；
-- 当前阶段；
-- 人类负责人；
-- Agent 执行者；
-- 风险等级；
-- 预计完成时间；
-- 当前进度；
-- 依赖状态；
-- Human Gate 状态；
-- Token 和成本；
-- 阻塞时长；
-- 最新执行结果。
+- title;
+- Work Item type;
+- priority;
+- current stage;
+- human owner;
+- Agent executor;
+- risk level;
+- estimated completion;
+- current progress;
+- dependency status;
+- Human Gate status;
+- tokens and cost;
+- time blocked;
+- latest execution result.
 
-#### 8.4.3 Human Gate 标识
+#### 8.4.3 Human Gate markers
 
-卡片上需要明确显示：
+Cards must clearly display:
 
-- Approval Required；
-- Waiting for Decision；
-- Human Reviewing；
-- Human Took Over；
-- Approved；
-- Rejected；
-- Escalated；
-- Decision Overdue。
+- Approval Required;
+- Waiting for Decision;
+- Human Reviewing;
+- Human Took Over;
+- Approved;
+- Rejected;
+- Escalated;
+- Decision Overdue.
 
-#### 8.4.4 卡片自主移动
+#### 8.4.4 Cards that move themselves
 
-卡片状态主要由系统事件自动驱动。
+Card state is driven primarily by system events.
 
-例如：
+For example:
 
 ```
-任务创建
+Task created
 → Ready
 
-Agent Run 启动
+Agent Run starts
 → Executing
 
-Agent 输出完成
+Agent output complete
 → Reviewing
 
-自动测试通过
+Automated tests pass
 → Waiting for Release
 
-发布完成
+Release complete
 → Acceptance
 ```
 
-用户仍然可以手动调整状态，但系统应记录原因。
+Users can still change state by hand, but the system should record why.
 
-#### 8.4.5 看板过滤和视图
+#### 8.4.5 Board filters and views
 
-支持按照以下维度筛选：
+Filterable by:
 
-- 项目；
-- 阶段；
-- Work Item 类型；
-- Human；
-- Agent；
-- 风险；
-- 优先级；
-- Human Gate；
-- 阻塞状态；
-- 截止时间；
-- 成本；
-- 任务来源。
+- project;
+- stage;
+- Work Item type;
+- Human;
+- Agent;
+- risk;
+- priority;
+- Human Gate;
+- blocked status;
+- due date;
+- cost;
+- task source.
 
-支持多种视图：
+Multiple views are supported:
 
-- Kanban；
-- List；
-- Timeline；
-- Calendar；
-- Execution Graph；
-- Agent View；
-- Human Decision View；
-- Risk View；
-- Delivery View。
+- Kanban;
+- List;
+- Timeline;
+- Calendar;
+- Execution Graph;
+- Agent View;
+- Human Decision View;
+- Risk View;
+- Delivery View.
 
 ---
 
 ### 8.5 Agent Workspace
 
-每个 Agent 都需要拥有独立工作区。
+Every Agent needs a workspace of its own.
 
-#### 8.5.1 Agent 基本信息
+#### 8.5.1 Agent profile
 
-展示：
+Shows:
 
-- Agent 定位；
-- 负责领域；
-- 模型；
-- Skill；
-- Tool；
-- 权限；
-- 成本；
-- 成功率；
-- 当前负载；
-- 最近任务。
+- what the Agent is for;
+- the domain it owns;
+- model;
+- Skills;
+- Tools;
+- permissions;
+- cost;
+- success rate;
+- current load;
+- recent tasks.
 
-#### 8.5.2 Agent 任务队列
+#### 8.5.2 Agent task queue
 
-包含：
+Contains:
 
-- 待执行任务；
-- 执行中任务；
-- 等待依赖任务；
-- 等待人类决策任务；
-- 失败任务；
-- 已完成任务。
+- queued tasks;
+- running tasks;
+- tasks waiting on dependencies;
+- tasks waiting on a human decision;
+- failed tasks;
+- completed tasks.
 
 #### 8.5.3 Agent Run
 
-每次执行形成独立 Run。
+Each execution forms its own Run.
 
-Run 包含：
+A Run holds:
 
-- 输入目标；
-- 上下文；
-- 使用的模型；
-- 使用的 Skill；
-- 工具调用；
-- 执行事件；
-- 输出结果；
-- Token；
-- 成本；
-- 耗时；
-- 错误；
-- 重试记录；
-- 人类干预；
-- 产物；
-- 最终状态。
+- the input goal;
+- context;
+- the model used;
+- the Skills used;
+- tool calls;
+- execution events;
+- output;
+- tokens;
+- cost;
+- elapsed time;
+- errors;
+- retry history;
+- human interventions;
+- artifacts;
+- final status.
 
-#### 8.5.4 Agent 协作
+#### 8.5.4 Agent collaboration
 
-支持：
+Supported patterns:
 
-- 主 Agent 委派子 Agent；
-- 多 Agent 并行；
-- Agent 结果聚合；
-- Agent 交叉审核；
-- Reviewer Agent；
-- Agent 之间请求补充信息；
-- 冲突结果仲裁；
-- 失败转交。
+- a lead Agent delegating to sub-Agents;
+- multiple Agents in parallel;
+- aggregation of Agent results;
+- Agent cross-review;
+- a Reviewer Agent;
+- one Agent asking another for more information;
+- arbitration of conflicting results;
+- handoff after failure.
 
-#### 8.5.5 人工接管
+#### 8.5.5 Human takeover
 
-人类可以在 Agent 执行过程中：
+While an Agent is running, a human can:
 
-- 暂停；
-- 增加约束；
-- 修改上下文；
-- 终止；
-- 重新分配；
-- 直接接管；
-- 要求重新规划；
-- 恢复 Agent 执行。
+- pause it;
+- add constraints;
+- change the context;
+- terminate it;
+- reassign the work;
+- take over directly;
+- ask for a re-plan;
+- resume Agent execution.
 
 ---
 
 ### 8.6 Flow Engine
 
-Flow Engine 负责推进项目状态，而不只是保存状态。
+The Flow Engine moves project state forward; it does not merely store it.
 
-#### 8.6.1 状态管理
+#### 8.6.1 State management
 
-管理以下对象的状态：
+It manages state for:
 
-- Project；
-- Requirement；
-- Work Item；
-- Agent Run；
-- Decision；
-- Approval；
-- Artifact；
-- Release。
+- Project;
+- Requirement;
+- Work Item;
+- Agent Run;
+- Decision;
+- Approval;
+- Artifact;
+- Release.
 
-#### 8.6.2 依赖管理
+#### 8.6.2 Dependency management
 
-支持：
+Supported:
 
-- Finish-to-Start；
-- Start-to-Start；
-- 产物依赖；
-- 人类决策依赖；
-- 权限依赖；
-- 外部系统依赖；
-- 数据准备依赖。
+- Finish-to-Start;
+- Start-to-Start;
+- artifact dependency;
+- human-decision dependency;
+- permission dependency;
+- external system dependency;
+- data-readiness dependency.
 
-#### 8.6.3 WIP 控制
+#### 8.6.3 WIP control
 
-可配置：
+Configurable limits on:
 
-- 每个阶段最大任务数；
-- 每个 Agent 最大并发数；
-- 每个人类最大待处理决策数；
-- 每个项目最大运行成本；
-- 每类任务的并发限制。
+- maximum tasks per stage;
+- maximum concurrency per Agent;
+- maximum open decisions per person;
+- maximum running cost per project;
+- concurrency per task type.
 
-#### 8.6.4 阻塞识别
+#### 8.6.4 Blocker detection
 
-系统自动识别：
+The system detects, on its own:
 
-- 任务超时；
-- 依赖未满足；
-- Agent 连续失败；
-- 等待决策过久；
-- 外部服务不可用；
-- 成本超限；
-- 权限不足；
-- 多 Agent 结果冲突；
-- 任务长期无事件更新。
+- task timeouts;
+- unmet dependencies;
+- an Agent failing repeatedly;
+- a decision waiting too long;
+- an external service being unavailable;
+- cost over budget;
+- insufficient permissions;
+- conflicting results from multiple Agents;
+- a task with no event activity for a long stretch.
 
 #### 8.6.5 Flow Recovery
 
-根据策略自动：
+Per policy, the system can automatically:
 
-- 重试；
-- 更换 Agent；
-- 降低模型成本；
-- 增加 Reviewer；
-- 拆分任务；
-- 回退上一步；
-- 请求人类决策；
-- 转人工；
-- 终止任务。
+- retry;
+- switch to a different Agent;
+- drop to a cheaper model;
+- add a Reviewer;
+- split the task;
+- roll back a step;
+- request a human decision;
+- hand off to a person;
+- terminate the task.
 
-#### 8.6.6 延期预测
+#### 8.6.6 Delay forecasting
 
-系统基于：
+Based on:
 
-- 当前进度；
-- 历史 Cycle Time；
-- Agent 成功率；
-- 依赖状态；
-- 阻塞时间；
-- 决策等待时间；
-- 剩余工作量；
+- current progress;
+- historical Cycle Time;
+- Agent success rate;
+- dependency status;
+- time spent blocked;
+- decision wait time;
+- remaining work;
 
-预测项目或任务的延期概率。
+the system forecasts the probability that a project or a task will slip.
 
 ---
 
 ### 8.7 Human Decision Center
 
-Human Decision Center 是所有需要人类参与事项的统一入口。
+The Human Decision Center is the single entry point for everything that needs a human.
 
-#### 8.7.1 决策收件箱
+#### 8.7.1 Decision inbox
 
-展示：
+Shows:
 
-- 待我处理；
-- 即将超时；
-- 高风险；
-- 需要多人会签；
-- 已转交；
-- 已完成；
-- Agent 建议自动化的重复决策。
+- awaiting me;
+- nearing timeout;
+- high risk;
+- requiring multi-party sign-off;
+- delegated;
+- resolved;
+- repeat decisions the Agent suggests automating.
 
-#### 8.7.2 决策卡片
+#### 8.7.2 Decision card
 
-每张决策卡片应回答：
+Every decision card should answer:
 
-- 需要决定什么；
-- 为什么需要人决定；
-- Agent 推荐什么；
-- 有哪些备选方案；
-- 各方案有什么影响；
-- 不处理会导致什么；
-- 最晚何时处理；
-- 相关证据在哪里。
+- what has to be decided;
+- why a human has to decide it;
+- what the Agent recommends;
+- what the alternatives are;
+- what each option implies;
+- what happens if nothing is done;
+- the latest it can be handled;
+- where the supporting evidence lives.
 
-#### 8.7.3 决策操作
+#### 8.7.3 Decision actions
 
-支持：
+Supported:
 
-- Approve；
-- Approve with Constraints；
-- Edit；
-- Request Revision；
-- Delegate；
-- Take Over；
-- Pause；
-- Reject；
-- Terminate；
-- Create Policy。
+- Approve;
+- Approve with Constraints;
+- Edit;
+- Request Revision;
+- Delegate;
+- Take Over;
+- Pause;
+- Reject;
+- Terminate;
+- Create Policy.
 
-#### 8.7.4 决策时限
+#### 8.7.4 Decision deadlines
 
-每个决策配置：
+Each decision is configured with:
 
-- 决策截止时间；
-- 提醒策略；
-- 升级路径；
-- 默认处理规则；
-- 超时后是否暂停项目。
+- a decision deadline;
+- a reminder policy;
+- an escalation path;
+- a default handling rule;
+- whether a timeout pauses the project.
 
-#### 8.7.5 决策责任
+#### 8.7.5 Decision accountability
 
-系统根据项目角色和 Policy 自动识别责任人。
+The system identifies the accountable party from project roles and Policy.
 
-例如：
+For example:
 
-- 业务范围变更 → 产品负责人；
-- 架构变更 → 技术负责人；
-- 数据库变更 → DBA；
-- 安全例外 → 安全负责人；
-- 预算超限 → 项目 Sponsor；
-- 生产发布 → 发布负责人。
+- business scope change → product owner;
+- architecture change → engineering lead;
+- database change → DBA;
+- security exception → security lead;
+- over budget → project sponsor;
+- production release → release manager.
 
 ---
 
-### 8.8 Human-in-the-Loop 机制
+### 8.8 Human-in-the-Loop
 
-Human-in-the-Loop 贯穿项目全生命周期。
+Human-in-the-Loop runs through the entire project lifecycle.
 
-#### 8.8.1 需求阶段
+#### 8.8.1 Requirement stage
 
-Agent 负责：
+The Agent handles:
 
-- 结构化需求；
-- 补充上下文；
-- 提出问题；
-- 生成验收标准。
+- structuring the requirement;
+- filling in context;
+- raising questions;
+- generating acceptance criteria.
 
-人类负责：
+The human handles:
 
-- 确认目标；
-- 判断业务价值；
-- 确认优先级；
-- 确认关键业务规则。
+- confirming the goal;
+- judging business value;
+- confirming priority;
+- confirming the critical business rules.
 
-#### 8.8.2 规划阶段
+#### 8.8.2 Planning stage
 
-Agent 负责：
+The Agent handles:
 
-- 拆解任务；
-- 生成依赖；
-- 估算时间和成本；
-- 推荐执行者。
+- breaking down the work;
+- generating dependencies;
+- estimating time and cost;
+- recommending executors.
 
-人类负责：
+The human handles:
 
-- 确认范围；
-- 确认关键方案；
-- 确认交付承诺；
-- 确认高风险路径。
+- confirming scope;
+- confirming the key solutions;
+- confirming the delivery commitment;
+- confirming the high-risk paths.
 
-#### 8.8.3 调度阶段
+#### 8.8.3 Scheduling stage
 
-默认由 Agent 自动分配。
+By default the Agent assigns work on its own.
 
-以下情况需要人类确认：
+A human confirmation is required when:
 
-- 使用高成本模型；
-- 占用关键人员；
-- 跨团队协作；
-- 使用敏感资源；
-- Agent 能力不足；
-- 成本超出预算。
+- an expensive model is used;
+- it consumes the time of key personnel;
+- it requires cross-team collaboration;
+- it uses sensitive resources;
+- the Agent's capability falls short;
+- cost exceeds budget.
 
-#### 8.8.4 执行阶段
+#### 8.8.4 Execution stage
 
-Agent 默认自主执行。
+By default the Agent executes autonomously.
 
-以下情况触发人类介入：
+A human is pulled in when:
 
-- 连续失败超过阈值；
-- 与计划明显偏离；
-- 发现需求冲突；
-- 涉及不可逆操作；
-- 多 Agent 结论冲突；
-- 需要超出权限的操作；
-- 成本异常增长；
-- 任务长期阻塞。
+- consecutive failures exceed the threshold;
+- execution has clearly diverged from the plan;
+- a requirement conflict is discovered;
+- an irreversible operation is involved;
+- multiple Agents reach conflicting conclusions;
+- an operation beyond granted permissions is needed;
+- cost is growing abnormally;
+- the task has been blocked for a long time.
 
-#### 8.8.5 Review 阶段
+#### 8.8.5 Review stage
 
-根据风险分级。
+Graded by risk.
 
-低风险任务
+Low-risk task
 
 ```
-Agent 执行
-→ 自动验证
+Agent executes
+→ automated verification
 → Review Agent
-→ 自动通过
+→ auto-approved
 ```
 
-中风险任务
+Medium-risk task
 
 ```
-Agent 执行
-→ 自动测试
+Agent executes
+→ automated tests
 → Review Agent
-→ 人类抽样或快速确认
+→ human spot check or quick confirmation
 ```
 
-高风险任务
+High-risk task
 
 ```
-Agent 执行
-→ 多 Agent 交叉审核
-→ 完整测试
-→ 指定人类强制审核
+Agent executes
+→ multi-Agent cross-review
+→ full test suite
+→ mandatory review by a named human
 ```
 
-#### 8.8.6 Release 阶段
+#### 8.8.6 Release stage
 
-- 开发环境：允许 Agent 自动发布；
-- 测试环境：允许自动发布并通知；
-- 预生产环境：按风险策略处理；
-- 生产环境：默认需要审批或满足企业自动发布策略。
+- Development: Agents may release automatically;
+- Testing: automatic release with a notification;
+- Staging: handled per the risk policy;
+- Production: approval required by default, unless the enterprise's auto-release policy is satisfied.
 
-#### 8.8.7 验收阶段
+#### 8.8.7 Acceptance stage
 
-Agent 负责验证技术结果。
+The Agent verifies the technical result.
 
-人类负责判断：
+The human judges:
 
-- 是否满足业务目标；
-- 是否符合真实使用场景；
-- 是否可以正式结项；
-- 是否需要继续优化。
+- whether the business goal is met;
+- whether it holds up in real usage;
+- whether the project can formally close;
+- whether further work is warranted.
 
-#### 8.8.8 Learning 阶段
+#### 8.8.8 Learning stage
 
-Agent 自动生成：
+The Agent automatically produces:
 
-- 项目复盘；
-- 瓶颈分析；
-- Agent 表现；
-- 决策总结；
-- Skill 候选；
-- Policy 候选。
+- a project retrospective;
+- bottleneck analysis;
+- Agent performance;
+- a decision summary;
+- Skill candidates;
+- Policy candidates.
 
-人类确认哪些经验可以进入组织知识库和默认规则。
+The human confirms which lessons make it into the organization's knowledge base and default rules.
 
 ---
 
 ### 8.9 Policy & Governance Engine
 
-Policy Engine 决定哪些事情可以自动执行，哪些事情需要人类介入。
+The Policy Engine decides what may run automatically and what needs a human.
 
-#### 8.9.1 Policy 条件
+#### 8.9.1 Policy conditions
 
-支持按照以下条件配置：
+Configurable on:
 
-- 项目类型；
-- Work Item 类型；
-- 风险等级；
-- 数据敏感度；
-- 操作环境；
-- Agent 类型；
-- Agent 置信度；
-- 历史成功率；
-- 模型成本；
-- 累计预算；
-- 测试结果；
-- 安全扫描；
-- 影响范围；
-- 失败次数；
-- 是否可逆；
-- 是否涉及外部客户。
+- project type;
+- Work Item type;
+- risk level;
+- data sensitivity;
+- target environment;
+- Agent type;
+- Agent confidence;
+- historical success rate;
+- model cost;
+- cumulative budget;
+- test results;
+- security scan;
+- blast radius;
+- failure count;
+- reversibility;
+- whether external customers are involved.
 
-#### 8.9.2 Policy 动作
+#### 8.9.2 Policy actions
 
-支持：
+Supported:
 
-- Allow；
-- Allow and Notify；
-- Require Agent Review；
-- Require Human Review；
-- Require Multiple Approvals；
-- Ask；
-- Pause；
-- Deny；
-- Escalate；
-- Transfer to Human。
+- Allow;
+- Allow and Notify;
+- Require Agent Review;
+- Require Human Review;
+- Require Multiple Approvals;
+- Ask;
+- Pause;
+- Deny;
+- Escalate;
+- Transfer to Human.
 
-#### 8.9.3 Policy 示例
-
-```
-如果：
-任务风险 = 低
-并且自动测试通过
-并且 Review Agent 通过
-并且成本 < 10 美元
-那么：
-自动批准并通知负责人
-```
+#### 8.9.3 Policy examples
 
 ```
-如果：
-涉及生产数据库
-那么：
-必须由 DBA 审批
+IF:
+task risk = low
+AND automated tests pass
+AND the Review Agent approves
+AND cost < 10 USD
+THEN:
+auto-approve and notify the owner
 ```
 
 ```
-如果：
-Agent 连续失败 3 次
-那么：
-暂停任务并请求技术负责人处理
+IF:
+the production database is involved
+THEN:
+require DBA approval
 ```
 
-#### 8.9.4 自治等级
+```
+IF:
+the Agent fails 3 times in a row
+THEN:
+pause the task and ask the engineering lead to step in
+```
 
-每个项目可以选择：
+#### 8.9.4 Autonomy levels
+
+Each project picks one:
 
 **Human-led**
 
-Agent 提建议，人类做主要决定。
+The Agent advises; humans make the calls that matter.
 
-适用于：
+Suited to:
 
-- 高风险项目；
-- 新业务；
-- Agent 能力尚未验证；
-- 强监管场景。
+- high-risk projects;
+- new lines of business;
+- Agents whose capability is not yet proven;
+- heavily regulated settings.
 
 **Agent-led with Approval**
 
-Agent 自主规划和执行，关键节点由人类批准。
+The Agent plans and executes on its own; humans approve at the key points.
 
-这是默认模式。
+This is the default mode.
 
 **Agent-autonomous**
 
-Agent 自主规划、执行和验证，仅在异常时请求人类。
+The Agent plans, executes, and verifies on its own, and only calls a human when something goes wrong.
 
-适用于：
+Suited to:
 
-- 低风险任务；
-- 重复性任务；
-- 测试或沙箱环境；
-- 已验证的成熟流程。
+- low-risk work;
+- repetitive work;
+- test or sandbox environments;
+- mature, proven processes.
 
 ---
 
 ### 8.10 Review & Quality Center
 
-#### 8.10.1 自动验证
+#### 8.10.1 Automated verification
 
-支持：
+Supported:
 
-- 单元测试；
-- 集成测试；
-- UI 测试；
-- 代码规范；
-- 安全扫描；
-- 性能测试；
-- 数据校验；
-- 文档完整性检查；
-- 验收标准校验。
+- unit tests;
+- integration tests;
+- UI tests;
+- lint and code standards;
+- security scanning;
+- performance testing;
+- data validation;
+- documentation completeness checks;
+- acceptance-criteria verification.
 
-#### 8.10.2 多 Agent Review
+#### 8.10.2 Multi-Agent review
 
-支持配置：
+Configurable reviewers:
 
-- Code Review Agent；
-- Security Agent；
-- Architecture Agent；
-- Test Agent；
-- Product Review Agent。
+- Code Review Agent;
+- Security Agent;
+- Architecture Agent;
+- Test Agent;
+- Product Review Agent.
 
-多个 Agent 可以独立审核同一产物，并由系统聚合结果。
+Several Agents can review the same artifact independently, and the system aggregates their verdicts.
 
-#### 8.10.3 质量门禁
+#### 8.10.3 Quality gates
 
-可配置：
+Configurable on:
 
-- 测试覆盖率；
-- 严重 Bug 数量；
-- 安全漏洞等级；
-- 性能阈值；
-- 人类审批；
-- 多 Agent 一致性；
-- 文档完整度。
+- test coverage;
+- number of severe bugs;
+- security vulnerability severity;
+- performance thresholds;
+- human approval;
+- agreement across Agents;
+- documentation completeness.
 
-未满足质量门禁时，不允许进入 Release。
+Work that fails a quality gate cannot enter Release.
 
 ---
 
 ### 8.11 Release Center
 
-#### 8.11.1 发布计划
+#### 8.11.1 Release plan
 
-自动生成：
+Generated automatically:
 
-- 发布范围；
-- 变更清单；
-- 影响分析；
-- 发布步骤；
-- 检查清单；
-- 灰度方案；
-- 回滚方案；
-- 通知计划。
+- release scope;
+- change list;
+- impact analysis;
+- release steps;
+- checklist;
+- canary plan;
+- rollback plan;
+- notification plan.
 
-#### 8.11.2 环境管理
+#### 8.11.2 Environment management
 
-支持：
+Supported:
 
-- Development；
-- Testing；
-- Staging；
-- Production；
-- 自定义环境。
+- Development;
+- Testing;
+- Staging;
+- Production;
+- custom environments.
 
-#### 8.11.3 发布审批
+#### 8.11.3 Release approval
 
-根据环境、风险和 Policy 决定：
+Environment, risk, and Policy together decide between:
 
-- 自动发布；
-- 发布后通知；
-- 单人审批；
-- 多人会签；
-- 人工执行。
+- automatic release;
+- release then notify;
+- single approver;
+- multi-party sign-off;
+- manual execution.
 
-#### 8.11.4 发布监控
+#### 8.11.4 Release monitoring
 
-发布后自动监控：
+After a release, the system automatically watches:
 
-- 服务状态；
-- 错误率；
-- 性能；
-- 日志；
-- 用户反馈；
-- 核心业务指标。
+- service status;
+- error rate;
+- performance;
+- logs;
+- user feedback;
+- core business metrics.
 
-发现异常后可自动：
+On an anomaly it can automatically:
 
-- 暂停发布；
-- 回滚；
-- 创建 Incident；
-- 通知负责人；
-- 启动问题分析 Agent。
+- halt the release;
+- roll back;
+- open an Incident;
+- notify the owner;
+- start a diagnosis Agent.
 
 ---
 
 ### 8.12 Knowledge Center
 
-#### 8.12.1 项目知识
+#### 8.12.1 Project knowledge
 
-保存：
+Retains:
 
-- 需求背景；
-- 技术方案；
-- 决策记录；
-- 项目文档；
-- 代码说明；
-- 测试记录；
-- 失败原因；
-- 发布经验；
-- 项目复盘。
+- requirement background;
+- technical approach;
+- decision records;
+- project documents;
+- code explanations;
+- test records;
+- failure causes;
+- release experience;
+- project retrospectives.
 
-#### 8.12.2 自动知识提取
+#### 8.12.2 Automatic knowledge extraction
 
-项目过程中自动识别：
+While the project runs, the system spots:
 
-- 可复用解决方案；
-- 常见问题；
-- 决策模式；
-- 有效 Prompt；
-- Agent 最佳实践；
-- Skill 候选；
-- Policy 候选；
-- 风险模式。
+- reusable solutions;
+- recurring problems;
+- decision patterns;
+- effective prompts;
+- Agent best practices;
+- Skill candidates;
+- Policy candidates;
+- risk patterns.
 
-#### 8.12.3 知识发布流程
+#### 8.12.3 Knowledge publication flow
 
 ```
 Candidate
-→ AI 整理
+→ AI cleanup
 → Human Review
 → Published
 → Reused
 → Updated / Deprecated
 ```
 
-#### 8.12.4 项目记忆
+#### 8.12.4 Project memory
 
-Project Agent 可以持续访问：
+The Project Agent has ongoing access to:
 
-- 为什么做这个项目；
-- 为什么采用当前方案；
-- 曾经否决过哪些方案；
-- 哪些风险已经接受；
-- 哪些约束不能改变；
-- 历史执行和决策记录。
+- why this project exists;
+- why the current approach was chosen;
+- which approaches were rejected, and when;
+- which risks have been accepted;
+- which constraints cannot move;
+- the history of executions and decisions.
 
 ---
 
 ### 8.13 Delivery Analytics
 
-系统不只统计完成任务数量，而是分析整个 Delivery System。
+The system does not just count finished tasks; it analyzes the whole delivery system.
 
-#### 8.13.1 Flow 指标
+#### 8.13.1 Flow metrics
 
-包括：
+Including:
 
-- Lead Time；
-- Cycle Time；
-- Throughput；
-- WIP；
-- Flow Efficiency；
-- Blocked Time；
-- Decision Waiting Time；
-- Rework Rate；
-- On-time Delivery Rate。
+- Lead Time;
+- Cycle Time;
+- Throughput;
+- WIP;
+- Flow Efficiency;
+- Blocked Time;
+- Decision Waiting Time;
+- Rework Rate;
+- On-time Delivery Rate.
 
-#### 8.13.2 Agent 指标
+#### 8.13.2 Agent metrics
 
-包括：
+Including:
 
-- Agent Success Rate；
-- First-pass Success Rate；
-- Retry Rate；
-- Human Intervention Rate；
-- Task Takeover Rate；
-- Average Cost；
-- Token Consumption；
-- Average Execution Time；
-- Review Pass Rate；
-- Agent Utilization。
+- Agent Success Rate;
+- First-pass Success Rate;
+- Retry Rate;
+- Human Intervention Rate;
+- Task Takeover Rate;
+- Average Cost;
+- Token Consumption;
+- Average Execution Time;
+- Review Pass Rate;
+- Agent Utilization.
 
-#### 8.13.3 Human-in-the-Loop 指标
+#### 8.13.3 Human-in-the-Loop metrics
 
-包括：
+Including:
 
-- 人类决策数量；
-- 平均决策时间；
-- 超时决策数量；
-- 重复决策数量；
-- 自动化决策比例；
-- 人工接管次数；
-- 各阶段人类介入比例；
-- 因等待人类导致的阻塞时间。
+- number of human decisions;
+- average decision time;
+- number of decisions that timed out;
+- number of repeat decisions;
+- share of decisions handled automatically;
+- number of human takeovers;
+- share of human involvement per stage;
+- time blocked waiting on a human.
 
-#### 8.13.4 项目健康度
+#### 8.13.4 Project health
 
-系统综合以下信息生成项目健康分：
+The system combines the following into a project health score:
 
-- 进度；
-- 质量；
-- 风险；
-- 成本；
-- 依赖；
-- 阻塞；
-- 决策等待；
-- Agent 稳定性；
-- 人力负载；
-- 需求变化。
+- progress;
+- quality;
+- risk;
+- cost;
+- dependencies;
+- blockers;
+- decision wait;
+- Agent stability;
+- staffing load;
+- requirement churn.
 
-#### 8.13.5 知识指标
+#### 8.13.5 Knowledge metrics
 
-包括：
+Including:
 
-- Knowledge Reuse Rate；
-- Skill Reuse Rate；
-- Policy Reuse Rate；
-- 历史项目引用次数；
-- 新增组织知识数量；
-- 失效知识数量。
-
----
-
-## 九、集成能力
-
-### 9.1 项目管理系统
-
-支持对接：
-
-- Jira；
-- Plane；
-- Linear；
-- Monday；
-- Asana；
-- GitHub Projects；
-- GitLab Issues；
-- 企业内部项目系统。
-
-系统需要支持双向同步：
-
-- 项目；
-- Work Item；
-- 状态；
-- 负责人；
-- 评论；
-- 截止时间；
-- 产物链接。
-
-需要定义 Source of Truth，避免多个系统互相覆盖。
+- Knowledge Reuse Rate;
+- Skill Reuse Rate;
+- Policy Reuse Rate;
+- number of references to past projects;
+- amount of new organization knowledge;
+- amount of knowledge that went stale.
 
 ---
 
-### 9.2 代码与研发系统
+## 9. Integrations
 
-支持：
+### 9.1 Project management systems
 
-- GitHub；
-- GitLab；
-- Bitbucket；
-- Jenkins；
-- GitHub Actions；
-- GitLab CI；
-- SonarQube；
-- Sentry；
-- Kubernetes；
-- 云平台；
-- 内部发布系统。
+Connectors for:
 
----
+- Jira;
+- Plane;
+- Linear;
+- Monday;
+- Asana;
+- GitHub Projects;
+- GitLab Issues;
+- in-house project systems.
 
-### 9.3 Agent 与模型
+Two-way sync is required for:
 
-支持接入：
+- projects;
+- Work Items;
+- status;
+- owners;
+- comments;
+- due dates;
+- artifact links.
 
-- Codex；
-- Claude Code；
-- OpenHands；
-- Cursor Agent；
-- Browser Agent；
-- Data Agent；
-- 企业内部 Agent；
-- MCP Server；
-- 自定义 Agent Runtime。
-
-需要提供统一 Agent Protocol。
-
-统一描述：
-
-- Agent 能力；
-- 任务输入；
-- 执行状态；
-- 事件；
-- 产物；
-- 权限；
-- 成本；
-- 错误；
-- 人工介入请求。
+A source of truth has to be defined, or the systems will overwrite each other.
 
 ---
 
-### 9.4 企业协同系统
+### 9.2 Code and engineering systems
 
-支持：
+Supported:
 
-- Slack；
-- Microsoft Teams；
-- 飞书；
-- 企业微信；
-- 邮件；
-- Google Calendar；
-- Outlook Calendar；
-- 企业内部通知系统。
-
----
-
-### 9.5 企业数据系统
-
-支持通过受控连接器接入：
-
-- 数据库；
-- 数据仓库；
-- CRM；
-- ERP；
-- 工单系统；
-- 知识库；
-- 文档系统；
-- BI 平台。
+- GitHub;
+- GitLab;
+- Bitbucket;
+- Jenkins;
+- GitHub Actions;
+- GitLab CI;
+- SonarQube;
+- Sentry;
+- Kubernetes;
+- cloud platforms;
+- in-house release systems.
 
 ---
 
-## 十、权限与安全
+### 9.3 Agents and models
 
-### 10.1 身份类型
+Onboarding supported for:
 
-统一支持：
+- Codex;
+- Claude Code;
+- OpenHands;
+- Cursor Agent;
+- Browser Agent;
+- Data Agent;
+- in-house Agents;
+- MCP Server;
+- custom Agent Runtimes.
+
+A unified Agent Protocol is required.
+
+It describes, uniformly:
+
+- Agent capabilities;
+- task input;
+- execution status;
+- events;
+- artifacts;
+- permissions;
+- cost;
+- errors;
+- requests for human intervention.
+
+---
+
+### 9.4 Enterprise collaboration systems
+
+Supported:
+
+- Slack;
+- Microsoft Teams;
+- Feishu / Lark;
+- WeCom;
+- email;
+- Google Calendar;
+- Outlook Calendar;
+- in-house notification systems.
+
+---
+
+### 9.5 Enterprise data systems
+
+Reachable through governed connectors:
+
+- databases;
+- data warehouses;
+- CRM;
+- ERP;
+- ticketing systems;
+- knowledge bases;
+- document systems;
+- BI platforms.
+
+---
+
+## 10. Permissions and Security
+
+### 10.1 Identity types
+
+Uniformly supported:
 
 ```
 Identity
@@ -1730,401 +1732,401 @@ Identity
 └── External Integration
 ```
 
-### 10.2 权限模型
+### 10.2 Permission model
 
-建议采用：
+Recommended:
 
-- RBAC；
-- ABAC；
-- Capability；
-- Project Scope；
-- Resource Scope。
+- RBAC;
+- ABAC;
+- Capability;
+- Project Scope;
+- Resource Scope.
 
-### 10.3 Agent 权限
+### 10.3 Agent permissions
 
-Agent 权限必须独立于人类用户配置。
+Agent permissions must be configured independently of any human user's.
 
-例如：
+For example:
 
 ```
 Review Agent
 
-允许：
-- 读取代码
-- 读取 PR
-- 创建 Review Comment
+Allowed:
+- read code
+- read PRs
+- create review comments
 
-禁止：
-- 合并代码
-- 修改生产配置
+Denied:
+- merge code
+- change production configuration
 ```
 
-### 10.4 高风险操作
+### 10.4 High-risk operations
 
-以下操作默认需要额外治理：
+The following require extra governance by default:
 
-- 修改生产数据；
-- 删除资源；
-- 修改权限；
-- 访问敏感数据；
-- 对外发送信息；
-- 执行付款；
-- 发布生产环境；
-- 修改安全策略；
-- 使用高成本资源。
+- modifying production data;
+- deleting resources;
+- changing permissions;
+- accessing sensitive data;
+- sending information outside the company;
+- executing payments;
+- releasing to production;
+- changing security policies;
+- using expensive resources.
 
-### 10.5 审计日志
+### 10.5 Audit log
 
-所有关键行为需要记录：
+Every significant action must record:
 
-- 操作者；
-- 身份类型；
-- 时间；
-- 输入；
-- 操作；
-- 目标资源；
-- Policy 判断；
-- 审批记录；
-- 执行结果；
-- 失败原因；
-- 关联项目和任务。
+- the actor;
+- the identity type;
+- the timestamp;
+- the input;
+- the operation;
+- the target resource;
+- the Policy verdict;
+- the approval record;
+- the result;
+- the failure cause;
+- the associated project and task.
 
 ---
 
-## 十一、通知与升级机制
+## 11. Notifications and Escalation
 
-系统通知应围绕"需要行动"设计，而不是发送大量 Agent 日志。
+Notifications should be designed around "something needs your action," not around shipping a firehose of Agent logs.
 
-### 通知类型
+### Notification types
 
-- 需要决策；
-- 决策即将超时；
-- 项目风险升高；
-- Agent 连续失败；
-- 任务长期阻塞；
-- 成本即将超限；
-- 关键里程碑完成；
-- 发布异常；
-- 人工接管请求；
-- 业务验收请求。
+- a decision is needed;
+- a decision is about to time out;
+- project risk has risen;
+- an Agent is failing repeatedly;
+- a task has been blocked for a long time;
+- cost is approaching its limit;
+- a key milestone completed;
+- a release anomaly;
+- a request for human takeover;
+- a request for business acceptance.
 
-### 升级规则
+### Escalation rules
 
-例如：
+For example:
 
 ```
-决策等待 4 小时
-→ 提醒责任人
+Decision waiting 4 hours
+→ remind the accountable person
 
-等待 8 小时
-→ 提醒项目负责人
+Waiting 8 hours
+→ remind the project lead
 
-等待 24 小时
-→ 提醒上级并暂停关键路径
+Waiting 24 hours
+→ notify their manager and pause the critical path
 ```
 
 ---
 
-## 十二、MVP 产品范围
+## 12. MVP Scope
 
-第一版不建议立即实现完整 Autonomous Project OS，而应验证最核心闭环。
+The first release should not attempt the complete Autonomous Project OS. It should prove out the core loop.
 
-### 12.1 MVP 核心目标
+### 12.1 MVP goal
 
-验证以下假设：
+Validate this hypothesis:
 
-> 用户录入一个需求后，Project Agent 能够将其转化为可执行计划，分配给人或 Agent，并在关键节点请求人类决策，最终推动需求完成。
+> After a user files one requirement, the Project Agent can turn it into an executable plan, assign it to people or Agents, request human decisions at the key points, and ultimately drive the requirement to completion.
 
-### 12.2 MVP 必须包含
+### 12.2 What the MVP must include
 
-#### 项目与需求
+#### Projects and requirements
 
-- 创建项目；
-- 录入需求；
-- AI 结构化需求；
-- AI 澄清问题；
-- 人类确认需求。
+- create a project;
+- file a requirement;
+- AI requirement structuring;
+- AI clarifying questions;
+- human requirement sign-off.
 
-#### 智能规划
+#### Intelligent planning
 
-- AI 拆解任务；
-- 生成依赖；
-- 生成执行计划；
-- 人类批准计划。
+- AI work breakdown;
+- dependency generation;
+- execution plan generation;
+- human plan approval.
 
-#### 智能看板
+#### Autonomous Board
 
-- 六阶段看板；
-- Work Item；
-- Human / Agent Assignee；
-- Human Gate 标识；
-- 自动状态更新；
-- 阻塞状态。
+- the six-stage board;
+- Work Items;
+- Human / Agent assignee;
+- Human Gate markers;
+- automatic status updates;
+- blocked state.
 
-#### Agent 管理
+#### Agent management
 
-- 注册 Agent；
-- 配置能力和权限；
-- 分配任务；
-- Agent Run；
-- 执行事件；
-- 产物回传；
-- 重试和失败。
+- register an Agent;
+- configure capabilities and permissions;
+- assign tasks;
+- Agent Runs;
+- execution events;
+- artifact return;
+- retries and failures.
 
 #### Human Decision Center
 
-- 决策卡片；
-- Approve；
-- Approve with Constraints；
-- Request Revision；
-- Take Over；
-- Reject。
+- decision cards;
+- Approve;
+- Approve with Constraints;
+- Request Revision;
+- Take Over;
+- Reject.
 
-#### Policy Engine 基础版
+#### Policy Engine, basic version
 
-支持配置：
+Configurable rules for:
 
-- 哪些任务自动执行；
-- 哪些任务需要审批；
-- 失败多少次后请求人工；
-- 哪些环境必须审批。
+- which tasks run automatically;
+- which tasks need approval;
+- how many failures trigger a request for a human;
+- which environments always require approval.
 
-#### 基础 Analytics
+#### Basic Analytics
 
-- 项目进度；
-- Lead Time；
-- Blocked Time；
-- Agent 成功率；
-- 人工介入次数；
-- Agent 成本。
+- project progress;
+- Lead Time;
+- Blocked Time;
+- Agent success rate;
+- number of human interventions;
+- Agent cost.
 
-#### 第一批集成
+#### First wave of integrations
 
-建议优先：
+Suggested priority:
 
-- GitHub；
-- 一个 Code Agent；
-- Slack 或飞书；
-- Jira 或 Plane。
-
----
-
-## 十三、MVP 暂不实现
-
-第一版暂不优先：
-
-- 完整 Agent Marketplace；
-- 复杂财务预算；
-- 多层企业组织；
-- 完整知识图谱；
-- 高度自定义 BI；
-- 大规模跨项目资源调度；
-- 全量 ERP / CRM 集成；
-- 复杂低代码 Workflow Designer；
-- 完全自治的生产发布；
-- Agent 自动修改 Policy。
-
-这些能力可以在验证核心闭环后逐步增加。
+- GitHub;
+- one Code Agent;
+- Slack or Feishu;
+- Jira or Plane.
 
 ---
 
-## 十四、核心页面
+## 13. Out of Scope for the MVP
 
-MVP 建议优先设计以下页面：
+Not a priority for the first release:
 
-1. 项目列表；
-2. 项目总览；
-3. 需求录入与 AI 澄清页；
-4. 项目计划确认页；
-5. Autonomous Board；
-6. Work Item 详情页；
-7. Execution Graph；
-8. Agent Workspace；
-9. Agent Run 详情页；
-10. Human Decision Center；
-11. 决策详情页；
-12. 项目 Analytics；
-13. Policy 配置页；
-14. 项目集成设置页。
+- a full Agent Marketplace;
+- elaborate financial budgeting;
+- multi-level enterprise org structures;
+- a complete knowledge graph;
+- highly customizable BI;
+- large-scale cross-project resource scheduling;
+- full ERP / CRM integration;
+- a complex low-code Workflow Designer;
+- fully autonomous production releases;
+- Agents editing Policy on their own.
+
+These can be added incrementally once the core loop is proven.
 
 ---
 
-## 十五、关键产品差异
+## 14. Core Pages
 
-### 对比传统 Kanban
+The MVP should design these pages first:
 
-传统 Kanban：
-
-- 用户创建任务；
-- 用户分配任务；
-- 用户更新状态；
-- 用户发现阻塞；
-- 用户推动流程。
-
-Autonomous Project OS：
-
-- Agent 理解需求；
-- Agent 生成计划；
-- Agent 分配任务；
-- Agent 执行任务；
-- 系统自动更新状态；
-- Agent 识别和恢复阻塞；
-- 人类只处理关键决策。
-
-### 对比 Jira + AI 助手
-
-Jira + AI 助手主要是：
-
-> AI 帮助用户更快使用 Jira。
-
-Autonomous Project OS 是：
-
-> Agent 本身成为项目执行者和协调者，系统围绕 Agent 的运行、治理和协作重新设计。
-
-### 对比单个 Code Agent
-
-单个 Code Agent 主要解决：
-
-> 如何完成一个研发任务。
-
-Autonomous Project OS 解决：
-
-> 如何将业务需求持续转化为一组可治理、可追踪、可协同的 Human–Agent 执行流程。
+1. project list;
+2. project overview;
+3. requirement intake and AI clarification;
+4. plan confirmation;
+5. Autonomous Board;
+6. Work Item detail;
+7. Execution Graph;
+8. Agent Workspace;
+9. Agent Run detail;
+10. Human Decision Center;
+11. decision detail;
+12. project Analytics;
+13. Policy configuration;
+14. project integration settings.
 
 ---
 
-## 十六、产品价值
+## 15. Key Differentiators
 
-### 对企业
+### Versus a traditional Kanban
 
-- 降低项目协调成本；
-- 提升项目状态透明度；
-- 减少手工更新看板；
-- 缩短需求到交付时间；
-- 提升 Agent 使用的可控性；
-- 建立企业级 Agent 治理体系；
-- 沉淀可复用项目知识；
-- 降低 Agent 失控和越权风险。
+Traditional Kanban:
 
-### 对项目经理
+- the user creates tasks;
+- the user assigns tasks;
+- the user updates status;
+- the user notices blockers;
+- the user pushes the process along.
 
-项目经理从：
+Autonomous Project OS:
 
-- 搬运任务；
-- 催进度；
-- 更新状态；
-- 收集日报；
-- 协调普通依赖；
+- the Agent understands the requirement;
+- the Agent generates the plan;
+- the Agent assigns the work;
+- the Agent executes the work;
+- the system updates status automatically;
+- the Agent detects blockers and recovers from them;
+- humans handle only the decisions that matter.
 
-转变为：
+### Versus Jira plus an AI assistant
 
-- 定义目标；
-- 设计规则；
-- 管理风险；
-- 处理关键例外；
-- 优化项目系统。
+Jira plus an AI assistant is essentially:
 
-### 对 OPC
+> AI helps the user use Jira faster.
 
-- 用一个人管理多个 Agent；
-- 将个人能力扩展为虚拟团队；
-- 降低项目管理负担；
-- 快速把想法转化为执行计划；
-- 在关键风险上保持最终控制。
+Autonomous Project OS is:
 
----
+> The Agent itself becomes the executor and coordinator, and the system is redesigned around how Agents run, are governed, and work together.
 
-## 十七、核心指标
+### Versus a single Code Agent
 
-### 业务指标
+A single Code Agent answers:
 
-- 项目创建数量；
-- 活跃项目数量；
-- 项目按时交付率；
-- 需求到交付时间；
-- 用户留存率；
-- 企业付费转化率。
+> How do I get one engineering task done?
 
-### 效率指标
+Autonomous Project OS answers:
 
-- 自动拆解任务比例；
-- 自动分配比例；
-- 自动更新状态比例；
-- Agent 完成工作比例；
-- 人工协调时间下降比例；
-- 平均决策处理时间；
-- 项目阻塞时间下降比例。
-
-### Agent 指标
-
-- Agent 任务成功率；
-- 首次成功率；
-- 人工接管率；
-- 平均任务成本；
-- 平均重试次数；
-- Review 通过率。
-
-### 治理指标
-
-- 高风险操作审批覆盖率；
-- 未授权操作数量；
-- 决策可追溯率；
-- 生产操作审计覆盖率；
-- Policy 自动处理比例；
-- 重复人工审批减少比例。
+> How do I continuously turn business requirements into governed, traceable, collaborative Human–Agent execution flows?
 
 ---
 
-## 十八、产品边界
+## 16. Product Value
 
-Autonomous Project OS 不负责取代所有专业工具。
+### For the enterprise
 
-它不需要重新实现：
+- lower project coordination cost;
+- more transparent project state;
+- less manual board updating;
+- shorter time from requirement to delivery;
+- more controllable Agent usage;
+- an enterprise-grade Agent governance system;
+- reusable project knowledge that actually accumulates;
+- lower risk of Agents going off the rails or exceeding their authority.
 
-- 代码托管；
-- CI/CD；
-- 文档编辑器；
-- 企业聊天；
-- 数据仓库；
-- 完整 ERP；
-- 完整 CRM。
+### For the project manager
 
-它的核心角色是：
+The project manager moves from:
 
-> 连接项目目标、人员、Agent、工具、知识与决策，并持续驱动项目 Flow。
+- moving tickets around;
+- chasing progress;
+- updating status;
+- collecting daily reports;
+- coordinating routine dependencies;
 
-因此，它更像企业项目的控制面和运行时，而不是所有执行能力的集合。
+to:
+
+- defining goals;
+- designing rules;
+- managing risk;
+- handling the important exceptions;
+- improving the project system itself.
+
+### For the OPC
+
+- one person managing many Agents;
+- an individual's capability extended into a virtual team;
+- less project management overhead;
+- ideas turned into execution plans quickly;
+- final control retained where the risk is.
 
 ---
 
-## 十九、产品总结
+## 17. Key Metrics
 
-Autonomous Project OS 不是一个增加了 AI 功能的传统看板，也不是一个单纯负责自动拆任务的项目管理助手。
+### Business metrics
 
-它是一套面向 Human–Agent 混合团队的项目运行系统。
+- projects created;
+- active projects;
+- on-time delivery rate;
+- requirement-to-delivery time;
+- user retention;
+- enterprise paid conversion.
 
-在这套系统中：
+### Efficiency metrics
 
-- Requirement 定义需要实现的业务价值；
-- Project Agent 负责规划和持续推进；
-- Human 与 Agent 共同成为执行主体；
-- Flow Engine 管理真实的项目流动；
-- Policy Engine 定义 Agent 的自治边界；
-- Human Decision Center 承接关键决策；
-- Agent Workspace 管理智能体执行过程；
-- Knowledge Center 将项目经验沉淀为组织资产；
-- Delivery Analytics 持续发现和优化交付瓶颈。
+- share of tasks broken down automatically;
+- share of assignments made automatically;
+- share of status updates made automatically;
+- share of work completed by Agents;
+- reduction in manual coordination time;
+- average decision handling time;
+- reduction in project blocked time.
 
-产品最终希望实现的，不是让人类退出项目，而是重新分配人类与 Agent 的职责：
+### Agent metrics
+
+- Agent task success rate;
+- first-pass success rate;
+- human takeover rate;
+- average cost per task;
+- average retries;
+- review pass rate.
+
+### Governance metrics
+
+- approval coverage for high-risk operations;
+- number of unauthorized operations;
+- decision traceability rate;
+- audit coverage for production operations;
+- share of cases Policy handles automatically;
+- reduction in repetitive manual approvals.
+
+---
+
+## 18. Product Boundaries
+
+Autonomous Project OS is not out to replace every specialized tool.
+
+It does not need to reimplement:
+
+- code hosting;
+- CI/CD;
+- document editors;
+- enterprise chat;
+- data warehouses;
+- a full ERP;
+- a full CRM.
+
+Its role is:
+
+> To connect project goals, people, Agents, tools, knowledge, and decisions — and to keep driving project Flow.
+
+So it looks more like the control plane and runtime for enterprise projects than like a collection of every execution capability.
+
+---
+
+## 19. Summary
+
+Autonomous Project OS is not a traditional board with AI features bolted on, and it is not a project assistant whose job is auto-splitting tasks.
+
+It is a project runtime for hybrid Human–Agent teams.
+
+In this system:
+
+- the Requirement defines the business value to be delivered;
+- the Project Agent plans and keeps things moving;
+- Humans and Agents are both executors;
+- the Flow Engine manages the real flow of the project;
+- the Policy Engine defines the boundary of Agent autonomy;
+- the Human Decision Center absorbs the decisions that matter;
+- the Agent Workspace manages how Agents execute;
+- the Knowledge Center turns project experience into an organizational asset;
+- Delivery Analytics keeps finding and removing delivery bottlenecks.
+
+What the product is ultimately after is not humans leaving the project — it is a redistribution of responsibility between humans and Agents:
 
 ```
-Agent：
-规划、拆解、分配、执行、监控、重试、同步、总结
+Agent:
+plan, break down, assign, execute, monitor, retry, sync, summarize
 
-Human：
-定义目标、判断价值、控制风险、处理例外、承担责任、验收结果
+Human:
+define goals, judge value, control risk, handle exceptions, carry accountability, accept results
 ```
 
-Autonomous Project OS 的核心价值可以总结为：
+The core value of Autonomous Project OS, in one line:
 
-> 让项目能够自主向前流动，同时确保人类始终掌握目标、风险与最终决策权。
+> Let the project keep flowing forward on its own, while humans keep hold of the goals, the risk, and the final say.

@@ -1,33 +1,35 @@
 # 06 Agent Protocol
 
-产品文档 9.3 要求「提供统一 Agent Protocol」，统一描述：Agent 能力、任务输入、执行状态、事件、产物、权限、成本、错误、人工介入请求。
+*[中文版本 / Chinese version](06-agent-protocol.zh.md)*
 
-本文档定义这个协议，以及如何把 Claude Code、Codex、OpenHands、MCP Server、自定义 Runtime 适配进来。
+Product doc 9.3 calls for "a unified Agent Protocol" that describes, in one place: agent capabilities, task input, execution status, events, artifacts, permissions, cost, errors, and requests for human intervention.
+
+This document defines that protocol, and how Claude Code, Codex, OpenHands, MCP servers, and custom runtimes get adapted into it.
 
 ---
 
-## 1. 为什么需要统一协议
+## 1. Why a unified protocol
 
-不做统一协议的话，每接一个 Agent 就要在 Flow Engine、看板、Run 详情页、Analytics 里各写一份特判。四五个 Agent 之后就无法维护。
+Without one, every agent you connect needs its own special case in the Flow Engine, on the board, in the Run detail page, and in Analytics. Four or five agents in, that is no longer maintainable.
 
-但统一协议有个绕不开的现实：**不同运行时的能力天差地别**。
+But there is one fact a unified protocol cannot design its way around: **runtimes differ enormously in what they can actually do**.
 
-| 能力 | Claude Code | 通用 MCP | 自建 HTTP Agent | 某些封闭 SaaS Agent |
+| Capability | Claude Code | Generic MCP | Self-built HTTP agent | Some closed SaaS agents |
 | --- | --- | --- | --- | --- |
-| 流式事件 | ✅ | ✅ | 看实现 | 常常只有最终结果 |
-| 工具调用可见 | ✅ | ✅ | 看实现 | ❌ |
-| 成本上报 | ✅ | 部分 | 看实现 | ❌ |
-| 执行中注入约束 | ✅ | 部分 | 看实现 | ❌ |
-| 主动请求人工介入 | 部分 | ❌ | 看实现 | ❌ |
-| 失败原因自述 | ✅ | ❌ | 看实现 | ❌ |
+| Streaming events | ✅ | ✅ | Depends on the implementation | Often only the final result |
+| Tool calls visible | ✅ | ✅ | Depends on the implementation | ❌ |
+| Cost reporting | ✅ | Partial | Depends on the implementation | ❌ |
+| Injecting constraints mid-run | ✅ | Partial | Depends on the implementation | ❌ |
+| Asking for human help on its own | Partial | ❌ | Depends on the implementation | ❌ |
+| Self-reported failure reason | ✅ | ❌ | Depends on the implementation | ❌ |
 
-**因此协议的核心设计不是"规定所有 Agent 必须做什么"，而是"协商每个 Agent 能做什么，并对缺失能力定义明确的降级行为"。**
+**So the heart of the protocol is not "here is what every agent must do." It is "negotiate what each agent can do, and define an explicit degraded behavior for every capability it lacks."**
 
-页面文档 14 §5.4 要求界面上展示兼容性检查结果与降级说明——不静默降级，让用户知道自己的 Agent 少了什么。
+Page doc 14 §5.4 requires the UI to display the compatibility check and the degradation notes — never degrade silently; let the user see what their agent is missing.
 
 ---
 
-## 2. 协议概览
+## 2. Protocol at a glance
 
 ```
         APOS                                        Agent Runtime
@@ -40,26 +42,26 @@
           │──────────────────────────────────────────────▶│
           │◀────────────── { runId, accepted }────────────│
           │                                               │
-          │  ③ 事件流（三选一：SSE 拉 / Webhook 推 / 轮询） │
+          │  ③ Event stream (one of SSE / webhook / poll) │
           │◀═════════════ RunEvent* ══════════════════════│
           │                                               │
           │  ④ POST /runs/{id}/control  { pause | resume | │
           │     terminate | add_constraint }              │
           │──────────────────────────────────────────────▶│
           │                                               │
-          │  ⑤ 人工介入请求（可选能力）                     │
+          │  ⑤ Intervention request (optional capability) │
           │◀────────────── InterventionRequest ───────────│
           │──────────────── InterventionResponse ────────▶│
           │                                               │
 ```
 
-**传输**：所有消息 JSON。事件流优先 SSE，不支持则 webhook 回调，都不支持则轮询（降级，延迟高）。
+**Transport**: every message is JSON. For the event stream, SSE is preferred; if the runtime cannot do SSE, a webhook callback; if it can do neither, polling (degraded, high latency).
 
 ---
 
-## 3. 能力清单（Capability Manifest）
+## 3. Capability Manifest
 
-Agent 运行时接入时上报，APOS 存入 `agent_runtimes.capabilities`。
+Reported by the agent runtime when it is connected; APOS stores it in `agent_runtimes.capabilities`.
 
 ```typescript
 interface CapabilityManifest {
@@ -69,21 +71,21 @@ interface CapabilityManifest {
     version: string;
   };
 
-  // ★ 能力协商的核心
+  // ★ The heart of capability negotiation
   features: {
-    streamingEvents: boolean;       // 流式事件
-    toolCallVisibility: boolean;    // 工具调用可见
-    reasoningVisibility: boolean;   // 推理过程可见
-    costReporting: boolean;         // 成本上报
+    streamingEvents: boolean;       // Streaming events
+    toolCallVisibility: boolean;    // Tool calls are visible
+    reasoningVisibility: boolean;   // Reasoning is visible
+    costReporting: boolean;         // Cost reporting
     tokenReporting: boolean;
-    progressReporting: boolean;     // 步骤进度
-    runtimeConstraints: boolean;    // ★ 执行中注入约束
-    interventionRequest: boolean;   // ★ 主动请求人工介入
-    selfReportOnFailure: boolean;   // ★ 失败原因自述
+    progressReporting: boolean;     // Step progress
+    runtimeConstraints: boolean;    // ★ Constraints can be injected mid-run
+    interventionRequest: boolean;   // ★ Can ask for human help on its own
+    selfReportOnFailure: boolean;   // ★ Explains its own failures
     pause: boolean;
     terminate: boolean;
-    statusQuery: boolean;           // ★ 支持主动查询状态（孤儿接管需要）
-    subAgentDelegation: boolean;    // 委派子 Agent
+    statusQuery: boolean;           // ★ Status can be queried on demand (needed to reclaim orphans)
+    subAgentDelegation: boolean;    // Delegates to sub-agents
     artifactUpload: boolean;
   };
 
@@ -92,7 +94,7 @@ interface CapabilityManifest {
     heartbeatIntervalSeconds: number | null;
   };
 
-  // 该运行时声明支持的工具
+  // Tools this runtime declares support for
   tools: Array<{
     name: string;
     description: string;
@@ -109,42 +111,42 @@ interface CapabilityManifest {
 }
 ```
 
-### 3.1 降级矩阵
+### 3.1 Degradation matrix
 
-每个缺失能力对应一个明确的降级行为。**这张表是协议设计的核心产出**，页面文档 14 §5.4 直接展示它。
+Every missing capability maps to one explicit degraded behavior. **This table is the central output of the protocol design**; page doc 14 §5.4 renders it directly.
 
-| 缺失能力 | 降级行为 | 用户可见影响 |
+| Missing capability | Degraded behavior | What the user sees |
 | --- | --- | --- |
-| `streamingEvents` | 只在 Run 结束时写一条汇总事件 | Run 详情页无实时执行流；卡片无进度条 |
-| `toolCallVisibility` | 执行流只有开始/结束 | 排障困难，页面提示「该 Agent 不上报执行细节」 |
-| `costReporting` | 按 token × 单价估算；无 token 则按时长粗估 | 成本标注「估算值」 |
-| `progressReporting` | 不显示百分比，只显示已耗时 | 卡片显示「执行中 12m」而非进度条 |
-| `runtimeConstraints` | 「增加约束」按钮置灰，提示改用「终止并补充上下文重跑」 | 功能不可用但有替代路径 |
-| `interventionRequest` | Agent 无法主动求助；靠超时与失败检测兜底 | 卡住的任务发现更晚 |
-| `selfReportOnFailure` | 错误 Tab 只显示原始错误 | 排障效率降低 |
-| `pause` | 暂停降级为终止（需二次确认说明差异） | 会丢失执行中的进度 |
-| `statusQuery` | 孤儿 Run 无法探测真实状态，超时后直接判失败 | 可能误判仍在运行的 Run |
-| `terminate` | 只能标记本地状态，外部可能仍在运行 | **有成本泄漏风险，页面必须红字警示** |
+| `streamingEvents` | Write a single summary event when the run ends | No live execution stream on the Run detail page; no progress bar on the card |
+| `toolCallVisibility` | The execution stream has only a start and an end | Hard to debug; the page says 「该 Agent 不上报执行细节」 ("this agent does not report execution detail") |
+| `costReporting` | Estimate from tokens × unit price; with no tokens either, estimate roughly from elapsed time | Cost is labeled 「估算值」 ("estimated") |
+| `progressReporting` | No percentage, only elapsed time | The card reads 「执行中 12m」 ("running, 12m") instead of showing a progress bar |
+| `runtimeConstraints` | The "Add constraint" button is grayed out, with a hint to use "terminate, add context, rerun" instead | Feature unavailable, but there is an alternate path |
+| `interventionRequest` | The agent cannot ask for help; timeouts and failure detection are the only backstop | Stuck tasks are noticed later |
+| `selfReportOnFailure` | The Error tab shows only the raw error | Debugging gets slower |
+| `pause` | Pause degrades to terminate (needs a second confirmation explaining the difference) | In-flight progress is lost |
+| `statusQuery` | An orphaned run's true state cannot be probed; after the timeout it is simply marked failed | A run that is still going may be misjudged |
+| `terminate` | Only the local state can be marked; the external run may keep going | **Risk of cost leakage — the page must warn in red** |
 
-**`terminate` 缺失是最严重的**：意味着 APOS 无法真正停止一个失控的 Agent。这类运行时应当在注册时警告，并强制配置更严格的成本上限。
+**A missing `terminate` is the most serious of these**: it means APOS cannot actually stop a runaway agent. A runtime like this should raise a warning at registration and be forced onto stricter cost ceilings.
 
 ---
 
-## 4. 任务派发
+## 4. Task dispatch
 
 ```typescript
 interface TaskDispatch {
   runId: string;
-  idempotencyKey: string;          // ★ 重复派发保护
+  idempotencyKey: string;          // ★ Protection against duplicate dispatch
 
   goal: {
     title: string;
     description: string;
     acceptanceCriteria: Array<{ id: string; text: string }>;
-    constraints: Array<{           // 人类附加的约束
+    constraints: Array<{           // Constraints attached by a human
       type: string;
       value: unknown;
-      description: string;         // 给 Agent 读的自然语言版本
+      description: string;         // The natural-language version, for the agent to read
     }>;
   };
 
@@ -152,19 +154,19 @@ interface TaskDispatch {
     kind: 'requirement' | 'knowledge' | 'file' | 'previous_run' | 'decision' | 'external';
     ref: string;
     title: string;
-    content?: string;              // 内联小内容
-    uri?: string;                  // 大内容给 URI，让 Agent 自取
+    content?: string;              // Small content, inlined
+    uri?: string;                  // Large content ships as a URI for the agent to fetch
     priority: 'must_read' | 'reference';
   }>;
 
-  // ★ 权限以显式清单下发，不依赖运行时自己的配置
+  // ★ Permissions ship as an explicit list; we never rely on the runtime's own config
   permissions: {
     allowedTools: string[];
     deniedTools: string[];
     resourceScopes: Array<{ kind: string; ref: string; access: 'read' | 'write' | 'none' }>;
   };
 
-  // ★ 会把这次工作拦下转人工的 Policy 规则，派发时算好、已渲染成人话
+  // ★ Policy rules that would stop this work for human review — computed at dispatch, already rendered into plain language
   policyGates: Array<{ name: string; explanation: string }>;
 
   limits: {
@@ -177,35 +179,35 @@ interface TaskDispatch {
   modelConfig: Record<string, unknown> | null;
 
   callback: {
-    eventsUrl: string;             // webhook 模式的回调地址
-    token: string;                 // 短期令牌，仅对本 Run 有效
+    eventsUrl: string;             // Callback address for webhook mode
+    token: string;                 // Short-lived token, valid only for this run
   };
 }
 ```
 
-**权限显式下发**是关键安全设计。不能假设运行时侧配置正确——APOS 是权限的唯一真相来源，每次派发都带上完整清单。适配器负责把它翻译成运行时能理解的形式（MCP 的工具过滤、Claude Code 的 allowedTools 等）。
+**Shipping permissions explicitly** is the key security decision here. You cannot assume the runtime side is configured correctly — APOS is the single source of truth for permissions, and every dispatch carries the full list. It is the adapter's job to translate that into whatever form the runtime understands (MCP's tool filtering, Claude Code's allowedTools, and so on).
 
-**幂等**：运行时必须对相同 `idempotencyKey` 返回已存在的 Run，而不是启动新的。不支持的运行时由适配器在 APOS 侧做去重（记录 key → runId 映射）。
+**Idempotency**: for a repeated `idempotencyKey` the runtime must return the run that already exists rather than starting a new one. For runtimes that cannot do this, the adapter deduplicates on the APOS side (recording a key → runId mapping).
 
-**`policyGates` 是告知，不是授权。** Agent 看不到 Policy 引擎——评估发生在 Work Item 的状态流转上（[05 Policy Engine](05-policy-engine.md) §3），是平台侧的事，它既不能遵守也不能违反。不告诉它的代价是它可能把整个 token 预算花在一条注定停在人工审批前的路上，而那道闸门在它结束**之后**才生效，它连失败反馈都拿不到。
+**`policyGates` informs; it does not authorize.** The agent never sees the Policy Engine — evaluation happens on the Work Item's state transitions ([05 Policy Engine](05-policy-engine.md) §3), which is platform business; the agent can neither comply with it nor violate it. What it costs to keep quiet is that the agent may spend its entire token budget going down a path that is destined to stop at a human approval gate — a gate that takes effect *after* it finishes, so it does not even get the failure as feedback.
 
-因此这个字段：
+Hence this field is:
 
-- **在派发时算好**（`selectPolicyGates`，`packages/domain/src/policy/gates.ts`），用的是那次流转刚算出来的 `contextSnapshot`——与写进 `policy.evaluated` 事件的是同一份，警告与实际判定不会漂移；
-- **只留会卡住人的规则**，且只留在本次执行中**还有可能命中**的（已被固定 fact 排除的不提，否则清单一长真正会命中的那条就被稀释了）；
-- **下发渲染好的字符串**而非规则 AST——`@apos/agent-runtimes` 只依赖 `@apos/contracts`，取不到 domain 的 `explainPolicy()`；
-- **措辞是「会被拦下」而不是「你不许做」**。拦截由 `transition()` 执行，与 Agent 读没读无关；写成禁令会让它以为自己是执行方，于是可能为了「合规」绕开正确解法，或者做了却瞒着不说。要的恰恰相反：照常做完，然后在最终回复里点名。
+- **Computed at dispatch** (`selectPolicyGates`, `packages/domain/src/policy/gates.ts`), from the `contextSnapshot` that transition just produced — the same snapshot written into the `policy.evaluated` event, so the warning and the actual ruling cannot drift apart;
+- **Limited to rules that would actually stop a human**, and only those that could **still fire** during this execution (anything already ruled out by fixed facts is left off — a long list dilutes the one rule that will really hit);
+- **Shipped as a rendered string** rather than a rule AST — `@apos/agent-runtimes` depends only on `@apos/contracts` and cannot reach domain's `explainPolicy()`;
+- **Worded as "this will be held for review," not "you are not allowed to do this."** The interception is carried out by `transition()`, whether or not the agent ever read the field; phrasing it as a prohibition makes the agent believe it is the enforcer, so it may route around the correct solution in the name of "compliance," or do the thing and then not mention it. What we want is exactly the opposite: do the work as usual, then call it out in the final reply.
 
-规划 Run 的这个字段恒为空数组：Policy 挂在 Work Item 的流转上，而规划跑在建出工作项之前，它没有可流转的对象。
+For planning runs this field is always an empty array: Policy hangs off Work Item transitions, and planning runs before any work items exist — there is nothing to transition.
 
 ---
 
-## 5. 事件
+## 5. Events
 
 ```typescript
 type RunEvent = {
   runId: string;
-  seq: number;                     // 单 Run 内单调递增
+  seq: number;                     // Monotonically increasing within one run
   ts: string;                      // ISO8601
 } & RunEventBody;
 
@@ -221,85 +223,85 @@ type RunEventBody =
   | { type: 'cost'; deltaUsd: number; totalUsd: number;
       tokens: { input: number; output: number; cacheRead: number } }
   | { type: 'intervention_request'; request: InterventionRequest }
-  | { type: 'note'; text: string }              // Agent 的自然语言进展摘要
+  | { type: 'note'; text: string }              // The agent's own natural-language progress note
   | { type: 'error'; error: AgentError }
   | { type: 'run_ended'; outcome: 'completed' | 'failed' | 'terminated';
       summary: string; selfReport?: string };
 ```
 
-### 5.1 事件提升规则
+### 5.1 Event promotion rules
 
-哪些 `run_events` 提升为领域 `events`（[03 事件模型](03-event-model.md) §2）：
+Which `run_events` get promoted to domain `events` ([03 Event model](03-event-model.md) §2):
 
-| RunEvent | → DomainEvent | 后续动作 |
+| RunEvent | → DomainEvent | Follow-on action |
 | --- | --- | --- |
 | `run_started` | `agent_run.started` | — |
-| `artifact` | `artifact.produced` | 写 artifacts 表 |
-| `cost`（累计触及阈值） | `agent_run.cost_threshold_reached` | 可能触发 Policy |
-| `intervention_request` | `decision.created` | 创建决策 |
-| `run_ended: completed` | `agent_run.completed` | **触发 flow.transition** |
-| `run_ended: failed` | `agent_run.failed` | **触发 flow.transition → Recovery** |
-| 其余 | 不提升 | 只写 run_events |
+| `artifact` | `artifact.produced` | Write to the artifacts table |
+| `cost` (cumulative hits a threshold) | `agent_run.cost_threshold_reached` | May trigger Policy |
+| `intervention_request` | `decision.created` | Create a decision |
+| `run_ended: completed` | `agent_run.completed` | **Triggers flow.transition** |
+| `run_ended: failed` | `agent_run.failed` | **Triggers flow.transition → Recovery** |
+| everything else | not promoted | run_events only |
 
-### 5.2 事件顺序与丢失
+### 5.2 Event ordering and loss
 
-- 运行时保证 `seq` 单调递增
-- APOS 收到乱序事件时按 seq 排序落库；发现空洞（收到 5 但没收到 4）时等待 2 秒后标记该 seq 为 `lost` 并继续
-- **`run_ended` 是终态标志**：收到后忽略后续事件（除非 seq 更小的补发）
+- The runtime guarantees `seq` increases monotonically
+- When APOS receives events out of order it sorts by seq before persisting; on a gap (5 arrives but 4 never did) it waits 2 seconds, marks that seq `lost`, and moves on
+- **`run_ended` is the terminal marker**: after it, later events are ignored (unless they are a backfill with a smaller seq)
 
-### 5.3 心跳
+### 5.3 Heartbeat
 
 ```typescript
-// 运行时每 N 秒发一次（N 来自 manifest.transport.heartbeatIntervalSeconds）
+// The runtime sends one every N seconds (N comes from manifest.transport.heartbeatIntervalSeconds)
 { type: 'heartbeat', runId, seq, ts, alive: true }
 ```
 
-APOS 更新 `agent_runs.last_heartbeat_at`。超过 `3 × N`（最少 90s）无心跳视为失联，交给 run-supervisor 处理（[01 架构](01-architecture.md) §3.3）。
+APOS updates `agent_runs.last_heartbeat_at`. No heartbeat for more than `3 × N` (minimum 90s) counts as lost, and run-supervisor takes over ([01 Architecture](01-architecture.md) §3.3).
 
-不支持心跳的运行时：用最后一条事件的时间代替，阈值放宽到 5 分钟。
+For runtimes without heartbeats: use the timestamp of the last event instead, with the threshold relaxed to 5 minutes.
 
 ---
 
-## 6. 错误分类
+## 6. Error classification
 
-**这是整个协议里对产品行为影响最大的部分。** [04 Flow Engine](04-flow-engine.md) §6.1 的恢复策略完全依赖错误分类——分类错了，恢复策略就是无差别重试，既烧钱又解决不了问题。
+**This is the part of the protocol with the largest effect on product behavior.** The recovery strategies in [04 Flow Engine](04-flow-engine.md) §6.1 rest entirely on error classification — get the class wrong and recovery becomes indiscriminate retrying, which burns money without fixing anything.
 
 ```typescript
 type ErrorClass =
-  | 'context_insufficient'    // 缺少必要信息，补充上下文后可能成功
-  | 'capability_mismatch'     // 任务超出 Agent 能力，换 Agent
-  | 'tool_failure'            // 工具调用失败，可重试
-  | 'permission_denied'       // 权限不足，重试无用，需人类决策
-  | 'external_unavailable'    // 外部服务不可用，退避重试
-  | 'timeout'                 // 超时，考虑拆分任务
-  | 'budget_exceeded'         // 成本超限，需人类决策
-  | 'invalid_task'            // 任务描述自相矛盾/不可执行，回到需求或计划
-  | 'runtime_error'           // 运行时自身故障
+  | 'context_insufficient'    // Missing information; may succeed once context is added
+  | 'capability_mismatch'     // Task is beyond this agent; switch agents
+  | 'tool_failure'            // Tool call failed; retriable
+  | 'permission_denied'       // Insufficient permission; retrying is pointless, a human must decide
+  | 'external_unavailable'    // External service down; retry with backoff
+  | 'timeout'                 // Timed out; consider splitting the task
+  | 'budget_exceeded'         // Over the cost ceiling; a human must decide
+  | 'invalid_task'            // Task description is self-contradictory or unworkable; back to the requirement or plan
+  | 'runtime_error'           // The runtime itself broke
   | 'unknown';
 
 interface AgentError {
   class: ErrorClass;
-  message: string;             // 面向工程师
-  detail?: unknown;            // 堆栈等
-  retriable: boolean;          // 运行时的建议
-  // ★ 面向人类的自述：为什么卡住、需要什么
+  message: string;             // For engineers
+  detail?: unknown;            // Stack trace, etc.
+  retriable: boolean;          // The runtime's own suggestion
+  // ★ For humans: why it is stuck and what it needs
   selfReport?: string;
 }
 ```
 
-**`selfReport` 的价值**（页面文档 09 §5.7）：
+**Why `selfReport` matters** (page doc 09 §5.7):
 
-> "我需要 orders 表的结构定义来设计查询索引，但在 order-service 仓库中未找到 migration 或 schema 文件。可能在其他仓库或由 DBA 单独维护。"
+> "I need the schema of the orders table to design the query index, but I could not find a migration or schema file in the order-service repo. It may live in another repo, or be maintained separately by a DBA."
 
-这一段比堆栈有用得多——它直接告诉人类该补什么。
+That paragraph is far more useful than a stack trace — it tells a human exactly what to supply.
 
-**不支持分类的运行时**：适配器用启发式规则从错误消息推断（正则匹配常见模式），并标注 `classificationSource: 'inferred'`。推断结果不可靠，因此这类 Agent 的恢复策略应当更保守（更早转人工）。
+**Runtimes that cannot classify**: the adapter infers a class heuristically from the error message (regex matching on common patterns) and marks `classificationSource: 'inferred'`. Inferred results are unreliable, so recovery for these agents should be more conservative (escalate to a human sooner).
 
 ---
 
-## 7. 人工介入请求
+## 7. Human intervention requests
 
-产品文档 9.3 明确列出「人工介入请求」是协议要素。这是 Agent 主动说"我需要人帮忙"的通道。
+Product doc 9.3 lists "human intervention request" as a protocol element. This is the channel through which an agent says, on its own, "I need help."
 
 ```typescript
 interface InterventionRequest {
@@ -314,7 +316,7 @@ interface InterventionRequest {
     consequence: string;
   }>;
   recommendation?: { optionId: string; confidence: number; rationale: string };
-  urgency: 'blocking' | 'can_continue';   // 是否阻塞执行
+  urgency: 'blocking' | 'can_continue';   // Whether execution is blocked
   context: unknown;
 }
 
@@ -327,13 +329,13 @@ interface InterventionResponse {
 }
 ```
 
-**APOS 侧处理**：收到请求 → 创建 Decision（type 由 reason 映射）→ 进入决策中心 → 人类处理 → 把结果作为 `InterventionResponse` 回传。
+**On the APOS side**: request arrives → create a Decision (type mapped from reason) → it lands in the Decision Center → a human handles it → the outcome goes back as an `InterventionResponse`.
 
-`urgency: 'can_continue'` 时 Agent 继续执行（比如"我用了默认值，你确认下"），`blocking` 时 Run 进入 `paused`。
+With `urgency: 'can_continue'` the agent keeps working (e.g. "I used a default value, please confirm"); with `blocking` the run enters `paused`.
 
 ---
 
-## 8. 控制指令
+## 8. Control commands
 
 ```typescript
 type ControlCommand =
@@ -343,63 +345,63 @@ type ControlCommand =
   | { action: 'add_constraint'; constraint: { type: string; value: unknown; description: string } };
 ```
 
-**`add_constraint` 的语义**（页面文档 09 §11 待确认问题 3 的答案）：
+**What `add_constraint` means** (the answer to open question 3 in page doc 09 §11):
 
-约束注入到 Agent 的下一轮上下文，**不重启 Run、不回滚已完成的步骤**。运行时收到后应当：
+The constraint is injected into the agent's next turn of context. It **does not restart the run and does not roll back completed steps**. On receiving it, the runtime should:
 
-1. 在当前步骤结束后应用
-2. 回一条 `note` 事件确认已接收（让用户看到"Agent 收到了"）
-3. 后续行为遵守该约束
+1. Apply it after the current step finishes
+2. Send back a `note` event acknowledging receipt (so the user can see "the agent got it")
+3. Honor the constraint from then on
 
-页面明确提示「Agent 将在当前步骤结束后应用该约束（约 40s 后生效），已完成的步骤不会回滚」。
+The page states this explicitly: 「Agent 将在当前步骤结束后应用该约束（约 40s 后生效），已完成的步骤不会回滚」 ("the agent will apply this constraint after the current step ends, roughly 40s from now; completed steps will not be rolled back").
 
 ---
 
-## 9. 适配器
+## 9. Adapters
 
 ```
 packages/agent-runtimes/
 ├── base/
-│   ├── adapter.ts          抽象接口
-│   ├── event-normalizer.ts 各家事件 → RunEvent
-│   ├── error-classifier.ts 启发式错误分类（降级用）
-│   └── idempotency.ts      运行时不支持时的本地去重
+│   ├── adapter.ts          Abstract interface
+│   ├── event-normalizer.ts Each vendor's events → RunEvent
+│   ├── error-classifier.ts Heuristic error classification (for degraded runtimes)
+│   └── idempotency.ts      Local dedup when the runtime cannot do it
 ├── claude-code/
 ├── mcp/
 ├── http-generic/
-└── builtin/                内置的简单 Agent（如需求结构化）
+└── builtin/                Simple built-in agents (e.g. requirement structuring)
 ```
 
-### 9.1 抽象接口
+### 9.1 Abstract interface
 
 ```typescript
 interface AgentRuntimeAdapter {
   getCapabilities(): Promise<CapabilityManifest>;
   dispatch(task: TaskDispatch): Promise<{ externalRunId: string; accepted: boolean }>;
   subscribe(runId: string, onEvent: (e: RunEvent) => Promise<void>): Promise<Unsubscribe>;
-  queryStatus(runId: string): Promise<RunStatus>;        // statusQuery 能力
+  queryStatus(runId: string): Promise<RunStatus>;        // statusQuery capability
   control(runId: string, cmd: ControlCommand): Promise<void>;
   respondIntervention(runId: string, resp: InterventionResponse): Promise<void>;
 }
 ```
 
-### 9.2 各适配器要点
+### 9.2 Notes on each adapter
 
-| 适配器 | 关键实现点 |
+| Adapter | Key implementation points |
 | --- | --- |
-| **Claude Code** | 通过 Agent SDK 启动会话；权限映射为 tools/allowedTools/disallowedTools + canUseTool；原生支持流式与成本上报，能力最完整。实现细节见 §9.4 |
-| **MCP** | 工具通过 MCP 暴露；MCP 本身不定义"任务"概念，需要在其上包一层任务语义；工具调用可见但推理过程可能不可见 |
-| **HTTP 通用** | 最小契约：`POST /tasks` + webhook 回调；适合企业自建 Agent；能力全靠 manifest 声明 |
-| **Codex** | CLI 封装；权限是沙箱级而非工具级，映射时一律收紧。实现细节见 §9.5 |
-| **通用 headless CLI** | pi / Gemini CLI / Aider / Goose / OpenCode / Qwen Code 共用**一个**适配器 + 一张声明式 profile 表。实现细节见 §9.6 |
-| **内置** | 需求结构化、计划生成这类 APOS 自己调 LLM 的场景，走同一套 Run 记录以保证可追溯性 |
+| **Claude Code** | Starts a session through the Agent SDK; permissions map onto tools/allowedTools/disallowedTools + canUseTool; streaming and cost reporting are native, so this is the most complete runtime. Implementation notes in §9.4 |
+| **MCP** | Tools are exposed over MCP; MCP itself has no concept of a "task," so task semantics have to be wrapped on top of it; tool calls are visible but reasoning may not be |
+| **Generic HTTP** | Minimal contract: `POST /tasks` plus a webhook callback; suits enterprise-built agents; capabilities come entirely from the manifest |
+| **Codex** | A CLI wrapper; permissions are sandbox-level rather than tool-level, so mapping always tightens. Implementation notes in §9.5 |
+| **Generic headless CLI** | pi / Gemini CLI / Aider / Goose / OpenCode / Qwen Code share **one** adapter plus a declarative profile table. Implementation notes in §9.6 |
+| **Built-in** | Cases where APOS calls an LLM itself — requirement structuring, plan generation — go through the same Run records so they stay traceable |
 
-**内置 Agent 也走协议**这点值得强调：需求结构化和计划生成也是 Agent 行为，也需要 Run 记录、成本统计、可追溯。不能因为"是我们自己调的 LLM"就走后门——那样 Analytics 里的成本统计就是不完整的。
+**Built-in agents go through the protocol too**, and that is worth stressing: requirement structuring and plan generation are agent behavior as well, and they also need run records, cost accounting, and traceability. "It's our own LLM call" is not a reason to take the back door — take it and the cost numbers in Analytics are incomplete.
 
-### 9.3 事件归一化示例
+### 9.3 Event normalization example
 
 ```typescript
-// Claude Code SDK 事件 → RunEvent
+// Claude Code SDK event → RunEvent
 function normalize(raw: SDKMessage, ctx: RunContext): RunEvent[] {
   switch (raw.type) {
     case 'assistant':
@@ -424,187 +426,187 @@ function normalize(raw: SDKMessage, ctx: RunContext): RunEvent[] {
 }
 ```
 
-### 9.4 Claude Code 适配器实现纪要
+### 9.4 Claude Code adapter: implementation notes
 
-代码位置 `packages/agent-runtimes/src/claude-code/`，依赖 `@anthropic-ai/claude-agent-sdk`（可选 peer 依赖，运行时动态加载 —— 不接 Claude Code 的部署不必安装这个包）。
+Code lives in `packages/agent-runtimes/src/claude-code/` and depends on `@anthropic-ai/claude-agent-sdk` (an optional peer dependency, loaded dynamically at runtime — a deployment that never connects Claude Code does not have to install it).
 
-#### 权限：默认拒绝
+#### Permissions: deny by default
 
-APOS 的 `AgentPermissions` 映射到 SDK 的四个开关，组合出闭世界语义：
+APOS's `AgentPermissions` maps onto four SDK switches, which together produce closed-world semantics:
 
-| APOS | SDK | 作用 |
+| APOS | SDK | Effect |
 | --- | --- | --- |
-| `allowedTools` 的基础工具名 | `tools` | 决定 Agent **看得到**哪些工具 |
-| `allowedTools` 原文（含作用域） | `allowedTools` | 决定什么**免确认放行** |
-| `deniedTools` | `disallowedTools` | 黑名单，优先级最高 |
-| 其余一切 | `canUseTool` | 落到适配器手上处置 |
+| Base tool names from `allowedTools` | `tools` | Determines which tools the agent can **see** |
+| `allowedTools` verbatim (scopes included) | `allowedTools` | Determines what runs **without confirmation** |
+| `deniedTools` | `disallowedTools` | Denylist, highest priority |
+| Everything else | `canUseTool` | Lands in the adapter's hands |
 
-两个额外约束：
+Two additional constraints:
 
-- **`settingSources: []`** —— 不加载 user / project / local 配置。否则仓库里的 `.claude/settings.json` 就能把 Policy 拒绝过的工具放回来，权限模型形同虚设。
-- **判定不出可写时禁用全部写工具**（`Write` / `Edit` / `MultiEdit` / `NotebookEdit`）。只在 prompt 里写「请不要改文件」不是权限控制。
+- **`settingSources: []`** — do not load user / project / local config. Otherwise a `.claude/settings.json` sitting in the repo could put back a tool that Policy denied, and the permission model is theater.
+- **When writability cannot be established, disable every write tool** (`Write` / `Edit` / `MultiEdit` / `NotebookEdit`). Writing "please don't modify files" in the prompt is not access control.
 
-「可写」按两层判，**平台的事实优先**：
+"Writable" is decided at two levels, and **the platform's own facts win**:
 
-| 情况 | 判据 |
+| Situation | Basis |
 | --- | --- |
-| 平台已备好工作区（`task.workspace`） | 直接用 `RunWorkspace.writable`，两个方向都覆盖 |
-| 没有工作区 | 回落到资源范围推导：存在 `access: 'write'` 的 **repo 或 dataset** 范围 |
+| The platform already prepared a workspace (`task.workspace`) | Use `RunWorkspace.writable` directly; it governs in both directions |
+| No workspace | Fall back to inferring from resource scopes: a **repo or dataset** scope with `access: 'write'` |
 
-两条都不是可有可无的：
+Neither line is optional:
 
-- **dataset 也算可写**，与 §7.3 的主挂载规则（可写仓库 → 可写数据集）对齐。只认 repo 的话，被授了 dataset write 的 Agent 会挂上一个可写的工作区、写工具却全被禁 —— 授权界面写着 Write，Agent 说没有 Write 工具，两个子系统各自都「对」，没有任何一层报错。
-- **工作区的 `writable` 压过范围推导**。规划 Run 的 scratch 目录**没有任何资源范围对应它**，光靠范围推导永远推不出「可写」，于是平台给了可写目录、Agent 却写不出产物。反方向同样覆盖：只读挂载时显式收紧。
+- **A dataset counts as writable too**, matching the primary-mount rule in §7.3 (writable repo → writable dataset). Recognize only repos and an agent granted dataset write gets a writable workspace with every write tool disabled — the access page says Write, the agent says it has no Write tool, both subsystems are individually "correct," and no layer raises an error.
+- **The workspace's `writable` overrides scope inference.** A planning run's scratch directory has **no resource scope corresponding to it at all**, so inference alone can never conclude "writable" — the platform hands over a writable directory and the agent cannot produce an artifact in it. The reverse direction is covered too: a read-only mount tightens explicitly.
 
-覆盖只动「可写」这一个合取项，**放不出能力闸门没授的工具**：写工具是从 `allowedTools` 里挑回来的，`workspace.write` 没授予时它们本来就不在里面；显式黑名单同样不放回。沙箱级的运行时（Codex / 通用 CLI）走同一条判据，只是落到 `workspace-write` 与 `read-only` 两档上 —— 三个运行时给出不同答案的话，「换个运行时就能写了」会被当成玄学。
+The override touches only the "writable" conjunct; it **cannot release a tool the capability gate never granted**. Write tools are picked back out of `allowedTools`, and without `workspace.write` they were never in there; an explicit denylist is likewise not undone. The sandbox-level runtimes (Codex, generic CLI) use the same test, landing on `workspace-write` versus `read-only` instead — if three runtimes gave three different answers, "switching runtimes makes writes work" turns into folklore.
 
-#### 未授权工具 → 人工决策
+#### Ungranted tools → human decision
 
-`canUseTool` 只在「既没被白名单放行、也没被黑名单拦掉」时触发，恰好就是「Agent 想要一个没给它的能力」。适配器据此分流：
+`canUseTool` fires only when a tool was neither allowlisted nor denylisted, which is precisely "the agent wants a capability nobody gave it." The adapter splits on that:
 
-- 命中显式黑名单 → 直接拒绝，不打扰人类（Policy 已经判过了）
-- 未授权 → 发 `intervention_request`（`reason: permission_needed`）并以 `interrupt: true` 拒绝
+- Explicit denylist hit → refuse outright, don't bother a human (Policy already ruled)
+- Ungranted → emit an `intervention_request` (`reason: permission_needed`) and refuse with `interrupt: true`
 
-第二条让 Agent 的求助落成 Decision 待办（`ingest.ts` 的提升规则），而不是让它在缺能力的情况下继续试探。想关掉这个行为可以配 `onUngrantedTool: 'deny'`，此时能力清单里的 `interventionRequest` 同步变为 `false` —— 不静默降级。
+The second turns the agent's request for help into a Decision on someone's queue (via the promotion rules in `ingest.ts`) instead of letting it keep probing without the capability. To turn this off, set `onUngrantedTool: 'deny'` — and then `interventionRequest` in the capability manifest flips to `false` to match. No silent degradation.
 
-#### 凭证与环境隔离
+#### Credential and environment isolation
 
-- 凭证读 `APOS_AGENT_ANTHROPIC_API_KEY`，**与平台自用的 `ANTHROPIC_API_KEY` 分开**。未配置时直接拒绝派发，不会悄悄回退到平台 key。要复用必须显式设 `allowInheritedCredentials`，留下审计痕迹。
-- 子进程环境只给 `PATH` / `HOME` / Agent 自己的 key。不做 `{ ...process.env }` —— 那等于把数据库口令和其他服务的 token 一起交给 Agent，绕开资源范围控制。
+- Credentials come from `APOS_AGENT_ANTHROPIC_API_KEY`, **kept separate from the platform's own `ANTHROPIC_API_KEY`**. If it is not configured, dispatch is refused outright; it never quietly falls back to the platform key. Reusing it requires setting `allowInheritedCredentials` explicitly, which leaves an audit trail.
+- The child process environment gets only `PATH`, `HOME`, and the agent's own key. No `{ ...process.env }` — that would hand the agent the database password and every other service's token, right past resource-scope control.
 
-#### 接中转站：接入地址、凭证变量名、环境变量表
+#### Connecting a relay: endpoint, credential variable name, environment table
 
-官方端点之外还有一大类接法：中转站、自建网关、Bedrock/Vertex 前置代理。它们要的三样东西分别落在三处：
+Beyond the official endpoint there is a whole class of connections: relays, self-hosted gateways, Bedrock/Vertex fronting proxies. The three things they need land in three different places:
 
-| 要配的 | 配在哪 | 落成什么 |
+| What to configure | Where it goes | What it becomes |
 | --- | --- | --- |
-| 网关地址 | Agent 的「接入地址」（`agents.endpoint`） | `ANTHROPIC_BASE_URL` |
-| 认证方式 | 配置项 `credentialEnv` | 凭证下发到 `ANTHROPIC_API_KEY` 还是 `ANTHROPIC_AUTH_TOKEN` |
-| 其余任意变量 | 配置项 `env`（一份 JSON） | 原样下发给子进程 |
+| Gateway address | The agent's "endpoint" (`agents.endpoint`) | `ANTHROPIC_BASE_URL` |
+| Authentication scheme | The `credentialEnv` config item | Whether the credential is delivered as `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` |
+| Any other variable | The `env` config item (a JSON blob) | Passed through to the child process verbatim |
 
-**为什么 `credentialEnv` 值得一个独立的配置项**：官方端点走 `x-api-key`，多数中转站走 `Authorization: Bearer`，认的是 `ANTHROPIC_AUTH_TOKEN`。下错变量名的表现是一句 401，而 401 里没有任何东西指向「名字错了」。做成一栏明确的选择，比让人去环境变量表里猜强。改投之后**不再同时下发 `ANTHROPIC_API_KEY`** —— 两个都给的话 SDK 会优先认 API Key，症状是「我明明改成了 AUTH_TOKEN，请求还是带着 x-api-key 打官方端点」。
+**Why `credentialEnv` deserves its own config item**: the official endpoint uses `x-api-key`, while most relays use `Authorization: Bearer` and read `ANTHROPIC_AUTH_TOKEN`. Getting the variable name wrong surfaces as a bare 401, and nothing in a 401 points at "you used the wrong name." An explicit field with two choices beats making someone guess their way through an environment table. Once switched, **`ANTHROPIC_API_KEY` is no longer sent alongside** — send both and the SDK prefers the API key, and the symptom is "I definitely switched to AUTH_TOKEN, and the request still hits the official endpoint with x-api-key."
 
-**为什么要有 `env` 这个自由 JSON**：平台的配置 schema 一定滞后于运行时。网关地址与 token 属于**这个 Agent**，不属于 APOS 进程 —— 用 `passthroughEnv`（给变量名、值从 APOS 环境取）表达不了，为一个 Agent 去改部署的环境变量还会波及所有共用该变量名的 Agent。
+**Why the free-form `env` JSON exists at all**: the platform's config schema will always lag behind the runtimes. A gateway address and a token belong to **this agent**, not to the APOS process — `passthroughEnv` (name a variable, take its value from the APOS environment) cannot express that, and changing a deployment environment variable for one agent would hit every other agent sharing that name.
 
-★ 整份运行时配置本身也是一份**自定义 JSON**（界面上就是一个 JSON 文本框）：平台认识的键按 spec 校验，不认识的键**原样保存、原样入库**，只在保存后把它们列给用户看一眼（`unknownConfigKeys`）。丢弃是「我明明填了它没了」，拒绝是「运行时升级了、平台还没发版，于是这个 Agent 存不下」—— 两条都会把人逼去改数据库。代价是键名敲错（`modle`）不再被当成错误，只能靠那句提示。
+★ The runtime config as a whole is itself a **custom JSON document** (in the UI it is literally a JSON textarea): keys the platform knows are validated against their spec, and keys it does not know are **stored as-is and written to the database as-is**, with the unrecognized ones simply listed back to the user after saving (`unknownConfigKeys`). Dropping them means "I definitely typed that and it vanished"; rejecting them means "the runtime shipped a new option, the platform hasn't released yet, so this agent cannot be saved" — and both push someone toward editing the database by hand. The price is that a typo'd key (`modle`) is no longer treated as an error; that notice is all you get.
 
-`env` 在其中仍是**声明出来的一个字段**，因而多两层约束：
+`env` is still **a declared field** within that document, so it carries two more constraints:
 
-- **值的形状照样校验**。键必须是合法变量名，值必须是字符串 —— 写成 `{"MAX_TOKENS": 4096}` 会在保存那一刻被拒，而不是让 Node 悄悄转成 `"4096"`。
-- **敏感键照样走凭证通道**。键名含 `TOKEN` / `KEY` / `SECRET` / `AUTH` 等字样时（判据 `isSecretEnvKey`，按下划线切段匹配，`GIT_AUTHOR_NAME` 不算），字面量值转成 `secret://` 引用（配了 `APOS_SECRET_KEY` 就是密文，没配就是明文，见 09-security §5.4），接口只回占位符 `secret://saved`。把这个占位符原样存回来表示「这一项不改」—— 界面上那是一个 JSON 文本框，改网关地址时整份 JSON 会一起提交，没有这个约定的话改一个字段就会把同一份里的 token 冲掉。
-- **不接受手工填写的 `secret://` 引用**。否则任何能编辑 Agent 的人都可以粘一条 `secret://env/DATABASE_URL` 进来，把 APOS 进程环境里的任意变量读给 Agent —— 那正是 `passthroughEnv` 那份白名单要挡住的事。要从进程环境取值只能写 `env:变量名`。
-- **解不开的引用不下发，并在配置页上列出来**。悄悄下发空串的表现是 Agent 报一句 401，而现场没有任何东西指向「那把 key 所在的环境变量没设置」。
+- **Value shapes are still validated.** Keys must be legal variable names and values must be strings — `{"MAX_TOKENS": 4096}` is rejected at save time rather than letting Node quietly turn it into `"4096"`.
+- **Secret-looking keys still go through the credential channel.** When a key name contains `TOKEN` / `KEY` / `SECRET` / `AUTH` and the like (the test is `isSecretEnvKey`, matching on underscore-separated segments, so `GIT_AUTHOR_NAME` does not count), the literal value is converted into a `secret://` reference (encrypted if `APOS_SECRET_KEY` is set, plaintext if not — see 09-security §5.4), and the API returns only the placeholder `secret://saved`. Posting that placeholder back unchanged means "leave this one alone" — the UI is a single JSON textarea, so changing the gateway address resubmits the whole document, and without that convention editing one field would wipe the token sitting next to it.
+- **Hand-written `secret://` references are not accepted.** Otherwise anyone who can edit an agent could paste in `secret://env/DATABASE_URL` and read any variable in the APOS process environment out to the agent — exactly what the `passthroughEnv` allowlist exists to prevent. To pull a value from the process environment you must write `env:VARIABLE_NAME`.
+- **References that cannot be resolved are not delivered, and are listed on the config page.** Quietly delivering an empty string surfaces as the agent reporting a 401, with nothing on the scene pointing at "the environment variable holding that key was never set."
 
-**叠加顺序是由平台到用户，`env` 排最后**：最小集 → 凭证 → 接入地址 → `passthroughEnv` → `env`。用户填的一定生效，哪怕代价是他能把自己的凭证覆盖掉 —— 「我填了却没生效」是配置类功能最坏的失败形态。
+**The layering order runs platform → user, with `env` last**: minimal set → credential → endpoint → `passthroughEnv` → `env`. What the user typed always takes effect, even at the cost of letting them overwrite their own credential — "I set it and it didn't take" is the worst failure mode a configuration feature has.
 
-代价说清楚：这一栏能把上面的安全设置绕过去（比如手工给一个放开限制的变量），所以它在界面上标着「影响安全边界」。
+State the cost plainly: this field can route around the security settings above (say, by hand-setting a variable that relaxes a limit), so it is labeled "affects the security boundary" in the UI.
 
-**凭证也可以只写在 `env` 里**。此时凭证栏是空的，`dispatch` 的凭证闸门认这种形态 —— 否则一个配好了、也确实能跑的 Agent 会被拒发，而报错还理直气壮地让人去配 `APOS_AGENT_ANTHROPIC_API_KEY`。同样的规则适用于 Codex 与六个通用 CLI。
+**The credential may live only in `env`.** In that case the credential field is empty, and `dispatch`'s credential gate recognizes that shape — otherwise an agent that is fully configured and genuinely works would be refused dispatch, with an error message confidently telling the user to go configure `APOS_AGENT_ANTHROPIC_API_KEY`. The same rule applies to Codex and to the six generic CLIs.
 
-#### 成本：估算 + 权威值校正
+#### Cost: estimate, then correct against the authoritative number
 
-Claude Code 只在 Run 结束时给出权威的 `total_cost_usd`，但看板需要执行过程中的成本。因此走双轨：
+Claude Code only produces the authoritative `total_cost_usd` when the run ends, but the board needs cost while the run is still going. So there are two tracks:
 
-1. 每轮按 `message.usage` 的真实 token × 本地单价表估算，发 `cost` 事件
-2. `result` 到达时发一条差额事件把累计值校正为 `total_cost_usd`，`tokens` 全填 0（ingest 对 token 是累加语义，再报一次会重复计数）
+1. Each turn, estimate from the real token counts in `message.usage` × a local price table and emit a `cost` event
+2. When `result` arrives, emit one delta event that corrects the running total to `total_cost_usd`, with `tokens` all zero (ingest treats tokens as additive, so reporting them again would double count)
 
-单价表过期只影响过程中的显示，不影响最终账目。另外把 `limits.maxCostUsd` 直接传给 SDK 的 `maxBudgetUsd` —— 预算是运行时侧的硬约束，不用等我们的成本事件追上。
+A stale price table only affects the in-flight display, never the final books. Separately, `limits.maxCostUsd` is passed straight to the SDK's `maxBudgetUsd` — the budget is a hard constraint on the runtime side, with no need to wait for our cost events to catch up.
 
-#### 能力与降级
+#### Capabilities and degradation
 
-| 能力 | 支持 | 说明 |
+| Capability | Supported | Notes |
 | --- | --- | --- |
-| `pause` | ✗ | SDK 无暂停/恢复语义。按降级矩阵，暂停退化为终止，需二次确认 |
-| `runtimeConstraints` | ✓ | prompt 用 `AsyncIterable` 输入，执行中可注入约束（Approve with Constraints 真正落到运行时） |
+| `pause` | ✗ | The SDK has no pause/resume semantics. Per the degradation matrix, pause degrades to terminate with a second confirmation |
+| `runtimeConstraints` | ✓ | The prompt is fed as an `AsyncIterable`, so constraints can be injected mid-run (Approve with Constraints genuinely reaches the runtime) |
 | `terminate` | ✓ | `abortController.abort()` |
-| `statusQuery` | ✓ | 仅限本进程持有的 Run。查不到即视为已终止 —— 会话是本进程的子进程，进程重启后子进程不复存在，这个回答对孤儿 Run 判定是可行动的 |
-| `artifactUpload` | ✓ | Claude Code 没有产物上传通道，适配器从最终回复合成：正文存为 `document`，回复里出现的 PR 链接单列为 `pull_request` |
-| `subAgentDelegation` | ✓ | `task_started` 消息翻译为 `delegation` 事件 |
+| `statusQuery` | ✓ | Only for runs held by this process. Not found means terminated — the session is a child process of this process, and after a restart that child no longer exists, so the answer is actionable for orphan detection |
+| `artifactUpload` | ✓ | Claude Code has no artifact upload channel, so the adapter synthesizes them from the final reply: the body is stored as a `document`, and any PR link in the reply is broken out as a `pull_request` |
+| `subAgentDelegation` | ✓ | `task_started` messages are translated into `delegation` events |
 
-#### 错误分类
+#### Error classification
 
-优先用运行时**上报**的结构化信号（`classificationSource: 'reported'`），拿不到才退回文本启发式（标 `'inferred'`，恢复策略对它更保守）：
+Prefer the structured signals the runtime **reports** (`classificationSource: 'reported'`); fall back to text heuristics only when there are none (marked `'inferred'`, which recovery treats more conservatively):
 
-| 信号 | 分类 |
+| Signal | Classification |
 | --- | --- |
-| `error_max_budget_usd` | `budget_exceeded`，不可重试 |
-| `error_max_turns` | `timeout`，可重试 |
-| `permission_denials` 非空 | `permission_denied`，不可重试 |
-| `SDKAssistantMessage.error` | 按错误码映射（认证 → `permission_denied`，限流/过载 → `external_unavailable`…） |
-| 模块加载失败 | `runtime_error`，不可重试 —— 部署问题重试多少次都没用 |
+| `error_max_budget_usd` | `budget_exceeded`, not retriable |
+| `error_max_turns` | `timeout`, retriable |
+| `permission_denials` non-empty | `permission_denied`, not retriable |
+| `SDKAssistantMessage.error` | Mapped by error code (auth → `permission_denied`, rate limit / overload → `external_unavailable`, …) |
+| Module load failure | `runtime_error`, not retriable — no number of retries fixes a deployment problem |
 
-**`subtype: 'success'` 不等于任务成功。** 认证失败这类错误会以 `subtype='success'` + `is_error=true` 回来，`result` 文本就是那句报错。只看 subtype 会把彻底失败的 Run 记成 `completed`，任务随即流转到 reviewing，还带上一条以报错为正文的产物。适配器因此用三个信号判定失败：`subtype !== 'success'`、`is_error`、执行中出现过致命错误。`queryStatus` 的终态也直接取 `run_ended` 的 outcome，不各判一次 —— 两处独立判断迟早会打架。
+**`subtype: 'success'` does not mean the task succeeded.** Errors like an authentication failure come back as `subtype='success'` with `is_error=true`, and the `result` text *is* the error message. Look only at subtype and a completely failed run gets recorded as `completed`, the task promptly transitions to reviewing, and it carries an artifact whose body is an error message. So the adapter uses three signals to declare failure: `subtype !== 'success'`, `is_error`, and whether a fatal error occurred during execution. `queryStatus` also takes its terminal state straight from the `run_ended` outcome rather than deciding again — two independent judgments will eventually disagree.
 
-> 这两条都是拿真实 SDK 跑一遍才暴露的，单测里的假 SDK 不会自己造出这种组合。
+> Both of these only showed up against the real SDK; a fake SDK in a unit test does not invent that combination on its own.
 
-#### 事件顺序
+#### Event ordering
 
-`subscribe` 把投递串成一条 Promise 链，保证订阅者严格按 `seq` 收到事件。`(runId, seq)` 是 `run_events` 的主键，乱序会让去重和增量更新都失效。`run_started` 在会话真正启动前就发出 —— 会话起不来时也要能看到 Run 开始过。
+`subscribe` chains delivery into a single Promise chain, guaranteeing subscribers receive events strictly in `seq` order. `(runId, seq)` is the primary key of `run_events`, and out-of-order delivery breaks both deduplication and incremental updates. `run_started` is emitted before the session actually starts — if the session fails to come up, you still need to see that the run began.
 
-### 9.5 Codex 适配器实现纪要
+### 9.5 Codex adapter: implementation notes
 
-代码位置 `packages/agent-runtimes/src/codex/`。它压出了协议里一个此前没被验证的假设：**权限模型未必是工具级的**。Codex 只有沙箱级（`read-only` / `workspace-write`），表达不了「Bash 可用但 rm 不可用」。映射一律**收紧**，表达不了的规则列进 `unenforceable` 并在 Run 详情里显示 —— 静默吞掉的话，用户会以为 `deniedTools` 在这里也生效了。
+Code lives in `packages/agent-runtimes/src/codex/`. It forced out an assumption the protocol had never had to test: **a permission model is not necessarily tool-level**. Codex has only sandbox levels (`read-only` / `workspace-write`), which cannot express "Bash is allowed but rm is not." The mapping always **tightens**, and rules that cannot be expressed are listed in `unenforceable` and shown in the Run detail page — swallow them silently and the user will believe `deniedTools` took effect here too.
 
-### 9.6 通用 headless CLI 适配器
+### 9.6 Generic headless CLI adapter
 
-代码位置 `packages/agent-runtimes/src/cli/`。**一个** `GenericCliRuntime` + 一张声明式 profile 表覆盖六个 CLI：
+Code lives in `packages/agent-runtimes/src/cli/`. **One** `GenericCliRuntime` plus a declarative profile table covers six CLIs:
 
-| kind | 二进制 | prompt 投递 | 输出形态 | 流式 | 工具可见 | token |
+| kind | Binary | Prompt delivery | Output shape | Streaming | Tools visible | Tokens |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pi` | `pi` | `-p <prompt>` | 纯文本 | ✓ | ✗ | ✗ |
-| `gemini_cli` | `gemini` | `-p <prompt>` | **单个 JSON** | ✗ | ✗ | ✓ |
-| `aider` | `aider` | `-m <prompt>` | 纯文本 | ✓ | ✗ | ✗ |
+| `pi` | `pi` | `-p <prompt>` | Plain text | ✓ | ✗ | ✗ |
+| `gemini_cli` | `gemini` | `-p <prompt>` | **A single JSON blob** | ✗ | ✗ | ✓ |
+| `aider` | `aider` | `-m <prompt>` | Plain text | ✓ | ✗ | ✗ |
 | `goose` | `goose` | stdin | stream-json | ✓ | ✓ | ✓ |
-| `opencode` | `opencode` | 位置参数 | 纯文本 | ✓ | ✗ | ✗ |
+| `opencode` | `opencode` | Positional argument | Plain text | ✓ | ✗ | ✗ |
 | `qwen_code` | `qwen` | `-p <prompt>` | stream-json | ✓ | ✓ | ✓ |
 
-**为什么共用一个适配器**：把 Codex 那个抄六遍，抄的是同一份东西 —— 起子进程、设 cwd、给最小环境、超时后 SIGTERM 再补 SIGKILL、留 stderr 尾巴、事件按 seq 串行投递。这些对所有 CLI 一模一样，而且是**已经踩过一遍坑**的部分。真正不同的只有五件事（二进制名、argv、prompt 从哪进、输出形态、凭证环境变量），它们是数据不是逻辑。
+**Why they share one adapter**: copying the Codex adapter six times copies the same thing six times — spawn a child process, set cwd, hand it a minimal environment, SIGTERM on timeout followed by SIGKILL, keep a tail of stderr, deliver events serially by seq. That part is identical across every CLI, and it is the part where **the mistakes have already been made once**. The genuinely different pieces are five: binary name, argv, where the prompt goes in, output shape, credential environment variable. Those are data, not logic.
 
-**为什么解析是防御式的**：这六个的输出格式来自各自的文档，不是实测。照文档写逐字段映射，字段名一变事件流就**静默变空** —— Run 在跑、界面上什么都没有、没有任何报错。所以 `translate.ts` 反过来做：只认结构上认得出的（用量数字、错误、文本、工具调用），**认不出来的原样透出成 note**。代价是事件流不如 Claude Code 精细，收益是永远不丢东西，下一个人能照着 note 把映射补上。
+**Why the parsing is defensive**: the output formats for these six come from their respective docs, not from measurement. Write field-by-field mappings straight from the docs, and one renamed field makes the event stream **go silently empty** — the run is executing, the UI shows nothing, and no error is raised anywhere. So `translate.ts` works from the other end: recognize only what is structurally recognizable (usage numbers, errors, text, tool calls), and **pass anything unrecognized straight through as a note**. The cost is an event stream less detailed than Claude Code's; the benefit is that nothing is ever lost, and the next person can fill the mapping in by reading the notes.
 
-**三处对所有 CLI 都成立的降级**，如实写进能力清单：
+**Three degradations that hold for every CLI**, written honestly into the capability manifest:
 
-1. **权限是沙箱级的** —— 复用 §9.5 的 `mapSandbox`，表达不了的规则在 Run 详情里列出来
-2. **没有 system prompt 通道** —— 治理规则只能折进用户消息最前面（`buildInlinePreamble`），权重低于真正的 system prompt
-3. **单次执行、无中途注入** —— `runtimeConstraints` / `interventionRequest` 均为 false
+1. **Permissions are sandbox-level** — reuse `mapSandbox` from §9.5; rules that cannot be expressed are listed in the Run detail page
+2. **There is no system prompt channel** — governance rules can only be folded into the front of the user message (`buildInlinePreamble`), which carries less weight than a real system prompt
+3. **Single-shot execution, no mid-run injection** — `runtimeConstraints` and `interventionRequest` are both false
 
-几条针对性的处理：Aider 强制 `--no-auto-commits`（提交由工作区供给统一负责，两边都提交会让一个 Run 产出一堆零碎提交）；自动批准（`--yolo` / `--approval-mode yolo`）只在可写沙箱下给；Gemini CLI 在 `subscribe` 时先发一条 note 说明「要跑完才有输出」，否则用户会对着不动的执行流以为卡死。
+A few targeted behaviors: Aider is forced to `--no-auto-commits` (committing is the workspace provider's single responsibility, and committing on both sides makes one run produce a scatter of fragmentary commits); auto-approval (`--yolo` / `--approval-mode yolo`) is granted only under a writable sandbox; Gemini CLI emits a note at `subscribe` time explaining that there is no output until the run finishes, otherwise the user stares at a motionless execution stream and assumes it hung.
 
-**加第七个 CLI**：在 `cli/profile.ts` 加一条 profile、在 `contracts/runtime-config.ts` 加一条 spec。适配器与 factory 一个字不用改，配置界面自动长出这一种的可配置项清单与 JSON 默认值。
+**Adding a seventh CLI**: add a profile to `cli/profile.ts` and a spec to `contracts/runtime-config.ts`. Neither the adapter nor the factory changes by one character, and the config UI grows that runtime's configurable-option list and JSON defaults on its own.
 
-这六个也各自带一份 `env` 环境变量表（§9.4 的规则原样适用）。profile 里的 `baseUrlEnv` 为 `null` 的那几个（pi / gemini_cli / goose / opencode）没有声明式的接入地址通道，接自建端点只能走 `env` —— 这正是那个口子存在的意义：不必等平台先给每个 CLI 补一条 `baseUrlEnv`。
+Each of the six also carries its own `env` table (the rules from §9.4 apply unchanged). The ones whose profile has `baseUrlEnv` set to `null` (pi / gemini_cli / goose / opencode) have no declarative endpoint channel, so connecting a self-hosted endpoint has to go through `env` — which is exactly why that escape hatch exists: nobody has to wait for the platform to add a `baseUrlEnv` for every CLI first.
 
 ---
 
-## 10. 安全
+## 10. Security
 
-| 关注点 | 措施 |
+| Concern | Measure |
 | --- | --- |
-| 回调认证 | 每个 Run 派发时生成短期令牌，仅对该 runId 有效，Run 结束即失效 |
-| 事件伪造 | 回调验签（HMAC）+ runId 与令牌绑定校验 |
-| 权限逃逸 | 权限清单每次派发下发；APOS 侧对高危工具调用做二次校验，不完全信任运行时执行 |
-| 凭证隔离 | Agent 使用自己的凭证，绝不复用人类用户 token（[09 安全](09-security.md) §4） |
-| 上下文泄漏 | 下发上下文前按数据分级过滤；敏感数据不进 Agent 上下文 |
-| 成本攻击 | 硬性成本上限；异常增长检测；运行时不可控时（无 terminate 能力）强制更低上限 |
+| Callback authentication | Each run gets a short-lived token at dispatch, valid only for that runId and dead when the run ends |
+| Event forgery | Signed callbacks (HMAC) plus a check that the runId and the token are bound to each other |
+| Permission escape | The permission list ships on every dispatch; APOS re-checks high-risk tool calls on its own side rather than fully trusting the runtime's enforcement |
+| Credential isolation | Agents use their own credentials and never reuse a human user's token ([09 Security](09-security.md) §4) |
+| Context leakage | Context is filtered by data classification before it is sent; sensitive data never enters an agent's context |
+| Cost attacks | Hard cost ceilings; anomalous-growth detection; when the runtime is uncontrollable (no terminate capability), a forcibly lower ceiling |
 
-**"不完全信任运行时执行"的具体做法**：即使给 Agent 下发了 `allowedTools`，涉及破坏性操作的工具调用（`sideEffects: 'destructive'`）在 APOS 侧再校验一次权限与 Policy。防的是运行时实现有 bug 或被绕过。
-
----
-
-## 11. 版本演进
-
-- `protocolVersion` 语义化版本
-- 向后兼容原则：新增事件类型必须可被旧版本忽略；新增能力字段默认 `false`
-- APOS 支持同时对接多个协议版本的运行时
-- 破坏性变更需要大版本号，且提供至少一个版本的过渡期
+**What "not fully trusting the runtime's enforcement" means in practice**: even after `allowedTools` has been handed to the agent, tool calls involving destructive operations (`sideEffects: 'destructive'`) are re-checked against permissions and Policy on the APOS side. This guards against a buggy or bypassed runtime implementation.
 
 ---
 
-## 12. 待确认问题
+## 11. Versioning
 
-1. **`selfReport` 是否强制要求？** 它对排障效率影响很大（页面文档 09），但不是所有运行时都能提供。建议：协议规定为 `SHOULD`，不支持时适配器用最后几条事件让 APOS 自己的 LLM 生成一段推测性说明，并明确标注「由 APOS 推断，非 Agent 自述」。
-2. **MCP 之上的任务语义如何定义？** MCP 是工具协议不是 Agent 协议。需要确认是在 MCP 之上包一层（APOS 自己驱动对话循环），还是要求 MCP 服务端提供任务级接口。前者控制力强但 APOS 要承担 agent loop 的复杂度。
-3. **子 Agent 委派的成本与权限归属**：子 Run 的成本计入父 Run 还是独立？子 Agent 的权限是继承父 Agent 还是独立配置？倾向于成本累计到父 Run（便于用户理解总花费），权限取父子交集（最小权限）。
-4. **无 `terminate` 能力的运行时是否应该允许接入？** 从治理角度这是重大缺陷。建议：允许接入但强制标记为「受限运行时」，禁止用于高风险任务，且成本上限强制设为组织默认值的一半。
-5. **事件的 `seq` 在孤儿接管后如何续接？** 接管的实例不知道上一个实例处理到哪。方案：seq 由运行时生成而非 APOS，APOS 只负责去重（`(runId, seq)` 主键天然去重）。需要确认所有运行时都能保证 seq 全局单调。
-6. **协议是否需要支持"任务取消后的清理"？** Agent 可能已经创建了分支、开了 PR。终止时是否要求运行时清理？倾向于不要求（清理逻辑复杂且易出错），改为 APOS 记录未清理资源并提示人工处理。
+- `protocolVersion` follows semantic versioning
+- Backward-compatibility rule: new event types must be safely ignorable by older versions; new capability fields default to `false`
+- APOS supports talking to runtimes on several protocol versions at once
+- Breaking changes require a major version bump and at least one version's worth of transition period
+
+---
+
+## 12. Open questions
+
+1. **Should `selfReport` be mandatory?** It has a large effect on debugging speed (page doc 09), but not every runtime can provide it. Proposal: the protocol specifies `SHOULD`, and where it is unsupported the adapter feeds the last few events to APOS's own LLM to generate a speculative explanation, clearly labeled 「由 APOS 推断，非 Agent 自述」 ("inferred by APOS, not reported by the agent").
+2. **How should task semantics be defined on top of MCP?** MCP is a tool protocol, not an agent protocol. We need to decide whether to wrap a layer on top of MCP (with APOS driving the conversation loop itself) or to require MCP servers to expose a task-level interface. The former gives more control but makes APOS carry the complexity of the agent loop.
+3. **Cost and permission ownership for sub-agent delegation**: does a child run's cost roll into the parent run or stand alone? Are a sub-agent's permissions inherited from the parent or configured separately? Leaning toward accumulating cost into the parent run (easier for users to understand total spend) and intersecting parent and child permissions (least privilege).
+4. **Should runtimes without `terminate` be allowed to connect at all?** From a governance standpoint this is a major defect. Proposal: allow them, but force a "restricted runtime" label, forbid their use on high-risk tasks, and pin their cost ceiling at half the organization default.
+5. **How does `seq` continue after an orphan is reclaimed?** The instance taking over does not know how far the previous one got. Approach: seq is generated by the runtime rather than by APOS, and APOS only deduplicates (the `(runId, seq)` primary key deduplicates naturally). We need to confirm every runtime can guarantee globally monotonic seq.
+6. **Does the protocol need to support "cleanup after cancellation"?** An agent may already have created a branch and opened a PR. Should the runtime be required to clean up on termination? Leaning toward not requiring it (cleanup logic is complex and error-prone) and instead having APOS record the uncleaned resources and prompt a human to handle them.

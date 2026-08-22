@@ -1,294 +1,301 @@
-# 10 Human Decision Center 决策中心
+# 10 Human Decision Center
 
-## 1. 页面信息
+*[中文版本 / Chinese version](10-decision-center.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/decisions` |
-| 层级 | 一级页面 |
-| 主要角色 | 全部角色（每个人都有自己的决策队列） |
-| 优先级 | P0 |
-| 对应产品文档 | 8.7 Human Decision Center、8.7.1 决策收件箱、十一 通知与升级 |
+| Route | `/decisions` |
+| Level | Top-level page |
+| Primary roles | All roles (everyone has their own decision queue) |
+| Priority | P0 |
+| Related product docs | 8.7 Human Decision Center, 8.7.1 Decision inbox, 11 Notifications and escalation |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-**所有需要人类参与的事项的唯一入口。**
+**The one place where everything that needs a human lands.**
 
-这是产品对用户的核心承诺的兑现处：*你不需要盯着 Agent，需要你的时候我会来找你。* 如果用户仍然感到"我不知道什么时候该介入"，那就是这个页面失败了。
+This is where the product's central promise is either kept or broken: *you don't have to watch the agents; when you're needed, we'll come find you.* If users still feel "I don't know when I'm supposed to step in," this page has failed.
 
-要回答：
+It has to answer:
 
-1. 现在有什么等着我？哪个最急？
-2. 每件事我需要花多少精力？
-3. 有没有重复出现的决策可以变成规则，让我以后不用再管？
+1. What is waiting on me right now, and which one is most urgent?
+2. How much effort does each item cost me?
+3. Are there recurring decisions I can turn into a rule so I never have to see them again?
 
-**设计目标：让用户能在 5 分钟内清空当日决策队列。** 这个目标决定了所有交互取舍——批量操作、快捷键、卡片内直接决策，都是为它服务的。
+**Design goal: a user can empty the day's decision queue in under 5 minutes.** That goal drives every interaction trade-off on this page — batch actions, keyboard shortcuts, and deciding from inside the card all exist to serve it.
 
 ---
 
-## 3. 入口与出口
+## 3. Entrances and Exits
 
-**入口**：全局导航 `Decisions`（带未处理角标）；顶部决策角标；项目列表/总览的待我处理区；通知（Slack / 飞书 / 邮件 / 推送）深链。
+**Entrances**: the global `Decisions` nav item (with an unhandled-count badge); the decision badge in the top bar; the "needs you" section on the project list and project overview; deep links from notifications (Slack / Feishu / email / push).
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Goes to |
 | --- | --- |
-| 展开决策卡片 | 就地展开（不跳页），或进 `11 决策详情` |
-| 关联任务 | `06 Work Item 详情` |
-| 关联 Run | `09 Agent Run 详情` |
-| 「转为规则」 | `13 Policy 配置`（预填条件） |
-| 决策处理后 | 停留，自动前进到下一条 |
+| Expand a decision card | Expands in place (no navigation), or opens `11 Decision Detail` |
+| Related work item | `06 Work Item Detail` |
+| Related run | `09 Agent Run Detail` |
+| "Turn into a rule" | `13 Policy Configuration` (conditions pre-filled) |
+| After a decision is handled | Stay on the page; advance to the next item automatically |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ Decision Center                              [全部项目 ▾]  [⚙ 决策偏好]   │
-├───────────────────────────────────────────────────────────────────────────┤
-│ ⏰ 已超时 1   ⚠ 4h 内 2   📋 待处理 5   👥 待会签 1   ↗ 已转交 2   ✓ 本周 18│
-├──────────────┬────────────────────────────────────────────────────────────┤
-│ 分类          │  排序: [紧急度 ▾]        [批量处理] [键盘模式 ?]           │
-│ ─────────────│ ┌────────────────────────────────────────────────────────┐ │
-│ ● 待我处理 5 │ │ ⏰ 已超时 2h10m          🔴 高风险    订单系统重构      │ │
-│   即将超时 2 │ │ ────────────────────────────────────────────────────── │ │
-│   高风险   2 │ │ 生产数据库索引变更审批                                  │ │
-│   待会签   1 │ │                                                        │ │
-│   已转交   2 │ │ 为什么找你：涉及生产 DDL，Policy #7 要求 DBA 审批       │ │
-│ ─────────────│ │ 不处理会怎样：阻塞下游 5 个任务，关键路径已延误 8h      │ │
-│ ○ 已完成  18 │ │                                                        │ │
-│ ─────────────│ │ 🤖 Agent 推荐：方案 A · 在线创建复合索引（置信度 82%）  │ │
-│ 按项目        │ │    预计耗时 12 分钟，锁表风险低，可回滚                │ │
-│ 订单系统重构3│ │    备选：方案 B 停机窗口创建 · 方案 C 分区表改造        │ │
-│ 官网改版   1 │ │                                                        │ │
-│ 数据平台   1 │ │ 证据：慢查询报告 · 索引影响分析 · 回滚脚本    [查看全部]│ │
-│ ─────────────│ │                                                        │ │
-│ 按类型        │ │ [✓ 批准方案A] [批准+附加约束] [选其他方案] [要求补充] │ │
-│ 高风险操作 2 │ │ [转交 ▾] [驳回]                          [完整详情 →] │ │
-│ 计划变更   1 │ └────────────────────────────────────────────────────────┘ │
-│ 需求确认   1 │ ┌────────────────────────────────────────────────────────┐ │
-│ 发布审批   1 │ │ ⚠ 3h42m 后到期      🟡 中风险    订单系统重构          │ │
-│              │ │ 计划变更 v3：新增 6 个任务，工期 +1.5 天               │ │
-│              │ │ 为什么找你：范围变化超过 20%，需项目负责人确认          │ │
-│              │ │ 🤖 推荐：批准（新增任务源于安全扫描发现的必要修复）     │ │
-│              │ │ [✓ 批准] [查看差异] [要求修改] [转交 ▾]   [详情 →]    │ │
-│              │ └────────────────────────────────────────────────────────┘ │
-│              │ ┌────────────────────────────────────────────────────────┐ │
-│              │ │ 💡 可自动化的重复决策                                   │ │
-│              │ │ 你在过去 30 天批准了 12 次「测试环境发布」，全部批准。  │ │
-│              │ │ 是否创建规则：测试环境 + 自动测试通过 → 自动批准并通知？│ │
-│              │ │                        [创建规则] [不再提示] [看详情]  │ │
-│              │ └────────────────────────────────────────────────────────┘ │
-└──────────────┴────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Decision Center                                           [All projects ▾]  [⚙ Preferences] │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ⏰ Overdue 1   ⚠ Due <4h 2   📋 Pending 5   👥 Co-sign 1   ↗ Delegated 2   ✓ Week 18        │
+├────────────────────┬────────────────────────────────────────────────────────────────────────┤
+│ Category           │  Sort: [Urgency ▾]          [Batch process] [Keyboard mode ?]          │
+│ ───────────────────│ ┌────────────────────────────────────────────────────────────────────┐ │
+│ ● To me          5 │ │ ⏰ Overdue by 2h10m       🔴 High risk     Order System Refactor   │ │
+│   Due soon       2 │ │ ────────────────────────────────────────────────────────────────── │ │
+│   High risk      2 │ │ Approve the production database index change                       │ │
+│   Co-sign        1 │ │                                                                    │ │
+│   Delegated      2 │ │ Why you: production DDL — Policy #7 requires DBA sign-off          │ │
+│ ───────────────────│ │ Cost of waiting: blocks 5 downstream tasks; the critical path      │ │
+│ ○ Completed     18 │ │ is already 8h behind                                               │ │
+│ ───────────────────│ │                                                                    │ │
+│ By project         │ │ 🤖 Agent recommends: Option A · create the index online (82%)      │ │
+│ Order Refactor   3 │ │    ~12 min, low table-lock risk, reversible                        │ │
+│ Website Redesign 1 │ │    Alternatives: B maintenance window · C repartition table        │ │
+│ Data Platform    1 │ │                                                                    │ │
+│ ───────────────────│ │ Evidence: slow-query report · index impact · rollback   [View all] │ │
+│ By type            │ │                                                                    │ │
+│ High-risk op     2 │ │ [✓ Approve A] [Approve + constraints] [Pick another option]        │ │
+│ Plan change      1 │ │ [Request revision] [Delegate ▾] [Reject]          [Full details →] │ │
+│ Req. sign-off    1 │ └────────────────────────────────────────────────────────────────────┘ │
+│ Release          1 │ ┌────────────────────────────────────────────────────────────────────┐ │
+│                    │ │ ⚠ Due in 3h42m            🟡 Medium risk   Order System Refactor   │ │
+│                    │ │ Plan change v3: 6 new tasks, +1.5 days                             │ │
+│                    │ │ Why you: scope changed by more than 20% — owner must confirm       │ │
+│                    │ │ 🤖 Recommends: approve (the new tasks are required fixes the       │ │
+│                    │ │    security scan turned up)                                        │ │
+│                    │ │ [✓ Approve] [Diff] [Request changes] [Delegate ▾]      [Details →] │ │
+│                    │ └────────────────────────────────────────────────────────────────────┘ │
+│                    │ ┌────────────────────────────────────────────────────────────────────┐ │
+│                    │ │ 💡 Repeat decisions you could automate                             │ │
+│                    │ │ You approved "release to the test environment" 12 times in the     │ │
+│                    │ │ last 30 days — approved every one of them.                         │ │
+│                    │ │ Create a rule: test env + automated tests pass → auto-approve      │ │
+│                    │ │ and notify?                                                        │ │
+│                    │ │                          [Create rule] [Stop suggesting] [Details] │ │
+│                    │ └────────────────────────────────────────────────────────────────────┘ │
+└────────────────────┴────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 顶部统计条
+### 5.1 Top Statistics Bar
 
-六个数字，各自可点击筛选。`已超时` 永远第一位且用红色——超时决策是整个系统 Flow 的最大杀手（文档 8.13.3「因等待人类导致的阻塞时间」）。
+Six numbers, each clickable as a filter. `Overdue` is always first and always red — overdue decisions are the single biggest killer of flow in this system (product doc 8.13.3, "time blocked waiting on a human").
 
-`✓ 本周 18` 提供正反馈，让用户看到自己的贡献。
+`✓ Week 18` is the positive half: it shows people what they actually contributed.
 
-### 5.2 分类侧栏（文档 8.7.1）
+### 5.2 Category Sidebar (product doc 8.7.1)
 
-| 分类 | 含义 |
+| Category | Meaning |
 | --- | --- |
-| 待我处理 | 我是责任人且未处理 |
-| 即将超时 | 4h 内到期（阈值可在决策偏好中配置） |
-| 高风险 | 风险等级高及以上 |
-| 待会签 | 需多人批准，我是其中之一 |
-| 已转交 | 我转交给别人的，跟踪状态 |
-| 已完成 | 我处理过的（用于回溯） |
+| To me | I'm the owner and haven't handled it |
+| Due soon | Due within 4h (threshold configurable in decision preferences) |
+| High risk | Risk level high or above |
+| Co-sign | Needs several approvers and I'm one of them |
+| Delegated | Things I handed to someone else, kept here so I can track them |
+| Completed | Things I've handled (for looking back) |
 
-另按项目、按类型二维筛选。类型对应文档 8.7.5 的责任划分（业务范围变更、架构变更、数据库变更、安全例外、预算超限、生产发布）。
+Two more filter axes on top: by project and by type. Types map to the ownership split in product doc 8.7.5 (business scope change, architecture change, database change, security exception, budget overrun, production release).
 
-### 5.3 决策卡片（文档 8.7.2）
+### 5.3 Decision Card (product doc 8.7.2)
 
-**卡片必须回答文档列出的八个问题**，且不能让用户点进详情页才看到答案：
+**The card must answer all eight questions the product doc lists**, and the user must not have to open a detail page to see any of the answers:
 
-| 问题 | 卡片元素 |
+| Question | Card element |
 | --- | --- |
-| 需要决定什么 | 标题 |
-| 为什么需要人决定 | 「为什么找你」一行，指明触发的 Policy |
-| Agent 推荐什么 | 「🤖 Agent 推荐」+ 置信度 |
-| 有哪些备选方案 | 备选列表（折叠） |
-| 各方案有什么影响 | 推荐方案的影响摘要 |
-| 不处理会导致什么 | 「不处理会怎样」一行 |
-| 最晚何时处理 | 顶部时限标记 |
-| 相关证据在哪里 | 证据链接 |
+| What has to be decided | Title |
+| Why a human has to decide it | The "Why you" line, naming the Policy that fired |
+| What the agent recommends | "🤖 Agent recommends" plus a confidence figure |
+| What the alternatives are | Alternatives list (collapsed) |
+| What each option would do | Impact summary for the recommended option |
+| What happens if nobody acts | The "Cost of waiting" line |
+| The latest it can be handled | Deadline marker at the top of the card |
+| Where the evidence is | Evidence links |
 
-**「不处理会怎样」是最容易被忽略但最有效的字段**——它把决策的紧迫性从抽象的"高优先级"变成具体的"阻塞 5 个任务"。
+**"Cost of waiting" is the field most likely to be skipped and the most effective one there is** — it turns urgency from an abstract "high priority" into a concrete "blocks 5 tasks."
 
-**卡片内直接决策**：常见操作（批准 / 批准+约束 / 选其他方案）在卡片上就能完成，不需要进详情页。只有需要深入评估的才点「完整详情」。
+**Deciding from inside the card**: the common actions (approve / approve with constraints / pick another option) can all be completed on the card itself, with no trip to a detail page. Only decisions that need real evaluation should require "Full details."
 
-### 5.4 Agent 推荐与置信度
+### 5.4 Agent Recommendation and Confidence
 
-推荐必须包含：方案、**置信度**、依据。
+A recommendation must carry three things: the option, its **confidence**, and the reasoning behind it.
 
-置信度的呈现要克制：
-- ≥ 80%：正常显示
-- 60–79%：显示并附「置信度中等，建议查看证据」
-- < 60%：不显示"推荐"，改为"Agent 列出了 3 个方案但无明确倾向"
+Show confidence with restraint:
+- ≥ 80%: display normally
+- 60–79%: display with "medium confidence — worth checking the evidence"
+- < 60%: don't call it a "recommendation" at all; say "the agent listed 3 options but has no clear preference"
 
-**不能让低置信度的推荐看起来和高置信度一样确定**——这会侵蚀信任，而信任是这个产品的根基。
+**A low-confidence recommendation must never look as certain as a high-confidence one** — that erodes trust, and trust is what this product is built on.
 
-### 5.5 决策操作（文档 8.7.3）
+### 5.5 Decision Actions (product doc 8.7.3)
 
-| 操作 | 说明 | 卡片上 | 详情页 |
+| Action | Description | On card | On detail page |
 | --- | --- | --- | --- |
-| Approve | 批准推荐方案 | ✅ | ✅ |
-| Approve with Constraints | 批准并附加约束（约束会传给 Agent） | ✅ | ✅ |
-| Edit | 修改方案后批准 | — | ✅ |
-| Request Revision | 要求 Agent 重新给方案 | ✅ | ✅ |
-| Delegate | 转交他人 | ✅ | ✅ |
-| Take Over | 我自己来做 | — | ✅ |
-| Pause | 暂停相关任务 | — | ✅ |
-| Reject | 驳回 | ✅ | ✅ |
-| Terminate | 终止任务 | — | ✅ |
-| **Create Policy** | 把这次决策变成规则 | ✅ | ✅ |
+| Approve | Approve the recommended option | ✅ | ✅ |
+| Approve with Constraints | Approve and attach constraints (they're passed to the agent) | ✅ | ✅ |
+| Edit | Modify the option, then approve | — | ✅ |
+| Request Revision | Ask the agent for a new proposal | ✅ | ✅ |
+| Delegate | Hand it to someone else | ✅ | ✅ |
+| Take Over | Do it myself | — | ✅ |
+| Pause | Pause the related work | — | ✅ |
+| Reject | Reject it | ✅ | ✅ |
+| Terminate | Terminate the task | — | ✅ |
+| **Create Policy** | Turn this decision into a rule | ✅ | ✅ |
 
-**Create Policy 是本产品的关键杠杆**（文档 3.2「Policy 驱动，而不是每一步都审批」）。每次决策后都提供入口：
-
-```
-✓ 已批准「测试环境发布 v1.4.0」
-
-💡 你今年已批准 12 次同类决策，全部批准。
-   创建规则后，符合条件的决策将自动处理，不再打扰你。
-
-   条件：环境 = 测试 且 自动测试通过 且 成本 < $5
-   动作：自动批准并通知你
-
-                    [创建规则] [以后再说]
-```
-
-### 5.6 批量处理
-
-选中多条同类决策后批量批准。**限制**：
-
-- 只允许对**低风险**、**同类型**的决策批量操作
-- 高风险决策强制逐条处理，批量选择时自动排除并说明
-- 批量操作前显示影响汇总
-
-### 5.7 键盘模式
-
-为高频用户（PM、技术负责人每天可能处理 20+ 决策）提供：
+**Create Policy is this product's key lever** (product doc 3.2, "policy-driven, not approve-every-step"). Offer the entry point after every decision:
 
 ```
-J / K      下一条 / 上一条
-Enter      展开当前卡片
-A          批准
-C          批准并附加约束
-R          要求修改
-D          转交
-X          驳回
-G          创建规则
-?          快捷键帮助
+✓ Approved "release v1.4.0 to the test environment"
+
+💡 You've approved 12 decisions like this one this year — every one approved.
+   Create a rule and matching decisions get handled automatically, without
+   bothering you again.
+
+   When:  environment = test AND automated tests pass AND cost < $5
+   Then:  auto-approve and notify you
+
+                    [Create rule] [Not now]
 ```
 
-处理完一条自动前进到下一条，形成流水线节奏。这是"5 分钟清空队列"目标的关键。
+### 5.6 Batch Processing
 
-### 5.8 可自动化的重复决策
+Select several decisions of the same kind and approve them together. **Limits**:
 
-系统检测同一用户对同类决策的重复批准模式，主动建议建规则。检测逻辑：
+- Batch actions are allowed only on **low-risk** decisions **of the same type**
+- High-risk decisions must be handled one at a time; a batch selection drops them automatically and says why
+- Show an impact summary before the batch runs
 
-- 同一决策类型 + 相似条件
-- 近 30 天出现 ≥ 5 次
-- 结果一致率 ≥ 90%
+### 5.7 Keyboard Mode
 
-这个卡片穿插在决策流中出现，不单独成区——**在用户刚处理完同类决策时提示，接受率最高**。
+For heavy users (a PM or tech lead may work through 20+ decisions a day):
 
-### 5.9 决策偏好设置
+```
+J / K      Next / previous
+Enter      Expand the current card
+A          Approve
+C          Approve with constraints
+R          Request revision
+D          Delegate
+X          Reject
+G          Create a rule
+?          Shortcut help
+```
 
-用户级配置：
+Handling one item advances to the next automatically, which gives the queue an assembly-line rhythm. This is what makes the "empty the queue in 5 minutes" goal reachable.
 
-- 通知渠道与时机（立即 / 汇总 / 免打扰时段）
-- 「即将超时」的提前量（默认 4h）
-- 默认转交人（休假时）
-- 自动转交规则（如「超过 8h 未处理自动转交给备用责任人」）
+### 5.8 Repeat Decisions Worth Automating
+
+The system watches for a user approving the same kind of decision over and over and proposes a rule unprompted. Detection:
+
+- Same decision type + similar conditions
+- At least 5 occurrences in the last 30 days
+- At least 90% consistent outcomes
+
+This card appears inline in the decision stream rather than in a section of its own — **acceptance is highest right after the user has just handled a decision of that kind**.
+
+### 5.9 Decision Preferences
+
+User-level settings:
+
+- Notification channels and timing (immediate / digest / do-not-disturb windows)
+- How far ahead "due soon" fires (default 4h)
+- Default delegate (for time off)
+- Auto-delegation rules (e.g. "if untouched for more than 8h, hand it to the backup owner")
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**每日清空队列（目标场景）**
-
-```
-通知 → 进入决策中心 → 键盘模式
-→ J 浏览 → A 批准 → 自动前进 → A → C(附加约束) → D(转交) → ...
-→ 队列清空 → 「今日已处理 6 项，平均 42 秒」
-（目标 < 5 分钟）
-```
-
-**处理高风险决策**
+**Emptying the daily queue (the target scenario)**
 
 ```
-看到 🔴 高风险 → 卡片信息不够 → [完整详情] → 11 决策详情
-→ 看影响分析、证据、历史类似决策
-→ 批准并附加约束「仅灰度 10%，观察 2h 后再扩量」
-→ 约束传给执行 Agent，写入 Work Item
+Notification → open Decision Center → keyboard mode
+→ J to browse → A to approve → auto-advance → A → C (with constraints) → D (delegate) → …
+→ queue empty → "6 handled today, 42s average"
+(target < 5 minutes)
 ```
 
-**规则化（降低未来负担）**
+**Handling a high-risk decision**
 
 ```
-批准后看到"可自动化"提示 → [创建规则]
-→ 跳 13 Policy 配置（条件已预填）
-→ 调整条件 → [模拟：过去 30 天将自动处理 12 次，无例外]
-→ 启用 → 以后这类决策不再出现在队列
+See 🔴 High risk → card isn't enough → [Full details] → 11 Decision Detail
+→ read the impact analysis, the evidence, similar past decisions
+→ approve with the constraint "canary at 10% only, watch for 2h before scaling up"
+→ the constraint is passed to the executing agent and written onto the work item
 ```
 
-**转交与升级**
+**Turning it into a rule (cutting future load)**
 
 ```
-收到不属于自己专业范围的决策 → [转交 ▾] → 选择 王强(DBA)
-→ 填写转交说明 → 原责任人可在"已转交"跟踪
-→ 若受让人也超时 → 按升级规则通知项目负责人（文档十一）
+After approving, see the "worth automating" prompt → [Create rule]
+→ jump to 13 Policy Configuration (conditions pre-filled)
+→ adjust the conditions → [Simulate: would have handled 12 cases in the last 30 days, no exceptions]
+→ enable → decisions like this stop appearing in the queue
+```
+
+**Delegation and escalation**
+
+```
+A decision arrives that's outside my area → [Delegate ▾] → pick Wang Qiang (DBA)
+→ write a handoff note → the original owner tracks it under "Delegated"
+→ if the delegate also runs out of time → escalation rules notify the project owner (product doc 11)
 ```
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 加载 | 卡片骨架屏；统计条先出 |
-| **队列为空** | **重要正反馈**：「✓ 全部处理完了」+ 本周处理统计 + 自动化率（「本周 68% 的同类事项已由规则自动处理，为你节省约 2 小时」） |
-| 只有已转交/待会签 | 显示等待中的事项及其进度 |
-| 决策被他人处理 | 卡片淡出 + 「李娜已于 1 分钟前批准」，3s 后移除 |
-| 决策超时后自动升级 | 卡片标注「已升级至张伟」，仍保留在我的列表中（我仍有责任） |
-| 处理失败（并发冲突） | 提示「该决策状态已变更」+ 刷新 |
-| 批量操作部分失败 | 显示成功 N 条、失败 M 条及各自原因 |
+| Loading | Skeleton cards; the statistics bar renders first |
+| **Empty queue** | **Important positive feedback**: "✓ All clear" plus this week's totals and the automation rate ("68% of items like these were handled by rules this week, saving you about 2 hours") |
+| Only delegated / co-sign items left | Show the items being waited on and how far along they are |
+| Decision handled by someone else | The card fades with "Li Na approved this a minute ago" and is removed after 3s |
+| Auto-escalated after timing out | The card is marked "escalated to Zhang Wei" but stays in my list (it's still my responsibility) |
+| Action fails (concurrent conflict) | "This decision has changed state" plus a refresh |
+| Batch action partially fails | Show N succeeded, M failed, with the reason for each failure |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看自己的决策队列 | 全部用户 |
-| 查看他人的决策队列 | `pm`（本项目）/ `org_admin` |
-| 处理决策 | 必须是该决策的责任人或会签人 |
-| 转交 | 责任人本人 / `pm`（改派） |
-| 批量处理 | 责任人；仅限低风险同类型 |
-| 创建规则 | `tech_lead` / `pm`（Policy 变更需权限） |
-| 代他人处理 | 禁止。只能通过正式转交流程 |
+| View my own decision queue | All users |
+| View someone else's decision queue | `pm` (this project) / `org_admin` |
+| Act on a decision | Must be the decision's owner or a co-signer |
+| Delegate | The owner themselves / `pm` (reassignment) |
+| Batch process | The owner; low-risk, same-type only |
+| Create a rule | `tech_lead` / `pm` (Policy changes require permission) |
+| Act on someone else's behalf | Forbidden. Only the formal delegation flow |
 
-**代他人处理的禁止是硬性的**——决策责任必须清晰归属，这是文档 10.5 审计要求的基础。
+**The ban on acting for someone else is absolute** — responsibility for a decision has to attach to exactly one person, and that is the foundation of the audit requirements in product doc 10.5.
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Decision`（全字段，文档 6.7）、`WorkItem`、`AgentRun`、`Policy`、`Human`（责任人识别）、`Event`
+**Domain objects**: `Decision` (all fields, product doc 6.7), `WorkItem`, `AgentRun`, `Policy`, `Human` (owner resolution), `Event`
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/decisions?scope=mine&category=&project=&type=&sort=urgency&cursor=
@@ -298,14 +305,14 @@ GET  /api/decisions?scope=mine&category=&project=&type=&sort=urgency&cursor=
                        alternatives[], evidence[], available_actions[] }] }
 
 POST /api/decisions/{id}/approve        { constraints?, note? }
-POST /api/decisions/{id}/reject         { reason }（必填）
+POST /api/decisions/{id}/reject         { reason }  (required)
 POST /api/decisions/{id}/request-revision { feedback }
 POST /api/decisions/{id}/delegate       { assignee_id, note }
 POST /api/decisions/{id}/select-option  { option_id, constraints? }
 POST /api/decisions/batch               { ids[], action, note }
 GET  /api/decisions/automation-suggestions
      → [{ pattern, occurrences, consistency, suggested_policy }]
-GET  /api/me/decision-preferences  /  PATCH 同路径
+GET  /api/me/decision-preferences  /  PATCH on the same path
 
 SSE  /api/stream?channels=user:{id}:decisions
      → decision_created / decision_resolved_by_other / decision_escalated / decision_due_soon
@@ -313,50 +320,50 @@ SSE  /api/stream?channels=user:{id}:decisions
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-对应文档 8.13.3 Human-in-the-Loop 指标，本页是这些指标的主要数据源。
+These map to the Human-in-the-Loop metrics in product doc 8.13.3; this page is their main data source.
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| **`decision_resolution_time`** | **平均决策时间——产品核心指标** |
-| `decision_overdue_count` | 超时决策数（应持续下降） |
-| `decision_action{action, from_card_or_detail}` | 卡片直接处理率（目标 > 70%） |
-| `recommendation_accepted{confidence_bucket}` | **不同置信度下推荐的采纳率——校准 Agent 推荐质量** |
-| `keyboard_mode_used` | 高频用户的效率工具使用率 |
-| **`policy_created_from_decision`** | **规则化转化率——衡量系统是否在真正减少人类负担** |
-| `automation_suggestion_accepted` | 自动化建议的接受率 |
-| `queue_cleared_duration` | 清空队列耗时（目标中位数 < 5min） |
-| `delegate_rate{type}` | 责任人分配是否准确（转交率高说明 8.7.5 的责任映射有问题） |
+| **`decision_resolution_time`** | **Average decision time — the product's core metric** |
+| `decision_overdue_count` | Overdue decisions (should trend down continuously) |
+| `decision_action{action, from_card_or_detail}` | Share handled straight from the card (target > 70%) |
+| `recommendation_accepted{confidence_bucket}` | **Acceptance rate by confidence band — calibrates the quality of agent recommendations** |
+| `keyboard_mode_used` | How much heavy users reach for the efficiency tooling |
+| **`policy_created_from_decision`** | **Rule conversion rate — whether the system is genuinely reducing human load** |
+| `automation_suggestion_accepted` | Acceptance rate for automation suggestions |
+| `queue_cleared_duration` | Time to empty the queue (target median < 5min) |
+| `delegate_rate{type}` | Whether decisions land on the right owner (a high delegation rate means the ownership mapping in 8.7.5 is wrong) |
 
-**页面成功标准**：
-- 平均决策时间 < 4h，超时率 < 5%
-- 卡片直接处理率 > 70%
-- 每月由决策转化的 Policy ≥ 2 条，且自动处理比例逐月上升
+**Success criteria for this page**:
+- Average decision time < 4h, overdue rate < 5%
+- More than 70% of decisions handled directly from the card
+- At least 2 policies per month created out of decisions, with the auto-handled share rising month over month
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases and Exceptions
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 决策队列积压 > 20 条 | 顶部提示「积压较多，建议批量处理低风险项或创建规则」+ 一键筛选低风险 |
-| 用户长期不处理 | 按升级规则（文档十一）4h/8h/24h 三级升级；24h 后暂停关键路径并通知上级 |
-| 责任人离职 / 账号停用 | 决策自动转给其上级或项目负责人，并标注「原责任人不可用」 |
-| 决策依赖的任务已被取消 | 决策自动关闭，标注「关联任务已取消」，不占用队列 |
-| 会签中部分人已批准 | 卡片显示签署进度 `2/3`，已批准者的意见对后续签署者可见 |
-| 会签出现分歧 | 自动升级到共同上级，附各方意见 |
-| 同一决策收到多个通知渠道 | 通知去重；用户在任一渠道处理后其余撤回 |
-| Agent 推荐明显错误 | 提供 [推荐有误] 反馈，进入 Agent 评估数据 |
-| 免打扰时段内的紧急决策 | 高风险 + 即将超时的决策突破免打扰，其余按设置延迟 |
+| Queue backlog > 20 items | Banner: "large backlog — consider batch-processing the low-risk items or creating a rule," plus a one-click low-risk filter |
+| User leaves items untouched for a long time | Escalate per the rules in product doc 11 at 4h / 8h / 24h; after 24h, pause the critical path and notify their manager |
+| Owner leaves the company / account disabled | The decision moves to their manager or the project owner, marked "original owner unavailable" |
+| The work item the decision depends on was canceled | The decision closes automatically, marked "related task canceled," and leaves the queue |
+| Some co-signers have already approved | The card shows signing progress `2/3`; earlier approvers' comments are visible to those still to sign |
+| Co-signers disagree | Escalate automatically to their common manager, with everyone's position attached |
+| The same decision arrives over several notification channels | Notifications are deduplicated; handling it in any one channel retracts the rest |
+| The agent's recommendation is clearly wrong | Offer a [Recommendation is wrong] feedback action that feeds agent evaluation data |
+| An urgent decision during do-not-disturb | High-risk plus due-soon decisions break through; everything else is deferred per the settings |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. 「不处理会怎样」的影响分析由谁生成？Project Agent 计算下游阻塞是可行的，但业务影响（如"影响客户上线"）需要人工标注或从需求继承。MVP 是否只做技术影响？
-2. 置信度的计算方式需要定义并校准。不同 Agent 的置信度不可比，是否需要按 Agent 做校准映射？
-3. 会签的分歧处理机制：多数决 vs 一票否决 vs 升级？倾向于可配置，默认升级。
-4. 批量处理的风险边界：即使是低风险，批量批准 20 条是否也应该有二次确认？倾向于超过 5 条时确认。
-5. 决策超时后"暂停关键路径"这个动作很重，是否应默认开启？倾向于默认开启但可关闭，因为它是让用户重视决策时限的唯一硬约束。
-6. 自动化建议的检测阈值（5 次 / 90% 一致率）需要真实数据验证，MVP 可先保守设置避免误建议。
+1. Who generates the "cost of waiting" impact analysis? Having the Project Agent compute downstream blocking is workable, but business impact (say, "delays a customer launch") has to be annotated by a human or inherited from the requirement. Should the MVP cover technical impact only?
+2. Confidence needs a defined and calibrated computation. Confidence figures from different agents aren't comparable — do we need a per-agent calibration mapping?
+3. How co-sign disagreements resolve: majority rule vs. any-veto vs. escalation? Leaning toward configurable, defaulting to escalation.
+4. The risk boundary for batch processing: even for low-risk items, should approving 20 at once require a second confirmation? Leaning toward confirming above 5.
+5. "Pause the critical path" after a decision times out is a heavy action — should it be on by default? Leaning toward on by default but switchable off, because it's the only hard constraint that makes people take decision deadlines seriously.
+6. The detection thresholds for automation suggestions (5 occurrences / 90% consistency) need validation against real data; the MVP can start conservative to avoid bad suggestions.

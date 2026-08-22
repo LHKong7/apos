@@ -35,29 +35,31 @@ import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './p
 
 export interface AutoAction {
   /**
-   * 界面读这个码 + params，**不读** description。
-   * ★ description 保留为兜底：存量快照里只有它，日志里也是它更省事。
-   *   「界面读码，日志读句子」——CLAUDE.md。
+   * The UI reads this code plus params, and **not** description.
+   * ★ description stays as the fallback: existing snapshots contain nothing
+   *   else, and for logs a ready-made sentence is simply less work.
+   *   "The UI reads codes, the logs read sentences" — CLAUDE.md.
    */
   code: AutoActionCode;
   params: ConsequenceParams;
-  /** @deprecated 中文兜底句，给存量数据与日志用 / Chinese fallback for logs and old snapshots */
+  /** @deprecated Chinese fallback for logs and old snapshots / 中文兜底句，给存量数据与日志用 */
   description: string;
   policyId: string | null;
   policyName: string | null;
   reversible: boolean;
   externalVisible: boolean;
   /**
-   * 这一条是**会发生的动作**还是**一个估算**。
+   * Whether this entry is **an action that will happen** or **an estimate**.
    *
-   * ★★ 两者此前混在同一个列表里，而「不可逆」这个标记只对前者成立。
-   *   于是计划页上出现了「预计消耗 …（不可逆）」—— 一个估算被标成
-   *   不可逆，读起来像是「这笔钱一批就没了、退不回来」。用量估算本来就
-   *   既不是动作也不会「逆」，它只是一个上界（问题记录 #13）。
+   * ★★ The two used to share one list, while the "irreversible" flag only makes
+   *   sense for the first kind. The plan page therefore showed "estimated usage
+   *   … (irreversible)" — an estimate tagged irreversible, which reads as "this
+   *   money is gone the moment you approve and you cannot get it back". A usage
+   *   forecast is neither an action nor something that can be "reversed"; it is
+   *   just an upper bound (issue log #13).
    *
-   * An estimate is not an action, and "irreversible" only makes sense for
-   * actions. Tagging the usage forecast irreversible read as "this money is
-   * gone the moment you approve".
+   *   估算不是动作，「不可逆」这个标记只对动作成立 —— 把用量估算标成不可逆，
+   *   读起来像是「这笔钱一批就没了」。
    */
   kind: 'action' | 'estimate';
 }
@@ -65,21 +67,26 @@ export interface AutoAction {
 export interface HumanGateEntry {
   taskTitle: string;
   /**
-   * 这道闸是**为什么**在的。
+   * **Why** this gate is here.
    *
-   * ★★ `execution` = 这活得人干；`approval` = 干完要人批。
-   *   两者以前混在同一个列表里，而用户看到它时要做的判断完全不同：
-   *   前者是排人，后者是把关。分不开的话，计划页上「仍需人确认的（5）」
-   *   里可能一条审批都没有 —— 全是「这几件事得人做」。
+   * ★★ `execution` = a human has to do the work; `approval` = a human has to
+   *   sign off once it is done. The two used to share one list, yet what the
+   *   user has to decide on seeing them is entirely different: the first is
+   *   staffing, the second is oversight. Undifferentiated, "still needs human
+   *   confirmation (5)" on the plan page can contain no approvals at all — all
+   *   five being "these are things a person has to do".
+   *
+   *   `execution` 是排人，`approval` 是把关，两者混在一起会让计划页上
+   *   「仍需人确认的（5）」里一条审批都没有。
    */
   cause: 'execution' | 'approval';
-  /** 界面读码 + params；reason 是兜底句 / UI reads the code, reason is the fallback */
+  /** The UI reads the code + params; reason is the fallback / 界面读码 + params，reason 是兜底句 */
   code: HumanGateCode;
   params: ConsequenceParams;
   assigneeHintCode: AssigneeHintCode;
-  /** @deprecated 中文兜底 / Chinese fallback */
+  /** @deprecated Chinese fallback / 中文兜底 */
   reason: string;
-  /** @deprecated 中文兜底 / Chinese fallback */
+  /** @deprecated Chinese fallback / 中文兜底 */
   assigneeHint: string;
 }
 
@@ -90,19 +97,24 @@ export interface PlanSummary {
   agentTaskCount: number;
   humanTaskCount: number;
   estimatedHours: number;
-  /** null = 一条任务都没给出估算（不是估成 0） */
+  /** null = not one task gave an estimate (as opposed to estimating zero). */
   estimatedTokens: number | null;
-  /** 批准后将自动发生的行为 —— 计划确认页的灵魂 */
+  /** What will happen automatically once approved — the heart of the plan confirmation page. */
   autoActions: AutoAction[];
   humanGates: HumanGateEntry[];
   riskCount: number;
 }
 
 /**
- * 生成执行计划。
+ * Generate an execution plan.
  *
- * 关键点：auto_actions 由 Policy 预演生成并快照存储。用户批准的是
- * 「当时那份清单」，Policy 后来变了也要能追溯他到底批准了什么。
+ * The key point: auto_actions is produced by a policy dry run and stored as a
+ * snapshot. What the user approves is *that list, as it stood then* — when a
+ * policy changes later, it must still be possible to trace what they actually
+ * approved.
+ *
+ * auto_actions 由 Policy 预演生成并快照存储：用户批准的是当时那份清单，
+ * Policy 后来变了也要能追溯他到底批准了什么。
  */
 export async function generatePlan(
   db: Database,
@@ -110,17 +122,22 @@ export async function generatePlan(
   input: {
     requirementId: string;
     correlationId: string;
-    /** 产出语言，来自调用方的 X-Locale。缺省时 provider 按英文写 */
+    /** Output language, from the caller's X-Locale. Absent, the provider writes English. */
     locale?: 'en' | 'zh';
     /**
-     * 「要求修改」时用户写的意见。
+     * What the user wrote when they asked for revisions.
      *
-     * ★ 它只传给规划器，不写进新版本的 revisionFeedback。
-     *   那个列的语义是「**这一版**为什么被要求改」，由 supersede 时写入 ——
-     *   新版本也往里写一份「我是基于什么意见生成的」，两种含义就共用了一列，
-     *   于是 v3 被 v4 取代时，「取代 v3 的理由」直接覆盖了「v3 是怎么来的」，
-     *   页面上 v3 会顶着一句它根本不是基于其生成的意见。
-     *   「这一版是基于什么生成的」= 上一版的 revisionFeedback，不需要再存一份。
+     * ★ It is passed to the planner only, and never written into the new
+     *   version's revisionFeedback. That column means "why **this version** was
+     *   sent back", written at supersede time. Have the new version also store
+     *   "the feedback I was generated from" and one column carries two meanings:
+     *   when v4 supersedes v3, "the reason v3 was replaced" overwrites "how v3
+     *   came about", and the page shows v3 captioned with feedback it was not
+     *   generated from at all. "What this version was generated from" is simply
+     *   the previous version's revisionFeedback — no second copy needed.
+     *
+     *   只传给规划器，不写进新版本的 revisionFeedback：两种含义共用一列，
+     *   会让 v3 顶着一句它根本不是基于其生成的意见。
      */
     feedback?: string;
   },
@@ -139,15 +156,21 @@ export async function generatePlan(
   const [project] = await db.select().from(projects).where(eq(projects.id, req.projectId));
 
   /**
-   * ★★ 假设与澄清必须一起传给规划器。
+   * ★★ Assumptions and clarifications have to travel to the planner together.
    *
-   *   这两栏以前是硬编码的空数组，于是 buildPlanBrief 里那句
-   *   `assumptions: req.assumptions` 永远拿到空 —— 规划 Agent 看不到
-   *   「上一步 AI 假设了什么」「人回答了哪些澄清问题」，只能凭结构化字段
-   *   重新猜一遍。用户在需求页上逐条回答的东西，到计划这一步全丢了。
+   *   Both fields used to be hard-coded empty arrays, so `assumptions:
+   *   req.assumptions` in buildPlanBrief always came up empty — the planning
+   *   agent could not see what the previous AI step assumed or which
+   *   clarifying questions a human answered, and had to re-guess it all from
+   *   the structured fields. Everything the user answered, item by item, on the
+   *   requirement page was lost by the time planning ran.
    *
-   * ★ 只带**已回答**的澄清与**未被证伪**的假设：没答的问题带过去是噪声，
-   *   已经被证伪的假设带过去会把规划引向已知错误的方向。
+   * ★ Carry only **answered** clarifications and assumptions **not yet
+   *   invalidated**: unanswered questions are noise, and an assumption already
+   *   proven wrong steers planning in a known-wrong direction.
+   *
+   *   只带已回答的澄清与未被证伪的假设 —— 否则用户在需求页上逐条回答的
+   *   东西，到计划这一步全丢了。
    */
   const [clarificationRows, assumptionRows] = await Promise.all([
     db
@@ -186,7 +209,7 @@ export async function generatePlan(
         agentSuggestion: c.agentSuggestion,
         suggestionBasis: c.suggestionBasis,
         options: (c.options as string[]) ?? [],
-        /** ★ 答案本身才是规划要用的东西 —— 只带问题等于没传 */
+        /** ★ The answer is the part planning needs — carrying only the question carries nothing. */
         answer: c.answer,
       })),
     assumptions: assumptionRows.map((a) => a.statement),
@@ -195,12 +218,12 @@ export async function generatePlan(
     model: '',
   };
 
-  // ★ 意见必须传给规划器，不能只存进数据库 —— 只存不用等于「要求修改」是个假按钮
+  // ★ Feedback must reach the planner, not merely the database — stored but unused makes "request changes" a fake button
   const generated = await provider.generatePlan(
     structured,
     project?.type ?? 'development',
     input.feedback,
-    // ★ 带上 requirementId：规划 Run 靠它才能从需求页找回来
+    // ★ Carry requirementId: it is how a planning run is reachable again from the requirement page
     {
       orgId: req.orgId,
       projectId: req.projectId,
@@ -229,29 +252,43 @@ export async function generatePlan(
 
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
   /**
-   * ★★ 一条都没估的时候要落 null，**不是 0**。
+   * ★★ When nothing was estimated, store null — **not 0**.
    *
-   *   此前是 `reduce((s, t) => s + (t.estimatedTokens ?? 0), 0)`：Agent 没给
-   *   估算时把一串 null 加成 0，计划页于是理直气壮地写「Token estimate 0」，
-   *   批准弹窗跟着说「预计消耗 0 tokens」—— 与「这份计划真的不花 token」
-   *   完全无法区分（问题记录：NEW-BUG-3）。
+   *   This used to be `reduce((s, t) => s + (t.estimatedTokens ?? 0), 0)`: with
+   *   no estimates from the agent, a string of nulls summed to 0, so the plan
+   *   page confidently printed "Token estimate 0" and the approval dialog said
+   *   "estimated usage 0 tokens" — indistinguishable from "this plan genuinely
+   *   costs no tokens" (issue log: NEW-BUG-3).
    *
-   * ★ 部分估了就按估到的那些求和：半份估算仍然是信息，而它天然偏小，
-   *   偏小的方向对预算闸门是安全的（会更早拦，不会更晚）。
+   * ★ Partially estimated sums the estimates that exist: half an estimate is
+   *   still information, and it necessarily runs low — which is the safe
+   *   direction for a budget gate, since it stops things earlier rather than
+   *   later.
+   *
+   *   一条都没估时落 null 而不是 0 —— 否则「没估算」与「真的不花 token」
+   *   完全无法区分；部分估了就按估到的那些求和，偏小的方向对预算闸门是安全的。
    */
   const estimated = generated.tasks.map((t) => t.estimatedTokens).filter((n): n is number => typeof n === 'number');
   const estimatedTokens = estimated.length === 0 ? null : estimated.reduce((a, b) => a + b, 0);
 
   /**
-   * ★★ 计划、任务、依赖边必须在**同一个事务**里落地。
+   * ★★ The plan, its tasks, and the dependency edges must land in **one
+   *   transaction**.
    *
-   *   在此之前它们是三段独立的写：先 insert plans，再循环 insert workItems，
-   *   最后 insert 依赖边。中途进程挂掉（或某条任务违反约束）留下的是一份
-   *   「已生成」的计划，底下却只有前几个任务 —— 而计划页看起来完全正常，
-   *   用户批准之后才发现少了一半的活。半份计划比没有计划危险得多。
+   *   They used to be three independent writes: insert plans, then loop
+   *   inserting workItems, then insert the dependency edges. A process dying
+   *   partway (or one task violating a constraint) left a plan marked
+   *   "generated" with only its first few tasks underneath — and the plan page
+   *   looked entirely normal, so the user only discovered half the work was
+   *   missing after approving it. Half a plan is far more dangerous than no
+   *   plan.
    *
-   * ★ 编号分配也放进来：它自己会推进项目的序号计数器，事务回滚时
-   *   那几个号就该跟着还回去，否则任务编号会莫名其妙地跳段。
+   * ★ Number allocation goes inside too: it advances the project's sequence
+   *   counter, and a rollback should hand those numbers back, or task numbers
+   *   develop inexplicable gaps.
+   *
+   *   三者必须同一个事务：半份计划比没有计划危险得多。编号分配也放进来，
+   *   否则回滚会让任务编号莫名其妙地跳段。
    */
   const plan = await db.transaction(async (tx) => {
   const [plan] = await tx
@@ -275,10 +312,14 @@ export async function generatePlan(
     })
     .returning();
 
-  // 任务先建为 draft，批准后才转 ready
+  // Tasks are created as draft first and only move to ready once approved
   /**
-   * ★ 一次把这批号全要过来，不是每条各要一个。
-   *   循环分配会让别人的号插进中间，同一份计划出来的任务编号不连续 ——
+   * ★ Claim the whole batch of numbers at once rather than one per task.
+   *   Allocating inside the loop lets somebody else's numbers slot in between,
+   *   so tasks from one plan get non-contiguous numbers — which reads as though
+   *   a few of them went missing.
+   *
+   *   一次把这批号全要过来：循环分配会让同一份计划的任务编号不连续，
    *   读起来像是丢了几条。
    */
   const numbers = await allocateNumbers(tx, req.projectId, generated.tasks.length);
@@ -307,24 +348,36 @@ export async function generatePlan(
           requiredCapabilities: task.requiredCapabilities,
           requiredTools: task.requiredTools,
           /**
-           * ★★ executionMode 与 approvalGate 是两件事。
+           * ★★ executionMode and approvalGate are two different things.
            *
-           *   「这活只能人干」和「干完要不要人批」在产品上正交：一段需要人写的
-           *   文案不一定要审批，一次自动的生产发布几乎一定要。合成一个
-           *   requiresHuman 之后，「Agent 执行 + 人类审批」表达不了，
-           *   而计划页那一栏会显示成「🤖 Agent」，看不出后面还有一道闸。
+           *   "Only a human can do this work" and "does it need sign-off when
+           *   done" are orthogonal in product terms: copy a human has to write
+           *   does not necessarily need approval, while an automated production
+           *   release almost certainly does. Collapsed into a single
+           *   requiresHuman, "agent executes + human approves" becomes
+           *   inexpressible, and that column on the plan page reads "🤖 Agent"
+           *   with no sign that a gate follows.
            *
-           * ★ requiresHuman 一并留着：老工作项只有它，读取处（executionModeOf）
-           *   两个都认。等历史数据都带上 executionMode 之后再删。
+           * ★ requiresHuman is kept alongside: old work items have only that
+           *   field, and the reader (executionModeOf) honors both. It can go
+           *   once every historical row carries executionMode.
+           *
+           *   两者正交，合成一个 requiresHuman 之后「Agent 执行 + 人类审批」
+           *   就表达不了了；requiresHuman 留着是因为老工作项只有它。
            */
           executionMode: task.requiresHuman ? 'human' : 'auto',
           requiresHuman: task.requiresHuman,
           ...(task.operationType ? { operationType: task.operationType } : {}),
           ...(task.environment ? { environment: task.environment } : {}),
           /**
-           * ★ 这两项此前没人写进 typeData，于是 buildPolicyContext 永远读到
-           *   null / false ——「访问受限数据要审批」「对外内容要人确认」
-           *   两类规则因此永远不会命中，而用户以为自己配好了。
+           * ★ Nobody used to write these two into typeData, so
+           *   buildPolicyContext always read null / false — rules like
+           *   "accessing restricted data needs approval" and "external-facing
+           *   content needs human confirmation" could therefore never match,
+           *   while the user believed they had configured them.
+           *
+           *   这两项此前没人写进 typeData，于是相关规则永远不会命中，
+           *   而用户以为自己配好了。
            */
           ...(task.dataSensitivity ? { dataSensitivity: task.dataSensitivity } : {}),
           ...(task.externalFacing !== undefined ? { externalFacing: task.externalFacing } : {}),
@@ -353,9 +406,12 @@ export async function generatePlan(
   });
 
   /**
-   * ★ 事件在事务**提交之后**发（modules/event/bus.ts 的纪律）。
-   *   事务内发布会把「计划已生成」推给浏览器而事务随后回滚 ——
-   *   用户点进去看到一个不存在的计划。
+   * ★ The event is published **after** the transaction commits (the discipline
+   *   in modules/event/bus.ts). Publishing inside pushes "plan generated" to the
+   *   browser and then rolls the transaction back — the user clicks through to a
+   *   plan that does not exist.
+   *
+   *   事务内发布会把「计划已生成」推给浏览器而事务随后回滚。
    */
   await emitAndPublish(db, {
     type: 'plan.generated',
@@ -410,16 +466,19 @@ async function loadRules(db: Database, orgId: string, projectId: string) {
 }
 
 /**
- * Policy 预演 —— 把抽象规则翻译成「批准后会发生什么」。
+ * Policy dry run — translating abstract rules into "what happens once you
+ * approve".
  *
- * 页面文档 04 §5.3：批准计划 = 批准一批自动化行为，
- * 用户必须清楚看到自己让渡了什么，以及安全网在哪。
+ * Page doc 04 §5.3: approving a plan means approving a batch of automated
+ * behavior, so the user has to see plainly what they are giving up and where
+ * the safety net is.
  */
 /**
- * Policy 动作 → 「接下来系统会怎么办」的码。
+ * Policy action → the code for "what the system will do next".
  *
- * ★ 与 explainAction() 一一对应，但产出的是码而不是中文句子。
- *   explainAction 仍然保留 —— 它喂日志与通知，那里拼一句现成的话更省事。
+ * ★ One-to-one with explainAction(), but producing a code rather than a Chinese
+ *   sentence. explainAction stays — it feeds logs and notifications, where a
+ *   ready-made sentence is less work.
  */
 function assigneeHintCodeFor(action: { type: string }): AssigneeHintCode {
   switch (action.type) {
@@ -444,9 +503,13 @@ function assigneeHintCodeFor(action: { type: string }): AssigneeHintCode {
     case 'transfer_to_human':
       return 'transfer_to_human';
     /**
-     * ★ 认不出来的动作类型回落到「得有人处理」而不是「自动放行」。
-     *   猜错方向的代价不对称：把「需要人」显示成「自动」会让用户以为
-     *   不用管，而反过来只是多看一眼。
+     * ★ An unrecognized action type falls back to "somebody has to handle this"
+     *   rather than "let it through automatically". The cost of guessing wrong
+     *   is asymmetric: showing "needs a human" as "automatic" makes the user
+     *   think there is nothing to do, while the reverse costs them one extra
+     *   glance.
+     *
+     *   猜错方向的代价不对称，所以认不出来时回落到「得有人处理」。
      */
     default:
       return 'project_member';
@@ -474,9 +537,13 @@ function predictPolicyOutcomes(
       riskLevel: task.riskLevel,
       reversible: task.operationType !== 'db_ddl' && task.operationType !== 'delete_resource',
       /**
-       * ★ 预演用的上下文要和真正执行时的那份一致。此前这两项在预演里
-       *   写死成 false / null，于是计划页预告的「批准后会发生什么」
-       *   与实际执行时的判定可能相反 —— 而预演的全部价值就是那个一致。
+       * ★ The dry-run context has to match the one used at real execution time.
+       *   These two were hard-coded to false / null in the dry run, so the plan
+       *   page's forecast of "what happens once you approve" could come out the
+       *   opposite of the verdict at execution — and that agreement is the
+       *   entire value of a dry run.
+       *
+       *   预演的全部价值就在于它与真正执行时的判定一致。
        */
       externalFacing: task.externalFacing ?? false,
       environment: task.environment ?? null,

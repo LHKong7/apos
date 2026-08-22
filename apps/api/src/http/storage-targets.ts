@@ -23,6 +23,20 @@ import { localMountRootsFromEnv } from '../modules/workspace';
 import { fail, notFound } from './errors';
 
 /**
+ * Storage target registrations — the non-Git workspace sources.
+ *
+ * ★★ Why these do not live in the `repositories` table and on that page.
+ *
+ *   Every column of that table is a git concept (remoteUrl / defaultBranch / branchPrefix /
+ *   sshKnownHosts). Squeezing an S3 bucket in means filling those columns with placeholders,
+ *   and placeholders leak all the way to the UI ("Default branch: main"). That is exactly
+ *   the trap planning tasks fell into back when they pretended to be a git repository with
+ *   `branch: 'planning'` (see docs/tech/11-workspace-abstraction.md §1).
+ *
+ * ★ `ResourceScope` references them with `kind: 'dataset'`, kept separate from a
+ *   repository's `kind: 'repo'` — which makes "what was authorized" self-explanatory in a
+ *   permission snapshot.
+ *
  * 存储目标登记 —— 非 Git 的工作区来源。
  *
  * ★★ 为什么不塞进 `repositories` 表和那一页。
@@ -37,7 +51,7 @@ import { fail, notFound } from './errors';
  *   分开 —— 「授权了什么」在权限快照里因此是自解释的。
  */
 
-// ── 输入 ──────────────────────────────────────────────────────────────
+// ── Input ─────────────────────────────────────────────────────────────
 
 const REF_RE = /^[a-z0-9][a-z0-9_.-]*$/i;
 
@@ -52,13 +66,22 @@ export const StorageTargetInput = z
     kind: z.enum(['object_storage', 'local']),
 
     // ── object_storage ──────────────────────────────────────────────
-    /** S3 兼容端点，如 `https://s3.us-east-1.amazonaws.com` 或自建 MinIO 的地址 */
+    /**
+     * S3-compatible endpoint, e.g. `https://s3.us-east-1.amazonaws.com` or a self-hosted
+     * MinIO address
+     */
     endpoint: z.string().max(500).nullable().optional(),
     region: z.string().max(64).optional(),
     bucket: z.string().max(255).nullable().optional(),
-    /** 只挂这个前缀下的对象；空串表示整个 bucket */
+    /** Mount only objects under this prefix; an empty string means the whole bucket */
     prefix: z.string().max(500).optional(),
     /**
+     * path-style (`host/bucket/key`) versus virtual-host-style (`bucket.host/key`).
+     *
+     * ★ Configured explicitly rather than guessed: MinIO / Ceph / self-hosted gateways
+     *   generally only support path-style, and guessing wrong shows up as a DNS resolution
+     *   failure — an error that points nowhere near "addressing style".
+     *
      * path-style（`host/bucket/key`）还是 virtual-host-style（`bucket.host/key`）。
      *
      * ★ 显式配置而不是猜：MinIO / Ceph / 自建网关基本只支持 path-style，
@@ -67,15 +90,24 @@ export const StorageTargetInput = z
     forcePathStyle: z.boolean().optional(),
 
     // ── local ───────────────────────────────────────────────────────
-    /** 宿主机上的绝对路径 */
+    /** Absolute path on the host machine */
     rootPath: z.string().max(1000).nullable().optional(),
 
     /**
+     * Object storage credential, shaped as `accessKeyId:secretAccessKey`, or `env:VAR_NAME`.
+     * Omitted = unchanged, null = cleared. Only a reference is stored, and the API never
+     * reads the raw value back out.
+     *
      * 对象存储凭证，形如 `accessKeyId:secretAccessKey`，或 `env:变量名`。
-     * 不传 = 不改，null = 清除。只以引用入库，接口永远读不回原值。
      */
     credential: z.string().nullable().optional(),
     /**
+     * Writable = the delivery stage is allowed to write back.
+     *
+     * ★ Defaults to false. If it defaulted to writable, a dataset mounted purely "for
+     *   reference" would get written back the moment an agent casually edited a few files —
+     *   something whoever registered it never intended.
+     *
      * 可写 = 交货阶段允许写回。
      *
      * ★ 默认 false。默认可写的话，一个「挂进来当参考」的数据集会在
@@ -83,16 +115,30 @@ export const StorageTargetInput = z
      */
     writable: z.boolean().optional(),
     /**
+     * Which storage target the output is delivered to. Omitted = write back to itself.
+     *
+     * ★ Pointing elsewhere means **delivery**: only files added or modified in the change
+     *   set are uploaded, they land under `{prefix}{runId}/`, and nothing in the target is
+     *   ever deleted.
+     *
      * 产出交货到哪个存储目标。不传 = 写回自己。
      *
      * ★ 指向别处时语义是**投递**：只上传变更集里新增/修改的文件，
      *   落在 `{前缀}{runId}/` 下，不删除目标里的任何东西。
      */
     deliveryTargetId: z.string().uuid().nullable().optional(),
-    /** 不传表示组织级共享 */
+    /** Omitted means organization-wide sharing */
     projectId: z.string().uuid().nullable().optional(),
   })
   /**
+   * ★★ Each kind's required fields are caught at the **entrance**, not left to the database
+   *   check constraint alone.
+   *
+   *   The constraint does stop a registration that is missing its bucket, but what comes
+   *   back is a Postgres constraint name (storage_targets_shape_check), and an admin cannot
+   *   tell from that which field to fill in. Here we name the field; the constraint stays as
+   *   the last line of defense.
+   *
    * ★★ 两类各自的必填项在**入口**就卡住，而不是只靠库里的 check 约束。
    *
    *   库约束会把缺 bucket 的登记挡下来，但报出来的是一句 Postgres 的
@@ -115,7 +161,8 @@ export const StorageTargetInput = z
     if (v.kind === 'local') {
       const p = v.rootPath?.trim();
       if (!p) issue('rootPath', '本地目录必须填绝对路径');
-      // ★ 相对路径会被 resolve 成**服务进程的当前目录**，而那通常是代码仓库本身
+      // ★ A relative path resolves against **the server process's working directory**, which
+      //   is usually the code repository itself
       else if (!isAbsolute(p)) issue('rootPath', '必须是绝对路径（以 / 开头）');
       if (v.bucket?.trim() || v.endpoint?.trim()) {
         issue('bucket', '本地目录不需要端点与 bucket');
@@ -125,7 +172,7 @@ export const StorageTargetInput = z
 
 type StorageTargetInputType = z.infer<typeof StorageTargetInput>;
 
-// ── 读 ────────────────────────────────────────────────────────────────
+// ── Reads ─────────────────────────────────────────────────────────────
 
 export async function listStorageTargets(db: Database, orgId: string, projectId: string | null) {
   const rows = await db
@@ -165,28 +212,35 @@ export async function listStorageTargets(db: Database, orgId: string, projectId:
         credentialHint: r.credentialHint,
         credentialUsable: cred.usable,
         credentialProblem: cred.problem,
-        /** ★ 与上面那句中文配对的码，界面据此取词 */
+        /** ★ The code paired with the Chinese sentence above; the UI looks up its message by it */
         credentialProblemCode: cred.problemCode,
         credentialProblemParams: cred.problemParams,
         warnings: targetWarnings(r, mountRoots),
       };
     }),
     /**
+     * ★ The allowlist has to be visible on this page. It is an environment variable, so an
+     *   admin cannot see it anywhere in the UI, yet it alone decides whether a registration
+     *   clears the gate. Hide it and a gated registration looks exactly like a healthy one
+     *   until the first dispatch reports "outside the allowed roots".
+     *
      * ★ 白名单要在这一页显示出来。它是环境变量，管理员在界面上看不到，
      *   而一条登记「过没过闸」完全由它决定 —— 不显示的话，被闸掉的登记
      *   在页面上和正常的一模一样，直到第一次派发才报「不在允许范围内」。
      */
     localMountRoots: mountRoots,
     localMountRestricted: mountRoots.length > 0,
-    /** 直接粘贴的凭证是不是密文入库 —— 不是「能不能存」 */
+    /** Whether a pasted credential is stored encrypted — not whether it can be stored */
     encryptsInlineSecrets: hasMasterKey(),
   };
 }
 
 /**
- * 配置页上要提前说出来的问题。
+ * Problems worth saying out loud on the configuration page.
  *
- * ★ 每一条都是「不说的话要等第一次派发才炸」的那种。
+ * ★ Every one of them is the kind that otherwise waits until the first dispatch to blow up.
+ *
+ * 配置页上要提前说出来的问题。
  */
 function targetWarnings(
   r: typeof storageTargets.$inferSelect,
@@ -199,6 +253,11 @@ function targetWarnings(
       out.push('未配置凭证：挂载时会因为拿不到 access key 直接失败');
     }
     /**
+     * ★ The easiest one to overlook: write-back happens **from the change set**, and a
+     *   read-only mount is skipped outright at the delivery stage. Register a target as
+     *   read-only while expecting it to receive output and the symptom is "the task
+     *   succeeded but the bucket is empty".
+     *
      * ★ 这一条最容易被忽略：写回是**按变更集**做的，而只读挂载在交货阶段
      *   会原样跳过。登记成只读却指望它接收产物，表现是「任务成功但 bucket 里
      *   什么都没有」。
@@ -226,9 +285,22 @@ function targetWarnings(
   return out;
 }
 
-// ── 写 ────────────────────────────────────────────────────────────────
+// ── Writes ────────────────────────────────────────────────────────────
 
 /**
+ * A local directory must fall under one of the deployment's allowed mount roots — enforced
+ * **before saving**.
+ *
+ * ★★ This used to be only a warning: the form was accepted, the row was written with status
+ *   `active`, and the list showed a line of small print saying "the mount will be rejected".
+ *   In other words, a resource the UI plainly labeled `Status: active` was guaranteed to
+ *   fail on its first dispatch — and that failure (see the rejection path in dispatch) is
+ *   invisible from where the user is standing. The allowed roots are printed at the top of
+ *   this very page, so this is entirely decidable before the save.
+ *
+ * ★ The error carries a code plus params, not a pre-built sentence: the frontend renders it
+ *   next to the field in the viewer's own language.
+ *
  * 本地目录必须落在部署方允许的挂载根里 —— **保存前**就拦。
  *
  * ★★ 此前这条只是一句 warning：表单照收，行落库、状态写成 active，
@@ -238,14 +310,11 @@ function targetWarnings(
  *   允许的根就印在同一个页面顶上，这件事在保存前完全判得了。
  *
  * ★ 错误带码 + 参数，不是拼好的句子：前端要按语言把它显示在字段旁边。
- *
- * The allowed roots are printed on the same page; there is no reason to accept
- * a path that is guaranteed to fail at dispatch and mark it "active".
  */
 function assertMountRootAllowed(kind: string, rootPath: string | null | undefined): void {
   if (kind !== 'local' || !rootPath) return;
   const roots = localMountRootsFromEnv();
-  if (roots.length === 0) return; // 部署方没有限定范围
+  if (roots.length === 0) return; // The deployment set no restriction
   if (isMountRootAllowed(rootPath, roots)) return;
 
   throw fail(
@@ -276,6 +345,12 @@ export async function createStorageTarget(
   }
 
   /**
+   * ★ Repository refs and storage target refs live in **one namespace**: an agent's resource
+   *   scope resolves by (kind, ref), but a person only ever sees the ref. Let the two
+   *   collide and the page shows two identically named resources, with which one a grant
+   *   actually selected depending entirely on kind — an ambiguity that is nearly impossible
+   *   to prove either way once something goes wrong.
+   *
    * ★ 仓库与存储目标的 ref 落在**同一个命名空间**里：Agent 的资源范围
    *   靠 (kind, ref) 解析，但人只看得到一个 ref。两边撞名的话，
    *   页面上会出现两条同名资源，而授权时选中哪一条全看 kind ——
@@ -318,6 +393,12 @@ export async function updateStorageTarget(
   const existing = await loadOwned(db, orgId, targetId);
 
   /**
+   * ★ The kind cannot be changed. The required columns of object_storage and local do not
+   *   overlap at all, so a half-finished switch gets the whole update rejected by the check
+   *   constraint, with an error naming the constraint instead of the field. To change kinds,
+   *   delete and re-register — which also gives the "agents whose grants point at it" check
+   *   a chance to run.
+   *
    * ★ 不允许改 kind。object_storage 与 local 的必填列完全不重叠，
    *   改一半的话库约束会把整次更新拒掉，而报错指向的是约束名不是字段。
    *   要换类型就删了重建 —— 这也让「授权指向它的 Agent」那道检查有机会跑。
@@ -333,6 +414,17 @@ export async function updateStorageTarget(
   assertShapeAfterUpdate(existing, input);
 
   /**
+   * ★★ Before flipping a target to read-only, check whether other registrations are
+   *   delivering their output into it.
+   *
+   *   `resolveDeliveryTarget` already rejects a read-only target at the moment a delivery
+   *   target is saved, because "I configured a delivery target and the output never arrived"
+   *   is the hardest failure to reason your way to. But writability can be changed
+   *   **afterward** — turning it off from this end lets those registrations slip past that
+   *   check: they get skipped at wrap-up, the task still succeeds, the artifacts page still
+   *   has a record, and the files simply went nowhere. The delete path has guarded the same
+   *   thing all along (see deleteStorageTarget); this closes the other half.
+   *
    * ★★ 改成只读之前，先看有没有别的登记正把产出交货到它。
    *
    *   `resolveDeliveryTarget` 在保存交货目标那一刻拒了只读的目标，理由是
@@ -357,7 +449,8 @@ export async function updateStorageTarget(
     .update(storageTargets)
     .set({
       ...(input.name ? { name: input.name } : {}),
-      // ★ null 与 undefined 在这里意义不同：null = 清空，undefined = 这次没提这个字段
+      // ★ null and undefined mean different things here: null = clear the column,
+      //   undefined = this request did not mention the field, leave it alone
       ...(input.endpoint !== undefined ? { endpoint: input.endpoint?.trim() || null } : {}),
       ...(input.region !== undefined ? { region: input.region } : {}),
       ...(input.bucket !== undefined ? { bucket: input.bucket?.trim() || null } : {}),
@@ -389,11 +482,19 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
   const row = await loadOwned(db, orgId, targetId);
 
   /**
+   * ★ A target still referenced by an agent grant cannot be deleted — delete it and those
+   *   agents' dataset scopes become strings that resolve to nothing, which shows up as
+   *   "every dispatch suddenly fails", with the error never mentioning that someone removed
+   *   a storage target. Same discipline as on the repository side.
+   *
    * ★ 还有 Agent 授权指向它就不能删 —— 删掉之后那些 Agent 的 dataset 范围
    *   会变成解析不出来的字符串，表现是「派发时突然全部失败」，
    *   而错误信息里不会提到有人删了一个存储目标。与仓库那边同一条纪律。
    */
-  /** ★ 与仓库那边同一条：授权在项目级，引用检查也要去那张表查 */
+  /**
+   * ★ Same as on the repository side: grants live at project level, so the reference check
+   *   has to query that table too
+   */
   const all = await db
     .select({ name: agents.name, scopes: projectAgentPermissions.resourceScopes })
     .from(projectAgentPermissions)
@@ -412,6 +513,15 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
   }
 
   /**
+   * ★★ A target that other registrations deliver into cannot be deleted either.
+   *
+   *   `delivery_target_id` deliberately has no foreign key (two tables point at the same
+   *   place, so it would take two constraints, and the delete semantics are not cascade
+   *   anyway), which makes this check the only gate. Without it the delete succeeds and, at
+   *   the next wrap-up, those repositories' and targets' output silently falls back to "no
+   *   delivery" — the task still succeeds, the artifacts page still has a record, and the
+   *   files went nowhere.
+   *
    * ★★ 还有登记把产出交货到它，也不能删。
    *
    *   `delivery_target_id` 刻意没有外键（跨两张表指向同一处，外键要建两条，
@@ -433,9 +543,20 @@ export async function deleteStorageTarget(db: Database, orgId: string, targetId:
   return { ok: true as const };
 }
 
-// ── 探测 ──────────────────────────────────────────────────────────────
+// ── Probes ────────────────────────────────────────────────────────────
 
 /**
+ * Connectivity probe.
+ *
+ * ★★ It exists for the same reason as the repository probe: a misconfiguration should be
+ *   visible **on the configuration page**, not discovered at the first dispatch as
+ *   "workspace preparation failed: mount failed" — a message that cannot distinguish a wrong
+ *   endpoint from an expired credential from a missing bucket from a backwards addressing
+ *   style, and those four call for completely different next steps.
+ *
+ * ★ Read-only: list the first few objects / stat the directory. Nothing is written, nothing
+ *   touches disk.
+ *
  * 连通性探测。
  *
  * ★★ 存在的理由与仓库那边的 probe 一样：配错了要在**配置页上**知道，
@@ -455,7 +576,7 @@ type ProbeResult = {
   ok: boolean;
   stage: 'ok' | 'config' | 'credential' | 'allowlist' | 'network' | 'auth' | 'not_found';
   message: string;
-  /** 探到的对象/条目数；探不到为 null */
+  /** Number of objects/entries found; null when the probe could not look */
   objectCount: number | null;
   samples: string[];
 };
@@ -470,6 +591,10 @@ async function probeLocal(row: typeof storageTargets.$inferSelect): Promise<Prob
   const roots = localMountRootsFromEnv();
 
   /**
+   * ★ Check the allowlist first: if the path exists but is gated out, answering "the
+   *   directory is there" is misleading — dispatch still will not mount it. This uses the
+   *   **same** predicate function as LocalMaterializer.
+   *
    * ★ 白名单先判：路径存在但被闸掉的话，只报「目录存在」是误导 ——
    *   派发时它照样挂不上。用的是与 LocalMaterializer **同一个**判据函数。
    */
@@ -498,6 +623,10 @@ async function probeLocal(row: typeof storageTargets.$inferSelect): Promise<Prob
     }
   } catch {
     /**
+     * ★ Say so right here when the directory is missing. At mount time it shows up as "the
+     *   registered local directory does not exist or is not a directory" — and by then a
+     *   task has already failed once.
+     *
      * ★ 目录不存在要当场说。挂载时它的表现是「登记的本地目录不存在或不是目录」，
      *   而那时任务已经失败了一次。
      */
@@ -563,7 +692,8 @@ async function probeObjectStore(row: typeof storageTargets.$inferSelect): Promis
   });
 
   try {
-    // ★ 只取一页：验的是「通不通、认不认、桶在不在」，不需要翻到底
+    // ★ One page is enough: we are verifying "can we reach it, does it accept us, does the
+    //   bucket exist" — there is no reason to page to the end
     const listed = await client.list(prefix, { maxObjects: 20 });
     return {
       ok: true,
@@ -579,6 +709,10 @@ async function probeObjectStore(row: typeof storageTargets.$inferSelect): Promis
     const text = err instanceof Error ? err.message : String(err);
 
     /**
+     * ★ Authentication failures and network failures are reported separately, because the
+     *   next step is completely different: the former means fixing the credential, the
+     *   latter means checking the endpoint address and the addressing style.
+     *
      * ★ 认证失败与网络失败要分开，因为下一步动作完全不同：
      *   前者改凭证，后者查端点地址与寻址风格。
      */
@@ -594,6 +728,11 @@ async function probeObjectStore(row: typeof storageTargets.$inferSelect): Promis
     }
 
     /**
+     * ★★ A backwards addressing style shows up as a DNS resolution failure (the hostname
+     *   `bucket.host` does not exist), and nothing in that error points at "addressing
+     *   style". It is the most common — and the hardest to think of unaided — failure on
+     *   self-hosted endpoints, so we name it explicitly here.
+     *
      * ★★ 寻址风格选反了的表现是 DNS 解析失败（`bucket.host` 这个域名不存在），
      *   而那条报错里没有任何东西指向「寻址风格」。这是自建端点上最常见、
      *   也最难自己想到的一条，所以在这里点名。
@@ -614,9 +753,17 @@ async function probeObjectStore(row: typeof storageTargets.$inferSelect): Promis
   }
 }
 
-// ── 内部 ──────────────────────────────────────────────────────────────
+// ── Internals ─────────────────────────────────────────────────────────
 
 /**
+ * Who delivers output into this target — both the repositories and the storage targets table
+ * have to be queried.
+ *
+ * ★ `delivery_target_id` deliberately has no foreign key (two tables point at the same place,
+ *   so it would take two constraints, and the delete semantics are not cascade anyway),
+ *   which makes this check the only gate. Deletion and "flip to read-only" share it: both
+ *   edits strand the output in exactly the same way, so the verdict should not exist twice.
+ *
  * 谁把产出交货到这个目标 —— 仓库与存储目标两张表都要查。
  *
  * ★ `delivery_target_id` 刻意没有外键（跨两张表指向同一处，外键要建两条，
@@ -638,6 +785,19 @@ async function deliveryDependents(db: Database, targetId: string): Promise<strin
 }
 
 /**
+ * Whether the registration still holds together after a partial update.
+ *
+ * ★★ The superRefine on the input schema is **switched off** for PATCH (the route uses
+ *   `innerType().partial()`; the reasoning is in routes.ts — cross-field validation only
+ *   holds for complete input). The price is that an edit like "clear the bucket" travels all
+ *   the way to the database, gets rejected by the check constraint, and comes back to the
+ *   caller as `storage_targets_shape_check` — precisely what the comment at the top of this
+ *   file says to avoid, because an admin cannot tell which field to fill in.
+ *
+ * ★ So we judge the **post-update** shape once more here, restricted to required fields
+ *   (kind is immutable and already blocked above), naming the specific field. The database
+ *   constraint stays as the fallback.
+ *
  * 局部更新之后，这条登记还立不立得住。
  *
  * ★★ 登记入口那层 superRefine 在 PATCH 上是**关掉的**（路由用
@@ -653,7 +813,7 @@ function assertShapeAfterUpdate(
   existing: typeof storageTargets.$inferSelect,
   input: Partial<StorageTargetInputType>,
 ) {
-  /** undefined = 这次没提这个字段，沿用旧值 */
+  /** undefined = this request did not mention the field, so keep the stored value */
   const after = (field: 'endpoint' | 'bucket' | 'rootPath') =>
     input[field] === undefined ? existing[field] : (input[field]?.trim() ?? null);
 
@@ -672,7 +832,8 @@ function assertShapeAfterUpdate(
     throw fail('VALIDATION_FAILED', 'storage.local_needs_absolute_path', '本地目录必须填绝对路径');
   }
 
-  // ★ 相对路径会被 resolve 成服务进程的当前目录，而那通常是代码仓库本身
+  // ★ A relative path resolves against the server process's working directory, which is
+  //   usually the code repository itself
   const root = input.rootPath?.trim();
   if (existing.kind === 'local' && root && !isAbsolute(root)) {
     throw fail('VALIDATION_FAILED', 'storage.path_must_be_absolute', '必须是绝对路径（以 / 开头）');
@@ -680,6 +841,28 @@ function assertShapeAfterUpdate(
 }
 
 /**
+ * Load one registration by id, **and** require that it belongs to the caller's organization.
+ *
+ * ★★ The organization boundary has to be narrowed at this layer; the rbac gate cannot cover
+ *   routes like these.
+ *
+ *   `rbac.guard()` only resolves ownership for `/api/v1/projects/:id/…` and the resource
+ *   kinds on RESOURCE_SCOPED_URL (see the two patterns in rbac.ts), and `/api/v1/admin/…`
+ *   matches neither — so all it can decide is "does the caller hold storage_target.manage
+ *   **in their own current organization**", not "does this registration belong to their
+ *   organization". Self-service signup is on by default, and signing up makes you org_admin
+ *   of a fresh organization, which hands you that permission for free: without this
+ *   narrowing, anyone holding a UUID could probe, tamper with, or delete another tenant's
+ *   registration. Probing would list objects using **their** credentials, and tampering with
+ *   the endpoint would redirect their future output into the attacker's own bucket.
+ *
+ *   The project path states the same discipline explicitly (rbac.ts `assertProjectAccess`:
+ *   cross-organization is refused — an admin's "everything" stops at the organization
+ *   boundary); this just closes the remaining gap.
+ *
+ * ★ Out-of-tenant access always returns 404, never 403: a 403 confirms "this id exists",
+ *   which turns ids into an enumerable probe. Same choice as assertProjectAccess.
+ *
  * 按 id 取一条登记，**并且**要求它属于调用者的组织。
  *
  * ★★ 组织边界必须在这一层收窄，rbac 那道闸拦不住这类路由。

@@ -6,24 +6,32 @@ import userEvent from '@testing-library/user-event';
 import { JsonInput } from './AgentConfig';
 
 /**
- * 运行时配置里那个 JSON 输入框（Agent 配置页 → 运行时）。
+ * The JSON input inside the runtime config (Agent config page → Runtime) /
+ * 运行时配置里那个 JSON 输入框。
  *
- * ★ 这一组验的是「解析不通过时会发生什么」。
+ * ★ This suite checks what happens when parsing fails.
  *
- *   JSON 输入必须把文本留在本地 state —— 边打字边解析会在敲到一半
- *   （`{"A":`）时判定失败，把值重置回上一个合法对象会当场清掉用户
- *   正在敲的内容。代价是解析失败时 config 停在上一个合法值，
- *   于是「继续保存」会存下用户改之前的那份，而界面显示保存成功。
+ *   The JSON input has to keep its text in local state — parsing on every
+ *   keystroke fails halfway through a value (`{"A":`), and resetting the field
+ *   back to the last valid object would wipe out what the user is still typing.
+ *   The price is that while parsing fails, `config` stays at the last valid
+ *   value, so hitting save anyway persists the version from before the user's
+ *   edit while the UI reports success.
  *
- *   所以这个框必须把错误顶到表单上去禁用保存按钮，
- *   而且那条错误要**留得住**。
+ *   That is why this box must push its error up to the form to disable the save
+ *   button, and why that error has to **stick**.
+ *
+ *   解析失败时值停在上一个合法对象，所以错误必须顶到表单上禁用保存，
+ *   而且要留得住 —— 否则存下的是用户改之前的那份，界面还说保存成功。
  */
 
 /**
- * 把错误收集起来，模拟表单那一侧的 jsonErrors。
+ * Collects the errors, standing in for the form's own jsonErrors / 把错误收集
+ * 起来，模拟表单那一侧的 jsonErrors。
  *
- * @param stableCallback 传 false 时每次渲染新建一个 onError —— 这是调用方
- *   最自然的写法，组件必须扛得住（见「即使 onError 每次渲染都换」那一条）。
+ * @param stableCallback When false, a fresh onError is created on every render
+ *   — the most natural thing a caller writes, and the component has to survive
+ *   it (see the "even when onError changes every render" case below).
  */
 function Host({
   onValue,
@@ -61,9 +69,9 @@ function Host({
 }
 
 /**
- * ★ 钉住中文：下面断言的是具体那句校验提示。默认语言是英文。
- *   Pinned to Chinese: these assertions match exact validation wording,
- *   while the app default is English.
+ * ★ Pinned to Chinese: these assertions match exact validation wording, while
+ *   the app default is English.
+ *   钉住中文：下面断言的是具体那句校验提示，而默认语言是英文。
  */
 beforeEach(() => useLocaleStore.setState({ locale: 'zh' }));
 
@@ -89,21 +97,24 @@ describe('运行时配置的 JSON 输入框', () => {
     await userEvent.type(box, '{{"ANTHROPIC_BASE_URL"');
 
     expect(screen.getByTestId('errors')).toHaveTextContent('env');
-    // 半截 JSON 不能被当成一次有效修改抛上去
+    // A half-typed JSON must not be raised as a valid change
     expect(onValue).not.toHaveBeenCalled();
-    // 用户正在敲的内容原样留着，没有被重置
+    // What the user is typing stays verbatim; nothing was reset
     expect(box).toHaveValue('{"ANTHROPIC_BASE_URL"');
   });
 
   /**
-   * ★★ 这条盯的是一个真实踩过的坑。
+   * ★★ This one guards against a bug we actually shipped.
    *
-   *   把 onError 放进 effect 的依赖数组、而调用方传的是每次渲染新建的
-   *   箭头函数时，清理副作用会在每次渲染时重跑一遍 —— 刚记下的错误
-   *   当场被自己清掉，保存按钮永远不会被禁。用户对着一段红字报错点保存，
-   *   存进去的是他改之前的那份，界面还显示保存成功。
+   *   With onError in the effect's dependency array and a caller passing a
+   *   freshly created arrow function on every render, the cleanup runs again on
+   *   every render — the error just recorded is immediately cleared by itself,
+   *   and the save button is never disabled. The user clicks save while staring
+   *   at red error text, what gets persisted is the version from before their
+   *   edit, and the UI still reports success.
    *
-   *   与其要求每个调用方记得 useCallback，不如让组件自己扛住。
+   *   Rather than requiring every caller to remember useCallback, the component
+   *   absorbs it.
    */
   it('即使 onError 每次渲染都换一个，错误也留得住', async () => {
     render(<Host stableCallback={false} />);
@@ -111,7 +122,7 @@ describe('运行时配置的 JSON 输入框', () => {
     await userEvent.type(screen.getByRole('textbox'), '{{"A"');
     expect(screen.getByTestId('errors')).toHaveTextContent('env');
 
-    // 再敲几下逼出更多次渲染，错误不该被 cleanup 抹掉
+    // A few more keystrokes to force more renders; cleanup must not erase the error
     await userEvent.type(screen.getByRole('textbox'), ': ');
     expect(screen.getByTestId('errors')).toHaveTextContent('env');
   });
@@ -130,15 +141,16 @@ describe('运行时配置的 JSON 输入框', () => {
   it('数组与标量不是合法的配置对象', async () => {
     render(<Host />);
 
-    // userEvent 把 `[` / `{` 当按键描述符，输入字面量要写两遍
+    // userEvent reads `[` / `{` as key descriptors, so a literal one is typed twice
     await userEvent.type(screen.getByRole('textbox'), '[["A=1"]');
     expect(screen.getByText(/必须是 JSON 对象/)).toBeInTheDocument();
     expect(screen.getByTestId('errors')).toHaveTextContent('env');
   });
 
   /**
-   * ★ 高级选项收起来、或者切到别的编辑模式时这个框会消失。
-   *   它留下的那条错误会永远禁着保存按钮 —— 而页面上找不到是谁在报错。
+   * ★ This box disappears when the advanced options collapse or the editor
+   *   switches modes. An error it leaves behind would disable the save button
+   *   forever, with nothing on the page to show where the complaint came from.
    */
   it('卸载时清掉自己的错误，不留下一个找不到出处的禁用状态', async () => {
     render(<Host />);

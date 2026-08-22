@@ -8,12 +8,18 @@ import type { AgentAccessPreview, AgentAccessView } from '../../lib/api/types';
 import { AgentAccessPanel } from './AgentAccess';
 
 /**
- * 生效权限面板。
+ * The effective-permissions panel / 生效权限面板。
  *
- * ★★ 这一组守的是三条产品承诺，每一条都不是「好看」的问题：
- *   1. 默认流程里**不出现运行时工具名** —— 用户不该为了授权先学某个 CLI；
- *   2. 「用的是默认档案」要说出来，不能显示成一份用户自己配过的配置；
- *   3. 运行时兜不住的限制必须显示 —— 授权界面骗人比授权界面难用糟得多。
+ * ★★ This suite guards three product promises, none of which is about looking
+ *   nice:
+ *   1. The default flow shows **no runtime tool names** — nobody should have to
+ *      learn a particular CLI in order to grant permissions;
+ *   2. "This is the default profile" must be said out loud, never rendered as a
+ *      configuration the user appears to have chosen;
+ *   3. Restrictions the runtime cannot enforce must be shown — an authorization
+ *      screen that lies is far worse than one that is awkward to use.
+ *
+ *   这一组守的是三条产品承诺，每一条都不是「好看」的问题。
  */
 
 const view = (over: Partial<AgentAccessView> = {}): AgentAccessView => ({
@@ -107,9 +113,10 @@ beforeEach(() => {
 
 describe('★ 默认流程不出现工具名', () => {
   /**
-   * ★★ `Read` / `Edit` / `Bash(npm test:*)` 是运行时的词汇。
-   *   把它们摆在授权界面上，用户得先懂某个 CLI 才能授权 ——
-   *   而更要命的是 `repo:write` 一个词同时表示三件风险差两个数量级的事。
+   * ★★ `Read` / `Edit` / `Bash(npm test:*)` is a runtime's vocabulary. Putting
+   *   it on the authorization screen forces the user to learn some CLI before
+   *   they can grant anything — and worse, the single word `repo:write` covered
+   *   three operations whose risk differs by two orders of magnitude.
    */
   it('显示的是能力人话，不是运行时工具名', async () => {
     renderPanel();
@@ -123,7 +130,7 @@ describe('★ 默认流程不出现工具名', () => {
     }
   });
 
-  /** ★ 「没配过」与「配成这样」在界面上必须分得开 */
+  /** ★ "Never configured" and "configured to look like this" must stay distinguishable */
   it('没配过时明说用的是默认档案', async () => {
     renderPanel();
     expect(await screen.findByText(/默认档案/)).toBeTruthy();
@@ -140,8 +147,10 @@ describe('★ 默认流程不出现工具名', () => {
 
 describe('★ 运行时降级必须可见', () => {
   /**
-   * ★★ 「这条限制在这个运行时上不生效」是保存后最该知道的一件事。
-   *   吞掉它，界面上这条授权和别处长得一模一样，而用户以为限制住了。
+   * ★★ "This restriction does not take effect on this runtime" is the single
+   *   most important thing to learn after saving. Swallow it and the grant
+   *   looks identical to every other one on screen, while the user believes
+   *   they have constrained something they have not.
    */
   it('运行时兜不住的限制显示在卡片上', async () => {
     agentAccess.mockResolvedValue(
@@ -155,8 +164,9 @@ describe('★ 运行时降级必须可见', () => {
 
 describe('★ 档案升级不自动生效', () => {
   /**
-   * ★★ 自动升级等于「平台改一次档案，所有 Agent 跟着变宽」——
-   *   权限累积最典型的发生方式。所以只提示。
+   * ★★ Auto-upgrading would mean "the platform edits one profile and every
+   *   Agent widens with it" — the textbook way permission creep happens. So we
+   *   only announce it.
    */
   it('档案有新版时提示，但不改变当前显示的权限', async () => {
     agentAccess.mockResolvedValue(view({ profileOutdated: true }));
@@ -172,15 +182,15 @@ describe('★ 改动前先看影响', () => {
     renderPanel();
 
     await user.click(await screen.findByRole('button', { name: '修改' }));
-    // ★ 按可见文案选，不再按 option 的 value（'code_developer'）—— Radix 没有 value 可点
+    // ★ Pick by visible text, not by the option's value ('code_developer') — Radix exposes no value to click
     await selectOption(user, await screen.findByRole('combobox'), '代码开发者');
 
-    // ★ 说的是后果（「离开平台的控制范围」），不是配置差异（「+repository.push」）
+    // ★ It states the consequence ("leaves the platform's control"), not the diff ("+repository.push")
     expect(await screen.findByText(/离开平台的控制范围/)).toBeTruthy();
     expect(await screen.findByLabelText(/为什么需要这些权限/)).toBeTruthy();
   });
 
-  /** ★★ 放宽没填原因时按钮必须是禁用的 —— 让人点了再被 400 驳回是最差的一种 */
+  /** ★★ Loosening with no reason must leave the button disabled — letting them click and then bouncing a 400 is the worst option */
   it('放宽未填原因时保存按钮禁用', async () => {
     const user = userEvent.setup();
     renderPanel();
@@ -196,9 +206,10 @@ describe('★ 改动前先看影响', () => {
   });
 
   /**
-   * ★ 预览必须是**问服务端**要的，不是前端自己比出来的。
-   *   前端比一遍就是第二份求值器，而它和服务端的分歧会正好出现在
-   *   最需要预览的那些复杂输入上（上限收窄、运行时不支持、资源升级）。
+   * ★ The preview must be **asked of the server**, not diffed on the client. A
+   *   client-side diff is a second evaluator, and it would disagree with the
+   *   server exactly on the complex inputs that most need a preview: a narrowed
+   *   ceiling, an unsupported runtime, a widened resource scope.
    */
   it('影响摘要来自服务端预览接口', async () => {
     const user = userEvent.setup();
@@ -212,11 +223,13 @@ describe('★ 改动前先看影响', () => {
 });
 
 /**
- * ★★ 英文说法**已经在接口返回里**了（nameEn / labelEn / descriptionEn）。
+ * ★★ The English wording is **already in the API response** (nameEn / labelEn /
+ *   descriptionEn).
  *
- *   此前界面只画中文那一份，于是英文用户在一个管权限的页面上
- *   看到「标准执行者」「读取工作区文件」—— 而这不是缺翻译，
- *   是把已经在线上的英文丢掉了。这条测试盯着它别再丢一次。
+ *   The UI used to render only the Chinese half, so an English-speaking user
+ *   managing permissions was shown 「标准执行者」 and 「读取工作区文件」. That
+ *   was not a missing translation — it was discarding English text that had
+ *   already shipped. These tests keep it from being discarded again.
  */
 describe('英文界面用接口给的英文', () => {
   it('能力说明走 labelEn', async () => {
@@ -234,7 +247,7 @@ describe('英文界面用接口给的英文', () => {
     expect(await screen.findByText('Standard executor')).toBeInTheDocument();
   });
 
-  /** ★ 中文界面照旧走中文那一份 —— 别把方向修反了 */
+  /** ★ The Chinese UI still takes the Chinese half — do not fix this in the wrong direction */
   it('中文界面仍是中文', async () => {
     useLocaleStore.setState({ locale: 'zh' });
     renderPanel();

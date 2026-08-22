@@ -1,25 +1,27 @@
-# 07 API 设计
+# 07 API Design
+
+*[中文版本 / Chinese version](07-api-design.zh.md)*
 
 ---
 
-## 1. 约定
+## 1. Conventions
 
-| 项 | 约定 |
+| Item | Convention |
 | --- | --- |
-| 风格 | REST，资源导向；复杂聚合查询用专门的只读端点（如 `/overview`） |
-| 前缀 | `/api/v1` |
-| 格式 | JSON；`camelCase` 字段名（与前端 TS 一致，避免两侧转换） |
-| 时间 | ISO 8601 UTC 字符串 |
-| 金额 | 字符串形式的十进制（`"8.2000"`），避免浮点精度问题 |
-| ID | UUID v4 字符串 |
-| 认证 | `Authorization: Bearer <jwt>`；Agent 回调用专用短期令牌 |
-| 校验 | Zod schema，与 `packages/contracts` 共享 |
+| Style | REST, resource-oriented; complex aggregate queries get dedicated read-only endpoints (e.g. `/overview`) |
+| Prefix | `/api/v1` |
+| Format | JSON; `camelCase` field names (matching the frontend's TypeScript, so neither side has to convert) |
+| Time | ISO 8601 UTC strings |
+| Money | Decimal as a string (`"8.2000"`), to avoid floating-point precision problems |
+| ID | UUID v4 strings |
+| Auth | `Authorization: Bearer <jwt>`; Agent callbacks use dedicated short-lived tokens |
+| Validation | Zod schemas, shared through `packages/contracts` |
 
-**为什么用 camelCase 而不是 snake_case**：数据库是 snake_case，API 是 camelCase，转换在 Repository 层做一次。让 API 直接匹配前端习惯，避免前端到处写 `work_item.human_gate` 这种在 TS 里别扭的访问。
+**Why camelCase and not snake_case**: the database is snake_case, the API is camelCase, and the conversion happens once, in the repository layer. Matching the frontend's habits at the API boundary keeps `work_item.human_gate` — an access pattern that reads badly in TypeScript — out of the frontend entirely.
 
 ---
 
-## 2. 错误
+## 2. Errors
 
 ```json
 {
@@ -34,49 +36,51 @@
 }
 ```
 
-信封里有**四样**东西，各有各的消费者：
+(The `message` above reads: "delivery target s3-main is registered read-only, so the write-back will be skipped at wrap-up — make it writable first.")
 
-| 字段 | 谁读它 | 稳定性 |
+The envelope carries **four** things, each with its own consumer:
+
+| Field | Who reads it | Stability |
 | --- | --- | --- |
-| `code` | 客户端分流（重试？刷新？跳登录？）、监控按 HTTP 语义分类 | 稳定，穷举在 `ErrorCode` |
-| `reason` | **界面取词** —— 词条键是 `error.reason.<reason>` | 稳定，穷举在 `ErrorReason`（contracts） |
-| `params` | 填进那条词条的 `{name}` 占位符 | 随 reason 定 |
-| `message` | 日志、告警、以及认不出 `reason` 的客户端 | **不稳定**，随时会改 |
+| `code` | Client-side routing (retry? refresh? bounce to login?), monitoring classified by HTTP semantics | Stable, enumerated in `ErrorCode` |
+| `reason` | **The UI's message lookup** — the message key is `error.reason.<reason>` | Stable, enumerated in `ErrorReason` (contracts) |
+| `params` | Fills the `{name}` placeholders in that message | Determined by the reason |
+| `message` | Logs, alerts, and clients that don't recognize the `reason` | **Unstable**, may change at any time |
 
-**界面读码，日志读句子。** `message` 永远是一句现成的中文 —— 值班的人半夜看日志时要的是一句话，不是一个要去查表的标识符。而界面要同时服务中英文两套，只能按码取词。两者同时给，不是二选一。
+**The UI reads codes, the logs read sentences.** `message` is always a ready-made Chinese sentence — the person on call at 2am wants a sentence, not an identifier they have to look up in a table. The UI, meanwhile, has to serve both English and Chinese, so it can only look messages up by code. Both are supplied at once; it isn't one or the other.
 
-**`message` 不是接口的一部分**。它随时会为了读起来更顺而改写。任何反过来正则匹配它的代码都是定时炸弹 —— 要分流就读 `code`，要显示就读 `reason`。
+**`message` is not part of the contract.** It gets rewritten whenever a better phrasing turns up. Any code that regex-matches it is a time bomb — route on `code`, display from `reason`.
 
-**认不出 `reason` 时回落到 `message`，不是回落到空白**。服务端加了新码而客户端还没跟上，这段窗口必然存在；那时用户要看到的是一句能读的话，哪怕语言不对，也好过一行 `error.reason.some_new_code`，更好过什么都不显示。
+**When the `reason` isn't recognized, fall back to `message`, not to blank.** There will always be a window where the server has shipped a new code and the client hasn't caught up yet; during it the user should see a sentence they can read. Even in the wrong language, that beats a bare `error.reason.some_new_code`, and it certainly beats showing nothing.
 
-### 2.1 错误码
+### 2.1 Error codes
 
-| HTTP | code | 场景 |
+| HTTP | code | Situation |
 | --- | --- | --- |
-| 400 | `VALIDATION_FAILED` | 请求体不合法 |
-| 401 | `UNAUTHENTICATED` | 没登录、令牌坏了、或账号没了 |
-| 403 | `FORBIDDEN` | 权限不足，`details` 说明所需角色 |
-| 404 | `NOT_FOUND` | `reason` 恒为 `not_found`，`params.entity` 说是哪种东西 |
-| 409 | `VERSION_CONFLICT` | 乐观锁冲突，`details` 带最新状态 |
-| 409 | `INVALID_TRANSITION` | 状态机不允许，`details` 带可用 triggers |
-| 409 | `GUARD_FAILED` | Guard 未通过，`details` 带失败原因（可能含 `overridable`） |
-| 409 | `CONFIRMATION_REQUIRED` | 请求没问题，但要用户先明确确认一次 |
-| 422 | `POLICY_DENIED` | Policy 拒绝，`details` 带规则名与条件 |
-| 422 | `BUDGET_EXCEEDED` | 超出项目预算 |
-| 422 | `UNANSWERED_MUST_CONFIRM` | 还有必答的澄清问题没回答 |
-| 429 | `RATE_LIMITED` | `details.retryAfterMinutes` 说多久后能重试 |
-| 500 | `INTERNAL` | 服务端故障，`traceId` 是唯一线索 |
-| 501 | `UNSUPPORTED_FEATURE` | 请求没问题，是这个运行时不具备该能力（降级矩阵） |
-| 502 | `EXTERNAL_ERROR` | 外部系统故障 —— 不是我们的 bug，也不是用户输错了 |
-| 503 | `AGENT_UNAVAILABLE` | Agent 运行时不可达 |
+| 400 | `VALIDATION_FAILED` | Malformed request body |
+| 401 | `UNAUTHENTICATED` | Not logged in, broken token, or the account is gone |
+| 403 | `FORBIDDEN` | Insufficient permission; `details` names the role required |
+| 404 | `NOT_FOUND` | `reason` is always `not_found`; `params.entity` says which kind of thing |
+| 409 | `VERSION_CONFLICT` | Optimistic-lock conflict; `details` carries the current state |
+| 409 | `INVALID_TRANSITION` | The state machine disallows it; `details` carries the available triggers |
+| 409 | `GUARD_FAILED` | A guard didn't pass; `details` carries the reason (possibly including `overridable`) |
+| 409 | `CONFIRMATION_REQUIRED` | Nothing wrong with the request, but the user has to confirm once first |
+| 422 | `POLICY_DENIED` | A policy denied it; `details` carries the rule name and its conditions |
+| 422 | `BUDGET_EXCEEDED` | Over the project budget |
+| 422 | `UNANSWERED_MUST_CONFIRM` | Required clarification questions are still unanswered |
+| 429 | `RATE_LIMITED` | `details.retryAfterMinutes` says how long until a retry will work |
+| 500 | `INTERNAL` | Server fault; `traceId` is the only lead |
+| 501 | `UNSUPPORTED_FEATURE` | Nothing wrong with the request — this runtime just lacks the capability (degradation matrix) |
+| 502 | `EXTERNAL_ERROR` | An external system failed — not our bug, and not the user mistyping something |
+| 503 | `AGENT_UNAVAILABLE` | The Agent runtime is unreachable |
 
-**`CONFIRMATION_REQUIRED` 与 `VALIDATION_FAILED` 分开**。后者是「你发来的东西不对」，前者是「东西没问题，但我要你看一眼再点一次」。混用 400 的代价不在功能上（功能照常），而在**日志与监控**里：一次正常的人机交互和一次真正的客户端错误长得一模一样，于是 4xx 率再也不能当告警指标用。
+**`CONFIRMATION_REQUIRED` is kept separate from `VALIDATION_FAILED`.** The latter means "what you sent is wrong"; the former means "what you sent is fine, but I want you to look once and click again." Collapsing both into 400 costs nothing functionally (the feature still works) — it costs you **logs and monitoring**: a normal human interaction and a genuine client error become indistinguishable, and the 4xx rate stops being usable as an alerting signal.
 
-**502 而不是 500，501 而不是 4xx**。请求走到了外部系统是那一侧的问题；运行时不具备某能力是服务端的形态问题而不是请求的问题。都挤进 500 的话，「服务挂了」这个信号就被稀释了。
+**502 rather than 500, 501 rather than a 4xx.** If the request made it out to an external system, the failure is on that side; if the runtime lacks a capability, that's a property of the deployment, not of the request. Pile all of those into 500 and the "the service is down" signal gets diluted away.
 
-**403 必须说明缺什么权限**。页面文档统一采用"只读降级"而非整页 403，前端需要知道具体缺哪个角色才能渲染 tooltip。
+**A 403 must say which permission is missing.** The page docs consistently call for "read-only degradation" rather than a full-page 403, and the frontend needs to know exactly which role is missing before it can render the tooltip.
 
-### 2.2 抛错
+### 2.2 Raising errors
 
 ```ts
 throw fail('VALIDATION_FAILED', 'storage.delivery_target_readonly', `交货目标 ${ref} 登记为只读…`, {
@@ -85,17 +89,17 @@ throw fail('VALIDATION_FAILED', 'storage.delivery_target_readonly', `交货目�
 });
 ```
 
-参数顺序是 `code, reason, message` —— **码在前，句子在后**。反过来读起来更顺，但会让「先写句子、码回头再补」成为默认路径，而回头补的那一步从来不会发生。
+The argument order is `code, reason, message` — **code first, sentence last**. The other order reads more naturally, but it makes "write the sentence now, add the code later" the default path, and the "later" step never happens.
 
-「找不到」用 `notFound(entity)`，实参是**实体键**不是中文：中文里名词在前、英文里 `not found` 在后，`${what}不存在` 这种拼法只在中文里成立。
+"Not found" goes through `notFound(entity)`, and the argument is an **entity key**, not Chinese: in Chinese the noun comes first, in English `not found` comes last, so a `${what}不存在` template only ever works in Chinese.
 
-细节见 [12-i18n.md](12-i18n.md)。
+Details in [12-i18n.md](12-i18n.md).
 
 ---
 
-## 3. 分页
+## 3. Pagination
 
-游标分页，不用 offset（数据实时变动，offset 会漏读或重复）：
+Cursor pagination, not offset (the data changes in real time, and offsets make you skip or double-read rows):
 
 ```
 GET /api/v1/projects/{id}/work-items?cursor=eyJpZCI6...&limit=50
@@ -107,40 +111,34 @@ GET /api/v1/projects/{id}/work-items?cursor=eyJpZCI6...&limit=50
 }
 ```
 
-游标编码 `(sortKey, id)`，保证稳定。
+The cursor encodes `(sortKey, id)`, which keeps it stable.
 
 ---
 
-## 4. 幂等
+## 4. Idempotency
 
-所有会产生副作用且可能被重复提交的写操作支持 `Idempotency-Key` 头：
+Every write with side effects that might be submitted twice supports the `Idempotency-Key` header:
 
 ```
 POST /api/v1/decisions/{id}/approve
 Idempotency-Key: dec_52_approve_01J8X...
 ```
 
-**必须支持幂等的端点**：决策批准/驳回、Run 派发与重试、发布触发、批量操作。
+**Endpoints that must support idempotency**: decision approve/reject, Run dispatch and retry, release triggers, bulk operations.
 
-理由：这些操作要么花钱（重复派发 Agent），要么不可逆（重复批准生产发布）。网络重试导致重复执行是真实风险。
+The reason: these operations either cost money (dispatching an Agent twice) or are irreversible (approving a production release twice). Duplicate execution from a network retry is a real risk.
 
-实现：`(idempotency_key, endpoint)` → 首次响应，缓存 24 小时。重复请求直接返回首次结果，
-并带上 `Idempotent-Replay: true` 响应头。见 `apps/api/src/http/idempotency.ts`。
+Implementation: `(idempotency_key, endpoint)` → the first response, cached for 24 hours. A repeat request gets the original result straight back, with an `Idempotent-Replay: true` response header. See `apps/api/src/http/idempotency.ts`.
 
-**只缓存 2xx**。把失败也缓存下来的话，一次偶发故障会被钉死 24 小时——
-客户端之后每次带同一个 key 重试都拿到那个陈旧的错误，再也好不了。
+**Only 2xx responses are cached.** Cache the failures too and a single transient fault gets nailed in place for 24 hours — every subsequent retry with the same key returns that stale error, and it never recovers.
 
-**它防的不是「重复执行」**——那一层由状态机挡住（重复批准同一条决策拿 409
-`VERSION_CONFLICT`，副作用不会发生第二次）。它防的是**成功了却被告知失败**：
-客户端 POST 批准，响应回来的路上网络断了，它重试，这次拿到 409，
-界面显示「批准失败」。用户再点还是失败，而操作第一次就成了。
-这比真的失败更难排查，因为服务端日志里一切正常。
+**What it protects against is not "running twice"** — the state machine handles that layer (approving the same decision twice gets a 409 `VERSION_CONFLICT`, and the side effect does not happen again). What it protects against is **succeeding and being told you failed**: the client POSTs the approval, the network drops on the way back, it retries, this time it gets a 409, and the UI says "approval failed." The user clicks again and it fails again — while the operation succeeded on the very first try. That's harder to debug than a real failure, because the server logs show nothing but success.
 
 ---
 
 ## 5. SSE
 
-### 5.1 连接
+### 5.1 Connecting
 
 ```
 GET /api/v1/stream?channels=project:abc:board,user:me:decisions&access_token=<jwt>
@@ -148,10 +146,7 @@ Accept: text/event-stream
 Last-Event-ID: 1284531
 ```
 
-★ 令牌走 **query 参数**而不是 `Authorization` 头：EventSource 带不了自定义头
-（同一个原因下面 §5.3 的 `Last-Event-ID` 也要支持 query 形态）。
-代价是令牌会进 access log，靠短 TTL 缓解。**不带令牌是 401** ——
-这条流推的是项目全部实时事件，与 REST 那边同一份数据同样要过鉴权。
+★ The token travels as a **query parameter** rather than an `Authorization` header, because EventSource cannot send custom headers (for the same reason, the `Last-Event-ID` in §5.3 must also be accepted as a query parameter). The cost is that the token lands in access logs, which a short TTL mitigates. **No token is a 401** — this stream carries every real-time event in the project, and it deserves the same authorization gate as the same data does over REST.
 
 ```
 id: 1284532
@@ -165,192 +160,195 @@ data: {"runId":"run_1284","step":7,"totalSteps":11,"cost":"8.2000",...}
 : keepalive
 ```
 
-### 5.2 频道
+### 5.2 Channels
 
-| 频道 | 授权要求 | 内容 |
+| Channel | Authorization required | Contents |
 | --- | --- | --- |
-| `project:{id}:board` | 项目成员 | Work Item 状态、进度、阻塞 |
-| `work_item:{id}` | 项目成员 | 该任务全部事件 |
-| `run:{id}` | 项目成员 | 执行流（高频） |
-| `agent:{id}` | 组织成员 | Agent 状态与队列 |
-| `user:me:decisions` | 本人 | 决策创建/解决/升级 |
+| `project:{id}:board` | Project member | Work Item status, progress, blockage |
+| `work_item:{id}` | Project member | Every event on that item |
+| `run:{id}` | Project member | The execution stream (high frequency) |
+| `agent:{id}` | Organization member | Agent status and queue |
+| `user:me:decisions` | The user themselves | Decision created / resolved / escalated |
 
-**订阅时逐频道鉴权**，无权限的频道从订阅列表中剔除并在首帧告知客户端（不整体拒绝连接）。
+**Authorization is checked per channel at subscribe time.** Channels the caller isn't entitled to are dropped from the subscription list and reported to the client in the first frame — the connection as a whole is not refused.
 
-### 5.3 断线续传
+### 5.3 Resuming after a disconnect
 
-`Last-Event-ID` 携带最后收到的事件 ID。重连时：
+`Last-Event-ID` carries the last event ID received. On reconnect:
 
 ```sql
 SELECT * FROM events
-WHERE id > $lastEventId AND <频道过滤>
+WHERE id > $lastEventId AND <channel filter>
 ORDER BY id LIMIT 500;
 ```
 
-超过 500 条未读时，发一条 `resync` 事件让客户端全量刷新，而不是补发全部——积压太多说明客户端离线很久，增量补发不如重新拉取。
+Past 500 unread events, send a `resync` event and let the client do a full refresh instead of replaying everything — a backlog that large means the client has been offline for a long while, and refetching beats an incremental catch-up.
 
-### 5.4 背压
+### 5.4 Backpressure
 
-- 同一实体 200ms 内的多次 `progress` 事件合并为最后一条
-- 单连接待发队列 > 1000 时降级：只发 `level=milestone` 事件 + 一条 `degraded` 通知
-- 客户端断开立即清理订阅
+- Multiple `progress` events for the same entity within 200ms collapse into the last one
+- When a single connection's pending queue exceeds 1000, degrade: send only `level=milestone` events plus one `degraded` notice
+- Clean up the subscription the moment the client disconnects
 
 ---
 
-## 6. 端点
+## 6. Endpoints
 
-按页面文档组织。仅列关键端点与非显然的设计点。
+Organized to follow the page docs. Only the key endpoints and the non-obvious design points are listed.
 
-### 6.0 登录与账号
+### 6.0 Login and accounts
 
-设计理由见 [09-security §1.0](09-security.md#10-人类凭证与账号来源)。
+The reasoning behind this is in [09-security §1.0](09-security.md#10-human-credentials-and-where-accounts-come-from).
 
 ```
-POST   /auth/login                      ★ 唯一不需要身份的写路由 —— 它就是身份的来源
+POST   /auth/login                      ★ the one write route that needs no identity — it is where identity comes from
        ← { email, password }
        → { token, user }
-       401 时「账号不存在」「没有口令」「口令错」回同一句话且耗时相同，
-          分开说等于给出一个通讯录枚举探针
+       On 401, "no such account", "no password set" and "wrong password" return the
+          same sentence and take the same amount of time; telling them apart hands
+          out a directory-enumeration probe
 
 GET    /auth/me
        → { user, currentOrgId, orgRole }
-       前端启动时先问一次：令牌可能过期、可能属于已删除的账号。
-       401 → 前端当场退出登录（而不是让每个页面各自报错）
+       The frontend asks once at startup: the token may have expired, or may belong
+       to an account that has since been deleted.
+       401 → the frontend logs out on the spot (instead of every page erroring on its own)
 
-POST   /auth/password                   改自己的口令，作用域是调用者自己
+POST   /auth/password                   change your own password; the scope is the caller themselves
        ← { currentPassword, newPassword }
-       → { ok, token }                  ★ 换一张新令牌回去
+       → { ok, token }                  ★ hands back a fresh token
 
-POST   /admin/users                     开账号，需 organization.members.manage
+POST   /admin/users                     create an account; requires organization.members.manage
        ← { email, name, password, orgRole? }
        → 201 { id, name, email, orgRole }
-       ★ 建号与加入本组织在同一个事务里 —— 分开的话第二步失败会留下一个
-         「能登录但不属于任何组织」的账号，他的每个请求都是 401
-       409 表示邮箱已有账号：那时正确的动作是「添加成员」而不是新建，
-       同一个人两个账号在审计里就是两个人
+       ★ Creating the account and joining it to this organization happen in one
+         transaction — split them and a failure on step two leaves an account that
+         "can log in but belongs to no organization", whose every request is a 401
+       409 means the email already has an account: the right move then is "add member",
+       not "create". One person with two accounts is two people in the audit trail
 ```
 
 ```
-POST   /auth/register            无需身份
+POST   /auth/register            no identity required
        ← { email, name, password, orgName? }
        → 200 { token, user, organization }
-       ★ 每次注册**新开一个空组织**，注册者是那个组织的 org_admin ——
-         不是加入某个已有组织。要进别人的组织仍然只有「被管理员加进去」
-       ★ 与登录不同，409 会明说「邮箱已注册」：不说的话用户没法完成注册。
-         缓解手段是限流（按 IP，10 分钟 10 次），不是把话说糊
-       429 表示触发限流
-       403 表示这个实例关掉了自助注册（APOS_ALLOW_SIGNUP）
+       ★ Every registration **opens a new, empty organization**, with the registrant as
+         its org_admin — it does not join an existing one. Getting into someone else's
+         organization still happens only one way: an admin adds you
+       ★ Unlike login, a 409 says outright "email already registered": without that the
+         user cannot finish registering. The mitigation is rate limiting (per IP,
+         10 attempts per 10 minutes), not vagueness
+       429 means the rate limit was hit
+       403 means this instance has self-service signup turned off (APOS_ALLOW_SIGNUP)
 
-GET    /auth/config             无需身份
+GET    /auth/config             no identity required
        → 200 { allowSignup }
-       ★ 登录页靠它决定要不要显示「注册」页签。开关是**服务端**的事，
-         不能烤进前端构建 —— 同一份产物会被不同实例托管
+       ★ The login page uses this to decide whether to show the "Register" tab. The
+         switch is a **server-side** matter and must not be baked into the frontend
+         build — one build artifact gets hosted by many different instances
 ```
 
-**注册不破坏多租户边界。** 组织边界就是多租户边界，要防的是**自助进入
-已有组织**；而注册开的是一个谁也看不见的新组织。详见 09-security §1。
+**Registration does not break the multi-tenant boundary.** The organization boundary *is* the tenant boundary, and what has to be prevented is **self-service entry into an existing organization**; what registration opens is a new organization nobody else can see. See 09-security §1.
 
-### 6.1 项目
+### 6.1 Projects
 
 ```
 GET    /projects?scope=mine|all&status=&risk=&autonomy=
-       → 含预计算指标，指标带 metricsUpdatedAt
+       → includes precomputed metrics; metrics carry metricsUpdatedAt
 
 POST   /projects
        ← { name, goal, type, autonomyLevel, budget, sponsorId, techLeadId }
-       → { projectId, requirementDraftId }   ★ 直接返回需求草稿 ID，前端可直接跳转
+       → { projectId, requirementDraftId }   ★ returns the requirement draft ID directly so the frontend can navigate straight there
 
 GET    /projects/{id}/overview
-       → 一次返回总览页全部数据（指标/阻塞/Agent/成员/摘要/流动）
-         页面文档 02 的所有区域，避免 8 个并发请求
+       → returns everything the overview page needs in one call (metrics / blockers / agents / members / summary / flow)
+         every region of page doc 02, avoiding 8 concurrent requests
 
 PATCH  /projects/{id}
        ← { autonomyLevel? , status? }
-       高危变更需 header: X-Confirm-Token（前端二次确认后获取）
+       High-risk changes require the header X-Confirm-Token (obtained after the frontend's second confirmation)
 
 GET    /me/action-items?limit=5
-       → 跨项目的"待我处理"，项目列表页与总览页共用
+       → cross-project "waiting on me", shared by the project list page and the overview page
 ```
 
-### 6.2 需求
+### 6.2 Requirements
 
 ```
-POST   /projects/{id}/requirements                   创建草稿
+POST   /projects/{id}/requirements                   create a draft
 
-POST   /requirements/{id}/analyze                    ★ SSE 流式返回
+POST   /requirements/{id}/analyze                    ★ streams back over SSE
        → event: field_updated  { field, value, sources }
        → event: question_added { id, level, question, impact, suggestion, options }
        → event: score_updated  { total, dimensions }
        → event: done           { cost, durationMs }
 
-PATCH  /requirements/{id}                            人工填写 / 修改结构化字段
+PATCH  /requirements/{id}                            fill in / edit structured fields by hand
 POST   /requirements/{id}/questions/{qid}/answer
-POST   /requirements/{id}/approve   { note? }        → 触发计划生成（异步）
-POST   /requirements/{id}/reject    { reason }       reason 必填
+POST   /requirements/{id}/approve   { note? }        → triggers plan generation (async)
+POST   /requirements/{id}/reject    { reason }       reason is required
 POST   /requirements/{id}/delegate  { assigneeId, note }
 ```
 
-**`analyze` 用 SSE 而不是轮询**：结构化过程 20–60 秒，逐字段流式填充是页面文档 03 §7 明确要求的体验。
+**`analyze` uses SSE rather than polling**: the structuring pass takes 20–60 seconds, and filling the fields in one by one as they stream is exactly the experience page doc 03 §7 calls for.
 
-**`PATCH` 与 `analyze` 是并行的两条结构化路径，不是主次关系**：
+**`PATCH` and `analyze` are two parallel paths to a structured requirement, not a primary and a fallback**:
 
-- `PATCH` 接受**全部**结构化字段。只开放几个可修补项的话，人工那条路永远填不出一份完整的需求
-  （完整度六个维度里有五个落在这些字段上）
-- 只有**真的变了**的字段才记 `source: 'human'` 溯源。编辑器一次提交整份表单，按「提交了什么」
-  记溯源的话，改一个字段会把整块面板标成人工产出 —— 那一排标记就成了假的
-- `analyze` **不覆盖**已标记 `human` 的字段，并在响应里回报 `keptHumanFields`
-- 确认闸门只看有没有内容（标题 / 业务目标 / 验收标准三者之一），不看内容是谁产出的
+- `PATCH` accepts **every** structured field. Expose only a handful of patchable ones and the manual path can never produce a complete requirement (five of the six completeness dimensions live in those fields)
+- Only fields that **actually changed** get `source: 'human'` provenance. The editor submits the whole form at once, and recording provenance by "what was submitted" would mark an entire panel as human-authored just because one field was edited — that row of markers would then be a lie
+- `analyze` **does not overwrite** fields already marked `human`, and reports back `keptHumanFields` in its response
+- The confirmation gate only asks whether there is content at all (a title, a business goal, or acceptance criteria), not who produced it
 
-### 6.3 计划
+### 6.3 Plans
 
 ```
-POST   /requirements/{id}/plans          触发生成（异步任务）
-       → { taskId }  轮询或订阅 SSE 获取完成通知
+POST   /requirements/{id}/plans          trigger generation (async task)
+       → { taskId }  poll it, or subscribe over SSE for the completion notice
 
 GET    /plans/{id}
        → { plan, workItems, criticalPath, milestones, risks,
            costEstimate, autoActions, requiredApprovals }
 
-GET    /plans/{id}/auto-actions          ★ Policy 预演结果
+GET    /plans/{id}/auto-actions          ★ policy dry-run results
        → [{ description, policyId, policyName, reversible, externalVisible }]
 
 GET    /plans/{id}/diff?from=v1&to=v2
 
 PATCH  /plans/{id}/work-items/{itemId}
        ← { assignee? | durationHours? | delete? }
-       → { affectedItems[], newCriticalPath, newDuration }   ★ 返回影响
+       → { affectedItems[], newCriticalPath, newDuration }   ★ returns the impact
 
 GET    /work-items/{id}/assignee-candidates
        → [{ type, id, name, matchScore, matchReasons[], successRate, load, costEstimate }]
-       ★ matchReasons 必须可读，页面直接展示
+       ★ matchReasons must be human-readable — the page displays them as-is
 
 POST   /plans/{id}/approve   { note?, acknowledgedOverrun? }
 POST   /plans/{id}/revise    { feedback }
 ```
 
-### 6.4 看板与 Work Item
+### 6.4 Board and Work Items
 
 ```
 GET    /projects/{id}/board?view=kanban&filters=...
        → { stages: [{ key, name, wipLimit, count, items[], hasMore }] }
-       每列独立分页，Done 列默认只返回 5 条
+       Each column paginates independently; the Done column returns only 5 items by default
 
 PATCH  /work-items/{id}/status
        ← { toStatus, reason, reasonCategory, terminateRunningRun? }
-       ★ reason 必填（人类覆盖必须记录原因）
-       → 409 INVALID_TRANSITION 时返回 allowedTriggers 供 UI 提示
+       ★ reason is required (a human override must record why)
+       → on 409 INVALID_TRANSITION, returns allowedTriggers so the UI can suggest what is possible
 
-POST   /work-items/{id}/takeover     { agentHandling, reason }   reason 必填
+POST   /work-items/{id}/takeover     { agentHandling, reason }   reason required
 POST   /work-items/{id}/handback     { handoverNote }
 POST   /work-items/{id}/reassign     { assigneeType, assigneeId, reason }
 POST   /work-items/{id}/retry        { additionalContext? }
 POST   /work-items/{id}/split        { subtasks[] }
-POST   /work-items/{id}/force-pass   { reason, criteria[] }      需 tech_lead
+POST   /work-items/{id}/force-pass   { reason, criteria[] }      requires tech_lead
 
 GET    /work-items/{id}/events?level=milestone|detail&source=&cursor=
 ```
 
-### 6.5 Agent 与 Run
+### 6.5 Agents and Runs
 
 ```
 GET    /agents?scope=&type=&status=
@@ -359,9 +357,9 @@ GET    /agents/{id}
            waitingDecision, failed }, trends }
 
 PATCH  /agents/{id}
-       权限扩大类变更需 header: X-Audit-Reason
+       Changes that widen permissions require the header X-Audit-Reason
 
-POST   /agents/{id}/permissions/simulate     ★ 权限变更影响预演
+POST   /agents/{id}/permissions/simulate     ★ dry-run the impact of a permission change
        ← { changes }
        → { affectedPolicies[], queuedTasksImpact[], runningRunsImpact[] }
 
@@ -373,34 +371,36 @@ GET    /runs/{id}
            artifacts, interventions, error?, related }
 GET    /runs/{id}/events?level=brief|detailed&cursor=
 GET    /runs/{id}/cost-breakdown?groupBy=step
-POST   /runs/{id}/constraints  { constraint }     执行中追加约束
+POST   /runs/{id}/constraints  { constraint }     add a constraint mid-execution
 POST   /runs/{id}/terminate    { reason }
 POST   /runs/{id}/retry        { additionalContext[], agentId? }
 ```
 
-### 6.6 决策
+### 6.6 Decisions
 
 ```
 GET    /decisions?scope=mine&category=&project=&type=&sort=urgency&cursor=
        → { stats: { overdue, dueSoon, pending, coSign, delegated, completedWeek },
            decisions: [...] }
-       ★ 列表项必须自带页面文档 10 §5.3 的八个字段（whyYou/consequence/
-         recommendation/alternatives/evidence），避免逐条再请求详情
+       ★ Every list item must carry the eight fields from page doc 10 §5.3 (whyYou /
+         consequence / recommendation / alternatives / evidence) itself, so the UI
+         never has to fetch the detail of each row separately
 
 GET    /decisions/{id}
-       → 完整详情，含 options 对比、evidence、similarDecisions、discussion
+       → full detail, including the option comparison, evidence, similarDecisions, discussion
 
 POST   /decisions/{id}/approve
        ← { optionId, constraints: [{ type, value, enforcement }], note? }
-       Idempotency-Key 必需
-POST   /decisions/{id}/reject            { reason }   必填
+       Idempotency-Key required
+POST   /decisions/{id}/reject            { reason }   required
 POST   /decisions/{id}/request-revision  { feedback }
 POST   /decisions/{id}/delegate          { assigneeId, note }
 POST   /decisions/batch                  { ids[], action, note }
-       ★ 服务端校验：仅低风险同类型可批量；高风险自动排除并在响应中说明
+       ★ Validated server-side: only low-risk decisions of the same type can be batched;
+         high-risk ones are excluded automatically and the response says so
 
-GET    /decisions/{id}/similar           历史相似决策 + 结果
-GET    /decisions/automation-suggestions 可自动化的重复决策
+GET    /decisions/{id}/similar           similar past decisions + how they turned out
+GET    /decisions/automation-suggestions repeat decisions that could be automated
 POST   /decisions/{id}/comments          { body, mentions[] }
 ```
 
@@ -410,21 +410,21 @@ POST   /decisions/{id}/comments          { body, mentions[] }
 GET    /projects/{id}/policies
        → { orgPolicies[], projectPolicies[], summary: { autoActions[], humanRequired[] },
            conflicts[] }
-       ★ summary 是"14 类自动执行、6 类需确认"的数据来源
+       ★ summary is where "14 kinds handled automatically, 6 kinds need confirmation" comes from
 
 POST   /policies
 PATCH  /policies/{id}
-       ★ direction=loosen 时必须携带有效 simulationId，否则 422
+       ★ when direction=loosen, a valid simulationId is mandatory, otherwise 422
 
-POST   /policies/simulate                历史回放
+POST   /policies/simulate                replay against history
        ← { policyDraft, projectId, range }
        → { totalSamples, skippedForMissingFacts, wouldAutoHandle,
            mismatches[], suggestions[], confidence }
 
-POST   /policies/evaluate                手动构造场景测试
+POST   /policies/evaluate                test a hand-built scenario
        ← { context }
        → { result, matchedPolicy, evaluationTrace[] }
-       ★ trace 展示"被哪条高优先级规则拦截"
+       ★ the trace shows "which higher-priority rule intercepted this"
 
 GET    /policies/{id}/history
 ```
@@ -439,12 +439,12 @@ GET /projects/{id}/analytics/cost?range=30d&groupBy=
 GET /projects/{id}/analytics/quality?range=30d
 GET /projects/{id}/analytics/insights?range=30d
     → [{ severity, type, message, evidence, actions[] }]
-    ★ actions 带可直接调用的端点与预填参数
+    ★ actions carry a directly callable endpoint plus prefilled parameters
 ```
 
-**所有 Analytics 端点返回 `dataAsOf` 字段**（预聚合的截止时间），页面展示"数据截至 15:00"。
+**Every analytics endpoint returns a `dataAsOf` field** (the cutoff of the pre-aggregation), so the page can show "data as of 15:00".
 
-### 6.9 集成与 Agent 回调
+### 6.9 Integrations and Agent callbacks
 
 ```
 GET    /projects/{id}/integrations
@@ -453,12 +453,12 @@ PATCH  /integrations/{id}/sync-mapping  { field, sourceOfTruth, conflictStrategy
 GET    /projects/{id}/sync-conflicts
 POST   /sync-conflicts/{id}/resolve     { winner, applyToSimilar? }
 
-# 外部 webhook 入口（独立认证）
-POST   /webhooks/github     签名验证
+# External webhook entry points (authenticated separately)
+POST   /webhooks/github     signature verified
 POST   /webhooks/jira
 POST   /webhooks/{provider}
 
-# Agent 回调（专用短期令牌，见 06 文档 §10）
+# Agent callbacks (dedicated short-lived tokens, see doc 06 §10)
 POST   /agent-callback/runs/{runId}/events
        Authorization: Bearer <run-scoped-token>
        ← RunEvent | RunEvent[]
@@ -467,54 +467,54 @@ POST   /agent-callback/runs/{runId}/artifacts
 
 ---
 
-## 7. 聚合端点的取舍
+## 7. The trade-off behind aggregate endpoints
 
-有几个端点（`/overview`、`/board`、决策列表）刻意做成"一次返回一屏所需的全部数据"，违反了纯 REST 的资源导向。
+A few endpoints (`/overview`, `/board`, the decision list) are deliberately built to "return everything one screen needs in a single call", which breaks pure REST's resource orientation.
 
-**理由**：这些页面的信息密度很高。`/projects/{id}/overview` 如果拆成 8 个资源端点，首屏就是 8 个往返，移动网络下体验很差。而且这些数据天然一起消费，没有独立复用价值。
+**Why**: these pages have very high information density. Split `/projects/{id}/overview` into 8 resource endpoints and the first paint costs 8 round trips, which feels terrible on a mobile network. On top of that, this data is naturally consumed together and has no independent reuse value.
 
-**边界**：只有页面文档明确定义的高密度页面做聚合端点，其余走标准资源端点。聚合端点不接受任意字段选择参数（那会变成半个 GraphQL），返回结构固定。
+**Where the line is**: only the high-density pages the page docs explicitly define get an aggregate endpoint; everything else goes through standard resource endpoints. Aggregate endpoints do not accept arbitrary field-selection parameters (that road ends in half a GraphQL) — their response shape is fixed.
 
 ---
 
-## 8. 长任务
+## 8. Long-running operations
 
-需求分析、计划生成、模拟、导出这类耗时操作：
+For slow work like requirement analysis, plan generation, simulation, and export:
 
-| 时长 | 方式 |
+| Duration | Approach |
 | --- | --- |
-| < 3s | 同步返回 |
-| 3–60s，需要过程可见 | SSE 流式（需求分析） |
-| > 60s | 异步任务 + 轮询/通知（计划生成、大批量导入） |
+| < 3s | Synchronous response |
+| 3–60s, with the process visible | SSE stream (requirement analysis) |
+| > 60s | Async task + polling/notification (plan generation, bulk import) |
 
-异步任务统一形式：
+Async tasks all take the same shape:
 
 ```
 POST /requirements/{id}/plans   → 202 { taskId }
 GET  /tasks/{taskId}            → { status, progress, result?, error? }
-                                  或订阅 SSE user:me:tasks
+                                  or subscribe over SSE to user:me:tasks
 ```
 
 ---
 
-## 9. 限流
+## 9. Rate limits
 
-| 对象 | 限制 |
+| Target | Limit |
 | --- | --- |
-| 普通读接口 | 300 req/min/user |
-| 写接口 | 60 req/min/user |
-| LLM 触发接口（analyze/plan/simulate） | 10 req/min/user + 项目成本上限 |
-| Agent 回调 | 1000 req/min/run（事件密集） |
-| Webhook | 按 provider 配置 |
+| Ordinary read endpoints | 300 req/min/user |
+| Write endpoints | 60 req/min/user |
+| LLM-triggering endpoints (analyze/plan/simulate) | 10 req/min/user + the project cost ceiling |
+| Agent callbacks | 1000 req/min/run (event-dense) |
+| Webhooks | Configured per provider |
 
-LLM 触发接口的限流不只为了保护服务，也是**成本护栏**——防止用户反复点击"重新分析"烧钱。前端按钮上显示的成本预估配合这个限流一起工作。
+The limit on LLM-triggering endpoints isn't only there to protect the service — it's a **cost guardrail**, keeping a user from burning money by clicking "re-analyze" over and over. The cost estimate shown on the frontend button works together with this limit.
 
 ---
 
-## 10. 待确认问题
+## 10. Open questions
 
-1. **API 版本策略**：目前用 `/v1` 路径前缀。考虑到 MVP 期间前后端同步发布，是否需要版本？倾向于保留前缀但 MVP 期间不承诺兼容性。
-2. **聚合端点的缓存**：`/overview` 数据变化频繁但计算不便宜。是否加短 TTL 缓存（10s）？会导致操作后刷新看不到最新结果，需要配合 SSE 补偿。
-3. **批量操作的响应形式**：部分成功时返回 200 带每项结果，还是 207 Multi-Status？倾向于 200 + 明确的每项结果，前端处理更简单。
-4. **Agent 回调的令牌泄漏风险**：令牌随任务下发给外部运行时。如果运行时环境被攻破，令牌可用于伪造事件。是否需要额外的事件内容签名？倾向于 MVP 用短期令牌 + IP 白名单（自建运行时可行），SaaS 运行时接受风险。
-5. **SSE 在企业代理环境下的可靠性**：部分企业代理会缓冲 SSE 流。是否需要 WebSocket 降级路径？建议 MVP 先用 SSE + 定期全量刷新兜底，遇到实际问题再加。
+1. **API versioning strategy**: today it's a `/v1` path prefix. Given that frontend and backend ship together during the MVP, is a version even needed? Leaning toward keeping the prefix but promising no compatibility during the MVP.
+2. **Caching aggregate endpoints**: `/overview` data changes often and is not cheap to compute. Should there be a short TTL cache (10s)? It would mean a refresh right after an action doesn't show the latest result, so it would need SSE to compensate.
+3. **Response shape for bulk operations**: on partial success, return 200 with per-item results, or 207 Multi-Status? Leaning toward 200 plus explicit per-item results — simpler for the frontend to handle.
+4. **Token leakage risk on Agent callbacks**: the token is handed to an external runtime along with the task. If that runtime environment is compromised, the token can be used to forge events. Do we need a separate signature over the event contents? Leaning toward short-lived tokens + an IP allowlist for the MVP (workable for self-hosted runtimes), and accepting the risk for SaaS runtimes.
+5. **SSE reliability behind corporate proxies**: some corporate proxies buffer SSE streams. Do we need a WebSocket fallback path? The suggestion is to start with SSE plus a periodic full refresh as a backstop, and add one only if it actually bites.

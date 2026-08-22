@@ -22,11 +22,13 @@ afterAll(async () => {
 });
 
 /**
- * 造一条真正卡住的 Run。
+ * Build a Run that is genuinely stuck / 造一条真正卡住的 Run。
  *
- * ★ 必须等 run_started 落库之后再交给调用方改心跳 ——
- *   那条事件的 ingest 会把 lastHeartbeatAt 刷成 now，
- *   在它之前改的值会被无声地覆盖掉。
+ * ★ Wait until run_started has landed in the database before handing the Run back for the caller
+ *   to rewrite its heartbeat — ingesting that event resets lastHeartbeatAt to now, so any value
+ *   written before it is silently overwritten.
+ *
+ *   必须等 run_started 落库之后再交给调用方改心跳，否则改的值会被无声覆盖。
  */
 async function stuckRun(opts: { registry?: RuntimeRegistry; runtime?: MockRuntime } = {}) {
   const runtime = opts.runtime ?? new MockRuntime({}, { steps: ['长任务'], stepDelayMs: 100_000 });
@@ -65,14 +67,19 @@ describe('run-supervisor', () => {
     const [after] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id));
     expect(after!.status).toBe('timeout');
 
-    // ★ 先叫停外部执行再落状态，否则成本会在我们判完之后继续涨
+    // ★ Stop the external execution before writing the status, or cost keeps climbing after we
+    //   have already made our judgment
+    //   先叫停外部执行再落状态，否则成本会在我们判完之后继续涨
     expect(runtime.controlsFor(run.id).some((c) => c.action === 'terminate')).toBe(true);
   });
 
   /**
-   * ★ 这条是 supervisor 存在的意义。
-   *   只按心跳判死，会把跑长任务（一次大重构二十分钟不产生事件）的 Agent
-   *   误杀，而它其实好好的 —— 杀掉的代价是那二十分钟的成本白烧。
+   * ★ This case is the whole reason the supervisor exists.
+   *   Declaring a Run dead on heartbeat alone kills Agents that are working on long tasks — a
+   *   large refactor can go twenty minutes without emitting an event — while they are perfectly
+   *   healthy. The price of that kill is twenty minutes of spend burned for nothing.
+   *
+   *   只按心跳判死会误杀跑长任务的 Agent，代价是那二十分钟的成本白烧。
    */
   it('心跳超期但运行时说仍在跑时，只续心跳不误杀', async () => {
     const { run, registry } = await stuckRun();
@@ -95,7 +102,7 @@ describe('run-supervisor', () => {
   it('运行时已经不认这个 Run 时判为中断并流转到 failed', async () => {
     const { run, item, registry, runtime } = await stuckRun();
 
-    // 运行时侧认为已终止
+    // The runtime side considers it terminated
     await runtime.control(run.id, { action: 'terminate', reason: '外部终止' });
     await db
       .update(agentRuns)
@@ -119,7 +126,7 @@ describe('run-supervisor', () => {
       .set({ lastHeartbeatAt: new Date(Date.now() - 10 * 60_000), timeoutAt: null })
       .where(eq(agentRuns.id, run.id));
 
-    // 空注册表 = 本进程没有这个运行时的适配器
+    // Empty registry = this process has no adapter for that runtime
     const report = await superviseRuns(db, new RuntimeRegistry(), { correlationId: randomUUID() });
     expect(report.orphanedResolved).toContain(run.id);
   });
@@ -141,9 +148,11 @@ describe('run-supervisor', () => {
   });
 
   /**
-   * ★ 不认领的话，重启前留下的 running Run 会永远占着
-   *   「一个 Work Item 只能有一个活跃 Run」的名额，把卡片钉死，
-   *   而看板上它显示为「执行中」。
+   * ★ Without reclaiming them, `running` Runs left behind by the previous process hold the single
+   *   "one active Run per work item" slot forever. The card is pinned in place and the board goes
+   *   on showing it as executing.
+   *
+   *   不认领的话，重启前留下的 running Run 会永远占着名额，把卡片钉死在「执行中」。
    */
   it('启动时认领上一轮进程留下的孤儿 Run', async () => {
     const { run } = await stuckRun();
@@ -168,7 +177,7 @@ describe('run-supervisor', () => {
 });
 
 describe('recovery-worker', () => {
-  /** 让 Run 以指定错误类别失败 */
+  /** Make a Run fail with the given error class */
   async function failedRun(errorClass: string, opts: { stepDelayMs?: number } = {}) {
     const runtime = new MockRuntime(
       {},
@@ -190,9 +199,12 @@ describe('recovery-worker', () => {
     });
 
     /**
-     * ★ 等 recoveryAction 落库，不能只等 status 变 failed ——
-     *   applyRunPatch 先写 status，handleFailure 才写恢复决策，
-     *   中间有个窗口。等错了会随机失败，而且看起来像产品 bug。
+     * ★ Wait for recoveryAction to land, not merely for status to turn `failed` — applyRunPatch
+     *   writes the status first and handleFailure writes the recovery decision afterward, leaving
+     *   a window in between. Waiting on the wrong signal makes this test flake, and the flake
+     *   looks like a product bug.
+     *
+     *   等 recoveryAction 落库，不能只等 status 变 failed —— 两次写之间有窗口。
      */
     await waitFor(async () => {
       const [r] = await db.select().from(agentRuns).where(eq(agentRuns.workItemId, item.id));
@@ -213,7 +225,7 @@ describe('recovery-worker', () => {
     const { run, item, registry } = await failedRun('permission_denied');
     expect(run.recoveryAction).toBe('request_decision');
 
-    // 该动作不退避，立刻可执行
+    // This action has no backoff, so it can run immediately
     await db.update(agentRuns).set({ recoveryNotBefore: null }).where(eq(agentRuns.id, run.id));
     const outcomes = await runRecoveryRound(db, registry, { correlationId: randomUUID() });
 
@@ -235,7 +247,8 @@ describe('recovery-worker', () => {
   });
 
   /**
-   * ★ 退避没到点就重试，等于把 decideRecovery 里的退避策略架空。
+   * ★ Retrying before the backoff has elapsed hollows out the backoff policy in decideRecovery.
+   *   退避没到点就重试，等于把 decideRecovery 里的退避策略架空。
    */
   it('退避未到点时不执行', async () => {
     const { registry } = await failedRun('context_insufficient');
@@ -244,7 +257,8 @@ describe('recovery-worker', () => {
   });
 
   /**
-   * ★ 每个动作只执行一次。重复执行的后果是两个 Agent 同时改同一份代码。
+   * ★ Each action runs exactly once. Running it twice means two Agents editing the same code.
+   *   每个动作只执行一次；重复执行的后果是两个 Agent 同时改同一份代码。
    */
   it('同一条恢复决策只执行一次', async () => {
     const { run, item, registry } = await failedRun('context_insufficient');
@@ -254,12 +268,14 @@ describe('recovery-worker', () => {
     await runRecoveryRound(db, registry, { correlationId: randomUUID() });
 
     const runs = await db.select().from(agentRuns).where(eq(agentRuns.workItemId, item.id));
-    // 第一次重试产生第 2 个 Run；第二次 round 不该再产生第 3 个
+    // The first retry produces Run #2; the second round must not produce a #3
     expect(runs.filter((r) => r.attempt === 2).length).toBe(1);
   });
 
   /**
-   * ★ 人已经接手了就别插一脚 —— 自动恢复会打断人的处置。
+   * ★ Once a person has taken over, stay out of the way — automatic recovery would cut across
+   *   whatever they are doing.
+   *   人已经接手了就别插一脚，自动恢复会打断人的处置。
    */
   it('任务已被人工处置（离开 failed）时跳过自动恢复', async () => {
     const { run, item, registry } = await failedRun('context_insufficient');
@@ -272,10 +288,14 @@ describe('recovery-worker', () => {
   });
 
   /**
-   * ★ 连续失败计数要在 Run **执行期间**改，不能在派发前改。
-   *   派发前就把它设到 3，任何一条「连续失败就转人工」的规则都会把任务
-   *   直接拦成 blocked，压根跑不到失败那一步 —— 那测的就是 Policy，
-   *   不是恢复策略了。这里要测的是后者，所以计数只能在跑起来之后再动。
+   * ★ The consecutive-failure counter has to be bumped **while the Run is executing**, never
+   *   before dispatch. Set it to 3 up front and any "escalate to a human after repeated
+   *   failures" rule blocks the work item outright, so it never reaches the failure at all —
+   *   that would be a test of Policy, not of the recovery strategy. This test is about the
+   *   latter, so the counter may only move once the Run is already going.
+   *
+   *   连续失败计数只能在 Run 执行期间改：派发前就设到 3，Policy 会先把任务拦成 blocked，
+   *   测的就不是恢复策略了。
    */
   it('连续失败三次时暂停并升级，不再自动重试', async () => {
     const runtime = new MockRuntime(
@@ -307,13 +327,15 @@ describe('recovery-worker', () => {
     });
 
     expect(run.recoveryAction).toBe('pause_and_escalate');
-    // 升级类动作不设退避 —— 再压 60 秒只会让待办晚一分钟出现
+    // Escalating actions carry no backoff — another 60 seconds only delays the human's to-do
+    // 升级类动作不设退避，再压 60 秒只会让待办晚一分钟出现
     expect(run.recoveryNotBefore).toBeNull();
   });
 
   /**
-   * ★ hasAlternativeAgent 曾被硬编码成 false，
-   *   于是 switch_agent 这条分支永远不可达。
+   * ★ hasAlternativeAgent was once hard-coded to false, which made the switch_agent branch
+   *   unreachable forever.
+   *   hasAlternativeAgent 曾被硬编码成 false，于是 switch_agent 这条分支永远不可达。
    */
   it('存在可替换 Agent 时 capability_mismatch 走改派而不是转人工', async () => {
     const runtime = new MockRuntime(
@@ -327,7 +349,7 @@ describe('recovery-worker', () => {
     );
     const registry = new RuntimeRegistry();
     const primary = await seedAgent(db, fx, { runtime, registry, name: 'agent-a' });
-    // 同一组织里的第二个 Agent，能接同类任务
+    // A second Agent in the same organization that can take the same kind of task
     await seedAgent(db, fx, { runtime: new MockRuntime(), registry, name: 'agent-b' });
 
     const item = await createWorkItem(db, fx, { status: 'ready' });
@@ -350,15 +372,16 @@ describe('recovery-worker', () => {
 });
 
 /**
- * ★★ 运行时**拒收**派发，和运行时跑到一半失败，是两条完全不同的代码路径。
+ * ★★ A runtime **refusing** a dispatch and a runtime failing mid-flight are two completely
+ *   different code paths.
  *
- *   前者在真实部署里远比后者常见（缺凭证、没有可用工具、工作目录没准备好），
- *   而它此前没有任何测试：dispatch 只把 Run 标成 failed 就 return，
- *   工作项停在 executing 上，看板照样按 `status = 'executing'`
- *   数出「1 个 Agent 在跑」，而没有任何循环能再碰到它。
+ *   The first is far more common in real deployments (missing credentials, no usable tools, a
+ *   working directory that was never prepared), and it had no test at all: dispatch marked the
+ *   Run `failed` and returned, the work item stayed in `executing`, and the board kept counting
+ *   "1 Agent running" off `status = 'executing'` while no loop could ever touch it again.
  *
- * Dispatch-time rejection is a different path from an in-flight failure, and
- * the far more common one in real deployments.
+ *   运行时拒收派发与跑到一半失败是两条路径。前者更常见却长期没有测试：工作项停在
+ *   executing 上，看板照样数出「1 个 Agent 在跑」，而没有任何循环够得着它。
  */
 describe('运行时拒收派发', () => {
   async function rejectedRun(reason = '工作目录没准备好') {
@@ -393,11 +416,12 @@ describe('运行时拒收派发', () => {
     expect(run.status).toBe('failed');
     expect(run.errorClass).toBe('runtime_error');
     expect(run.errorMessage).toContain('缺少凭证');
-    // ★ endedAt 为空的 failed Run 会让「跑了多久」永远算不出来
+    // ★ A failed Run with no endedAt makes "how long did it run" permanently uncomputable
+    //   endedAt 为空的 failed Run 会让「跑了多久」永远算不出来
     expect(run.endedAt).not.toBeNull();
   });
 
-  /** CLAUDE.md 第一条：状态变更必须产生事件 */
+  /** CLAUDE.md rule #1: a status change must produce an event */
   it('状态变了就有对应事件 —— run_ended 与 agent_run.failed 都在', async () => {
     const { run } = await rejectedRun();
 
@@ -416,14 +440,17 @@ describe('运行时拒收派发', () => {
 });
 
 /**
- * 兜底层：即便派发路径再出新漏洞，停在 executing 却没有活跃 Run 的
- * 工作项也必须能被收回来 —— 它是所有循环都够不着的那一类。
+ * The backstop: however the dispatch path breaks next, a work item stuck in `executing` with no
+ * active Run must still be recoverable — that is precisely the class no other loop can reach.
+ *
+ * 兜底层：停在 executing 却没有活跃 Run 的工作项必须能被收回来。
  */
 describe('停在 executing 却没有活跃 Run 的工作项', () => {
   it('被 supervisor 收回并流转出 executing', async () => {
     const { run, item, registry } = await stuckRun();
 
-    // 只结算 Run，不动工作项 —— 复现进程在两次写之间挂掉的现场
+    // Settle only the Run and leave the work item alone — reproducing a process that died
+    // between the two writes
     await db
       .update(agentRuns)
       .set({ status: 'failed', endedAt: new Date() })

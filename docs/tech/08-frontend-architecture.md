@@ -1,46 +1,48 @@
-# 08 前端架构
+# 08 Frontend architecture
 
-React 18 + TypeScript + Vite。对应 14 个[页面文档](../product/pages/README.md)。
+*[中文版本 / Chinese version](08-frontend-architecture.zh.md)*
+
+React 18 + TypeScript + Vite. Maps onto the 14 [page documents](../product/pages/README.md).
 
 ---
 
-## 1. 前端的特殊挑战
+## 1. What makes this frontend hard
 
-这不是一个普通的 CRUD 后台。三个特点决定了架构取舍：
+This is not an ordinary CRUD admin panel. Three properties drive every architectural tradeoff:
 
-| 特点 | 挑战 |
+| Property | Challenge |
 | --- | --- |
-| **状态由系统事件驱动** | 界面必须实时更新且不打断用户操作。传统"提交后刷新"模式不适用 |
-| **信息密度极高** | 看板卡片、决策卡片要在小面积内表达状态、执行主体、成本、时限、Gate 状态 |
-| **人机混合的表达** | 每个显示执行主体的地方都要区分人与 Agent，这是产品的核心视觉差异 |
+| **State is driven by system events** | The UI has to update live without interrupting whatever the user is doing. The traditional "submit, then refresh" model does not apply |
+| **Extremely high information density** | A board card or a decision card has to convey status, executor, cost, deadline, and Gate state in a very small area |
+| **Human/Agent duality has to be visible** | Every place that shows an executor must distinguish a person from an Agent — this is the product's core visual differentiator |
 
-第一条最难。用户可能正在编辑某个字段，同时 Agent 更新了同一个对象。处理不好会丢用户输入，这是最不可接受的 bug 类型。
+The first one is the hardest. A user may be editing a field at the exact moment an Agent updates the same object. Get this wrong and you lose the user's input, which is the least forgivable class of bug there is.
 
 ---
 
-## 2. 技术选型
+## 2. Technology choices
 
-| 用途 | 选型 | 理由 |
+| Purpose | Choice | Why |
 | --- | --- | --- |
-| 构建 | Vite | — |
-| 路由 | React Router v6 | 嵌套路由匹配项目内 Tab 结构 |
-| 服务端状态 | TanStack Query v5 | 缓存、失效、乐观更新；与 SSE 集成见 §4 |
-| 客户端状态 | Zustand | 筛选条件、面板开合、键盘模式等 UI 状态 |
-| 样式 | Tailwind CSS | 高信息密度界面需要精细间距控制 |
-| 无样式组件 | Radix UI | 弹窗、下拉、Tooltip 的可访问性 |
-| 表单 | React Hook Form + Zod | 与后端共享 schema |
-| 虚拟滚动 | TanStack Virtual | 看板列、Run 事件流（可能数千条） |
-| 图 | React Flow + dagre | Execution Graph |
-| 图表 | Recharts | Analytics |
-| 类型 | `@apos/contracts` | ★ 与后端共享，不生成 |
+| Build | Vite | — |
+| Routing | React Router v6 | Nested routes match the tab structure inside a project |
+| Server state | TanStack Query v5 | Caching, invalidation, optimistic updates; SSE integration in §4 |
+| Client state | Zustand | UI state: filters, panel open/closed, keyboard mode |
+| Styling | Tailwind CSS | Dense interfaces need fine-grained control over spacing |
+| Unstyled primitives | Radix UI | Accessibility for dialogs, dropdowns, tooltips |
+| Forms | React Hook Form + Zod | Shares schemas with the backend |
+| Virtual scrolling | TanStack Virtual | Board columns, Run event streams (potentially thousands of rows) |
+| Graphs | React Flow + dagre | Execution Graph |
+| Charts | Recharts | Analytics |
+| Types | `@apos/contracts` | ★ Shared with the backend, not generated |
 
 ---
 
-## 3. 目录结构
+## 3. Directory layout
 
 ```
 apps/web/src/
-├── pages/                       与 14 个页面文档一一对应
+├── pages/                       one directory per page document (14 of them)
 │   ├── ProjectList/
 │   ├── ProjectOverview/
 │   ├── RequirementIntake/
@@ -55,16 +57,16 @@ apps/web/src/
 │   ├── Analytics/
 │   ├── PolicyConfig/
 │   └── IntegrationSettings/
-├── features/                    跨页面复用的领域功能
-│   ├── work-item/               卡片、状态徽标、状态机客户端校验
-│   ├── decision/                决策卡片、操作栏、约束编辑器
-│   ├── agent/                   Agent Chip、状态点、队列
-│   ├── run/                     执行流时间线、成本明细
-│   ├── policy/                  条件编辑器、自然语言解释、模拟结果
-│   └── event/                   Event Timeline（三处共用）
-├── components/                  通用组件（页面文档 README §5）
+├── features/                    domain features reused across pages
+│   ├── work-item/               cards, status badges, client-side state machine checks
+│   ├── decision/                decision cards, action bar, constraint editor
+│   ├── agent/                   Agent chip, status dot, queue
+│   ├── run/                     execution timeline, cost breakdown
+│   ├── policy/                  condition editor, natural-language explanation, simulation results
+│   └── event/                   Event Timeline (shared by three pages)
+├── components/                  generic components (page docs README §5)
 │   ├── HumanGateBadge.tsx
-│   ├── AssigneeChip.tsx         ★ 人机视觉区分的唯一实现
+│   ├── AssigneeChip.tsx         ★ the one and only implementation of the human/Agent distinction
 │   ├── RiskBadge.tsx
 │   ├── AutonomyBadge.tsx
 │   ├── UpdateSourceTag.tsx
@@ -72,23 +74,23 @@ apps/web/src/
 │   ├── BlockedDuration.tsx
 │   └── states/                  Loading / Empty / Error / NoPermission
 ├── lib/
-│   ├── api/                     类型化 client
-│   ├── sse/                     ★ SSE 连接管理与缓存同步（§4）
-│   ├── query/                   TanStack Query 配置与 key 工厂
-│   ├── permissions/             前端权限判定（与后端同源规则）
-│   └── format/                  成本、时长、相对时间
+│   ├── api/                     typed client
+│   ├── sse/                     ★ SSE connection management and cache sync (§4)
+│   ├── query/                   TanStack Query config and key factory
+│   ├── permissions/             frontend permission checks (same rules as the backend)
+│   └── format/                  cost, duration, relative time
 └── stores/                      Zustand
 ```
 
-**`components/` 与 `features/` 的边界**：`components/` 是页面文档全局约定中定义的原子组件，无业务逻辑；`features/` 含数据获取与业务规则。
+**Where `components/` ends and `features/` begins**: `components/` holds the atomic components defined in the page docs' global conventions, with no business logic; `features/` contains data fetching and business rules.
 
 ---
 
-## 4. 实时数据：SSE 与 Query 缓存的融合
+## 4. Live data: fusing SSE with the Query cache
 
-这是前端最核心的设计。
+This is the single most important piece of frontend design here.
 
-### 4.1 单连接多频道
+### 4.1 One connection, many channels
 
 ```typescript
 // lib/sse/connection.ts
@@ -101,7 +103,7 @@ class SSEConnection {
   subscribe(channel: string, handler: Handler): Unsubscribe {
     this.channels.add(channel);
     this.addHandler(channel, handler);
-    this.reconnectIfChannelsChanged();      // 防抖 100ms，避免快速切页时反复重连
+    this.reconnectIfChannelsChanged();      // 100ms debounce, so fast page switching doesn't thrash the connection
     return () => this.unsubscribe(channel, handler);
   }
 
@@ -116,14 +118,14 @@ class SSEConnection {
       this.dispatch(event);
     };
 
-    this.es.onerror = () => this.scheduleReconnect();   // 指数退避
+    this.es.onerror = () => this.scheduleReconnect();   // exponential backoff
   }
 }
 ```
 
-**只维持一条连接**：浏览器对同域 SSE 连接数有限制（HTTP/1.1 下 6 条）。多个组件订阅不同频道，共用一条连接。
+**Exactly one connection is kept open**: browsers cap same-origin SSE connections (6 under HTTP/1.1). Many components subscribe to different channels, all sharing one connection.
 
-### 4.2 事件 → 缓存补丁
+### 4.2 Event → cache patch
 
 ```typescript
 // lib/sse/apply-event.ts
@@ -134,21 +136,21 @@ export function applyEventToCache(event: DomainEvent) {
     case 'work_item.status_changed': {
       const { workItemId, from, to } = event.payload;
 
-      // 1. 更新详情缓存
+      // 1. update the detail cache
       qc.setQueryData(qk.workItem(workItemId), (old) =>
         old ? { ...old, status: to, stage: stageOf(to) } : old);
 
-      // 2. 更新看板：从原列移除、加到新列
+      // 2. update the board: remove from the old column, add to the new one
       qc.setQueryData(qk.board(event.projectId), (old) =>
         old ? moveItemBetweenStages(old, workItemId, from, to) : old);
 
-      // 3. 让派生数据失效（不直接改，让它重新拉）
+      // 3. invalidate derived data (don't patch it — let it refetch)
       qc.invalidateQueries({ queryKey: qk.projectOverview(event.projectId) });
       break;
     }
 
     case 'agent_run.progress': {
-      // 高频事件：只做局部更新，绝不 invalidate（会触发大量请求）
+      // high-frequency event: patch locally, never invalidate (that would fire a storm of requests)
       qc.setQueryData(qk.run(event.payload.runId), (old) =>
         old ? { ...old, ...pick(event.payload, ['step', 'cost', 'progressNote']) } : old);
       break;
@@ -157,26 +159,26 @@ export function applyEventToCache(event: DomainEvent) {
     case 'decision.created':
     case 'decision.resolved':
       qc.invalidateQueries({ queryKey: qk.decisions() });
-      qc.invalidateQueries({ queryKey: qk.actionItems() });   // 全局角标
+      qc.invalidateQueries({ queryKey: qk.actionItems() });   // global badge count
       break;
   }
 }
 ```
 
-**原则**：
+**The rules**:
 
-| 事件频率 | 处理 |
+| Event frequency | Handling |
 | --- | --- |
-| 高频（progress、cost、run 事件） | `setQueryData` 局部补丁，不发请求 |
-| 低频且影响面大（状态变更） | 补丁主缓存 + invalidate 派生缓存 |
-| 结构性变化（任务创建/删除） | 直接 invalidate |
+| High frequency (progress, cost, run events) | `setQueryData` local patch, no request |
+| Low frequency but wide-reaching (status changes) | Patch the primary cache + invalidate derived caches |
+| Structural change (task created/deleted) | Invalidate directly |
 
-### 4.3 保护用户正在编辑的内容
+### 4.3 Protecting what the user is editing
 
-页面文档 README §5.10 的硬性要求：**用户正在编辑的表单区域不被远端更新覆盖**。
+A hard requirement from page docs README §5.10: **a form region the user is editing must never be overwritten by a remote update**.
 
 ```typescript
-// stores/editing.ts —— 全局记录正在编辑的字段
+// stores/editing.ts —— global registry of fields currently being edited
 export const useEditingStore = create<EditingState>((set, get) => ({
   editing: new Map<string, Set<string>>(),   // entityId → Set<field>
   startEdit: (entityId, field) => { /* ... */ },
@@ -184,7 +186,7 @@ export const useEditingStore = create<EditingState>((set, get) => ({
   isEditing: (entityId, field) => get().editing.get(entityId)?.has(field) ?? false,
 }));
 
-// 应用补丁时跳过正在编辑的字段
+// when applying a patch, skip the fields being edited
 function patchEntity<T>(entityId: string, old: T, incoming: Partial<T>): T {
   const store = useEditingStore.getState();
   const safe = Object.fromEntries(
@@ -193,81 +195,82 @@ function patchEntity<T>(entityId: string, old: T, incoming: Partial<T>): T {
   const conflicted = Object.keys(incoming).filter(f => store.isEditing(entityId, f));
 
   if (conflicted.length) {
-    // 不静默丢弃：告诉用户有更新
+    // don't discard silently: tell the user something changed
     notifyConflict(entityId, conflicted, incoming);
-    // → 顶部提示「该内容已被 Agent 更新，[查看差异] [使用最新]」
+    // → banner at the top: 「该内容已被 Agent 更新，[查看差异] [使用最新]」
+    //   ("An Agent has updated this content — [view diff] [use latest]")
   }
   return { ...old, ...safe };
 }
 ```
 
-**冲突提示而非静默丢弃**：用户需要知道自己编辑的内容已经过时了，否则保存时会遇到 409 却不知道为什么。
+**Flag the conflict, never drop it silently**: the user needs to know their edit is now stale, otherwise they hit a 409 on save with no idea why.
 
-### 4.4 未保存的改动不能静默丢
+### 4.4 Unsaved changes must not vanish silently
 
-4.3 管的是「远端更新别覆盖我正在打的字」，这一条管的是另一头：**我打完了但没点保存，别让它就这么没了**。
+§4.3 handles "don't let a remote update overwrite what I'm typing." This one handles the other end: **I finished typing but never hit save — don't let it evaporate**.
 
-两道防线，缺一不可（`lib/useUnsavedGuard.ts`）：
+Two lines of defense, both required (`lib/useUnsavedGuard.ts`):
 
-1. `beforeunload` —— 挡刷新与关标签页；
-2. `confirmClose()` —— 挡关弹窗。**关弹窗不触发 `beforeunload`**，而那才是常走的那条路。
+1. `beforeunload` — catches reloads and tab closes;
+2. `confirmClose()` — catches closing the dialog. **Closing a dialog does not fire `beforeunload`**, and that is the path people actually take.
 
-判据必须是「和初始值不一样」，不能是「碰过这个表单」。每次关闭都要确认一遍的弹窗，用户三次之后就会条件反射地点确认 —— 那恰好训练掉了这道防线本身。
+The test has to be "differs from the initial value," not "this form has been touched." A dialog that asks for confirmation on every close trains users to click through it reflexively by the third time — which disables exactly the defense you just built.
 
-### 4.5 动画与滚动
+### 4.5 Animation and scrolling
 
-页面文档 05 §5.5 的约束在此实现：
+The constraints from page doc 05 §5.5 are implemented here:
 
 ```typescript
-// 卡片移动动画
-const MOVE_STAGGER_MS = 80;      // 多张卡片错峰
+// card movement animation
+const MOVE_STAGGER_MS = 80;      // stagger multiple cards
 
 function useCardMoveQueue() {
   const queue = useRef<MoveEvent[]>([]);
-  // 用户正在拖拽或打开了详情 → 延迟该卡片的动画到交互结束
-  // 用户不在视口顶部 → 不自动滚动，显示"↑ 2 张卡片已移动"提示条
+  // user is dragging or has the detail open → defer that card's animation until the interaction ends
+  // user is not scrolled to the top → don't auto-scroll; show a "↑ 2 cards moved" bar instead
 }
 ```
 
-**不自动滚动**是反复出现的要求（看板、Run 事件流、决策列表）。统一实现：
+**No auto-scrolling** is a requirement that shows up over and over (board, Run event stream, decision list). One shared implementation:
 
 ```typescript
 function useFollowTail(containerRef) {
-  const [pinned, setPinned] = useState(true);   // 是否贴底
-  // 用户滚动离开底部 → pinned = false，显示"↓ N 条新内容"
-  // 用户滚回底部 → pinned = true，恢复自动跟随
+  const [pinned, setPinned] = useState(true);   // stuck to the bottom?
+  // user scrolls away from the bottom → pinned = false, show "↓ N new items"
+  // user scrolls back to the bottom → pinned = true, resume following
 }
 ```
 
 ---
 
-## 4.6 图标只给眼睛，语义另给一份
+## 4.6 Icons are for the eyes; ship the meaning separately
 
-界面里到处是 emoji（🔍 调研 / 🔧 任务 / ⛔ 阻塞 / ⚡ 待决策）。它们是很好的扫视锚点，但**只对看得见颜色和形状的人成立**：
+Emoji are everywhere in this UI (🔍 调研 / 🔧 任务 / ⛔ 阻塞 / ⚡ 待决策 — research / task / blocked / awaiting decision). They make excellent scanning anchors, but **only for people who can see color and shape**:
 
-- 屏幕阅读器读的是 Unicode 官方名字 ——「🔍」是 "magnifying glass tilted left"，和「调研任务」毫无关系；
-- 灰度打印、低分屏、高对比模式下，靠颜色区分的那部分直接消失。
+- A screen reader announces the official Unicode name — "🔍" is "magnifying glass tilted left," which has nothing to do with "research task";
+- In grayscale print, on a low-resolution display, or in high-contrast mode, everything encoded by color alone simply disappears.
 
-所以约定是：**emoji 一律 `aria-hidden`，紧跟一段 `sr-only` 的文字**，或者旁边本来就有可见的文字标签。
+So the convention is: **every emoji gets `aria-hidden` and is immediately followed by `sr-only` text**, or sits next to a visible text label that was already there.
 
 ```tsx
 <span aria-hidden title={typeLabel(card.type)}>{typeIcon(card.type)}</span>
 <span className="sr-only">{typeLabel(card.type)}</span>
 ```
 
-同一个状态用**颜色 + 形状**双编码，而不是只用颜色：验收标准是 `✓ / ✕ / ○`（同粗细的描边记号）而不是 `✅ / ❌ / ⬜`（三种不同来源的彩色字符，粗细与基线各不一样，摆在一起不像一套设计语言）；计划 diff 的增删是**带底色的方块**而不是裸 `+` / `−` —— 那两个字符在正文字号下只差一竖。
+The same state is double-encoded as **color + shape**, never color alone. Acceptance criteria render as `✓ / ✕ / ○` (outline marks of equal stroke weight) rather than `✅ / ❌ / ⬜` (three colored glyphs from three different sources, with mismatched weights and baselines — side by side they don't look like one design language). Additions and deletions in a plan diff are **tinted blocks**, not bare `+` / `−` — at body text size those two characters differ by one vertical stroke.
 
-## 4.7 禁用的按钮必须说清为什么
+## 4.7 A disabled button has to say why
 
-灰按钮不给任何解释，等于让用户猜。而且 `disabled` 元素在多数浏览器里**不响应 hover，原生 `title` 弹不出来** —— 所以解释不能放在按钮自己身上。
+A gray button with no explanation asks the user to guess. Worse, in most browsers a `disabled` element **does not respond to hover, so the native `title` never appears** — which means the explanation cannot live on the button itself.
 
-做法：把原因放在按钮**外面**，跟着禁用条件一起出现（永远看得见，不依赖 hover），并用 `aria-describedby` 关联，让读屏用户听到的是「不可用 —— 先写点什么」而不是只有「不可用」。
+What we do instead: put the reason **outside** the button, rendered alongside the disabling condition (always visible, no hover required), and wire it up with `aria-describedby` so a screen reader user hears "unavailable — write something first" rather than just "unavailable."
 
-按钮的**可见性**同样要和真实状态联动：一个点了必然报错的按钮，比没有这个按钮更伤 —— 用户会以为自己点错了。判据取自状态机，不取自卡片长相（`blockedSince` 是一个**标记**，可以挂在 status 仍是 `ready` 的卡片上；状态是事实，标记只是注解）。
+A button's **visibility** has to track real state too: a button that is guaranteed to error when clicked is worse than no button at all — the user will assume they did something wrong. The test comes from the state machine, not from how the card looks (`blockedSince` is a **marker**; it can hang on a card whose status is still `ready`. Status is the fact, the marker is only an annotation).
 
-## 5. 权限的前端表达
+## 5. Expressing permissions in the frontend
 
-页面文档统一采用**只读降级**而非整页 403。
+The page docs uniformly call for **read-only degradation** rather than a full-page 403.
 
 ```typescript
 // lib/permissions/use-can.ts
@@ -277,7 +280,7 @@ export function useCan(action: Action, resource?: Resource): PermissionResult {
   return result;   // { allowed: boolean, missingRole?: string }
 }
 
-// 用法
+// usage
 function ApproveButton({ plan }) {
   const can = useCan('plan.approve', plan);
   return (
@@ -288,48 +291,48 @@ function ApproveButton({ plan }) {
 }
 ```
 
-**前端判定不是安全边界**，后端必须独立校验。前端判定的目的是体验——让用户立刻知道自己不能做什么，而不是点了才报错。
+**The frontend check is not a security boundary** — the backend must verify independently. The point of the frontend check is experience: tell the user immediately what they cannot do, instead of failing after the click.
 
-**规则同源**：判定逻辑放在 `packages/domain/src/permissions`，前后端共用同一份实现。避免两边规则不一致导致"按钮可点但请求被拒"。
+**One source of rules**: the decision logic lives in `packages/domain/src/permissions` and is shared by both sides. That avoids the two sets of rules drifting apart into "the button is clickable but the request is rejected."
 
 ---
 
-## 6. 性能
+## 6. Performance
 
-### 6.1 关键路径预算
+### 6.1 Budgets for the critical paths
 
-| 页面 | 目标 | 手段 |
+| Page | Target | How |
 | --- | --- | --- |
-| 看板首屏（200 项） | < 1.5s | 每列首屏 20 张 + 虚拟滚动；Done 列折叠 |
-| Run 详情（3000 事件） | < 1s | 虚拟滚动 + 简明模式默认（只加载 milestone 事件） |
-| Execution Graph（200 节点） | < 2s | 服务端预计算布局；节点 > 100 时 Canvas 渲染 |
-| 决策中心 | < 800ms | 列表项自带完整信息，无二次请求 |
+| Board first paint (200 items) | < 1.5s | 20 cards per column up front + virtual scrolling; Done column collapsed |
+| Run detail (3000 events) | < 1s | Virtual scrolling + concise mode by default (load milestone events only) |
+| Execution Graph (200 nodes) | < 2s | Layout precomputed server-side; Canvas rendering above 100 nodes |
+| Decision Center | < 800ms | List items carry everything they need — no second request |
 
-### 6.2 虚拟滚动的应用点
+### 6.2 Where virtual scrolling is used
 
 ```typescript
-// 看板列
+// board column
 const virtualizer = useVirtualizer({
   count: items.length,
   getScrollElement: () => columnRef.current,
-  estimateSize: () => 140,        // 卡片高度相对一致（页面文档 05 §5.3 的设计约束）
+  estimateSize: () => 140,        // card heights are fairly uniform (a design constraint from page doc 05 §5.3)
   overscan: 5,
 });
 ```
 
-**卡片高度一致性**是页面设计约束，同时也是虚拟滚动的性能前提——高度差异大会导致滚动位置跳动。
+**Uniform card height** is a design constraint and simultaneously a performance precondition for virtual scrolling — large height variance makes the scroll position jump around.
 
-### 6.3 Execution Graph 的渲染切换
+### 6.3 Switching renderers in the Execution Graph
 
 ```typescript
 const renderer = nodeCount > 100 ? 'canvas' : 'svg';
 ```
 
-SVG 便于交互（悬停、点击）但 100+ 节点后卡顿。Canvas 需要自己实现命中检测，但性能好得多。切换阈值需实测校准。
+SVG is easy to make interactive (hover, click) but stutters past 100 nodes. Canvas requires implementing hit testing yourself, but performs far better. The switching threshold needs to be calibrated by measurement.
 
-> 现状：只实现了 SVG 一条路。超过 100 节点时页面顶部提示改用「关键路径」高亮聚焦主链，等真出现这么大的图再按实测换渲染器（§11 刻意没做）。
+> Where we actually are: only the SVG path is implemented. Above 100 nodes the page shows a banner suggesting "critical path" highlighting to focus on the main chain; when a graph that large actually shows up, we'll swap renderers based on measurements (deliberately not built — §11).
 
-### 6.4 代码分割
+### 6.4 Code splitting
 
 ```typescript
 const ExecutionGraph = lazy(() => import('./pages/ExecutionGraph'));
@@ -337,128 +340,98 @@ const Analytics = lazy(() => import('./pages/Analytics'));
 const PolicyConfig = lazy(() => import('./pages/PolicyConfig'));
 ```
 
-React Flow 与 Recharts 体积较大，只在对应页面加载。核心路径（项目列表 → 看板 → Work Item）不做分割，保证跳转即时。
+React Flow and Recharts are heavy, so they load only with their pages. The core path (project list → board → Work Item) is not split, so navigation there is instant.
 
 ---
 
-## 6.5 设计令牌与主题
+## 6.5 Design tokens and theming
 
-### 颜色不是色号，是语义槽位
+### Colors are semantic slots, not hex codes
 
-界面里散着 1500+ 处 `text-slate-500` / `bg-white` / `border-slate-200`。要给这套界面换观感，
-逐处改是几千行 diff，而且此后每加一个页面都靠自觉对齐 —— 迟早漂移成好几套灰。
+The UI has 1500+ occurrences of `text-slate-500` / `bg-white` / `border-slate-200` scattered through it. Restyling that interface by editing each one is a diff thousands of lines long — and from then on every new page depends on someone remembering to match. It drifts into several different grays eventually.
 
-所以整条调色盘在 `tailwind.config.ts` 里**重新指向 CSS 变量**（令牌定义在 `src/index.css`）：
+So the whole palette is **redirected to CSS variables** in `tailwind.config.ts` (the tokens themselves live in `src/index.css`):
 
 ```ts
 const token = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
 colors: { slate: ramp('slate'), amber: ramp('amber'), white: token('white'), ... }
 ```
 
-于是类名的含义从「#64748b」变成「次要文字」，从「纯白」变成「浮起的卡面」。
-主题一换全站跟着换，已经写好的页面一个字都不用动。
+A class name now means "secondary text" instead of "#64748b," and "the raised card surface" instead of "pure white." Swap the theme and the whole app follows, with not one character changed in the pages already written.
 
-| 槽位 | 含义 | 深色取值 | 浅色取值 |
+| Slot | Meaning | Dark value | Light value |
 | --- | --- | --- | --- |
-| `slate-50` | 页面底色 | `#070b14` | `#f5f7fb` |
-| `white` | 卡面（比页底浮起一层） | `#101829` | `#ffffff` |
-| `slate-100` | 轻微浮起：chip、hover 面 | `#111a2b` | `#eceff5` |
-| `slate-200` | 发丝描边、骨架块、进度槽 | `#1e2a41` | `#dfe4ed` |
-| `slate-300` | 较强描边、输入框边 | `#3e5274` | `#c7cfdd` |
-| `slate-400/500` | 弱化 / 次要文字 | `#7488a5` / `#8b9cb8` | `#8d99ad` / `#64748b` |
-| `slate-900` | 主文字 / 反色按钮底 | `#eef3fa` | `#0d1626` |
+| `slate-50` | Page background | `#070b14` | `#f5f7fb` |
+| `white` | Card surface (one layer above the page) | `#101829` | `#ffffff` |
+| `slate-100` | Slightly raised: chips, hover surfaces | `#111a2b` | `#eceff5` |
+| `slate-200` | Hairline borders, skeleton blocks, progress troughs | `#1e2a41` | `#dfe4ed` |
+| `slate-300` | Stronger borders, input borders | `#3e5274` | `#c7cfdd` |
+| `slate-400/500` | De-emphasized / secondary text | `#7488a5` / `#8b9cb8` | `#8d99ad` / `#64748b` |
+| `slate-900` | Primary text / inverted button background | `#eef3fa` | `#0d1626` |
 
-两条硬约束：
+Two hard constraints:
 
-1. **令牌存 RGB 通道而不是 `#hex`。** Tailwind 的透明度修饰符（`bg-gate/15`、`bg-white/70`）
-   要靠 `rgb(var(--x) / <alpha-value>)` 才算得出来，存成 hex 那些类会**静默失效**。
-2. **深色下中性色阶整体反转**（50 最深 → 900 最浅）。这让 `text-slate-900`（标题）
-   自然变成近白、`bg-slate-50`（页底）自然变成近黑，原有语义全部成立。
-   代价是 `bg-slate-900 text-white` 这类主行动按钮在深色下是「近白底 + 深色字」——
-   这是刻意的，不是 bug。
+1. **Tokens store RGB channels, not `#hex`.** Tailwind's opacity modifiers (`bg-gate/15`, `bg-white/70`) only compute if the value goes through `rgb(var(--x) / <alpha-value>)`. Store hex and those classes **fail silently**.
+2. **The neutral ramp inverts wholesale in dark mode** (50 darkest → 900 lightest). That makes `text-slate-900` (headings) naturally near-white and `bg-slate-50` (page background) naturally near-black, keeping every existing semantic intact. The cost is that a primary action button like `bg-slate-900 text-white` becomes "near-white background + dark text" in dark mode — that is deliberate, not a bug.
 
-### 反转不适用的三处
+### Three places where the inversion does not apply
 
-- **遮罩**：抽屉与弹层用 `bg-scrim/[var(--scrim-alpha)]`，不是 `bg-slate-900/20`。
-  反转之后 slate-900 是近白，照搬会在内容上蒙一层雾而不是压暗它。
-- **SVG 的 `fill` / `stroke`**：它们是属性不是 class，Tailwind 的色阶够不着。
-  执行图与图表另给一套 `--graph-*` / `--chart-*` 令牌（`features/graph/shapes.tsx`、
-  `features/analytics/palette.ts`），否则换主题时整张图会留在原地。
-- **图表数据色**：`SERIES` / `ORDINAL` 那几个蓝**不跟主题走**。它们是在白底上跑过
-  明度带、彩度、色盲 ΔE 校验的，同时在深底上也读得出（最浅的 `#86b6ef` 对比度 8.4:1）。
-  直接反过来用等于把校验结果作废。
+- **Scrims**: drawers and overlays use `bg-scrim/[var(--scrim-alpha)]`, not `bg-slate-900/20`. After inversion slate-900 is near-white, so copying that pattern lays a haze over the content instead of dimming it.
+- **SVG `fill` / `stroke`**: those are attributes, not classes — Tailwind's ramps cannot reach them. The execution graph and the charts get their own `--graph-*` / `--chart-*` tokens (`features/graph/shapes.tsx`, `features/analytics/palette.ts`); otherwise the whole diagram stays behind when the theme changes.
+- **Chart data colors**: the blues in `SERIES` / `ORDINAL` **do not follow the theme**. They were validated on a white background for lightness banding, chroma, and color-blind ΔE, and they still read on a dark background (the lightest, `#86b6ef`, has 8.4:1 contrast). Inverting them would throw that validation away.
 
-### 主题的落点
+### Where the theme actually lands
 
-深色是默认，浅色是显式选择（`stores/theme.ts`，写 `<html data-theme>` + localStorage）。
-**真正生效的那次赋值在 `index.html` 的内联脚本里** —— React 挂载至少要等 bundle 下载解析完，
-在那之前 `<html>` 上没有 `data-theme`，选了浅色的人每次刷新都会先被闪一下深色。
+Dark is the default; light is an explicit choice (`stores/theme.ts`, writing `<html data-theme>` + localStorage). **The assignment that actually matters happens in the inline script in `index.html`** — React mounting waits for the bundle to download and parse, and until then `<html>` carries no `data-theme`, so anyone who picked light mode gets a flash of dark on every reload.
 
 ---
 
-## 6.6 项目导航只有一份
+## 6.6 There is exactly one project navigation
 
-项目下有十二个页面。这一版之前，**只有总览页有导航** —— 执行图、Analytics、Policy、
-Agent 团队、需求、决策中心、设置各页都只有一个 `<h1>`。从执行图想去 Analytics，
-除了浏览器后退没有别的路。看板工具条上那四个跳转按钮是这个洞的一块补丁，
-补在了十五个控件挤成一行的地方。
+A project has twelve pages. Before this revision, **only the overview page had navigation** — the execution graph, Analytics, Policy, Agent team, requirements, decision center, and settings pages each had nothing but an `<h1>`. Getting from the execution graph to Analytics meant hitting the browser back button. The four jump buttons on the board toolbar were a patch over that hole, applied in the one place where fifteen controls were already crammed into a single row.
 
-现在导航只有一处实现：`components/ProjectSidebar.tsx`，路由匹配到
-`/projects/:projectId` 就出现。总览页那条十二标签横排导航、看板工具条上的四个
-跨页链接，都随之删除 —— 它们是同一份导航的重复实现。
+Now navigation has one implementation: `components/ProjectSidebar.tsx`, which appears whenever the route matches `/projects/:projectId`. The twelve-tab horizontal nav on the overview page and the four cross-page links on the board toolbar were deleted along with it — they were duplicate implementations of the same navigation.
 
-**新增项目页时，改这一个文件里的 `navGroups()`，不要在页面里自己加跳转。**
+**When you add a project page, edit `navGroups()` in that one file. Do not add your own jump links inside the page.**
 
-分三组不是排版：「工作」是每天都在的地方，「洞察」是回头看的，「配置」是装一次
-就不再动的。混在一起，一天点二十次的看板会和一年点两次的角色定义长得一模一样。
+The three groups are not a layout decision: "Work" is where you live every day, "Insights" is what you look back at, and "Configuration" is what you set up once and never touch again. Mixed together, a board you click twenty times a day looks identical to a role definition you click twice a year.
 
-### 看板页默认收成图标栏
+### The board page collapses the sidebar to an icon rail by default
 
-被一个硬数字逼出来的：六列不横滚要 **1216px**（`6 × 12rem + 5 × 8px gap + 24px padding`），
-加上 56px 图标栏就是 **1272px**。
+This was forced by one hard number: six columns without horizontal scrolling need **1216px** (`6 × 12rem + 5 × 8px gap + 24px padding`), and with the 56px icon rail that's **1272px**.
 
-| 视口 | 侧栏 | 看板可见宽 | 实际列宽 | 六列横滚 |
+| Viewport | Sidebar | Visible board width | Actual column width | Six columns scroll? |
 | --- | --- | --- | --- | --- |
-| 1280 | 收窄 56px | 1224px | 193px | 否 |
-| 1366 | 收窄 56px | 1310px | 208px | 否 |
-| 1440 | 收窄 56px | 1384px | 220px | 否 |
-| 1440 | 展开 224px | 1216px | — | 是 |
+| 1280 | Collapsed 56px | 1224px | 193px | No |
+| 1366 | Collapsed 56px | 1310px | 208px | No |
+| 1440 | Collapsed 56px | 1384px | 220px | No |
+| 1440 | Expanded 224px | 1216px | — | Yes |
 
-列间距原本是 12px、下限 13rem（门槛 1332px）。加了侧栏之后门槛会抬到 1388px ——
-1366 的笔记本全都开始横滚。缩到 8px / 12rem 把门槛压回 1272px，而宽屏上没有损失：
-列是 `flex-1`，省下的间距全给了列本身（1440 下每列反而从 217px 变成 220px）。
+Column gaps were originally 12px with a 13rem floor (threshold 1332px). Adding the sidebar would have pushed the threshold to 1388px — every 1366 laptop would start scrolling horizontally. Shrinking to 8px / 12rem brings the threshold back down to 1272px, and costs nothing on wide screens: columns are `flex-1`, so the space saved on gaps goes to the columns themselves (at 1440, each column actually grows from 217px to 220px).
 
-所以 `stores/sidebar.ts` 的 `manual` 是**三态**（`true` / `false` / `null`）而不是布尔：
-`null` 表示用户没表过态，跟着页面走（看板收窄、其余展开）。用布尔存的话，进看板
-自动折叠会写回 `true`，离开看板仍然是折叠的 —— 用户没做过任何选择却得到一个粘住的偏好。
+That is why `manual` in `stores/sidebar.ts` is **tri-state** (`true` / `false` / `null`) instead of a boolean: `null` means the user has expressed no preference, so the page decides (collapsed on the board, expanded elsewhere). With a boolean, entering the board would auto-collapse and write back `true`, and leaving the board would leave it collapsed — the user gets a sticky preference they never chose.
 
-用户点过折叠开关之后，他的选择压过这条规则，包括「我就要在看板上展开」。
-那会让看板横滚，但横滚本来就是支持的状态（`.board-scroll`），而「导航在我最常待的
-那一页展不开」不是。
+Once the user has clicked the collapse toggle, their choice wins over that rule, including "I want it expanded on the board." That makes the board scroll horizontally, but horizontal scrolling is a supported state (`.board-scroll`), whereas "navigation won't open on the page I spend the most time on" is not.
 
-### Run 详情：URL 里没有项目，侧栏自己去问
+### Run detail: no project in the URL, so the sidebar goes and asks
 
-`/runs/:runId` 是从看板点「看日志」进来的，URL 里没有 projectId，但那次执行
-**属于**某个项目。侧栏在这里消失等于「一点日志就被扔出了项目」。
+You reach `/runs/:runId` by clicking "view logs" from the board. There is no projectId in the URL, but that run **belongs to** a project. Having the sidebar vanish here means "clicking a log throws you out of the project."
 
-所以侧栏自己拿 runId 查一次 Run（和 Run 详情页同一个 query key，React Query 合并成
-一次请求），从 `detail.project.id` 取项目。**不要**改成「Run 详情页把 projectId 写进
-某个全局态」——那种写法要靠每个页面记得设、记得清，漏一处就是侧栏指着上一个项目。
+So the sidebar fetches the Run itself using runId (the same query key the Run detail page uses, so React Query collapses it into one request) and takes the project from `detail.project.id`. **Do not** change this to "the Run detail page writes projectId into some global state" — that approach depends on every page remembering to set it and to clear it, and one miss means the sidebar points at the previous project.
 
-数据在路上时先渲染一个等宽的空占位：等数据回来再插入的话，整个内容区会在那一刻
-横向平移 224px，用户正在读的日志会跳走。
+While the data is in flight, render an equal-width empty placeholder: inserting the sidebar once the data arrives shifts the entire content area sideways by 224px at that moment, and the log the user is reading jumps away.
 
-真正没有项目上下文的路由不给侧栏，这是对的，不是缺陷：
-- `/`（项目列表）、`/decisions`（**跨项目**决策收件箱，从顶栏徽标进来）
-- `/agents/:agentId`（只在没有 projectId 时才用这条独立路由，见 `pages/Agents/index.tsx`）
+Routes with genuinely no project context get no sidebar. That is correct, not a gap:
+- `/` (project list), `/decisions` (the **cross-project** decision inbox, reached from the top-bar badge)
+- `/agents/:agentId` (this standalone route is only used when there is no projectId — see `pages/Agents/index.tsx`)
 
 ---
 
-## 7. 关键组件的实现要点
+## 7. Implementation notes for the key components
 
-### 7.1 AssigneeChip（人机区分）
+### 7.1 AssigneeChip (human vs. Agent)
 
-产品最核心的视觉差异，必须只有一处实现：
+The product's most important visual distinction, so there must be exactly one implementation:
 
 ```tsx
 export function AssigneeChip({ actor, size = 'md' }: Props) {
@@ -474,523 +447,345 @@ export function AssigneeChip({ actor, size = 'md' }: Props) {
     <span className="inline-flex items-center gap-1.5 rounded border border-dashed px-1.5">
       <AgentIcon shape="square" size={size} />
       <span className="font-mono text-sm">{actor.name}</span>
-      <StatusDot state={actor.state} />   {/* 空闲/执行中(呼吸)/阻塞/失败 */}
+      <StatusDot state={actor.state} />   {/* idle / running (pulsing) / blocked / failed */}
     </span>
   );
 }
 ```
 
-区分手段是**形状 + 边框 + 字体**三重，不只靠颜色（色觉障碍可访问性）。
+The distinction is carried three ways — **shape + border + typeface** — not by color alone (color-vision accessibility).
 
-### 7.2 Event Timeline（三处共用）
+### 7.2 Event Timeline (shared by three pages)
 
-Work Item 详情、Run 详情、决策详情共用。差异通过 props 控制：
+Work Item detail, Run detail, and decision detail all use it. The differences are props:
 
 ```tsx
 <EventTimeline
   source={{ kind: 'work_item', id }}
-  defaultLevel="milestone"          // Run 详情用 'detail'
-  groupConsecutive                  // 合并连续同类工具调用
+  defaultLevel="milestone"          // Run detail uses 'detail'
+  groupConsecutive                  // collapse consecutive tool calls of the same kind
   followTail={isRunning}
   renderDetail={renderRunEventDetail}
 />
 ```
 
-**合并连续同类事件**（`read_file × 6` 折叠为一行）是页面文档 09 §5.3 的简明模式要求。
+**Collapsing consecutive same-kind events** (`read_file × 6` folded into one line) is the concise-mode requirement from page doc 09 §5.3.
 
-### 7.3 Policy 条件编辑器
+### 7.3 Policy condition editor
 
-MVP 只做模板化配置（[05 Policy Engine](05-policy-engine.md) §10），但自然语言解释组件要做：
+The MVP only ships template-based configuration ([05 Policy Engine](05-policy-engine.md) §10), but the natural-language explanation component does get built:
 
 ```tsx
 function PolicyExplanation({ condition, action }: Props) {
-  // ★ 调后端接口生成，不在前端重复实现模板逻辑
+  // ★ generated by a backend endpoint — don't reimplement the template logic in the frontend
   const { data } = useQuery(qk.policyExplain(condition, action), ...);
   return <div className="rounded bg-muted p-3 text-sm">{data?.text}</div>;
 }
 ```
 
-**解释在后端生成**：前端重复实现一遍模板逻辑，两边会漂移。解释与实际执行逻辑必须绝对一致。
+**The explanation is generated on the backend**: reimplement the template logic in the frontend and the two will drift. The explanation and the actual execution logic have to match exactly.
 
 ---
 
-## 8. 状态与错误的统一处理
+## 8. Unified handling of states and errors
 
 ```tsx
 // components/states/QueryBoundary.tsx
 export function QueryBoundary({ query, empty, children }: Props) {
   if (query.isLoading) return <Skeleton layout={empty.skeletonLayout} />;
   if (query.isError)   return <ErrorState error={query.error} onRetry={query.refetch} />;
-  if (isEmpty(query.data)) return <EmptyState {...empty} />;   // 必带主行动按钮
+  if (isEmpty(query.data)) return <EmptyState {...empty} />;   // must carry a primary action
   return children(query.data);
 }
 ```
 
-页面文档 README §5.9 要求空状态必须带主行动按钮，不做纯插画。`EmptyState` 的 props 强制要求 `action`：
+Page docs README §5.9 requires every empty state to carry a primary action button — no illustration-only empty states. `EmptyState`'s props enforce `action`:
 
 ```typescript
 interface EmptyStateProps {
   icon: ReactNode;
   message: string;
-  action: { label: string; onClick: () => void };   // 必填，不是可选
+  action: { label: string; onClick: () => void };   // required, not optional
 }
 ```
 
-用类型系统强制设计规范，比写在文档里靠自觉更可靠。
+Enforcing a design convention through the type system is more reliable than writing it in a document and hoping people remember.
 
 ---
 
-## 9. 测试
+## 9. Testing
 
-| 层次 | 内容 | 工具 |
+| Layer | What | Tools |
 | --- | --- | --- |
-| 单元 | 格式化、权限判定、状态机客户端校验 | Vitest |
-| 组件 | 通用组件的各状态快照 | Testing Library |
-| 集成 | SSE 事件 → 缓存更新的正确性 | Vitest + MSW |
-| 集成 | 编辑保护：远端更新不覆盖用户输入 | Testing Library |
-| E2E | 三条核心路径 | Playwright |
+| Unit | Formatting, permission checks, client-side state machine validation | Vitest |
+| Component | Snapshot each state of the generic components | Testing Library |
+| Integration | Correctness of SSE event → cache update | Vitest + MSW |
+| Integration | Edit protection: remote updates don't overwrite user input | Testing Library |
+| E2E | The three core paths | Playwright |
 
-**三条 E2E 路径**：
+**The three E2E paths**:
 
-1. 需求录入 → 澄清 → 确认 → 计划批准 → 看板出现任务
-2. 决策中心处理一条决策 → 看板卡片状态变化
-3. Agent 失败 → Work Item 详情 → 补充上下文重试 → 成功
+1. Requirement intake → clarification → confirmation → plan approval → tasks appear on the board
+2. Handle a decision in the Decision Center → the board card's status changes
+3. Agent fails → Work Item detail → add context and retry → success
 
-**SSE 集成测试是重点**：这是最容易出 bug 且最难手工验证的部分。用 MSW 模拟事件流，断言缓存状态与渲染结果。
-
----
-
-## 10. 待确认问题
-
-1. **卡片自动移动的动画在大量卡片时可能干扰**。页面文档 05 §12 提出「安静模式」开关，需确认是否 MVP 就做。倾向于做，成本低。
-2. **Execution Graph 的 Canvas 实现工作量不小**（命中检测、文本渲染、缩放）。MVP 是否先只支持 SVG + 100 节点上限，超出提示"任务过多，请使用筛选"？倾向于是。
-3. **移动端支持范围**：决策处理是移动端最有价值的场景（随时随地批准）。是否 MVP 就做移动端优化的决策中心？倾向于做响应式的决策中心与详情页，其余页面桌面优先。
-4. **离线与弱网**：SSE 断开时页面显示缓存数据 + 断线提示。是否需要更强的离线能力（如离线查看已加载数据）？倾向于不需要，这是协作型产品。
-5. **`@apos/contracts` 的体积**：Zod schema 会被打进前端包。如果 schema 很大需要考虑 tree-shaking 或只导出类型（`import type`）+ 运行时校验只在后端。倾向于前端只在表单校验处使用 Zod，其余用 `import type`。
+**The SSE integration tests matter most**: this is the part most likely to break and hardest to verify by hand. Simulate the event stream with MSW and assert on both cache state and rendered output.
 
 ---
 
-## 11. 已实现范围（apps/web）
+## 10. Open questions
 
-MVP 只做了看板闭环需要的部分。这里如实记录做了什么、没做什么，避免把设计当成现状。
+1. **Automatic card movement animations may become distracting with many cards.** Page doc 05 §12 proposes a "quiet mode" toggle; we need to decide whether it ships in the MVP. Leaning yes — it's cheap.
+2. **The Canvas implementation of the Execution Graph is a real chunk of work** (hit testing, text rendering, zoom). Should the MVP support SVG only with a 100-node cap and prompt "too many tasks, please filter" beyond that? Leaning yes.
+3. **Scope of mobile support**: handling decisions is the most valuable mobile scenario (approve from anywhere). Should the MVP ship a mobile-optimized Decision Center? Leaning toward a responsive Decision Center and detail page, with the remaining pages desktop-first.
+4. **Offline and poor connectivity**: when SSE drops, the page shows cached data plus a disconnection notice. Do we need stronger offline capability (e.g. browsing already-loaded data offline)? Leaning no — this is a collaboration product.
+5. **The size of `@apos/contracts`**: Zod schemas get bundled into the frontend. If the schemas grow large, we'll need tree-shaking, or export types only (`import type`) and keep runtime validation on the backend. Leaning toward using Zod in the frontend only for form validation and `import type` everywhere else.
 
-### 已实现
+---
 
-| 模块 | 文件 | 说明 |
+## 11. What is actually built (apps/web)
+
+The MVP only built what the board loop needs. This section records honestly what exists and what does not, so nobody mistakes the design for the current state.
+
+### Implemented
+
+| Module | Files | Notes |
 | --- | --- | --- |
-| 项目列表 | `pages/ProjectList` | 进入项目的入口，落点是总览而不是看板 |
-| 项目总览 | `pages/Overview` | 五个指标卡（健康度 / 进度 / 延期风险 / 待决策 / 成本），健康度与延期可展开成逐项明细；需要你处理、阻塞、Agent、成员、活动流 |
-| 需求录入与澄清 | `pages/Requirement` | 原文左右对照、四类澄清分级、完整度评分、确认 → 生成计划 |
-| 计划确认 | `pages/Plan` | 五项概览、★「批准后将自动发生」、任务拆解、要求修改（生成新版本）|
-| 智能看板 | `pages/Board` | Kanban / List / Agent / 待决策 四视图 |
-| 任务详情抽屉 | `features/work-item/WorkItemDrawer` | 概览 / 执行记录 / 时间线；含补充上下文重试 |
-| 决策抽屉 | `features/decision/DecisionDrawer` | 批准（可附加约束）/ 驳回；「不可代行」在界面上体现 |
-| 手动移动 | `features/work-item/ManualMoveDialog` | 强制填原因 + 分类，落到事件 |
-| Run 详情 | `pages/RunDetail` + `features/run/` | 执行流 / 输入 / 产物 / 成本 / 错误五个页签，简明⇄详细切换，运行时控制 |
-| 执行图 | `pages/Graph` + `features/graph/` | 分层 / 阶段泳道 / 执行者泳道三种布局，关键路径、上下游追溯、结构诊断 |
-| Analytics | `pages/Analytics` + `features/analytics/` | 系统发现 + Flow / Agent / HITL / 成本四个 Tab，环比默认开启 |
-| Policy 配置 | `pages/Policies` | 摘要 + 规则集体检 + 模板化新建 + 历史回放模拟 + 场景测试 |
-| 决策中心 | `pages/Decisions` | 队列按「超时 → 剩余时间 → 风险」排序，卡片内就地批准/驳回，低风险可逆的可批量批准，重复决策就地给出配规则入口 |
-| Agent Workspace | `pages/Agents` | 花名册（负载/成功率/首次成功/人工覆盖/成本/负责人）+ 详情（效能、在办队列、权限边界、运行时能力、执行记录、暂停）|
-| 计划版本对比 | `pages/Plan/VersionDiff` | 自动化边界变化排最前，任务增删改逐字段列出，总量与风险变化；可选对比任意历史版本 |
-| Policy 命中明细 | `pages/Policies/HitsPanel` | 逐次命中的时间/任务/触发上下文/判定/结局；门禁规则看批准率，放行规则看事后有没有被人工纠正 |
-| Analytics 质量 Tab | `pages/Analytics/QualityTab` | 测试通过率 / 覆盖率趋势 / 发布后事故；每项自报数据源与接入状态，没接的显式说没接 |
-| Analytics 成本效益 Tab | `pages/Analytics/BenefitTab` | 基准由用户填，收益与代价两侧并列，算式逐行摊开 |
-| 集成设置 | `pages/Settings/Integrations` | 四类集成一页：代码 / 项目管理 / Agent 运行时 / 协同通知。字段级 Source of Truth + 三种预设、同步冲突就地处理、权限允许项与禁止项并列、通知按「需要行动」配置 |
-| Source of Truth 配置 | `pages/Settings/SotPanel` | 逐字段选谁说了算，每格标出为什么默认是这个；改动先摆差异与后果再确认 |
-| 同步冲突 | `pages/Settings/ConflictPanel` | 两侧的值 / 时间 / 谁改的，SoT 提示，「以后同类自动处理」 |
-| 运行时能力报告 | `pages/Agents/CapabilityPanel` | 先说做不到什么（降级行为 + 用户影响 + 严重程度），再说支持什么。Agent 详情与集成设置共用 |
-| SSE | `lib/sse/` | 单连接多频道、退避重连、事件 → 缓存补丁 |
-| 编辑保护 | `stores/editing` | 远端更新不覆盖正在编辑的字段，冲突留痕 |
-| 通用组件 | `components/` | AssigneeChip、Human Gate 徽标、风险、成本、阻塞时长、空/错状态 |
+| Project list | `pages/ProjectList` | Entry point into a project; lands on the overview, not the board |
+| Project overview | `pages/Overview` | Five metric cards (health / progress / delay risk / pending decisions / cost); health and delay expand into per-item detail; needs-you, blocked, Agents, members, activity feed |
+| Requirement intake and clarification | `pages/Requirement` | Original text side by side, four clarification severities, completeness score, confirm → generate plan |
+| Plan confirmation | `pages/Plan` | Five-part summary, ★ "what will happen automatically once you approve," task breakdown, request changes (generates a new version) |
+| Smart board | `pages/Board` | Four views: Kanban / List / Agent / Pending decisions |
+| Task detail drawer | `features/work-item/WorkItemDrawer` | Overview / execution records / timeline; includes retry with added context |
+| Decision drawer | `features/decision/DecisionDrawer` | Approve (optionally with constraints) / reject; "cannot be delegated" is visible in the UI |
+| Manual move | `features/work-item/ManualMoveDialog` | Reason + category required, recorded as an event |
+| Run detail | `pages/RunDetail` + `features/run/` | Five tabs — execution stream / input / artifacts / cost / errors — concise⇄detailed toggle, runtime controls |
+| Execution graph | `pages/Graph` + `features/graph/` | Three layouts (layered / stage swimlanes / executor swimlanes), critical path, upstream-downstream tracing, structural diagnostics |
+| Analytics | `pages/Analytics` + `features/analytics/` | System insights + four tabs (Flow / Agent / HITL / cost), period-over-period comparison on by default |
+| Policy configuration | `pages/Policies` | Summary + rule-set checkup + template-based creation + historical replay simulation + scenario testing |
+| Decision Center | `pages/Decisions` | Queue sorted by overdue → time remaining → risk; approve/reject in place on the card; low-risk reversible decisions can be batch-approved; repeated decisions offer an inline entry point for writing a rule |
+| Agent Workspace | `pages/Agents` | Roster (load / success rate / first-try success / human override / cost / owner) + detail (effectiveness, active queue, permission boundary, runtime capabilities, execution records, pause) |
+| Plan version comparison | `pages/Plan/VersionDiff` | Automation-boundary changes come first, task additions/removals/edits listed field by field, totals and risk deltas; optionally compare against any historical version |
+| Policy hit detail | `pages/Policies/HitsPanel` | Per-hit time / task / triggering context / verdict / outcome; gate rules are judged by approval rate, allow rules by whether they were later corrected by a human |
+| Analytics quality tab | `pages/Analytics/QualityTab` | Test pass rate / coverage trend / post-release incidents; each item declares its data source and wiring status, and says so explicitly when not wired |
+| Analytics cost-benefit tab | `pages/Analytics/BenefitTab` | Baselines supplied by the user; benefits and costs shown side by side; every step of the arithmetic laid out |
+| Integration settings | `pages/Settings/Integrations` | Four integration categories on one page: code / project management / Agent runtime / collaboration notifications. Field-level Source of Truth + three presets, sync conflicts resolved in place, allowed and forbidden permissions side by side, notifications configured around "needs action" |
+| Source of Truth configuration | `pages/Settings/SotPanel` | Pick who wins per field, with each cell explaining why that is the default; changes show the diff and consequences before you confirm |
+| Sync conflicts | `pages/Settings/ConflictPanel` | Both sides' value / time / who changed it, the SoT hint, and "handle this kind automatically from now on" |
+| Runtime capability report | `pages/Agents/CapabilityPanel` | Starts with what it cannot do (degraded behavior + user impact + severity), then what it supports. Shared by Agent detail and integration settings |
+| SSE | `lib/sse/` | One connection, many channels, backoff reconnect, event → cache patch |
+| Edit protection | `stores/editing` | Remote updates don't overwrite fields being edited; conflicts leave a trace |
+| Generic components | `components/` | AssigneeChip, Human Gate badge, risk, cost, blocked duration, empty/error states |
 
-### 刻意没做
+### Deliberately not built
 
-| 项 | 原因 |
+| Item | Why |
 | --- | --- |
-| Jira / Plane 的 HTTP 适配器 | GitHub 那条走通了（真的打 api.github.com），Jira 是同一套形状：换 baseUrl、换字段映射、换认证头。没写是因为它不会带来新的判断，只会多三百行同构代码 —— 而每一行都得靠真实 Jira 实例才验得了。接的时候照 `GitHubAdapter` 抄 |
-| GitHub OAuth / App 安装流程 | 适配器接受一个 token 就能工作，token 从哪来是另一件事：OAuth 回调需要公网地址与注册好的 App。当前从环境变量读，或走部署环境自带的鉴权代理 |
-| 大批量导入（Jira 几百条 Issue）| 页面文档 §11 要求异步任务 + 进度显示 + 导入前预览。当前 `linkObject` 是逐条建立映射，够用；批量导入等真接上 provider 再做，现在做的是一个没有数据源的进度条 |
-| 通知里的「直接批准」按钮 | 页面文档 §12.3 倾向 MVP 只做深链，照做了。在第三方平台内确认「点按钮的人真的是决策责任人」各平台机制都不同 —— 做不到这一点的直接批准，会把不可代行的决策变成谁点谁算，那比不做更糟 |
-| 组织级集成管理（`/admin/integrations`）| 与组织级 Policy 管理同因：需要组织级身份与权限模型。项目页如实说明数据连接器必须组织管理员配置 |
-| 企业数据系统连接器 | 产品文档十三明确「全量 ERP / CRM 集成」暂不实现。页面只做占位说明与权限提示，不放能点的按钮 |
-| 需求的对话式录入 / 文档上传 / 外部导入 | 三样都不是小工程（多轮状态同步、文档解析、集成配置），而它们解决的是「录入更顺手」，不是「录入之后 AI 理解得对不对」。后者才是这条链路的价值所在，力气先花在澄清与完整度上 |
-| 需求字段的内联编辑 | `PATCH /requirements/:id` 已经通了并会标记「已由人类修改」，但界面上还只读。等真出现「AI 总把某个字段写歪」再做 |
-| 计划里改派 / 调工期 / 拆分任务 | 与执行图的依赖编辑同理：计划是要被批准的东西，在上面随手改等于绕过批准。改动应走「要求修改」让 Agent 重新规划 |
-| Policy 的自由条件编辑器 | 页面文档 13 §12.1 的建议，照做了。真正需要设定 Agent 边界的是项目负责人，给他一个条件表达式编辑器，他要么不敢配、要么配错 —— 两种结果都比「只有六个模板」糟糕。省下的力气全投给了模拟 |
-| Policy 的高级模式（表达式编辑）| 同上。等真有人被模板卡住再做，而不是先建一套没人用的规则语言 IDE |
-| 组织级 Policy 管理页（`/admin/policies`）| 需要一套组织级的 Policy 编排界面，当前没有。项目页如实显示「组织级规则不可修改，如需例外请联系管理员」 |
-| 组织规则例外申请流程 | 页面文档 §12.3 倾向 MVP 不做，用「联系管理员」占位 |
-| Analytics 导出（PDF / CSV）| 页面文档把它放在「周会准备」流程里，但当前分享一个带筛选参数的链接（`?tab=&range=&compare=`）比导出一张死图有用。真要塞进周报再说 |
-| Analytics 的预聚合表 | 页面文档 §9 要求按小时/天预聚合。项目级窗口内事件量在几千条量级，实时算完的代价远低于维护一套聚合管道加上它的延迟与回补。数据量真涨上来再做，而不是现在假装做了 |
-| 跨项目 Analytics | 页面文档 §11 明确 MVP 不支持，属于组织级分析 |
-| 执行图的 Canvas 渲染（§6.3）| 演示数据 8 个节点，SVG 毫无压力。100 节点以上再换，现在换等于自己实现命中检测却测不出收益。超过 100 时页面顶部提示改用「关键路径」高亮聚焦 |
-| 执行图上直接改依赖 | 页面文档 07 §12.1 倾向只读：依赖是计划的一部分，在图上随手一拖就改掉，等于绕过计划批准。诊断给的动作是「让 Agent 重新规划」，改动仍走批准流程 |
-| 时间轴（甘特）布局 | 页面文档 07 §12.4 未定：任务没有真实排期字段，画出来的时间轴是编的 |
-| 执行图导出 | 图是活的，导出的是死的截图。真要分享，链接（`?layout=&highlight=&focus=`）比图片有用 |
-| 虚拟滚动 | 每列首屏 20 张，实测无需虚拟化。列内超过 50 张再引入 TanStack Virtual |
-| Radix UI / React Hook Form | 当前只有两个弹窗、三个表单字段，引入组件库的收益不抵体积 |
-
-### Run 详情的三个取舍
-
-**简明 / 详细不是「返回哪些事件」，是「每条事件的深度」。**
-一度用 `run_events.level` 来分（简明只回 `milestone`），结果简明模式只剩
-「启动 / 产出 / 结束」三行 —— 中间做了什么全没了，而这一页存在的理由
-恰恰是回答「它做了什么」。现在简明模式返回全部事件但不带 `payload`：
-省掉的正是体积的大头（推理全文、工具原始参数、上下文明细），
-也正是页面文档要求隐藏的东西。`level` 那个字段是给 SSE 降级和低成本扫表用的。
-
-**执行细节走轮询，不走 SSE。**
-`run_events` 比领域事件多两个数量级，全推上去会把 Analytics 和审计要扫的表撑爆
-（[03 事件模型](03-event-model.md) §2）。所以分两路：SSE 负责「Run 状态变了」
-这种低频信号，高频的执行细节用 `after` 游标增量拉，只在 Run 活跃时轮询。
-
-**能力不足如实报，不悄悄降级。**
-Claude Code 没有暂停语义，点「暂停」实际会变成终止。暂停可恢复、终止不可，
-这个差别对用户是决定性的。后端返回 `501 UNSUPPORTED_FEATURE` 并带上替代动作，
-界面把它连同「下一步能做什么」一起显示，而不是替用户做决定。
-
-### 执行图的三个取舍
-
-**关键路径、布局、诊断都在服务端算，前端只负责画。**
-三者互相咬合：主因归因要先有关键路径，「伪串行」诊断要反复重算去掉某条边之后的
-关键路径，泳道分层要先有拓扑序。放到前端就得把这套算法连同环检测一起搬过去，
-而它同时还要喂 `GET /graph` 的 `metrics.primaryCause`。现在一次请求把
-`nodes / edges / layout / metrics / diagnostics` 一起返回，客户端不存在
-「算了一半」的中间态，`@apos/domain/graph` 也只有一份实现。
-
-**诊断宁可少报，不可滥报。**
-「伪串行依赖」第一版在 6 条边里报了 5 条 —— 任何两个前后相接的任务在结构上
-都像可以并行，说了等于没说。改成必须同时满足三个条件才报：去掉这条边后关键路径
-真的缩短、缩短幅度 ≥ 1h、两端执行者不同；再按收益排序取前 2 条。诊断区是这一页
-唯一的「智能」，它一旦变成噪音，用户连带会忽略真正重要的阻塞告警。
-
-**★ 图缩成一个点，问题不在图上。**
-执行图一度渲染在 17%，数据全对却像坏了。根因是 App 外壳用了 `min-h-screen`：
-高度不确定，`flex-1` 就无从结算，画布容器的 `clientHeight` 接近 0，
-「适应窗口」老老实实算出了缩放下限。修法是外壳改 `h-screen overflow-hidden`
-（高度确定，`min-h-0` 一路传下去），并用 ResizeObserver 等尺寸稳定后再 fit ——
-比 `setTimeout` 猜一个延时可靠。这类 bug 单元测试永远碰不到，冒烟里固定了一条
-「适应窗口后缩放 ≥ 40%」来兜。
-
-### 入口链路的三个取舍
-
-**确认需求后直接进计划页，中间不停留。**
-用户刚做完一个判断，此刻最该看到的是这个判断导致了什么，
-而不是被丢回一个列表再自己去找。所以「确认」这一个动作在后台串了
-两步：approve → generatePlan，成功后直接跳转。
-
-**★ 计划页的人机拆分不能数 `work_items.executorType`。**
-批准之前任务还没被调度，`executorType` 全是 null —— 按它数出来永远是
-「🤖 0　👤 0」，而同一页的快照正写着「4 个任务将由 Agent 自动执行」。
-更糟的是这个数字会出现在批准弹窗里，也就是用户让渡执行权的那一刻。
-正确的来源是计划生成时的 `humanGates` 快照：不在里面的就是 Agent 干的。
-任务行也因此显示「👤 需要人 / 🤖 Agent」而不是「未分配」——
-后者会被读成「漏排了」，而实际是「等调度时再挑」。
-
-**「批准后将自动发生」用快照，不用展示时重算。**
-用户批准的是**当时那份清单**。Policy 后来改了，追溯「他到底批准了什么」
-必须看快照 —— 静默用新规则替换掉它，等于事后修改了用户签过字的东西。
-页面同时给出按当前规则重算的边界供对照，两者不一致时明说。
-
-### Analytics 的四个取舍
-
-**指标口径必须写在指标旁边，而不是文档里。**
-「流动效率 55%」这种数字，用户第一反应是「怎么算的」。答不上来他就不会
-照着它做任何事，这一页也就白做了。所以每个指标卡都带 ⓘ 说明口径
-（有效工作 = 有人或 Agent 正在推进；排队、阻塞、等批准都算等待），
-每条系统发现都能展开「凭什么这么说」，里面写着判据本身 ——
-包括阈值是多少。这些阈值来自页面文档 §5.1 的判据表，是产品设定的经验值，
-不是行业统计（§12.2 把「基准值从哪来」列为待确认），所以更要让用户能反驳。
-
-**数据源没接通就说「未接入」，绝不显示 0。**
-按时交付率没有排期字段时返回 `null`，页面显示「未接入 · 计划里没有排期字段」。
-显示 0% 会让人立刻去追责，而真相只是没人填过计划完成时间 ——
-一个会导致错误行动的数字，比没有这个数字糟糕得多。预算消耗、
-预算可用天数同理。
-
-**★ 同一个词在两个页面上必须指同一件事。**
-「被阻塞」在这个产品里有两种表达：`blocked` 状态，和 `blockedSince` 标记
-（卡片还在 ready，但挂着「在等外部依赖」）——看板的「⛔ N 项阻塞」按后者算。
-Analytics 起初只统计前者，于是看板说「1 项阻塞」、Analytics 说「阻塞 0h」。
-两个数都对，放在一起就是错的。现在两个来源都算，重叠区间只算一次。
-
-**必须给得出正面发现。**
-这不是为了讨好用户。一个只会报警的分析页，用户第三次就不点了；
-而一个没人看的分析页比没有分析页更糟，因为它让人以为这件事已经有人在管。
-所以 `findInsights` 最后一定尝试找一条改善信号 —— 有上期就比环比，
-没有就从绝对值里挑够好的那个说一句。
-
-### 图表的做法
-
-不引图表库。这一页全是「带标签的条」和「一条线」，Recharts 的体积换不来任何东西，
-而 tooltip、直接标注、表格视图这些真正要紧的行为反而要绕开它的默认样式重做。
-四个原语在 `features/analytics/charts.tsx`：`BarChart`、`TrendChart`、
-`StatTile`、`NotWired`。
-
-配色是**跑过校验的**，不是挑出来的（`features/analytics/palette.ts` 记了完整结果）：
-
-- 两类序列 `#2a78d6` / `#eb6834` —— 色盲区分 ΔE 24.7、正常视觉 ΔE 33.6、对比度 ≥3:1，全通过
-- 有序色阶在白底上**只放得下 5 级**。再加一级要么相邻两步分不开，要么最浅那级糊进背景。
-  这个上限直接改变了设计：需要 6 类的图（按阶段的累积流图）因此没有用色阶画，
-  而不是硬凑第六个颜色 —— 那正是「用生成的第 9 个色相」这类错误的开头。
-- 图表框架用 app 自己的 slate 灰阶，不用配色表里的暖灰。一页之内出现两套中性色，
-  图表会看起来像贴上去的。
-
-几条一直守着的规矩：条形数据端 4px 圆角、基线端方角；线宽 2px；网格是实线发丝，
-不用虚线；值为 0 就画成 0（留一条细缝会被读成「有一点」，那是假的）；
-状态色永远配图标 + 文字，颜色不做唯一线索；趋势图只直接标注峰值与最新值，
-其余交给 hover，并且 hover 不是读到数字的唯一途径 —— 每张趋势图都有「看数据」表格。
-
-### Policy 配置的四个取舍
-
-**摘要那一行是整页最重要的东西。**
-用户不会去读 12 条规则再自己推导边界，他要的就是「N 类自动执行、M 类需要人确认」。
-难点在「视情况而定」那一类：真实的分界往往是**析取**的（「生产环境，或者风险高」），
-只在单个轴上找分界会一个都找不到，退化成「12 / 20 种情况需要人确认」——
-一句正确但毫无用处的话。现在的做法是先找出「只要满足它就一定需要人」的单值条件，
-再看它们的并集能不能盖住全部需要人的场景，能盖住就直接说出来。
-
-**摘要与体检共用同一次场景枚举。**
-「这两条规则会冲突吗」在一般情况下是个约束求解问题。真去写个小型求解器，
-代价大、结果还难以向用户解释 —— 而用户要的不是「已证明无冲突」，
-是「给我看那个会出问题的场景」。把有限的真实场景跑一遍，得到的正是能直接展示的反例。
-代价也说清楚了：网格覆盖不到的组合检测不出来，所以页面写的是「检测到 N 个问题」
-而不是「没有问题」，并明说这是抽样不是证明。
-
-**★ 安全阀放在服务端，判据是「会不会自动放行」而不是「网格有没有变松」。**
-页面文档 §9 要求放宽类变更携带 `simulation_id`。那个 id 是客户端给的，
-伪造一个字符串就能绕过 —— 而这道闸恰恰是本页最重要的东西
-（§10「放宽类规则变更 100% 经过模拟验证」）。改成服务端在保存时自己跑一遍模拟，
-发现与人类判断不一致的历史案例就返回 422 并把案例带回去，客户端必须显式
-`acknowledgeMismatches` 才能继续。
-判据也从「场景网格变松了吗」改成了「这条规则会不会自动放行」：两者不等价，
-一条「中低风险部署自动放行」在网格上可能一个场景都没放宽（那些场景本来就是自动的），
-却照样会自动批准历史上 10 个被人驳回过的任务 —— 按网格判，它一路绿灯。
-
-**规则列表只显示人话，条件表达式留在编辑器里。**
-`risk == 'low' && cost < 10` 项目负责人看不懂，也就不会去管，
-最后治理配置只剩工程师一个人维护。解释用模板拼接生成，**不用大模型** ——
-解释与实际执行逻辑必须严格一致，模型的偏差会直接导致用户误配规则。
-模板 → 条件/动作的映射也只在后端有一份实现，前端跟着算一遍就有两份，
-迟早出现「界面上写的规则」和「实际执行的规则」不是同一条。
-
-### 总览、决策中心、Agent、运行时的四个取舍
-
-**总览上的每个数字都能展开成它的来源。** 健康度不是一个「综合评分」，是
-100 分起扣的减分制，每一分丢在哪里都点得开；延期概率不是模型输出，是七条
-写死的经验规则，页面上直接标明「这不是统计模型」。一个说不清来源的分数有两种下场
-—— 被当成事实引用，或被当成玄学忽略，两种都不好。知道它怎么算的，
-用户才知道什么时候该忽略它。
-
-**决策中心只提供批量批准，不提供批量驳回。** 驳回必须写原因，而每条的原因各不相同：
-批量驳回要么逼用户写一句放之四海皆准的废话，要么干脆不写，两种都在破坏
-「每次覆盖都要留下为什么」这条底线 —— 而那正是 Analytics「重复决策 → 可自动化」
-唯一的数据来源。批量批准也只对**可逆且非高风险**的决策开放：页面文档要 5 分钟清空队列，
-但队列里混着「合并 PR」和「删生产库数据」时，一个全选框就是事故本身。
-批量省的是点击，不是阅读。后端逐条走单条批准的**同一个函数**，
-不可代行、状态机、Policy 一个都不绕（`decisions/batch-approve` → `approveDecisionById`）。
-
-**Agent 详情按人事口径组织，不按服务配置组织。** 顺序是「它是谁 → 在做什么 →
-做得怎么样 → 被允许做什么 → 出问题怎么干预」。把权限表放最上面，这一页就退化成
-一个 YAML 编辑器。「任务队列」只算没做完的：`executorId` 是永久归属不是队列，
-直接列出来会让一个干了半年的 Agent 显示「队列 200」，而它其实闲着。
-
-**运行时能力先说做不到什么。** 一个把 14 个能力项打满绿勾、把缺失折叠到底部的面板，
-等于把降级又藏回去了。每条缺失都摊开三段：降级后的行为、对用户的影响、严重程度 ——
-只写「不支持 pause」用户没法据此做决定，写「暂停降级为终止，会丢失执行中的进度」才行。
-用户在派高风险任务之前，有权先看见「这个 Agent 的暂停其实是终止」。
-
-### 身份与缓存
-
-身份走登录换来的 JWT（[09-security §1.0](09-security.md#10-人类凭证与账号来源)），
-存在 `localStorage['apos.token']`，每个请求带 `Authorization: Bearer`。
-
-> 此前这里是一个**身份切换器**：`/users` 拿回全库用户，右上角下拉选一个，
-> 选中谁就是谁 —— 那不是身份，是一个自助改名的界面。
-
-后端有一整类响应按当前身份计算（决策收件箱的「待我处理」、总览的「需要你处理」、
-决策卡片的 `canAct`），而这些查询的 key 里没有用户 id。因此：
-
-- **登录时作废缓存**（`invalidateQueries`），**退出时清空缓存**（`clear`）。
-  两者不能互换：`invalidate` 只把数据标记为陈旧，它仍在内存里 ——
-  下一个人登录后，在重新拉取回来之前会先看到上一个人的页面。
-  一个声称「决策不可代行」的系统，在界面上把张三的待办摆给李四看。
-- **令牌被服务端拒了就当场退出登录**（`/auth/me` 回 401 → `signOut`）。
-  留着一张废令牌的表现是「每个页面都在报错」，而不是「请重新登录」。
-- **身份相关的页面 `enabled: Boolean(userId)`**，不在身份未定时先问一遍。
-- **SSE 的令牌走 query 参数**（`?access_token=`）：EventSource 带不了自定义头。
-  未登录时**根本不连** —— EventSource 对 401 的表现是静默重连，
-  页面不报错，只是所有实时更新都不来了，看起来像后端不推事件。
-
-### 集成的四个取舍
-
-**Source of Truth 是这一层唯一真正难的地方，难点不在代码量。** 两个系统都能改同一个字段，
-就必然有一方的修改会被丢掉。一个集成能不能被信任，取决于它能不能回答三个问题 ——
-谁说了算、另一边怎么办、被丢掉的那次修改去哪了。答不上来的集成，
-用完一阵子的结果是两边的数据都没人敢信。所以：判定（`resolveSync`）与写入分开，
-判定只返回一个可被审计的 `Resolution`；每个字段的默认归属都带一句「为什么」；
-改 SoT 先摆出差异与后果再确认，并写事件留痕。
-
-**状态字段默认「记录冲突」而不是默认「回写」。** 状态是唯一一个会驱动流程往下走的字段：
-悄悄把它回写回去，外部系统里那个人会看到自己刚点的「Done」被弹回 Review，
-而且没有任何解释。别的字段被覆盖只是数据不一致，状态被覆盖是「这个系统在跟我较劲」。
-
-**同一个字段的未处理冲突只留一条。** 冲突未解决时同步基准不推进（这是对的），
-于是每一轮同步都会重新判出同一个冲突。不去重的话，一个每 5 分钟拉一次的集成
-会在一天里堆出近三百条一模一样的记录，用户处理完第一条之后还剩两百九十九条 ——
-功能在测试里是好的，在生产上没法用。已存在的那条要更新快照，
-因为外部可能又改了一次，给用户看的必须是现在的值。
-
-**权限的允许项与禁止项必须并列，且禁止项由集成层写死。** 与 08 Agent Workspace 同一条原则：
-用户要确认的往往是「这个连接**不能**合并我的代码」。`NEVER_GRANTED_SCOPES` 不是
-「默认关掉、想开可以开」，而是集成层根本不提供这条路径 —— 提供了它就迟早会被打开。
-服务端在建立连接时会复核适配器返回的 allowed，即便适配器有 bug 也拦得住。
-另外「能连上」和「能让它改我的代码」分两档权限：pm 能连，开写权限要 tech_lead。
-
-### 假的外部系统，真的同步引擎
-
-> 这一节写于 GitHub 传输层落地之前。现在 GitHub 走的是真的 api.github.com
-> （见下一节），其余 provider 仍用进程内适配器。下面这套做法的价值也因此被验证了一次：
-> 接真实传输层时，它下游的一切一行没改。
-
-当时真实 provider 的 HTTP 传输层没有做。做法不是画一套点了没反应的授权按钮，而是：
-
-- 定义 `IntegrationAdapter` 接口（按同步引擎需要什么定义，不按各家 API 长什么样定义）
-- 写一个**进程内适配器**，拉取、回写、来源标记、外部删除、限流报错都真的发生
-- 它下游的一切 —— SoT 判定、冲突生成与去重、循环抑制、权限校验、断开影响 ——
-  都被端到端跑通并写进冒烟
-- 页面上如实标注「这个 provider 还没有传输层」
-
-进程内适配器的存储是可插拔的：测试用 Map，开发环境注入 DB 后端（`dev_external_objects`），
-因为种子脚本和 API 是两个进程 —— 假外部系统只活在种子进程里的话，
-页面上点「立即同步」什么也不会发生，而那正是最该被看见能工作的一步。
-真实 provider 接上之后那张表可以直接删。
-
-★ `IntegrationAdapter` 刻意不提供 `delete`。外部对象的删除由对方系统负责，
-我们只在拉取时发现「它不见了」并打标 —— 一个能删外部对象的集成，出错时的代价不可逆。
-
-### 真实 HTTP 传输层的四个取舍
-
-**契约测试起真的 HTTP 服务器，不 mock fetch。** mock fetch 测的是「我以为我发了什么」，
-起一个 `node:http` 服务器测的是「线上真的收到了什么」—— URL 拼错、header 少一个、
-body 序列化方式不对，只有后者会暴露。GitHub 适配器另外跑了一次**真实的
-api.github.com**：它当场报出这个 token 只有读权限，于是 `create_pr` 落在了禁止项里
-而不是被声称可用。这是 mock 永远测不出来的那类正确性。
-
-**错误分类比错误信息重要。** 同步失败时页面要回答的是「我该重新授权、该等一会儿、
-还是该找管理员」—— 一句「请求失败 500」三个问题一个都答不了。最容易踩的坑是
-**GitHub 限流也返回 403**：当成「权限不足」会让用户去找管理员要权限，
-而真正该做的是等几分钟。
-
-**退避要听对方的，但不能真的等下去。** 优先用 `Retry-After` / `x-ratelimit-reset`，
-自己算一个更短的间隔只会更快撞进下一轮限流。但这里有个**实测到的**坑：
-一次没走代理（因而是匿名请求）的 `testConnection` 撞上 GitHub 限流，
-「听对方的」让它原地睡了 **50.8 分钟**才返回 —— 请求不返回、连接不释放、
-页面一直转圈。所以单次退避超过 30s 就放弃，
-把「还要等多久」报上去让调用方暂停这个集成。
-
-**「探测不到」和「确实没有」不能长得一样。** 上面那次限流还顺带暴露了另一件事：
-`grantedScopes` 探测失败时按只读兜底（宁可少说，不能多说，这是对的），
-但页面把这份猜测当事实显示成「✗ 创建 PR」，用户会据此跑去找管理员要权限 ——
-而真相是刚才那次探测被限流了。所以授权清单带 `probed` 标记，
-页面在兜底时明说「不代表写权限真的没给」。
-
-**出网代理不是沙箱的特例，是企业部署的常态。** Node 内置 fetch **不认
-`HTTPS_PROXY`**，装在内网的实例会表现为「所有集成都连不上」，
-而运维一试 curl 是通的 —— 这个差异极难自己想到。
-
-### 通知：判定与投递严格分开
-
-「围绕需要行动设计，而不是发送大量 Agent 日志」落到代码上就是
-`decideNotification`：它的职责不是「怎么发」，是**「发不发」**。
-一个只管发的通知系统，两天之内就会被屏蔽 —— 而屏蔽之后，
-真正需要行动的通知也一起没了。
-
-- **免打扰保护的是注意力，不是责任。** 高风险决策必须能穿透 ——
-  一个「凌晨两点生产库要删数据、等你批」的请求被静音到早上九点，
-  这个系统就再也不配说「需要你的时候我会来找你」。
-- **升级是「叫更多人」，不是「换人叫」。** 只通知最高档的话，
-  等了 24 小时的决策会只找上级、不再提醒责任人 ——
-  而责任人恰恰是唯一能处理它的人。
-- **订阅事件流，不在业务代码里到处调 notify()。** 决策可能由 Policy 拦截、
-  Agent 求助、状态机挂起三条路径产生，每条各加一行迟早漏掉一条，
-  而漏掉的表现是「某类决策从来不提醒」，没人会注意到。
-- **每一次都落记录，包括被抑制的。** 通知最典型的故障是静默失败：
-  webhook 被撤销、群被解散、被免打扰吃掉 —— 而用户只会觉得
-  「这系统从来不提醒我」，根本不会想到去查投递。查得到，才可能被修。
-- ★ Slack 和飞书都用 **200 + body 里说失败** 表达错误。只看 HTTP 状态会把
-  「这个群没了」当成投递成功，通知悄悄进黑洞而页面一切正常 ——
-  最坏的一种失败方式。
-
-### 质量与成本效益：让「没有数据」和「数据不好」区分开
-
-**质量 Tab 之前算不出来不是算法难，是没有数据源。**
-`work_items.typeData.qualityGate` 这个字段一直存在、Policy 引擎一直在读
-（「测试没过不许进发布」那条规则就靠它），但从来没有任何东西写过它 ——
-所以那条规则永远命中不了。现在由 GitHub check-runs 回填。
-抓不到就不写：写一个 `testsPassed: true` 的默认值，
-会让那条规则变成一条永远放行的规则，比没有这条规则危险得多。
-
-每个指标自报 `wired` 与 `source`，没接的显式说没接、给出怎么接，**绝不给 0**：
-「0 起事故」和「这个周期没发过版」是完全不同的两件事。
-
-**成本效益之前不做的理由是那个数字不可证伪**，不是技术上做不到。
-所以解法不是不做，是把基准变成用户自己填的输入，并且把每一步换算摊在明面上：
-基准是你填的、工时是系统记的、结论是这两者的算术。结论永远带着
-「按你填的 X/小时」和「换个数就是另一个结论」——
-一个「你自己的假设推出来的结论」可以被追问，也就可以被相信。
-代价那一侧必须同时给：只算「Agent 干了多少活」不算「人为此花了多少时间收拾」，
-得到的是一个营销数字。
-
-### 版本对比与命中明细的两个取舍
-
-**diff 里最重要的一段不是任务增删，是自动化边界的变化。**
-用户要批准的是 v2，脑子里记得的是 v1 —— 不给 diff 的话他只能整个重读一遍，
-而重读一遍的真实结果通常是不读，直接批。所以 diff 不是便利功能，
-是让「批准」这个动作重新有意义的东西。而在所有变化里，
-「v2 比 v1 多了一条自动执行生产部署」是唯一一类**不看就会漏掉、漏掉就出事**的：
-其余变化最坏是计划不如预期，这一类最坏是批准了自己不知道的自动化。
-所以它单独算、排在最前、放宽时打醒目标记。同时只算两版都有的任务 ——
-新增任务本来就没有 gate，算成「gate 被去掉了」会把每次加任务都报成边界放宽，
-而一个总在喊狼来了的警告，用户第三次就不看了。
-
-**命中明细要用两套标准评价两类规则。**
-门禁规则（require_human_review 等）看批准率：全批说明它每次都在问一个
-答案已知的问题，可以放开；常驳说明它拦对了，别动。放行规则根本不产生决策，
-套「批准率」是无从谈起的 —— 它唯一能被证伪的地方是**放过去的事后来有没有被人纠正**。
-用同一套话术评价两类规则，说出来的必然有一半是废话。
-另外样本少于 5 条时不下结论：三次里三次都批，说明不了任何事。
-
-### 判定同源的几处
-
-前端不复制后端规则，两边引用同一份实现：
-
-- **拖拽落点**：`evaluateDrop` → `manualTargetForStage`（`@apos/domain`），后端 PATCH 用 `manualTriggerFor`，同一个状态机推导
-- **卡片归属的列**：`stageFor`（`@apos/contracts`），看板 API 与 SSE 补丁用的是同一个函数
-- **集成权限**：`canIntegration` / `denyReason`（`@apos/domain` permissions/integration）。
-  前端用它灰掉按钮，后端用它真正拦住请求 —— 界面上能点但服务端不让做（体验差），
-  或服务端让做但界面点不了（等于没做），两种偏差在「谁能给外部系统开写权限」这件事上都不能接受。
-  共用一份实现不等于信任前端：服务端每个写接口都独立判一次
-- **Run 成功的状态值**：`RUN_SUCCESS`（`@apos/contracts`）。字面量写错的表现是**静默算成 0** ——
-  成本效益里写成 `'succeeded'`（实际是 `'completed'`），于是「Agent 承担的工时」永远是 0，
-  页面显示「没有可换算的工时」，看起来完全像是「这个周期确实没跑过」
-- **Policy 动作的中文名**：`ACTION_LABELS` / `actionLabel`（`@apos/contracts`），紧挨着 `Action` 定义。
-  `Record<ActionType, string>` 会在新增动作时直接编译不过 —— 凡是「新增枚举值必须同步的映射」都该长在枚举旁边
-- **状态与决策类型的中文名**：`STATUS_LABELS`（`@apos/contracts`）、`decisionLabel`（`@apos/domain`）。
-  后端也要拼给人看的句子（决策卡片上的「不处理会怎样」），各写一份的下场已经见过：
-  决策类型的标签表按页面文档的词汇写，而运行时发出的是另一套，
-  于是界面上一直印着 `high_risk_operation` 这样的裸 key
-
-### 本地跑起来
+| HTTP adapters for Jira / Plane | The GitHub one works end to end (it really hits api.github.com), and Jira is the same shape: different baseUrl, different field mapping, different auth header. It's unwritten because it would introduce no new judgment calls, only another three hundred lines of isomorphic code — every one of which needs a real Jira instance to verify. When we do wire it up, copy `GitHubAdapter` |
+| GitHub OAuth / App installation flow | The adapter works given a token; where the token comes from is a separate matter. An OAuth callback needs a public address and a registered App. For now we read from an environment variable, or go through whatever auth proxy the deployment already has |
+| Bulk import (hundreds of Jira issues) | Page docs §11 require an async job + progress display + pre-import preview. Today `linkObject` creates mappings one at a time, which is enough; bulk import waits until a real provider is connected — building it now means building a progress bar with no data source |
+| An "approve directly" button inside notifications | Page docs §12.3 lean toward deep links only in the MVP, and that's what we did. Confirming inside a third-party platform that "the person who clicked really is the accountable decision maker" works differently on every platform — and a direct-approve button that can't guarantee that turns a non-delegable decision into whoever-clicks-first, which is worse than not having it |
+| Org-level integration management (`/admin/integrations`) | Same reason as org-level Policy management: it needs an org-level identity and permission model. The project page states plainly that data connectors must be configured by an org administrator |
+| Enterprise data system connectors | Product doc 13 explicitly defers "full ERP / CRM integration." The page shows a placeholder explanation and a permission notice, with no clickable button |
+| Conversational requirement intake / document upload / external import | None of the three is small (multi-turn state sync, document parsing, integration configuration), and what they solve is "intake is smoother," not "does the AI understand it correctly afterward." The latter is where the value of this path lies, so the effort goes to clarification and completeness first |
+| Inline editing of requirement fields | `PATCH /requirements/:id` already works and marks the record "edited by a human," but the UI is still read-only. We'll build it when "the AI keeps getting one field wrong" actually happens |
+| Reassigning / rescheduling / splitting tasks inside the plan | Same logic as dependency editing in the execution graph: a plan is a thing that gets approved, so casually editing it is a way around approval. Changes should go through "request changes" and let the Agent re-plan |
+| A free-form Policy condition editor | Page docs 13 §12.1 recommend against it, and we followed. The person who actually needs to set an Agent's boundaries is the project lead; hand them a condition-expression editor and they will either not dare to configure anything or configure it wrong — both worse than "there are only six templates." The effort saved went into simulation |
+| Policy advanced mode (expression editing) | Same as above. Build it when someone is genuinely blocked by the templates, rather than first building an IDE for a rule language nobody uses |
+| Org-level Policy management page (`/admin/policies`) | It needs an org-level Policy orchestration UI, which doesn't exist yet. The project page states honestly: "org-level rules cannot be modified; contact an administrator for an exception" |
+| Exception request flow for org rules | Page docs §12.3 lean toward not building it in the MVP; "contact an administrator" is the placeholder |
+| Analytics export (PDF / CSV) | The page docs put it in the "prepare for the weekly meeting" flow, but sharing a link with the filter parameters (`?tab=&range=&compare=`) is more useful today than exporting a dead image. Revisit if it really has to go into a weekly report |
+| Pre-aggregation tables for Analytics | Page docs §9 call for hourly/daily pre-aggregation. Event volume inside a project-level window is in the low thousands; computing live costs far less than maintaining an aggregation pipeline plus its lag and backfill. Build it when the data volume actually grows, rather than pretending to have built it now |
+| Cross-project Analytics | Page docs §11 explicitly exclude it from the MVP — it belongs to org-level analysis |
+| Canvas rendering for the execution graph (§6.3) | The demo data has 8 nodes; SVG doesn't break a sweat. Switch above 100 nodes — switching now means implementing hit testing yourself with no measurable payoff. Above 100 the page suggests focusing via "critical path" highlighting |
+| Editing dependencies directly on the execution graph | Page doc 07 §12.1 leans read-only: dependencies are part of the plan, and changing one with a casual drag is a way around plan approval. The diagnostic's suggested action is "have the Agent re-plan," and the change still goes through approval |
+| Timeline (Gantt) layout | Page doc 07 §12.4 leaves it open: tasks have no real scheduling fields, so any timeline we drew would be made up |
+| Execution graph export | The graph is live; an export is a dead screenshot. If you really need to share it, a link (`?layout=&highlight=&focus=`) beats an image |
+| Virtual scrolling | 20 cards per column on first paint; measurement says virtualization isn't needed. Bring in TanStack Virtual once a column exceeds 50 |
+| Radix UI / React Hook Form | With only two dialogs and three form fields today, the benefit of a component library doesn't cover its bundle size |
+
+### Three tradeoffs in Run detail
+
+**Concise vs. detailed is not "which events come back," it's "how deep each event goes."**
+We tried splitting on `run_events.level` for a while (concise returned only `milestone`), and concise mode collapsed to three lines — "started / produced / finished." Everything in between was gone, and answering "what did it actually do" is the entire reason this page exists. Concise mode now returns every event but without `payload`: what gets dropped is exactly the bulk (full reasoning text, raw tool arguments, context details), and exactly what the page docs asked to hide. That `level` field is there for SSE degradation and cheap table scans.
+
+**Execution details are polled, not streamed over SSE.**
+`run_events` outnumber domain events by two orders of magnitude; pushing them all through would blow up the very tables Analytics and auditing have to scan ([03 event model](03-event-model.md) §2). So there are two paths: SSE carries the low-frequency signal "this Run's status changed," and the high-frequency execution detail is pulled incrementally with an `after` cursor, polled only while the Run is active.
+
+**Report missing capabilities honestly; never degrade quietly.**
+Claude Code has no pause semantics, so clicking "pause" would actually terminate. Pause is resumable and termination is not, and that difference is decisive for the user. The backend returns `501 UNSUPPORTED_FEATURE` with the alternative action attached, and the UI shows it together with "here's what you can do next" instead of deciding for the user.
+
+### Three tradeoffs in the execution graph
+
+**Critical path, layout, and diagnostics are all computed server-side; the frontend only draws.**
+The three interlock: root-cause attribution needs the critical path first, "false serialization" diagnostics repeatedly recompute the critical path with one edge removed, and swimlane layering needs a topological order. Pushing that to the frontend means moving the whole algorithm — cycle detection included — over there, while it still has to feed `metrics.primaryCause` in `GET /graph`. Today one request returns `nodes / edges / layout / metrics / diagnostics` together, the client never sits in a half-computed intermediate state, and `@apos/domain/graph` has exactly one implementation.
+
+**Diagnostics should under-report rather than over-report.**
+The first version of "false serial dependency" flagged 5 of 6 edges — structurally, any two back-to-back tasks look like they could run in parallel, so saying it says nothing. Now three conditions must all hold before we report: removing the edge genuinely shortens the critical path, the reduction is ≥ 1h, and the two ends have different executors; then we rank by payoff and keep the top 2. The diagnostics panel is the only "intelligence" on this page, and once it becomes noise, users start ignoring the genuinely important blocking alerts along with it.
+
+**★ The graph shrank to a dot, and the problem wasn't in the graph.**
+The execution graph once rendered at 17% zoom — the data was correct but it looked broken. The root cause was the app shell using `min-h-screen`: with an indeterminate height, `flex-1` has nothing to resolve against, the canvas container's `clientHeight` was near 0, and "fit to window" dutifully computed the minimum zoom. The fix was changing the shell to `h-screen overflow-hidden` (a determinate height, with `min-h-0` threaded all the way down) and using a ResizeObserver to fit only after the size settles — more reliable than guessing a delay with `setTimeout`. Unit tests will never catch this class of bug, so the smoke suite pins down "after fit-to-window, zoom ≥ 40%."
+
+### Three tradeoffs on the entry path
+
+**Confirming a requirement goes straight to the plan page, with no stop in between.**
+The user has just made a judgment call; what they most need to see right now is what that judgment produced, not a list they get dumped back into and have to search. So the single "confirm" action chains two steps in the background — approve → generatePlan — and navigates on success.
+
+**★ The human/Agent split on the plan page cannot be counted from `work_items.executorType`.**
+Before approval nothing has been scheduled, so `executorType` is null across the board — counting from it always yields "🤖 0　👤 0" while the snapshot on the same page says "4 tasks will be executed automatically by Agents." Worse, that number appears in the approval dialog, at the exact moment the user is ceding execution authority. The correct source is the `humanGates` snapshot taken when the plan was generated: anything not in it is Agent work. For the same reason, task rows show "👤 needs a human / 🤖 Agent" rather than "unassigned" — the latter reads as "someone forgot to assign it," when the truth is "we'll pick when it's scheduled."
+
+**"What will happen automatically once you approve" uses the snapshot, not a recomputation at display time.**
+What the user approved was **that list, at that moment**. If a Policy changes later, tracing "what exactly did they approve" has to come from the snapshot — silently substituting the new rules amounts to editing something the user already signed. The page also shows the boundary recomputed under current rules for comparison, and says so plainly when the two disagree.
+
+### Four tradeoffs in Analytics
+
+**A metric's definition has to sit next to the metric, not in a document.**
+Confronted with a number like "flow efficiency 55%," the user's first reaction is "how is that computed?" If they can't answer that, they won't act on it, and the page was pointless. So every metric card carries an ⓘ explaining the definition (effective work = a person or an Agent is actively moving it forward; queueing, blocked, and awaiting approval all count as waiting), and every system insight expands into "what makes you say that," which spells out the criterion itself — including the threshold value. Those thresholds come from the criteria table in page docs §5.1: they are experience values the product chose, not industry statistics (§12.2 lists "where do the baselines come from" as unresolved), which is all the more reason to let the user push back on them.
+
+**When a data source isn't connected, say "not wired." Never show 0.**
+On-time delivery rate returns `null` when there is no scheduling field, and the page reads "not wired · the plan has no scheduling field." Showing 0% sends someone off to assign blame when the truth is simply that nobody ever filled in a planned completion date — a number that causes the wrong action is much worse than no number. Budget burn and budget days remaining work the same way.
+
+**★ The same word must mean the same thing on two different pages.**
+"Blocked" has two expressions in this product: the `blocked` status, and the `blockedSince` marker (the card is still in ready but flagged "waiting on an external dependency") — and the board's "⛔ N blocked" counts the latter. Analytics originally counted only the former, so the board said "1 blocked" while Analytics said "blocked 0h." Both numbers were right, and together they were wrong. Now both sources count, with overlapping intervals counted once.
+
+**It has to be able to produce a positive finding.**
+This is not about flattering the user. An analysis page that only ever raises alarms stops getting clicked by the third visit — and an analysis page nobody looks at is worse than no analysis page, because it makes people believe someone is on top of this. So `findInsights` always makes a final attempt to find an improvement signal: if there's a prior period, compare against it; if not, pick something good enough out of the absolute values and say it.
+
+### How the charts are done
+
+No charting library. This page is all "labeled bars" and "one line"; Recharts' bundle size buys nothing, while the behaviors that actually matter — tooltips, direct labeling, table view — would all have to be rebuilt around its default styling. Four primitives live in `features/analytics/charts.tsx`: `BarChart`, `TrendChart`, `StatTile`, `NotWired`.
+
+The palette is **validated**, not picked (`features/analytics/palette.ts` records the full results):
+
+- Two series colors `#2a78d6` / `#eb6834` — color-blind ΔE 24.7, normal-vision ΔE 33.6, contrast ≥3:1, all passing
+- An ordered ramp **fits only 5 steps** on a white background. A sixth means either two adjacent steps become indistinguishable or the lightest one dissolves into the background. That ceiling directly changed the design: a chart needing 6 categories (the cumulative flow diagram by stage) was therefore not drawn with a ramp, rather than forcing a sixth color — that is exactly how mistakes like "generate a 9th hue" begin.
+- The chart chrome uses the app's own slate ramp, not the warm gray from the palette table. Two neutral systems on one page make the charts look pasted in.
+
+A few rules we hold to consistently: bars get 4px rounded corners on the data end and square corners at the baseline; line width is 2px; gridlines are solid hairlines, never dashed; a value of 0 is drawn as 0 (leaving a sliver reads as "a little bit," which is a lie); status colors always come with an icon and text, so color is never the only cue; trend charts directly label only the peak and the latest value, leaving the rest to hover — and hover is never the only way to read a number, since every trend chart has a "view data" table.
+
+### Four tradeoffs in Policy configuration
+
+**That one summary line is the most important thing on the page.**
+Nobody is going to read 12 rules and derive the boundary themselves; what they want is "N categories run automatically, M categories need a human." The hard part is the "it depends" category: the real dividing line is usually a **disjunction** ("production environment, or high risk"), and looking for a split along a single axis finds nothing, degrading into "12 of 20 situations need a human" — a statement that is correct and completely useless. What we do now is first find the single-valued conditions where satisfying it alone always requires a human, then check whether their union covers every human-required scenario; if it does, say it outright.
+
+**The summary and the checkup share one scenario enumeration.**
+"Will these two rules conflict?" is, in the general case, a constraint-solving problem. Actually writing a small solver is expensive and produces results that are hard to explain to the user — and what the user wants isn't "proven conflict-free," it's "show me the scenario that goes wrong." Running a finite set of real scenarios yields exactly the counterexample you can put on screen. The cost is stated plainly too: combinations the grid doesn't cover go undetected, so the page says "N problems detected" rather than "no problems," and says explicitly that this is sampling, not proof.
+
+**★ The safety valve lives on the server, and the test is "will this auto-approve," not "did the grid get looser."**
+Page docs §9 require loosening changes to carry a `simulation_id`. That id comes from the client, so forging a string bypasses the gate — and this gate is the single most important thing on the page (§10: "100% of loosening rule changes are validated by simulation"). Now the server runs the simulation itself at save time, and if it finds historical cases where the outcome disagrees with the human judgment, it returns 422 with those cases attached; the client has to explicitly `acknowledgeMismatches` to continue.
+The test also changed from "did the scenario grid get looser" to "will this rule auto-approve." Those are not equivalent: a rule like "auto-approve medium/low-risk deployments" may loosen zero cells in the grid (those scenarios were already automatic) and still auto-approve 10 tasks that humans historically rejected — judged by the grid, it sails straight through.
+
+**The rule list shows plain language only; condition expressions stay in the editor.**
+A project lead can't read `risk == 'low' && cost < 10`, so they won't engage with it, and governance configuration ends up maintained by one engineer. The explanations are assembled from templates, **not from an LLM** — the explanation and the actual execution logic have to be strictly identical, and a model's drift would directly cause users to misconfigure rules. The template → condition/action mapping also has exactly one implementation, on the backend; recomputing it in the frontend gives you two, and sooner or later "the rule shown in the UI" and "the rule actually executed" stop being the same rule.
+
+### Four tradeoffs across overview, Decision Center, Agents, and runtimes
+
+**Every number on the overview expands into where it came from.** Health is not a "composite score"; it is a deduction system starting from 100, and every lost point is clickable. Delay probability is not a model output; it is seven hard-coded heuristics, and the page says so directly: "this is not a statistical model." A score whose origin can't be explained meets one of two fates — cited as fact, or dismissed as astrology, and neither is good. Only by knowing how it's computed does the user know when to ignore it.
+
+**The Decision Center offers batch approve but not batch reject.** A rejection requires a reason, and every reason is different: batch rejection either forces the user to write one universally applicable platitude or lets them write nothing, and both destroy the "every override records a why" floor — which is the only data source for Analytics' "repeated decision → automatable" insight. Batch approval is also limited to decisions that are **reversible and not high risk**: the page docs want the queue cleared in 5 minutes, but with "merge a PR" and "delete production data" mixed in the same queue, a select-all checkbox is the incident itself. Batching saves clicks, not reading. The backend runs each item through the **same function** as single approval — non-delegability, state machine, and Policy are all still enforced (`decisions/batch-approve` → `approveDecisionById`).
+
+**Agent detail is organized like a personnel file, not like a service config.** The order is "who is it → what is it doing → how well is it doing → what is it allowed to do → how do I intervene when something goes wrong." Put the permission table at the top and this page degenerates into a YAML editor. "Task queue" counts only unfinished work: `executorId` is permanent ownership, not a queue, and listing it directly would show "queue 200" for an Agent that has been working for six months and is in fact idle.
+
+**Runtime capabilities lead with what it cannot do.** A panel with green checks on all 14 capability items and the gaps collapsed at the bottom has simply hidden the degradation again. Each gap is spelled out in three parts: the degraded behavior, the impact on the user, and the severity — "pause is not supported" gives the user nothing to decide with; "pause degrades to termination, losing in-flight progress" does. Before assigning a high-risk task, the user has the right to see that "this Agent's pause is actually a kill."
+
+### Identity and caching
+
+Identity uses a JWT obtained at login ([09-security §1.0](09-security.md#10-human-credentials-and-where-accounts-come-from)), stored in `localStorage['apos.token']`, with every request carrying `Authorization: Bearer`.
+
+> This used to be an **identity switcher**: `/users` returned every user in the database, you picked one from a dropdown in the top right, and whoever you picked is who you were — that isn't identity, it's a self-service rename UI.
+
+A whole class of backend responses is computed against the current identity (the decision inbox's "assigned to me," the overview's "needs you," a decision card's `canAct`), and those query keys don't include the user id. Therefore:
+
+- **Invalidate the cache on login** (`invalidateQueries`), **clear it on logout** (`clear`). The two are not interchangeable: `invalidate` only marks data stale, and it is still in memory — so after the next person logs in, they see the previous person's pages until the refetch lands. A system that claims "decisions cannot be delegated" would be showing Alice's to-do list to Bob.
+- **If the server rejects the token, sign out on the spot** (`/auth/me` returns 401 → `signOut`). Keeping a dead token around presents as "every page is throwing errors" rather than "please log in again."
+- **Identity-dependent pages set `enabled: Boolean(userId)`** so they don't fire a request while identity is undetermined.
+- **The SSE token goes in a query parameter** (`?access_token=`): EventSource cannot send custom headers. When logged out we **don't connect at all** — EventSource responds to a 401 by silently reconnecting, so the page shows no error and simply never receives a live update, which looks exactly like the backend not publishing events.
+
+### Four tradeoffs in integrations
+
+**Source of Truth is the only genuinely hard part of this layer, and the difficulty isn't lines of code.** If two systems can both edit the same field, one side's edit is inevitably going to be thrown away. Whether an integration can be trusted comes down to whether it can answer three questions: who wins, what happens to the other side, and where did the discarded edit go. An integration that can't answer them ends, after a while in use, with nobody trusting the data on either side. Hence: the decision (`resolveSync`) is separated from the write, and the decision returns nothing but an auditable `Resolution`; every field's default ownership carries a "why"; and changing the SoT shows the diff and the consequences before you confirm, then writes an event for the record.
+
+**The status field defaults to "record the conflict," not to "write back."** Status is the one field that drives the process forward: quietly writing it back means the person in the external system watches the "Done" they just clicked bounce back to Review, with no explanation whatsoever. Any other field being overwritten is a data inconsistency; status being overwritten reads as "this system is fighting me."
+
+**Only one unresolved conflict per field.** While a conflict is unresolved the sync baseline does not advance (which is correct), so every sync round re-detects the same conflict. Without deduplication, an integration that pulls every 5 minutes accumulates nearly three hundred identical records in a day, and after the user resolves the first one, two hundred ninety-nine remain — the feature works in tests and is unusable in production. The existing record does have to update its snapshot, because the external side may have changed again, and what we show the user has to be the current value.
+
+**Allowed and forbidden permissions must appear side by side, and the forbidden list is hard-coded in the integration layer.** Same principle as 08 Agent Workspace: what the user most needs confirmed is often "this connection **cannot** merge my code." `NEVER_GRANTED_SCOPES` is not "off by default, flip it on if you want" — the integration layer simply does not offer that path, because if it offered it, it would eventually get turned on. When establishing a connection the server re-checks the allowed list the adapter returned, so even a buggy adapter is stopped. Separately, "can connect" and "can let it change my code" are two permission tiers: pm can connect, granting write requires tech_lead.
+
+### A fake external system with a real sync engine
+
+> This section was written before the GitHub transport layer landed. GitHub now goes through the real api.github.com (see the next section); the other providers still use in-process adapters. That validated this approach once: when the real transport layer was wired in, nothing downstream of it changed by a single line.
+
+At the time, the HTTP transport for real providers didn't exist. The approach was not to draw a set of authorization buttons that do nothing when clicked, but instead to:
+
+- Define the `IntegrationAdapter` interface (defined by what the sync engine needs, not by what each vendor's API looks like)
+- Write an **in-process adapter** where pulling, writing back, source tagging, external deletion, and rate-limit errors all really happen
+- Get everything downstream of it — SoT resolution, conflict creation and deduplication, loop suppression, permission checks, disconnection effects — running end to end and written into the smoke suite
+- State honestly on the page that "this provider has no transport layer yet"
+
+The in-process adapter's storage is pluggable: tests use a Map, and the dev environment injects a DB backend (`dev_external_objects`), because the seed script and the API are two separate processes — if the fake external system lived only inside the seed process, clicking "sync now" on the page would do nothing, and that is precisely the step that most needs to be seen working. Once real providers are connected, that table can simply be dropped.
+
+★ `IntegrationAdapter` deliberately provides no `delete`. Deleting external objects is the other system's job; we only notice on pull that "it's gone" and tag it — an integration that can delete external objects has an irreversible cost when it goes wrong.
+
+### Four tradeoffs in the real HTTP transport layer
+
+**Contract tests stand up a real HTTP server; they don't mock fetch.** Mocking fetch tests "what I think I sent"; standing up a `node:http` server tests "what actually arrived on the wire" — a malformed URL, a missing header, the wrong body serialization, only the latter exposes those. The GitHub adapter additionally ran once against the **real api.github.com**: it immediately reported that this token was read-only, so `create_pr` landed in the forbidden list instead of being advertised as available. That's the class of correctness a mock can never test.
+
+**Classifying the error matters more than the error message.** When a sync fails, the page has to answer "should I re-authorize, wait a while, or go find an administrator" — and "request failed 500" answers none of the three. The easiest trap: **GitHub also returns 403 for rate limiting**. Treat it as "insufficient permission" and the user goes off asking an admin for access, when the right move was to wait a few minutes.
+
+**Back off on the other side's terms, but don't actually wait forever.** Prefer `Retry-After` / `x-ratelimit-reset`; computing a shorter interval yourself only means hitting the next rate limit sooner. But there's a trap here we **hit in practice**: one `testConnection` that didn't go through the proxy (and was therefore an anonymous request) ran into GitHub's rate limit, and "doing what the other side says" made it sleep in place for **50.8 minutes** before returning — the request never returned, the connection was never released, and the page spun forever. So we give up on any single backoff longer than 30s and report "how much longer" upward, letting the caller suspend that integration.
+
+**"Couldn't probe it" and "it genuinely isn't there" must not look alike.** That rate-limit incident exposed something else too: when `grantedScopes` probing fails we fall back to read-only (understate rather than overstate, which is correct), but the page displayed that guess as fact — "✗ create PR" — and the user would go ask an administrator for permissions when the truth was that the probe had just been rate-limited. So the permission list carries a `probed` flag, and when it's a fallback the page says plainly that "this does not mean write access was actually withheld."
+
+**An outbound proxy is not a sandbox special case; it's the norm for enterprise deployment.** Node's built-in fetch **does not honor `HTTPS_PROXY`**, so an instance installed inside a corporate network presents as "no integration can connect," while ops tries curl and it works fine — a discrepancy that is extremely hard to arrive at on your own.
+
+### Notifications: decision and delivery are strictly separate
+
+"Design around what needs action, rather than sending piles of Agent logs" becomes, in code, `decideNotification`: its job is not "how to send," it's **"whether to send."** A notification system that only knows how to send gets muted within two days — and once muted, the notifications that genuinely need action are gone too.
+
+- **Do Not Disturb protects attention, not accountability.** High-risk decisions have to be able to break through — a request that says "at 2am, production data is about to be deleted, awaiting your approval" and gets silenced until 9am means this system no longer deserves to say "I'll come find you when I need you."
+- **Escalation means "call more people," not "call someone else."** Notify only the top tier and a decision that has waited 24 hours reaches only the supervisor and stops reminding the accountable owner — who is precisely the only person who can handle it.
+- **Subscribe to the event stream; don't sprinkle `notify()` calls through business code.** A decision can arise three ways — a Policy interception, an Agent asking for help, the state machine suspending — and adding one line at each site will eventually miss one, presenting as "this kind of decision never notifies anyone," which nobody notices.
+- **Record every attempt, including suppressed ones.** The classic notification failure is silent: the webhook was revoked, the group was dissolved, Do Not Disturb ate it — and all the user feels is "this system never reminds me," with no thought of going to check deliveries. Only what you can look up can be fixed.
+- ★ Slack and Feishu both express failure as **200 with the failure in the body**. Looking only at the HTTP status treats "that group no longer exists" as a successful delivery, and notifications quietly disappear into a black hole while the page looks perfectly fine — the worst possible failure mode.
+
+### Quality and cost-benefit: keep "no data" distinguishable from "bad data"
+
+**The quality tab was previously uncomputable not because the algorithm is hard, but because there was no data source.**
+The `work_items.typeData.qualityGate` field has always existed and the Policy engine has always read it (the rule "no release until tests pass" depends on it), but nothing ever wrote it — so that rule could never fire. It is now backfilled from GitHub check-runs. If we can't fetch it, we don't write it: writing a default of `testsPassed: true` would turn that rule into one that always lets things through, which is far more dangerous than not having the rule at all.
+
+Every metric reports its own `wired` and `source`, says explicitly when it isn't connected and how to connect it, and **never shows 0**: "0 incidents" and "no release went out this period" are completely different things.
+
+**The reason cost-benefit wasn't built before is that the number is unfalsifiable**, not that it was technically out of reach.
+So the fix isn't to skip it, it's to make the baseline an input the user supplies and to lay every conversion step out in the open: the baseline is what you entered, the hours are what the system recorded, and the conclusion is the arithmetic between the two. The conclusion always carries "at the $X/hour you entered" and "a different number gives a different conclusion" — a conclusion derived from your own assumptions can be interrogated, and therefore can be believed. The cost side has to be shown at the same time: counting "how much work the Agents did" without "how much human time went into cleaning up after them" produces a marketing number.
+
+### Two tradeoffs in version comparison and hit detail
+
+**The most important part of the diff isn't task additions and removals, it's the change in the automation boundary.**
+What the user is approving is v2, and what they remember is v1 — without a diff, their only option is to reread the whole thing, and the realistic outcome of "reread the whole thing" is usually not reading it and approving anyway. So the diff is not a convenience feature; it's what makes the act of approving mean something again. And among all the changes, "v2 added an automatic production deployment that v1 didn't have" is the one class that **you will miss without a diff and that hurts when you miss it**: at worst, other changes mean the plan isn't what you expected; at worst, this class means you approved automation you didn't know about. So it's computed separately, listed first, and flagged prominently when it loosens. It also only counts tasks present in both versions — a new task never had a gate, and counting that as "a gate was removed" would report every task addition as a loosened boundary, and a warning that always cries wolf stops being read by the third time.
+
+**Hit detail has to judge the two kinds of rules by two different standards.**
+Gate rules (require_human_review and friends) are judged by approval rate: approving every time means the rule keeps asking a question whose answer is already known and can be relaxed; frequent rejections mean it's catching the right things, so leave it alone. Allow rules produce no decisions at all, so "approval rate" has nothing to attach to — the only place they can be falsified is **whether what they let through was later corrected by a human**. Judge both kinds with the same vocabulary and half of what you say is necessarily filler. We also draw no conclusion below 5 samples: three approvals out of three proves nothing.
+
+### Where the logic has a single source
+
+The frontend does not copy backend rules; both sides reference one implementation:
+
+- **Drag-and-drop targets**: `evaluateDrop` → `manualTargetForStage` (`@apos/domain`); the backend PATCH uses `manualTriggerFor` — the same state machine derivation
+- **Which column a card belongs to**: `stageFor` (`@apos/contracts`); the board API and the SSE patch use the same function
+- **Integration permissions**: `canIntegration` / `denyReason` (`@apos/domain` permissions/integration).
+  The frontend uses them to gray out buttons, the backend uses them to actually block requests — "clickable in the UI but refused by the server" (bad experience) and "allowed by the server but unclickable in the UI" (equivalent to not shipping it) are both unacceptable when the question is "who can grant an external system write access." Sharing one implementation does not mean trusting the frontend: every server write endpoint checks independently
+- **The Run success status value**: `RUN_SUCCESS` (`@apos/contracts`). Getting the literal wrong presents as **silently computing 0** — cost-benefit had `'succeeded'` (the actual value is `'completed'`), so "hours carried by Agents" was permanently 0 and the page read "no convertible hours," which looks exactly like "nothing ran this period"
+- **Chinese labels for Policy actions**: `ACTION_LABELS` / `actionLabel` (`@apos/contracts`), right next to the `Action` definition. `Record<ActionType, string>` fails to compile the moment a new action is added — any "mapping that must be updated when an enum grows" belongs next to the enum
+- **Chinese labels for statuses and decision types**: `STATUS_LABELS` (`@apos/contracts`), `decisionLabel` (`@apos/domain`). The backend also has to assemble human-readable sentences (the "what happens if you don't act" line on a decision card), and we've already seen what two copies costs: the decision-type label table was written using the page docs' vocabulary while the runtime emitted a different set, so the UI kept printing bare keys like `high_risk_operation`
+
+### Running it locally
 
 ```bash
-bash scripts/dev-up.sh                                   # Postgres → 迁移 → API(:3000) → Vite(:5173)，幂等
-DATABASE_URL=…/apos pnpm --filter @apos/api seed --reset # 造演示数据（走真实链路，只在空库时需要）
-pnpm --filter @apos/web smoke <projectId>                # 真实浏览器冒烟，111 项（需先 seed --reset：它会改数据）
+bash scripts/dev-up.sh                                   # Postgres → migrations → API(:3000) → Vite(:5173), idempotent
+DATABASE_URL=…/apos pnpm --filter @apos/api seed --reset # build demo data (through the real code path; only needed on an empty database)
+pnpm --filter @apos/web smoke <projectId>                # real-browser smoke, 111 checks (run seed --reset first: it modifies data)
 ```
 
-`dev-up.sh` 里面就是原来那几步（`pg-dev.sh` 起库、两个库分别 `db:migrate`、
-`@apos/api start`、`@apos/web dev`），拆开手动跑也一样。容器回收后重跑一遍即可。
+`dev-up.sh` is just the same steps as before (`pg-dev.sh` starts the database, `db:migrate` runs against both databases, `@apos/api start`, `@apos/web dev`); running them by hand works identically. If the container is reclaimed, just run it again.
 
-★ `TEST_DATABASE_URL` 必须与 `DATABASE_URL` 不同 —— 测试在 `beforeEach` 里 TRUNCATE 全表。
+★ `TEST_DATABASE_URL` must differ from `DATABASE_URL` — the tests TRUNCATE every table in `beforeEach`.

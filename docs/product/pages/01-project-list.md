@@ -1,203 +1,205 @@
-# 01 项目列表
+# 01 Project List
 
-## 1. 页面信息
+*[中文版本 / Chinese version](01-project-list.zh.md)*
 
-| 项 | 值 |
+## 1. Page Facts
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects` |
-| 层级 | 一级页面（登录后默认落地页） |
-| 主要角色 | 全部角色 |
-| 优先级 | P0 |
-| 对应产品文档 | 8.1 Home 工作台、6.1 Project、8.9.4 自治等级 |
+| Route | `/projects` |
+| Level | Top-level page (default landing page after sign-in) |
+| Primary roles | All roles |
+| Priority | P0 |
+| Related product docs | 8.1 Home workspace, 6.1 Project, 8.9.4 Autonomy levels |
 
 ---
 
-## 2. 页面目标
+## 2. Purpose
 
-一屏回答三个问题：**我有哪些项目、哪些项目在出问题、我现在要做什么。**
+One screen, three questions: **which projects do I have, which ones are in trouble, and what do I need to do right now.**
 
-MVP 阶段本页同时承担 Home 工作台职责（文档 8.1），因此除项目卡片外必须包含"待我处理"区域——尤其对 OPC 用户，这是他们每天唯一需要看的页面。
+For the MVP this page doubles as the Home workspace (doc 8.1), so alongside the project cards it must carry a "Needs you" area — especially for OPC users, for whom this is the only page they need to open on a given day.
 
 ---
 
-## 3. 入口与出口
+## 3. Ways In and Out
 
-**入口**：登录后默认；顶部 Logo 点击；全局导航 `Projects`。
+**In**: default after sign-in; clicking the logo in the header; the global `Projects` nav item.
 
-**出口**：
+**Out**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 点击项目卡片 | `02 项目总览` |
-| 点击卡片上的看板图标 | `05 Autonomous Board` |
-| 点击"待我决策"条目 | `11 决策详情` |
-| 点击"新建项目" | 新建项目弹窗 → `03 需求录入` |
-| 点击风险提示 | `02 项目总览` 并锚定到风险区 |
+| Click a project card | `02 Project Overview` |
+| Click the board icon on a card | `05 Autonomous Board` |
+| Click a "needs my decision" row | `11 Decision Detail` |
+| Click "New project" | New-project dialog → `03 Requirement Intake` |
+| Click a risk callout | `02 Project Overview`, anchored to the risk section |
 
 ---
 
-## 4. 页面结构
+## 4. Page Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  项目                                    [+ 新建项目]  [卡片|列表 ⇄]  │
+│  Projects                         [+ New project]  [cards | list ⇄]  │
 ├──────────────────────────────────────────────────────────────────────┤
-│  ⚡ 待我处理                                              查看全部 →   │
+│  ⚡ Needs you                                           View all →   │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ ⏰ 决策超时 2h  支付网关选型          [订单重构]      [去处理]  │  │
-│  │ ⚠ 待审批       生产发布 v1.4.0        [官网改版]      [去处理]  │  │
-│  │ 👁 待验收       用户导出功能           [数据平台]      [去处理]  │  │
+│  │ ⏰ Overdue 2h       Payment gateway     [Order rework]  [Open] │  │
+│  │ ⚠ Needs approval    Prod release v1.4.0 [Website]       [Open] │  │
+│  │ 👁 Needs sign-off    User export         [Data platform] [Open] │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 ├──────────────────────────────────────────────────────────────────────┤
-│  筛选：[全部 ▾] [状态 ▾] [风险 ▾] [自治等级 ▾] [我的角色 ▾]  🔍       │
+│  Filters: [All ▾] [Status ▾] [Risk ▾] [Autonomy ▾] [My role ▾]  🔍   │
 ├──────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────┐  ┌─────────────────────────┐           │
-│  │ 订单系统重构      ⋯     │  │ 官网改版           ⋯    │           │
-│  │ Agent-led + Approval    │  │ Human-led               │           │
-│  │ ─────────────────────── │  │ ─────────────────────── │           │
-│  │ 健康度 ██████░░░░ 62 ⚠  │  │ 健康度 █████████░ 91    │           │
-│  │ 进度   ████████░░ 78%   │  │ 进度   ███░░░░░░░ 31%   │           │
-│  │                         │  │                         │           │
-│  │ 👤3  🤖5 (2执行中)      │  │ 👤2  🤖1 (空闲)         │           │
-│  │ ⏳ 待决策 2  ⛔ 阻塞 1   │  │ ⏳ 待决策 0             │           │
-│  │ $128.40 / $500  ▓▓▓░░   │  │ $12.80 / $200           │           │
-│  │                         │  │                         │           │
-│  │ ⚠ 关键路径延期风险 高    │  │ 里程碑 M1  还剩 6 天     │           │
-│  │ ─────────────────────── │  │ ─────────────────────── │           │
-│  │ 张伟 · 更新于 3 分钟前   │  │ 李娜 · 更新于 2 小时前   │           │
-│  └─────────────────────────┘  └─────────────────────────┘           │
+│  ┌────────────────────────────┐  ┌────────────────────────────┐      │
+│  │ Order system rework      ⋯ │  │ Website redesign         ⋯ │      │
+│  │ Agent-led + Approval       │  │ Human-led                  │      │
+│  │ ────────────────────────── │  │ ────────────────────────── │      │
+│  │ Health   ██████░░░░ 62 ⚠   │  │ Health   █████████░ 91     │      │
+│  │ Progress ████████░░ 78%    │  │ Progress ███░░░░░░░ 31%    │      │
+│  │                            │  │                            │      │
+│  │ 👤 3  🤖 5 (2 running)     │  │ 👤 2  🤖 1 (idle)          │      │
+│  │ ⏳ Pending 2  ⛔ Blocked 1 │  │ ⏳ Pending 0               │      │
+│  │ $128.40 / $500  ▓▓▓░░      │  │ $12.80 / $200              │      │
+│  │                            │  │                            │      │
+│  │ ⚠ Critical path slip  High │  │ Milestone M1  6 days left  │      │
+│  │ ────────────────────────── │  │ ────────────────────────── │      │
+│  │ Zhang Wei · 3 min ago      │  │ Li Na · 2 hours ago        │      │
+│  └────────────────────────────┘  └────────────────────────────┘      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Areas in Detail
 
-### 5.1 待我处理（Action Bar）
+### 5.1 Needs You (Action Bar)
 
-**只显示需要"我本人"行动的事项**，不显示项目动态、不显示 Agent 日志。这是全页最高优先级区域。
+**Only items that require action from me personally.** No project activity feed, no Agent logs. This is the highest-priority area on the page.
 
-| 字段 | 来源 | 说明 |
+| Field | Source | Notes |
 | --- | --- | --- |
-| Human Gate 状态 | `Decision.status` / `WorkItem.human_gate` | 用通用组件 §5.1 |
-| 事项标题 | `Decision.title` / `WorkItem.title` | 超长省略，悬停全文 |
-| 所属项目 | `Project.name` | 可点击跳项目 |
-| 剩余时限 | `Decision.due_at` | 已超时显示「超时 Xh」并置顶 |
-| 行动按钮 | — | 直达决策详情，不经过中间页 |
+| Human Gate status | `Decision.status` / `WorkItem.human_gate` | Uses the shared component, §5.1 |
+| Item title | `Decision.title` / `WorkItem.title` | Truncated when long, full text on hover |
+| Owning project | `Project.name` | Clickable, jumps to the project |
+| Time remaining | `Decision.due_at` | Once past due, shows "Overdue Xh" and pins to the top |
+| Action button | — | Goes straight to the decision detail, no intermediate page |
 
-**排序**：`已超时 → 4h 内到期 → 高风险 → 其余按到期时间`。
+**Sort order**: `overdue → due within 4h → high risk → everything else by due time`.
 
-**上限**：最多 5 条，超出显示「还有 N 项 →」跳 `10 Decision Center`。
+**Cap**: at most 5 rows; beyond that, show "N more →" linking to `10 Decision Center`.
 
-**为空时**：整个区域折叠为一行绿色提示「暂无待你处理的事项」，不占屏幕高度。
+**When empty**: the whole area collapses to a single green line — "Nothing needs you right now" — and takes up no vertical space.
 
-### 5.2 筛选与视图
+### 5.2 Filters and Views
 
-| 筛选项 | 选项 |
+| Filter | Options |
 | --- | --- |
-| 归属 | 我参与的（默认） / 我负责的 / 全部 |
-| 状态 | 进行中 / 已暂停 / 已结项 / 已归档 |
-| 风险 | 低 / 中 / 高 / 极高 |
-| 自治等级 | Human-led / Agent-led + Approval / Agent-autonomous |
-| 我的角色 | Sponsor / 技术负责人 / PM / 成员 |
+| Scope | Projects I'm on (default) / Projects I own / All |
+| Status | Active / Paused / Closed / Archived |
+| Risk | Low / Medium / High / Critical |
+| Autonomy level | Human-led / Agent-led + Approval / Agent-autonomous |
+| My role | Sponsor / Tech lead / PM / Member |
 
-筛选条件持久化到 URL query，可分享。
+Filter state is persisted into the URL query, so a filtered view can be shared as a link.
 
-**列表视图**：卡片信息的表格化，增加「Lead Time 中位数」「本周交付数」两列，供管理者横向对比。
+**List view**: the same card data as a table, plus two extra columns — "median lead time" and "delivered this week" — so managers can compare projects side by side.
 
-### 5.3 项目卡片
+### 5.3 Project Card
 
-| 区块 | 字段 | 来源 |
+| Block | Fields | Source |
 | --- | --- | --- |
-| 头部 | 项目名、自治等级 Badge、更多菜单 | `Project` |
-| 健康度 | 0–100 分 + 条形 + 趋势箭头 | `Analytics.health_score`（文档 8.13.4） |
-| 进度 | 已完成 Work Item / 总数 | `WorkItem` 聚合 |
-| 团队 | 人类数、Agent 数、执行中 Agent 数 | `Project.members` / `agents` |
-| 待办 | 待决策数、阻塞任务数 | `Decision` / `WorkItem` 聚合 |
-| 成本 | 已用 / 预算 + 进度条 | `Project.budget`（文档 5.6 组件） |
-| 风险行 | 最高优先级的一条风险或最近里程碑 | 风险引擎 / `Plan.milestones` |
-| 底部 | 负责人 + 最后活动时间 | `Event` 最新一条 |
+| Header | Project name, autonomy-level badge, overflow menu | `Project` |
+| Health | 0–100 score + bar + trend arrow | `Analytics.health_score` (doc 8.13.4) |
+| Progress | Completed work items / total | `WorkItem` aggregate |
+| Team | Humans, Agents, Agents currently running | `Project.members` / `agents` |
+| Queue | Pending decisions, blocked work items | `Decision` / `WorkItem` aggregates |
+| Cost | Spent / budget + progress bar | `Project.budget` (component, doc 5.6) |
+| Risk line | The single highest-priority risk, or the next milestone | Risk engine / `Plan.milestones` |
+| Footer | Owner + last activity time | Latest `Event` |
 
-**健康度配色**：≥80 绿，60–79 黄，<60 红。<60 时卡片左侧加 4px 红色边条。
+**Health colors**: ≥80 green, 60–79 yellow, <60 red. Below 60, the card also gets a 4px red bar down its left edge.
 
-**更多菜单**：进入看板 / 进入 Analytics / 项目设置 / 暂停项目 / 归档。「暂停项目」会停止所有 Agent 调度，需二次确认并说明影响。
+**Overflow menu**: open board / open Analytics / project settings / pause project / archive. "Pause project" halts all Agent scheduling, so it takes a second confirmation that spells out the consequences.
 
-### 5.4 新建项目
+### 5.4 New Project
 
-轻量弹窗，只收集必要信息，其余交给 Project Agent 推断：
+A lightweight dialog that collects only what it has to and leaves the rest for the Project Agent to infer:
 
 ```
-项目名称        [                    ]  *
-项目目标        [                    ]  多行，可留空
-项目类型        [研发 ▾]                 影响默认流程与 Policy 模板
-自治等级        (•) Agent-led + Approval  ← 默认
-                ( ) Human-led
-                ( ) Agent-autonomous      需 tech_lead 权限
-预算上限        [$        ] 可留空
-业务负责人      [👤 ▾]
-技术负责人      [👤 ▾]
+Project name        [                    ]  *
+Project goal        [                    ]  multi-line, optional
+Project type        [R&D ▾]                 sets the default flow and Policy template
+Autonomy level      (•) Agent-led + Approval  ← default
+                    ( ) Human-led
+                    ( ) Agent-autonomous      requires tech_lead
+Budget cap          [$        ] optional
+Business owner      [👤 ▾]
+Tech lead           [👤 ▾]
 
-            [取消]  [创建并录入需求]
+            [Cancel]  [Create and enter requirements]
 ```
 
-创建后直接跳 `03 需求录入`，不停留在空项目页——避免用户面对一个什么都没有的项目不知所措。
+On creation the user goes straight to `03 Requirement Intake` rather than landing on an empty project page — nobody knows what to do when handed a project with nothing in it.
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**首次登录（无项目）**
-
-```
-空状态 → 「创建你的第一个项目」+ 「从 Jira / GitHub 导入」两个入口
-      → 新建项目弹窗 → 需求录入页
-```
-
-**日常使用（OPC 场景，文档 8.1）**
+**First sign-in (no projects)**
 
 ```
-落地 → 待我处理区（今天要拍板的事）→ 逐条处理
-                                    ↓ 处理完
-     → 扫一眼项目卡片健康度 → 只点开有红色边条的项目
+Empty state → "Create your first project" + "Import from Jira / GitHub"
+            → new-project dialog → requirement intake
 ```
 
-**管理者场景**
+**Day-to-day use (the OPC scenario, doc 8.1)**
 
 ```
-切列表视图 → 按健康度排序 → 定位问题项目 → 进 Analytics 看瓶颈
+Land → Needs-you area (today's calls to make) → work through it row by row
+                                              ↓ done
+     → Glance at card health scores → open only the projects with a red edge bar
+```
+
+**Manager scenario**
+
+```
+Switch to list view → sort by health → find the troubled project → open Analytics for the bottleneck
 ```
 
 ---
 
-## 7. 状态设计
+## 7. States
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 加载 | 卡片骨架屏 6 个；"待我处理"区独立加载，先到先显示 |
-| 空（无项目） | 见 §6 首次登录 |
-| 空（筛选无结果） | 「没有符合条件的项目」+ 清除筛选按钮 |
-| 错误 | 保留已缓存的项目卡片，顶部黄条提示刷新失败 |
+| Loading | Six card skeletons; the "Needs you" area loads independently and renders as soon as it arrives |
+| Empty (no projects) | See §6, first sign-in |
+| Empty (no filter matches) | "No projects match these filters" + a clear-filters button |
+| Error | Keep the cached project cards, show a yellow bar at the top saying the refresh failed |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看项目卡片 | 是项目成员，或具备组织级 `viewer` |
-| 新建项目 | `org_admin` / `pm` / `sponsor` |
-| 设置 Agent-autonomous | `tech_lead` 及以上（自治等级下拉中该项对其他角色置灰） |
-| 暂停 / 归档项目 | `pm` 及以上 |
+| View a project card | Be a member of the project, or hold org-level `viewer` |
+| Create a project | `org_admin` / `pm` / `sponsor` |
+| Set Agent-autonomous | `tech_lead` or above (the option is grayed out in the autonomy dropdown for everyone else) |
+| Pause / archive a project | `pm` or above |
 
-未参与的项目默认不出现在列表中；`org_admin` 可通过筛选「全部」查看，卡片显示但内部数据打码，需申请加入后可见。
+Projects you are not on do not appear in the list by default. An `org_admin` can see them by filtering to "All", but the cards show with their internals redacted — the real data only appears after requesting to join.
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Project`、`Decision`、`WorkItem`（聚合）、`Event`（最后活动）、`Analytics.health_score`
+**Domain objects**: `Project`, `Decision`, `WorkItem` (aggregate), `Event` (last activity), `Analytics.health_score`
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/projects?scope=mine&status=&risk=&autonomy=
@@ -213,39 +215,39 @@ POST /api/projects
 SSE  /api/stream?channels=user:{id}:action-items,projects:mine
 ```
 
-**性能**：项目指标聚合走预计算表，页面不实时算；指标延迟容忍 60s，卡片上标注「指标更新于 X 前」。
+**Performance**: project metrics come from a precomputed table; the page never aggregates them live. Staleness of up to 60s is acceptable, and the card notes "metrics updated X ago".
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it tells us |
 | --- | --- |
-| `project_list_viewed` | DAU、落地页留存 |
-| `action_item_clicked{type, overdue}` | 待处理区是否真正被使用 |
-| `project_card_clicked{health_bucket}` | 用户是否被健康度引导 |
-| `project_created{type, autonomy}` | 自治等级的真实选择分布 |
-| `time_to_first_action` | 落地到首次点击的时长——衡量"一眼看懂"是否成立 |
+| `project_list_viewed` | DAU, landing-page retention |
+| `action_item_clicked{type, overdue}` | Whether the needs-you area actually gets used |
+| `project_card_clicked{health_bucket}` | Whether the health score is steering people |
+| `project_created{type, autonomy}` | The real distribution of autonomy-level choices |
+| `time_to_first_action` | Time from landing to first click — the measure of whether the page is legible at a glance |
 
-**页面成功标准**：80% 的会话在 15 秒内产生一次有效点击；待我处理区的点击率 > 60%。
+**Success criteria for this page**: 80% of sessions produce a meaningful click within 15 seconds; click-through on the needs-you area above 60%.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 项目数 > 50 | 卡片视图分页（24/页）；自动建议切换列表视图 |
-| 健康度未计算（新项目 < 24h） | 显示「计算中」而非 0 分，避免新项目全是红的 |
-| 预算未设置 | 成本行只显示已用金额，不显示进度条 |
-| Agent 全部离线 | 卡片团队区显示「🤖 5 (全部离线)」橙色，并在待我处理区插入一条系统提醒 |
-| 项目被他人归档 | 实时移出列表，顶部提示「订单系统重构已被张伟归档」 |
-| 待我处理事项被他人抢先处理 | 该行淡出并标注「已由李娜处理」，3s 后移除 |
+| More than 50 projects | Paginate the card view (24/page) and suggest switching to list view |
+| Health score not yet computed (project under 24h old) | Show "computing" rather than a score of 0, so new projects aren't all red |
+| No budget set | The cost line shows spend only, with no progress bar |
+| All Agents offline | The team block shows "🤖 5 (all offline)" in orange, and a system notice is inserted into the needs-you area |
+| Project archived by someone else | Removed from the list in real time, with a toast: "Order system rework was archived by Zhang Wei" |
+| A needs-you item handled by someone else first | The row fades and is labeled "handled by Li Na", then disappears after 3s |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. 健康度算分公式（文档 8.13.4 列了十个维度但未给权重）需要产品与数据侧确认，MVP 是否先用简化版（进度 40% + 阻塞 30% + 决策等待 30%）？
-2. OPC 用户可能只有 1–2 个项目，卡片视图价值不大，是否为单项目用户直接跳转项目总览？
-3. 「待我处理」是否需要包含"我委派出去但对方超时"的事项？倾向于包含，但需与 Decision Center 的分类保持一致。
+1. The health-score formula (doc 8.13.4 lists ten dimensions but assigns no weights) needs sign-off from product and data. Should the MVP ship a simplified version first (progress 40% + blocked 30% + decision wait 30%)?
+2. OPC users may only have one or two projects, where the card view buys little. Should a single-project user be routed straight to the project overview?
+3. Should "Needs you" include items *I* delegated where the other party is now overdue? Leaning yes, but it has to stay consistent with how Decision Center categorizes them.

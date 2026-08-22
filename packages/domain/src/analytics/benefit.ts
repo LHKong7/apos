@@ -2,70 +2,77 @@ import { RUN_SUCCESS } from '@apos/contracts';
 import type { AnalyticsInput } from './types';
 
 /**
- * 成本效益（页面文档 12 §12.3 的待确认项）。
+ * Cost/benefit (the open question in page doc 12 §12.3) / 成本效益。
  *
- * ★ 这一块之前不做的理由是：「硬编一个时薪算出来的『本月为你省了 $12,400』
- *   看起来最像成果，也最经不起追问 —— 被问一次『这个数怎么来的』
- *   就再也没人信这一页了。」
+ * ★ The reason this was left undone: "'we saved you $12,400 this month', computed from a
+ *   hard-coded hourly rate, looks the most like a result and holds up the worst under
+ *   questioning — one 'where does that number come from?' and nobody trusts this page again."
  *
- *   问题从来不在技术上，在于那个数字**不可证伪**。
- *   所以解法不是不做，是把基准变成**用户自己填的输入**，
- *   并且把每一步换算都摊在明面上：
- *   基准是你填的、工时是系统记的、结论是这两者的除法。
- *   一个「你自己的假设推出来的结论」可以被追问，也就可以被相信。
+ *   The problem was never technical; it was that the number is **unfalsifiable**. So the fix is
+ *   not to skip the feature but to make the baseline an input **the user fills in themselves**,
+ *   and to lay every conversion step out in the open: you supplied the baseline, the system
+ *   recorded the hours, the conclusion is those two divided. A conclusion derived from your own
+ *   assumption can be argued with, and therefore can be believed.
  *
- * ★ 同时必须给出**代价那一侧**。只算「Agent 干了多少活」而不算
- *   「人为此花了多少时间收拾」，得到的是一个营销数字：
- *   人工覆盖、返工、等待决策都是这套自动化的真实开销，
- *   不减掉就是在自欺。
+ * ★ The **cost side** must be shown too. Counting only "how much work an Agent did" without
+ *   counting "how much time people spent cleaning up after it" produces a marketing number:
+ *   manual overrides, rework, and waiting on decisions are real expenses of this automation, and
+ *   not subtracting them is self-deception.
+ *
+ * 基准由用户自己填、每一步换算都摊开，代价那一侧也必须减掉 —— 否则得到的是一个
+ * 经不起一次追问的营销数字。
  */
 
 export interface BenefitInput {
-  /** 用户填的人力小时成本；null = 没填，所有折算项都不出数 */
+  /** The hourly labor cost the user supplied; null = not supplied, so nothing converts to money */
   laborHourlyCost: number | null;
   currency: string;
 }
 
 export interface BenefitLine {
   /**
-   * ★★ 界面按它取词（`analytics.benefit.<key>.label` / `.basis`），
-   *   下面那两个中文字段是日志与兜底用的。界面读码，日志读句子。
+   * ★★ The UI looks up its wording from this key (`analytics.benefit.<key>.label` / `.basis`);
+   *   the two Chinese fields below exist for logs and as a fallback.
+   *   界面读码，日志读句子。
    */
   key: string;
   label: string;
-  /** `basis` 那句话里的数字，供词条按各自语言的语序组织 */
+  /** The numbers inside the `basis` sentence, so each language can order them its own way */
   params?: Record<string, string | number>;
-  /** 小时数，来自系统记录 */
+  /** Hours, taken from what the system recorded */
   hours: number;
-  /** 折算成钱；laborHourlyCost 为 null 时是 null */
+  /** Converted to money; null when laborHourlyCost is null */
   money: number | null;
-  /** 这一行是收益还是代价 */
+  /** Whether this line is a benefit or a cost */
   side: 'benefit' | 'cost';
-  /** 这个数字怎么来的，一句话说清 */
+  /** Where this number came from, in one sentence */
   basis: string;
 }
 
 export interface BenefitMetrics {
-  /** 没有基准时为 false，页面必须显示「填一个数才能换算」而不是编一个 */
+  /** False when there is no baseline; the page must then say "fill in a number to convert"
+   *  rather than inventing one / 而不是编一个 */
   hasBaseline: boolean;
   currency: string;
   laborHourlyCost: number | null;
 
   lines: BenefitLine[];
 
-  /** Agent 承担的工时 */
+  /** Hours of work the Agents carried */
   agentHours: number;
-  /** 人为这套自动化额外花掉的工时（覆盖 + 返工） */
+  /** Extra human hours this automation cost (overrides + rework) */
   humanOverheadHours: number;
-  /** Agent 的真金白银开销 */
+  /** The hard-currency spend on Agents */
   agentSpend: number;
 
-  /** 净收益 = 人力折算 − 人的额外投入折算 − Agent 开销；没有基准时为 null */
+  /** Net = labor value − extra human effort − Agent spend; null when there is no baseline */
   net: number | null;
   /**
-   * ★ 结论一句话，且必须能被追问。
-   *   它总是显式带上「按你填的 X/小时」——
-   *   读者一眼就知道这个数字建立在什么假设上。
+   * ★ The conclusion in one sentence, and it has to survive questioning.
+   *   It always states "at the X/hour you entered" explicitly, so the reader sees at a glance
+   *   which assumption the number rests on.
+   *
+   *   结论必须能被追问，所以总是显式带上「按你填的 X/小时」。
    */
   verdict: string;
 }
@@ -77,9 +84,11 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
   const inWindow = items.filter((i) => i.createdAt <= window.to && (i.actualEnd ?? window.to) >= window.from);
 
   /**
-   * Agent 承担的工时用**实际执行时长**，不用 estimatedHours。
-   * 用估算值等于「计划说要 8 小时，所以省了 8 小时」——
-   * 那是在拿一个从没被验证过的数字当收益。
+   * Agent hours come from **actual execution duration**, never from estimatedHours.
+   * Using the estimate amounts to "the plan said 8 hours, therefore we saved 8 hours" — booking a
+   * number that was never once validated as a benefit.
+   *
+   * 用估算值等于拿一个从没被验证过的数字当收益。
    */
   const agentHours = round(
     runs
@@ -88,36 +97,35 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
   );
 
   /**
-   * ★★ 全站只有这一处仍以货币计量，而且必须如此。
+   * ★★ This is the only place left that measures in currency, and necessarily so.
    *
-   *   ROI 是「人力折算 − Agent 开销」这个减法，两边得同一个单位。
-   *   人力那一侧的单位由用户填的时薪决定，只能是钱 ——
-   *   token 减小时数不是一个量。所以这里读 costUsd 而不是 tokens。
+   *   ROI is the subtraction "labor value − Agent spend", and both sides must share a unit. The
+   *   labor side is denominated by the hourly rate the user entered, so money is the only
+   *   option — tokens minus hours is not a quantity. Hence costUsd here rather than tokens.
    *
-   *   代价是这个数会随官方调价漂移，正是记账口径换成 token 要躲开的那件事。
-   *   页面因此把它标成「按运行时结算的美元估算」，与其余 token 口径的
-   *   指标区分开：漂移是可以接受的，把漂移说成精确不行。
+   *   The price is that this figure drifts with vendor repricing, which is exactly what moving
+   *   accounting onto tokens was meant to avoid. The page therefore labels it as "a USD estimate
+   *   settled by the runtime", set apart from the token-denominated metrics: drift is acceptable,
+   *   passing drift off as precision is not.
    *
-   * This is the only place left that measures in currency, necessarily so.
-   * ROI subtracts agent spend from labor value, and both sides must share a
-   * unit. The labor side is denominated by the user's hourly rate, so money
-   * is the only option — tokens minus hours is not a quantity. The cost is
-   * that this figure drifts with vendor repricing, which is exactly what
-   * token accounting avoids elsewhere; the page therefore labels it as a USD
-   * estimate rather than passing the drift off as precision.
+   * 全站只有这一处仍以货币计量：ROI 两边得同一个单位，而人力那一侧只能是钱。
+   * 代价是它会随官方调价漂移，所以页面把它单独标成美元估算。
    */
   const agentSpend = round(runs.reduce((s, r) => s + r.costUsd, 0));
 
   /**
-   * 人的额外投入。
+   * Extra human effort.
    *
-   * ★ 人工覆盖按一次 15 分钟估：看懂现状 + 决定怎么改 + 写原因。
-   *   这是个假设，所以 basis 里写明了 —— 不写明的话它就成了
-   *   另一个「不可证伪的数字」，只不过这次是往不利方向编。
+   * ★ A manual override is estimated at 15 minutes: understand the current state, decide what to
+   *   change, write the reason. That is an assumption, which is why `basis` says so outright —
+   *   left unstated it becomes another unfalsifiable number, only this time one that errs against
+   *   the platform.
+   *
+   *   人工覆盖按一次 15 分钟估，这是个假设，所以 basis 里写明了。
    */
   const overrideHours = round((overrides.length * OVERRIDE_MINUTES) / 60);
 
-  /** 返工：跑过不止一次的任务，多出来的那些次都是返工 */
+  /** Rework: for a task that ran more than once, every run past the first is rework */
   const runsByItem = new Map<string, number>();
   for (const r of runs) runsByItem.set(r.workItemId, (runsByItem.get(r.workItemId) ?? 0) + 1);
   const reworkRuns = [...runsByItem.values()].reduce((s, n) => s + Math.max(0, n - 1), 0);
@@ -185,7 +193,8 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
   };
 }
 
-/** 一次人工覆盖的估计耗时：看懂现状 + 决定怎么改 + 写原因 */
+/** Estimated time for one manual override: understand the state, decide the change, write the
+ *  reason / 这是个估计值，不是实测 */
 const OVERRIDE_MINUTES = 15;
 
 function verdictOf(x: {
@@ -202,8 +211,11 @@ function verdictOf(x: {
   }
 
   /**
-   * ★ 没有基准时给的是「事实 + 一个待你填的空」，不是一个编出来的结论。
-   *   这句话本身就是这一块的设计说明：数字要你自己的假设才成立。
+   * ★ With no baseline, what comes back is "the facts, plus a blank for you to fill in" — not a
+   *   fabricated conclusion. The sentence is itself the design note for this section: the number
+   *   only holds once your own assumption is in it.
+   *
+   *   没有基准时给的是事实加一个待填的空，不是一个编出来的结论。
    */
   if (x.rate === null || x.net === null) {
     return (

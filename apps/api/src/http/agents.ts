@@ -17,17 +17,19 @@ import { notFound } from './errors';
 import { loadAnalyticsInput } from './analytics';
 
 /**
- * Agent Workspace（页面文档 08）。
+ * Agent Workspace (page doc 08) / Agent 工作台。
  *
- * ★ 设计基调是「员工档案 + 工作台」，不是「服务配置页」。
- *   所以这里返回的东西按人事口径组织：它在干什么、干得怎么样、
- *   被允许做什么、花了多少钱、出问题怎么干预 ——
- *   而不是一堆 runtime 配置字段。
+ * ★ The design register is "personnel file + workbench", not "service settings
+ *   page". So everything returned here is organized the way an HR record would
+ *   be: what it is working on, how well it does, what it is allowed to do, what
+ *   it has cost, and how to step in when something goes wrong — rather than a
+ *   pile of runtime configuration fields.
  */
 
 export async function listAgents(db: Database, projectId: string | null, orgId: string) {
-  // ★ 没有 projectId 时也必须按组织收窄 —— 否则花名册会列出别的组织的 Agent
-  /** ★ 组织级视图里没有「本项目」这个概念，membership 为 null 而不是 false */
+  // ★ Even without a projectId the query must be narrowed by org — otherwise the roster
+  //   lists agents belonging to other organizations.
+  /** ★ The org-level view has no notion of "this project", so membership is null, not false */
   const rows: (typeof agents.$inferSelect & { inProject?: boolean })[] = projectId
     ? await agentsOfProject(db, projectId)
     : await db.select().from(agents).where(eq(agents.orgId, orgId));
@@ -52,18 +54,18 @@ export async function listAgents(db: Database, projectId: string | null, orgId: 
       type: a.type,
       model: a.model,
       /**
-       * ★★ 两个互不相干的状态，分两栏说。
+       * ★★ Two unrelated states, reported in two separate fields.
        *
-       *   `status` 是**生命周期**（在岗 / 暂停 / 已停用），
-       *   `inProject` 是**这个项目里的成员关系**。此前界面只显示前者，
-       *   而且把 retired 和 active 一起画成绿色的「正常」——
-       *   一个已停用的 Agent 在花名册上显示「● 正常」，
-       *   同时在看板上被标成「状态为 retired」（问题记录 #10 / #11）。
+       *   `status` is the **lifecycle** (active / paused / retired);
+       *   `inProject` is **membership in this project**. The UI used to show
+       *   only the first, and painted retired and active alike as a green
+       *   "normal" — so a retired agent read "● normal" on the roster while
+       *   the board flagged it as "status is retired" (issue log #10 / #11).
        */
       status: a.status,
       pausedReason: a.pausedReason,
       inProject: a.inProject ?? null,
-      /** 负载：进行中的 Run / 并发上限 */
+      /** Load: runs in flight over the concurrency ceiling */
       load: { running, max: a.maxConcurrency },
       runs: p?.runs ?? 0,
       successRate: p?.successRate ?? null,
@@ -113,12 +115,13 @@ export async function getAgent(
   const itemById = new Map(items.map((i) => [i.id, i]));
 
   /**
-   * ★ 「队列」只放没做完的。
+   * ★ The "queue" holds only unfinished work.
    *
-   *   executorId 是永久归属，不是队列 —— 直接列出来会把这个 Agent
-   *   历史上干过的每一件事都算进「队列 16」，用户看到的是
-   *   「它手上压了 16 个活」，而真相是 1 个在跑、15 个早就交付了。
-   *   做完了多少放到 doneCount，想看历史去下面的执行记录。
+   *   executorId is a permanent assignment, not a queue — listing it directly
+   *   counts everything this agent has ever done into "queue: 16", so the user
+   *   reads "it has 16 items piled up" when the truth is 1 running and 15
+   *   delivered long ago. The finished count goes to doneCount, and the
+   *   history lives in the run records further down.
    */
   const assigned = await db
     .select()
@@ -141,11 +144,12 @@ export async function getAgent(
   const p = perf.get(agentId);
 
   /**
-   * ★ 运行时能力报告（页面文档 08 §5 / 14 §5.4）。
+   * ★ Runtime capability report (page doc 08 §5 / 14 §5.4).
    *
-   *   不静默降级：这个运行时做不到什么、做不到会怎样、对用户什么影响，
-   *   全都摊开。用户在派高风险任务之前有权知道
-   *   「这个 Agent 的暂停其实是终止」。
+   *   No silent degradation: what this runtime cannot do, what happens when it
+   *   cannot, and what that means for the user are all laid out. Before handing
+   *   an agent a high-risk task, the user has a right to know that "pause on
+   *   this agent is really terminate".
    */
   let capability: CapabilityReport | null = null;
   if (registry.has(agent.id)) {
@@ -173,7 +177,7 @@ export async function getAgent(
       tokenLimitPerRun: agent.tokenLimitPerRun,
       tokenLimitDaily: agent.tokenLimitDaily,
       ownerName: userName.get(agent.ownerId) ?? '未知',
-      /** 运行时是 Agent 自己的属性，不再指向一个共享的「接入」对象 */
+      /** The runtime is a property of the agent itself, no longer a shared "connection" object */
       runtime: {
         kind: agent.runtimeKind,
         config: agent.runtimeConfig,
@@ -183,9 +187,11 @@ export async function getAgent(
     },
 
     /**
-     * ★ 权限独立配置，绝不继承人类用户（产品文档 十）。
-     *   页面把黑名单单独列出来并标注「不可被模板或继承覆盖」——
-     *   一个看不出边界的 Agent 档案，等于没有边界。
+     * ★ Permissions are configured independently and never inherited from a
+     *   human user (product doc X). The page lists the deny list separately and
+     *   marks it "cannot be overridden by a template or by inheritance" — an
+     *   agent profile whose boundary you cannot see is a profile with no
+     *   boundary at all.
      */
     permissions: {
       allowedTools: agent.allowedTools,
@@ -205,7 +211,7 @@ export async function getAgent(
         }
       : null,
 
-    /** 执行中的排在最前 —— 「它现在在做什么」是这一段要回答的第一个问题 */
+    /** Executing items sort first — "what is it doing right now" is the first question here */
     queue: queue
       .sort((a, b) => queueRank(a.status) - queueRank(b.status))
       .map((i) => ({
@@ -220,7 +226,8 @@ export async function getAgent(
       id: r.id,
       kind: r.kind,
       workItemId: r.workItemId,
-      // ★ 规划 Run 本来就没有工作项 —— 与「工作项被删了」是两回事，别混成一句话
+      // ★ A planning run never has a work item — a different thing from "the work item was
+      //   deleted", so the two must not collapse into one sentence.
       workItemTitle: r.workItemId
         ? (itemById.get(r.workItemId)?.title ?? '（已删除）')
         : '（需求分析 / 计划生成）',
@@ -234,7 +241,7 @@ export async function getAgent(
 
     capability,
 
-    /** 权限变更历史 —— 谁在什么时候放宽了这个 Agent 的边界 */
+    /** Permission change history — who widened this agent's boundary, and when */
     permissionChanges: changes.map((c) => ({
       direction: c.direction,
       changedBy: userName.get(c.changedBy) ?? c.changedBy,
@@ -245,16 +252,18 @@ export async function getAgent(
 }
 
 /**
- * 运行时能力清单（页面文档 14 §5.4 的真实部分）。
+ * Runtime capability inventory (the part of page doc 14 §5.4 that is real).
  *
- * 这是「集成设置」里唯一有真实后端支撑的一块：能力协商与降级矩阵
- * 已经在 Agent 协议里实现了，外部系统对接（Jira / GitHub / Slack）
- * 则完全没有后端，那部分不做。
+ * This is the only slice of "integration settings" with a real backend behind
+ * it: capability negotiation and the degradation matrix are implemented in the
+ * agent protocol. External system integration (Jira / GitHub / Slack) has no
+ * backend at all, so that part is not built.
  *
- * ★ 取消「运行时接入」层之后，这里按 **CLI 类型**聚合而不是按接入行 ——
- *   要回答的问题是「本组织在用哪几种 Code Agent、各自能力如何」，
- *   而不是「有几条接入记录」。同一类型下的多个 Agent 能力清单一致，
- *   取其中任意一个已注册的探测即可。
+ * ★ With the "runtime connection" layer gone, this aggregates by **CLI kind**
+ *   rather than by connection row — the question to answer is "which kinds of
+ *   code agent is this org running, and what can each do", not "how many
+ *   connection records exist". Agents of the same kind report identical
+ *   capabilities, so probing any one registered instance is enough.
  */
 export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
   const agentRows = await db.select().from(agents);
@@ -269,7 +278,7 @@ export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
   const out = [];
   for (const [kind, used] of byKind) {
     const spec = runtimeKindSpec(kind);
-    // 取第一个已注册的 Agent 探测能力 —— 同类型的清单一致
+    // Probe capabilities via the first registered agent — same kind, same inventory
     const probeTarget = used.find((a) => registry.has(a.id));
 
     let capability: CapabilityReport | null = null;
@@ -289,7 +298,7 @@ export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
       kind,
       status: used.some((a) => a.status === 'active') ? 'active' : 'inactive',
       protocolVersion: capability?.protocolVersion ?? null,
-      /** 进程里一个适配器都没注册 = 这一类运行时现在根本派不出任务 */
+      /** No adapter registered in this process = this runtime kind cannot be dispatched to at all */
       registered: Boolean(probeTarget),
       reachable,
       agentCount: used.length,
@@ -301,7 +310,7 @@ export async function listRuntimes(db: Database, registry: RuntimeRegistry) {
   return { runtimes: out };
 }
 
-/** 队列排序：在跑的 → 卡住的 → 排队的。等人的排在「卡住」一档，因为它确实动不了 */
+/** Queue order: running → stuck → waiting. Waiting-on-a-human counts as stuck, because it is */
 function queueRank(status: string): number {
   if (status === 'executing' || status === 'releasing') return 0;
   if (status === 'blocked' || status === 'failed' || status === 'awaiting_decision') return 1;
@@ -324,12 +333,12 @@ function buildCapability(manifest: Awaited<ReturnType<import('@apos/agent-runtim
       ...m,
       label: FEATURE_LABELS[m.feature] ?? m.feature,
     })),
-    /** critical 缺失 = 不该用它跑高风险任务 */
+    /** A missing critical feature = do not run high-risk work on this runtime */
     restricted: report.restricted,
   };
 }
 
-/** 能力项的中文名。这份清单是给项目负责人读的，不是给协议实现者读的。 */
+/** Chinese names for the capability keys. This list is read by project leads, not by protocol implementers. */
 const FEATURE_LABELS: Record<FeatureKey, string> = {
   streamingEvents: '实时事件流',
   toolCallVisibility: '工具调用可见',
@@ -350,20 +359,20 @@ const FEATURE_LABELS: Record<FeatureKey, string> = {
 void DEGRADATION_MATRIX;
 
 /**
- * 项目花名册。
+ * Project roster / 项目花名册。
  *
- * ★★ 这里刻意**列出整个组织的 Agent**，而不是只列项目成员 ——
- *   「组织里有它但这个项目还没加」正是用户最需要在这一页看到的状态，
- *   只列成员的话那些 Agent 就从花名册上消失了，而看板上还在说
- *   「refactor-agent 不是本项目成员」。
+ * ★★ This deliberately **lists every agent in the org**, not only project
+ *   members — "the org has it but this project hasn't added it" is exactly the
+ *   state the user needs to see on this page. List members only and those
+ *   agents vanish from the roster while the board keeps saying "refactor-agent
+ *   is not a member of this project".
  *
- * ★★ 但必须**标出来**。此前这一列全都显示成一样，于是花名册说
- *   refactor-agent 一切正常、看板说它不在这个项目里 ——
- *   两句都对，用户看到的是系统在自相矛盾（问题记录 #10）。
+ * ★★ But each row must **say which it is**. Every row used to render
+ *   identically, so the roster said refactor-agent was perfectly fine and the
+ *   board said it was not in this project — both true, and what the user saw
+ *   was a system contradicting itself (issue log #10).
  *
- * Deliberately lists every agent in the org, because "exists but not added to
- * this project" is the state the user needs to see here — but each row must
- * say which it is, otherwise the roster and the board contradict each other.
+ *   两句都对，用户看到的是系统在自相矛盾。
  */
 async function agentsOfProject(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
@@ -379,7 +388,7 @@ async function agentsOfProject(db: Database, projectId: string) {
   return rows.map((a) => ({ ...a, inProject: memberIds.has(a.id) }));
 }
 
-/** 效能口径与 Analytics 完全一致 —— 两处各算一套迟早对不上 */
+/** Performance is measured exactly as Analytics measures it — two definitions will diverge */
 async function performanceByAgent(
   db: Database,
   projectId: string | null,
@@ -400,7 +409,7 @@ async function performanceByAgent(
         merged.set(a.agentId, a);
         continue;
       }
-      // 跨项目合并按 Run 数加权，不是简单平均
+      // Merging across projects weights by run count, not a plain average
       const runs = seen.runs + a.runs;
       merged.set(a.agentId, {
         ...seen,

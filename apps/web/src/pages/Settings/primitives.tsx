@@ -3,22 +3,29 @@ import clsx from 'clsx';
 import { Label } from '@/components/ui/label';
 
 /**
- * 设置区各页共用的排版小件。
+ * Shared layout atoms for the settings pages / 设置区各页共用的排版小件。
  *
- * ★★ 单独一个文件，是因为「存储目标」从 Agent 配置里拆出去之后，这四个
- *   小件同时被两页用到。留在 AgentConfig.tsx 里再从存储页 import 的话，
- *   依赖方向就成了「存储页依赖 Agent 配置页」—— 而两页之间本来没有
- *   任何从属关系，那条 import 只是历史位置的残留。
+ * ★★ They get their own file because once the storage target was split out of
+ *   the Agent config page, these four atoms were needed by both pages. Leaving
+ *   them in AgentConfig.tsx and importing them from the storage page would
+ *   encode "the storage page depends on the Agent config page" — the two pages
+ *   have no such relationship, and that import would be nothing but a residue
+ *   of where the code happened to be written first.
  *
- *   Shared layout atoms for the settings pages. They live here rather than in
- *   AgentConfig.tsx because the storage page now needs them too, and importing
- *   them from a sibling page would encode a dependency that does not exist.
+ *   单独一个文件，是因为「存储目标」从 Agent 配置里拆出去之后，这四个小件
+ *   同时被两页用到。留在 AgentConfig.tsx 里再从存储页 import 的话，依赖方向
+ *   就成了「存储页依赖 Agent 配置页」—— 而两页之间本来没有任何从属关系，
+ *   那条 import 只是历史位置的残留。
  *
- * ★ 只放**没有领域知识**的东西：接受 label / tone / children，不认识
+ * ★ Only things with **no domain knowledge** live here: they take label / tone
+ *   / children and know nothing of Agents, repositories, or storage targets.
+ *   Anything that knows the domain belongs to the page that owns it.
+ *
+ *   只放**没有领域知识**的东西：接受 label / tone / children，不认识
  *   Agent、仓库或存储目标。有领域知识的组件属于它自己那一页。
  */
 
-/** 带标签与说明的表单行 */
+/** A form row with a label and help text */
 export function Labeled({
   label,
   help,
@@ -31,18 +38,16 @@ export function Labeled({
   children: React.ReactNode;
 }) {
   /**
-   * ★ 仍然是「包起来」而不是 htmlFor：这个小件不认识子元素的 id，
-   *   加一个必填的 id 参数要改几十个调用点。
-   *   代价是子元素为 Radix Select 时，点标签文字只把焦点给到触发器、
-   *   不展开下拉（Radix 在 pointerdown 上展开，而 label 转发的是 click）——
-   *   聚焦后空格/回车/下箭头照常展开，所以不是死路。
-   *
-   *   Still wraps rather than associating by htmlFor: this atom does not know
-   *   its child's id, and adding a required id would touch dozens of call
-   *   sites. The cost is that when the child is a Radix Select, clicking the
-   *   label text focuses the trigger without opening it — Radix opens on
+   * ★ Still wraps rather than associating by htmlFor: this atom does not know
+   *   its child's id, and adding a required id parameter would touch dozens of
+   *   call sites. The cost is that when the child is a Radix Select, clicking
+   *   the label text focuses the trigger without opening it — Radix opens on
    *   pointerdown and a label only forwards a click. Space/Enter/ArrowDown
-   *   still open it from there.
+   *   still open it from there, so it is not a dead end.
+   *
+   *   仍然是「包起来」而不是 htmlFor：这个小件不认识子元素的 id，加一个必填
+   *   的 id 参数要改几十个调用点。代价是子元素为 Radix Select 时，点标签文字
+   *   只把焦点给到触发器、不展开下拉 —— 聚焦后空格/回车/下箭头照常展开。
    */
   return (
     <Label className="mt-2 block font-normal first:mt-0">
@@ -56,7 +61,7 @@ export function Labeled({
   );
 }
 
-/** 卡片上的一格「字段名 / 值」，配 <dl> 使用 */
+/** One "field name / value" cell on a card, meant to sit inside a <dl> */
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -113,30 +118,38 @@ export function Notice({
 }
 
 /**
- * 「这一页是干什么的」/ A three-sentence primer for a settings page.
+ * A three-sentence primer for a settings page / 「这一页是干什么的」。
  *
- * ★★ 设置区通篇是领域词汇：Policy、Agent capabilities、RBAC、RLS、审计日志。
- *   这些词对写它的人是精确的，对一个产品经理或项目经理是一堵墙 ——
- *   他打开这一页，第一件事是判断「这跟我有关系吗」，而页面上没有任何
- *   一句话回答这个问题（问题记录 #42）。
+ * ★★ The settings area speaks entirely in domain vocabulary: Policy, Agent
+ *   capabilities, RBAC, RLS, audit log. Those words are precise to whoever
+ *   wrote them and a wall to a product or project manager. The first thing
+ *   they do on opening the page is decide "does this concern me at all", and
+ *   nothing on the page answered that question (issue #42).
  *
- * ★ 默认**展开**，一次性写清三件事：这是什么、什么时候需要动它、
- *   不动会怎样。看过一次的人可以收起来，收起状态记在 localStorage 里 ——
- *   否则每次进设置都要重新关一遍，那比不给更烦。
+ *   设置区通篇是领域词汇：Policy、Agent capabilities、RBAC、RLS、审计日志。
+ *   这些词对写它的人是精确的，对产品经理或项目经理是一堵墙 —— 他打开这一页
+ *   第一件事是判断「这跟我有关系吗」，而页面上没有一句话回答（问题记录 #42）。
  *
- * ★ 不写「更多信息见文档」。真需要跳出去读文档才能懂的话，
- *   这段话就没写好。
+ * ★ Expanded by **default**, and it says three things in one pass: what this
+ *   is, when you would need to touch it, and what happens if you never do.
+ *   Someone who has read it can collapse it, and the collapsed state is kept in
+ *   localStorage — otherwise they would dismiss it again on every visit to
+ *   settings, which is more annoying than not having it at all.
  *
- * Settings pages speak in Policy / RBAC / RLS. Those words are precise to
- * whoever wrote them and a wall to a project manager, whose first question is
- * "does this concern me at all" — a question the page never answered.
+ *   默认展开，一次性写清三件事：这是什么、什么时候需要动它、不动会怎样。
+ *   收起状态记在 localStorage 里，否则每次进设置都要重新关一遍。
+ *
+ * ★ Never write "see the docs for more". If a reader has to leave the page to
+ *   understand this blurb, the blurb is the thing that is wrong.
+ *
+ *   不写「更多信息见文档」。真需要跳出去读文档才能懂的话，这段话就没写好。
  */
 export function WhatIsThis({
   storageKey,
   title,
   children,
 }: {
-  /** 每页一个，用来记住「我已经读过了」 */
+  /** One key per page; remembers that this reader has already read it */
   storageKey: string;
   title: string;
   children: React.ReactNode;
@@ -167,9 +180,13 @@ export function WhatIsThis({
 }
 
 /**
- * ★ localStorage 读写都包一层 try —— 隐私模式下它会抛，
- *   而「读不到偏好」绝不该把整页拖垮。读不到就当成没读过：
- *   多显示一次说明的代价，远小于一个白屏。
+ * ★ Every localStorage read and write is wrapped in a try — it throws in
+ *   private browsing mode, and failing to read a preference must never take the
+ *   whole page down with it. A failed read is treated as "not read yet": the
+ *   cost of showing the primer one extra time is far below a blank screen.
+ *
+ *   localStorage 读写都包一层 try —— 隐私模式下它会抛，而「读不到偏好」绝不该
+ *   把整页拖垮。读不到就当成没读过：多显示一次说明，远好过一个白屏。
  */
 function readDismissed(key: string): boolean {
   try {
@@ -184,6 +201,6 @@ function writeDismissed(key: string, dismissed: boolean): void {
     if (dismissed) window.localStorage.setItem(`apos.whatIsThis.${key}`, 'dismissed');
     else window.localStorage.removeItem(`apos.whatIsThis.${key}`);
   } catch {
-    /* 隐私模式下写不进去 —— 只是记不住，不影响功能 */
+    /* Private mode refuses the write — the preference is simply not remembered */
   }
 }

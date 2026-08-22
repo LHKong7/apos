@@ -1,292 +1,297 @@
-# 05 Autonomous Board 智能看板
+# 05 Autonomous Board
 
-## 1. 页面信息
+*[中文版本 / Chinese version](05-autonomous-board.zh.md)*
 
-| 项 | 值 |
+## 1. Page Facts
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/board` |
-| 层级 | 三级页面（项目内使用频率最高） |
-| 主要角色 | 全部项目成员 |
-| 优先级 | P0 |
-| 对应产品文档 | 8.4 Autonomous Board、8.4.4 卡片自主移动、8.6 Flow Engine |
+| Route | `/projects/:projectId/board` |
+| Level | Third-level page (the most-used page inside a project) |
+| Primary roles | All project members |
+| Priority | P0 |
+| Product docs | 8.4 Autonomous Board, 8.4.4 Cards Move Themselves, 8.6 Flow Engine |
 
 ---
 
-## 2. 页面目标
+## 2. Goal
 
-展示项目的**真实流动状态**，并让人一眼看出流动在哪里被卡住。
+Show the project's **actual flow**, and make it obvious at a glance where that flow is stuck.
 
-与传统看板的根本差异：
+What makes this fundamentally different from a traditional board:
 
-| 传统看板 | Autonomous Board |
+| Traditional board | Autonomous Board |
 | --- | --- |
-| 用户拖卡片 | **卡片自己移动**，用户偶尔纠正 |
-| 卡片 = 一条待办 | 卡片 = 一个正在被 Agent 执行的进程 |
-| 状态是人填的 | 状态由 Event 驱动，标注来源 |
-| 看"谁在做" | 看"人还是 Agent 在做，以及卡在哪个 Gate" |
+| The user drags cards | **Cards move themselves**; the user corrects them now and then |
+| A card is a to-do | A card is a process an agent is currently running |
+| A human types in the status | Status is event-driven, and labeled with where it came from |
+| Shows "who is working on it" | Shows "whether a human or an agent is working on it, and which gate it's stuck at" |
 
-**设计红线**：如果用户觉得"我还是得手动拖卡片"，这个页面就失去了存在意义。手动拖动是异常路径，不是主路径。
+**Design red line**: if the user comes away thinking "I still have to drag cards around myself," this page has no reason to exist. Dragging is the exception path, not the main one.
 
 ---
 
-## 3. 入口与出口
+## 3. Ways In and Out
 
-**入口**：项目内 Tab「看板」；项目列表卡片的看板图标；计划批准后自动跳转；通知深链。
+**In**: the "Board" tab inside a project; the board icon on a project list card; the automatic redirect after a plan is approved; deep links from notifications.
 
-**出口**：
+**Out**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 点击卡片 | `06 Work Item 详情`（侧栏抽屉，不离开看板） |
-| 卡片上的 Agent Chip | `09 Agent Run 详情` |
-| 卡片上的 Human Gate 徽标 | `11 决策详情` |
-| 视图切换「执行图」 | `07 Execution Graph` |
-| 卡片「查看产物」 | 外部链接（PR / 测试报告 / 部署记录） |
+| Click a card | `06 Work Item Detail` (side drawer — you never leave the board) |
+| Agent chip on a card | `09 Agent Run Detail` |
+| Human gate badge on a card | `11 Decision Detail` |
+| Switch view to "Execution Graph" | `07 Execution Graph` |
+| Card's "View artifact" | External link (PR / test report / deployment record) |
 
 ---
 
-## 4. 页面结构
+## 4. Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│ 订单系统重构 / 看板    [Kanban ▾] 筛选:[全部 ▾][风险 ▾][执行者 ▾] 🔍  [⚙ WIP]  │
-│ ⚡ 2 项待你决策  ⛔ 3 项阻塞  🤖 4 个 Agent 执行中           [只看需我处理 ○──] │
-├──────────┬──────────┬──────────────┬──────────┬──────────┬────────────────────┤
-│ Intake 2 │Planning 1│ Execution 7  │ Review 4 │Release 2 │ Done 8             │
-│          │          │ WIP 7/8 ⚠    │          │          │                    │
-├──────────┼──────────┼──────────────┼──────────┼──────────┼────────────────────┤
-│┌────────┐│┌────────┐│┌────────────┐│┌────────┐│┌────────┐│┌──────────────────┐│
-││⚠待审批 │││📋Plan  │││🤖 执行中    │││⚠待审批 │││⏳等待   │││✓ 已完成          ││
-││批量导出│││变更 v3 │││实现多条件   │││生产发布│││发布许可│││分析慢查询日志    ││
-││需求    │││+6任务  │││查询 API     │││v1.4.0  │││        │││                  ││
-││        │││        │││            │││        │││缓存层  │││[🤖research-agent]││
-││👤 李娜 │││👤 张伟 │││[🤖code-1]  │││🔴高风险│││实现    │││✓ 验收通过 李娜   ││
-││🔴超时2h│││⏳ 4h内 │││▓▓▓▓▓▓░░65% │││👤 张伟 │││        │││Lead 6h · $1.20   ││
-││[处理→] │││[处理→] │││12m · $8.20 │││[处理→] │││[🤖c-1] │││                  ││
-│└────────┘│└────────┘││📎 PR #42   ││└────────┘│└────────┘│└──────────────────┘│
-│┌────────┐│          ││最新: 已通过 ││┌────────┐│┌────────┐│┌──────────────────┐│
-││📥 新需求││          ││48/48 测试  │││👁审核中 │││🚀发布中│││✓ 设计搜索 API    ││
-││客服反馈││          │└────────────┘││UI 组件 │││        │││                  ││
-││批量处理││          │┌────────────┐││        │││灰度10% │││[🤖code-agent-1]  ││
-││        ││          ││⛔ 阻塞 8h12m│││[🤖rev] │││▓▓▓░░  │││✓ 通过            ││
-││未分析  ││          ││订单查询 API │││+👤张伟 │││        │││                  ││
-││[分析→] ││          ││等待 DBA 审批│││        │││        │││                  ││
-│└────────┘│          ││👤 王强 未响应│└────────┘│└────────┘│└──────────────────┘│
-│          │          ││[催办][改派] │          │          │  ⋯ 展开其余 6 项    │
-│          │          │└────────────┘│          │          │                    │
-│          │          │┌────────────┐│          │          │                    │
-│          │          ││❌ 失败 2/3  ││          │          │                    │
-│          │          ││支付回调测试 ││          │          │                    │
-│          │          ││[🤖test-1]  ││          │          │                    │
-│          │          ││再失败1次将 ││          │          │                    │
-│          │          ││请求人工     ││          │          │                    │
-│          │          ││[看日志][重试]│         │          │                    │
-│          │          │└────────────┘│          │          │                    │
-└──────────┴──────────┴──────────────┴──────────┴──────────┴────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Order System Refactor / Board   [Kanban ▾] Filter:[All ▾][Risk ▾][Owner ▾] 🔍                [⚙ WIP]  │
+│ ⚡ 2 need your decision  ⛔ 3 blocked  🤖 4 agents running                             [Needs me ○──] │
+├──────────────┬──────────────┬────────────────────┬──────────────┬──────────────┬──────────────────────┤
+│ Intake 2     │ Planning 1   │ Execution 7        │ Review 4     │ Release 2    │ Done 8               │
+│              │              │ WIP 7/8 ⚠          │              │              │                      │
+├──────────────┼──────────────┼────────────────────┼──────────────┼──────────────┼──────────────────────┤
+│┌────────────┐│┌────────────┐│┌──────────────────┐│┌────────────┐│┌────────────┐│┌────────────────────┐│
+││⚠ Approval  │││📋 Plan     │││🤖 Running        │││⚠ Approval  │││⏳ Awaiting │││✓ Completed         ││
+││Bulk export │││change v3   │││Implement multi-  │││Prod release│││release     │││Analyzed slow query ││
+││request     │││+6 tasks    │││filter query API  │││v1.4.0      │││approval    │││logs                ││
+││            │││            │││[🤖 code-1]       │││🔴 High risk│││            │││                    ││
+││👤 Li Na    │││👤 Zhang W. │││▓▓▓▓▓▓░░ 65%      │││👤 Zhang W. │││Cache layer │││[🤖 research-agent] ││
+││🔴 2h late  │││⏳ within 4h│││12m · $8.20       │││[Handle →]  │││impl        │││✓ Accepted · Li Na  ││
+││[Handle →]  │││[Handle →]  │││📎 PR #42         ││└────────────┘││[🤖 c-1]    │││Lead 6h · $1.20     ││
+│└────────────┘│└────────────┘││Latest: 48/48     ││┌────────────┐│└────────────┘│└────────────────────┘│
+│┌────────────┐│              ││tests passed      │││👁 Reviewing ││┌────────────┐│┌────────────────────┐│
+││📥 New req  ││              │└──────────────────┘││UI component│││🚀 Releasing│││✓ Search API design ││
+││Support     ││              │┌──────────────────┐││            │││            │││                    ││
+││feedback    ││              ││⛔ Blocked 8h12m  │││[🤖 rev]    │││canary 10%  │││[🤖 code-agent-1]   ││
+││batch job   ││              ││Order query API   │││+👤 Zhang W.│││▓▓▓░░       │││✓ Passed            ││
+││            ││              ││Waiting on DBA    ││└────────────┘││            ││└────────────────────┘│
+││Unanalyzed  ││              ││approval          ││              │└────────────┘│  ⋯ Show 6 more       │
+││[Analyze →] ││              ││👤 Wang Qiang     ││              │              │                      │
+│└────────────┘│              ││not responding    ││              │              │                      │
+│              │              ││[Nudge][Reassign] ││              │              │                      │
+│              │              │└──────────────────┘│              │              │                      │
+│              │              │┌──────────────────┐│              │              │                      │
+│              │              ││❌ Failed 2/3     ││              │              │                      │
+│              │              ││Payment callback  ││              │              │                      │
+│              │              ││test              ││              │              │                      │
+│              │              ││[🤖 test-1]       ││              │              │                      │
+│              │              ││1 more failure    ││              │              │                      │
+│              │              ││→ human handoff   ││              │              │                      │
+│              │              ││[Logs][Retry]     ││              │              │                      │
+│              │              │└──────────────────┘│              │              │                      │
+└──────────────┴──────────────┴────────────────────┴──────────────┴──────────────┴──────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 顶部状态条
+### 5.1 Top Status Bar
 
-**不是装饰，是行动入口。** 三个数字各自可点击，点击后自动应用对应筛选：
+**Not decoration — it's a set of entry points.** Each of the three numbers is clickable, and clicking one applies the matching filter:
 
-- `⚡ 2 项待你决策` → 筛选出需当前用户处理的卡片
-- `⛔ 3 项阻塞` → 筛选阻塞卡片
-- `🤖 4 个 Agent 执行中` → 筛选执行中卡片
+- `⚡ 2 need your decision` → filter to cards waiting on the current user
+- `⛔ 3 blocked` → filter to blocked cards
+- `🤖 4 agents running` → filter to running cards
 
-**「只看需我处理」开关**是 OPC 与忙碌用户的主入口——打开后看板只剩下等着人拍板的卡片，通常是 2–5 张。
+**The "Needs me" toggle** is the main entry point for the OPC and for busy users: flip it on and the board is reduced to the cards waiting for a human to call it, usually 2–5 of them.
 
-### 5.2 阶段列（文档 8.4.1）
+### 5.2 Stage Columns (product doc 8.4.1)
 
-默认六列：Intake / Planning / Execution / Review / Release / Done。企业可按项目类型配置（在 `13 Policy 配置` 或项目设置中）。
+Six columns by default: Intake / Planning / Execution / Review / Release / Done. An organization can configure them per project type (in `13 Policy Configuration` or in project settings).
 
-**列头显示**：阶段名 + 卡片数 + WIP 限制（配置了才显示）。
+**Column header shows**: stage name + card count + WIP limit (only when one is configured).
 
-**WIP 超限**（文档 8.6.3）：列头变橙并显示 `WIP 7/8 ⚠`，达到上限后 Flow Engine 停止向该列调度新任务，列头提示「已达上限，新任务排队中 (3)」。
+**Over the WIP limit** (product doc 8.6.3): the header turns orange and shows `WIP 7/8 ⚠`. Once the limit is reached the Flow Engine stops scheduling new work into that column, and the header says "At limit — 3 tasks queued."
 
-**Done 列**默认只显示最近 5 张 + 「展开其余 N 项」，避免长期项目的 Done 列无限增长。
+**The Done column** shows only the 5 most recent cards by default, plus "Show N more," so that a long-running project doesn't grow an unbounded Done column.
 
-### 5.3 卡片（文档 8.4.2）
+### 5.3 Cards (product doc 8.4.2)
 
-卡片信息密度是本页最难的设计问题。原则：**按状态决定显示什么，而不是所有卡片显示所有字段。**
+Card information density is the hardest design problem on this page. The principle: **let the state decide what to show, instead of showing every field on every card.**
 
-| 卡片状态 | 突出显示 | 隐藏 |
+| Card state | Foreground | Hidden |
 | --- | --- | --- |
-| 待审批 / 待决策 | Human Gate 徽标、剩余时限、风险、[处理] 按钮 | 进度条、成本 |
-| 执行中 | Agent Chip、进度条、已耗时、当前成本、最新事件 | 依赖、验收标准 |
-| 阻塞 | 阻塞时长、**阻塞原因**、责任对象、[催办][改派] | 成本、进度 |
-| 失败 | 失败次数、下一步将发生什么、[看日志][重试] | 进度 |
-| 审核中 | Reviewer（Agent + 人类）、审核进度 | 成本 |
-| 已完成 | 执行者、Lead Time、总成本、验收人 | 其余全部 |
+| Awaiting approval / decision | Human gate badge, time remaining, risk, [Handle] button | Progress bar, cost |
+| Running | Agent chip, progress bar, elapsed time, cost so far, latest event | Dependencies, acceptance criteria |
+| Blocked | How long it's been blocked, **why**, who owns the unblock, [Nudge][Reassign] | Cost, progress |
+| Failed | Attempt count, what happens next, [Logs][Retry] | Progress |
+| In review | Reviewers (agent + human), review progress | Cost |
+| Done | Who did it, lead time, total cost, who accepted it | Everything else |
 
-**通用元素**（所有卡片）：标题、Work Item 类型图标、优先级（仅 P0/P1 显示）、执行主体 Chip。
+**Universal elements** (every card): title, work item type icon, priority (shown only for P0/P1), owner chip.
 
-**卡片高度**保持相对一致（约 120–160px），避免瀑布流式的视觉混乱。信息超出时省略并在详情页展示。
+**Card height** stays roughly consistent (about 120–160px) to avoid a masonry-style visual mess. Anything that doesn't fit is elided and shown on the detail page.
 
-### 5.4 Human Gate 标识（文档 8.4.3）
+### 5.4 Human Gate Markers (product doc 8.4.3)
 
-用通用组件 §5.1 的八种状态。在看板上，Human Gate 卡片有额外强化：
+Uses the eight states from §5.1 of the shared components doc. On the board, human gate cards get extra emphasis:
 
-- 卡片左侧 4px 橙色/红色竖条
-- `decision_overdue` 卡片有轻微脉冲动效（仅一次，不持续闪烁——持续闪烁会让人关掉页面）
-- 卡片直接带 `[处理 →]` 主按钮，**不需要先点开卡片再找按钮**
+- A 4px orange/red bar down the left edge of the card
+- `decision_overdue` cards pulse gently — once only, not a continuous blink; a continuously blinking card makes people close the page
+- The card carries a `[Handle →]` primary button directly, so **you don't have to open the card first to find the button**
 
-### 5.5 卡片自主移动（文档 8.4.4）
+### 5.5 Cards Move Themselves (product doc 8.4.4)
 
-卡片移动由 Event 驱动，前端收到 SSE 后执行动画：
-
-```
-卡片淡出原列 → 沿路径滑向新列 → 在新列高亮 1.5s → 恢复常态
-```
-
-**动画约束**：
-
-- 同时移动多张卡片时错峰执行（间隔 80ms），避免视觉混乱
-- 用户正在拖拽或已打开某卡片详情时，该卡片的自动移动**延迟到交互结束**
-- 用户滚动中不自动滚动视口去追卡片；改为在屏幕边缘显示「↑ 2 张卡片已移动」提示条
-
-**移动来源标注**：卡片移动后，在卡片角落短暂显示来源图标（🔧/🤖/👤/🔗），3 秒后淡出。悬停卡片可查看完整状态变更历史。
-
-### 5.6 手动调整（异常路径）
-
-用户仍可拖拽卡片，但：
-
-1. 拖拽到不符合状态机的列时，目标列显示红色禁止态并说明原因（如「该任务依赖未完成，不能进入 Execution」）
-2. 允许的拖拽落下后**弹出原因输入框**（文档 8.4.4 要求记录原因）：
+Card movement is driven by events; the frontend animates on receiving the SSE message:
 
 ```
-将「实现多条件查询 API」从 Review 移到 Execution
-
-原因  ( ) 审核发现问题，需返工
-      ( ) 需求变更
-      ( ) 系统状态判断有误
-      (•) 其他 [                    ]
-
-☐ 同时终止正在运行的 Review Agent
-
-              [取消]  [确认]
+card fades out of its old column → slides along a path to the new column → highlights there for 1.5s → returns to normal
 ```
 
-3. 原因记入 Event 并标注 `👤 人类覆盖`，在 Analytics 中统计「人工覆盖率」——这是衡量系统自动化准确性的重要指标
+**Animation constraints**:
 
-### 5.7 筛选与视图（文档 8.4.5）
+- When several cards move at once, stagger them (80ms apart) so the screen doesn't turn into noise
+- If the user is dragging a card or has its detail open, that card's automatic move **waits until the interaction ends**
+- Never auto-scroll the viewport to chase a card while the user is scrolling; show an edge-of-screen banner instead: "↑ 2 cards moved"
 
-**筛选维度**：阶段、Work Item 类型、执行主体（人/Agent/具体某个）、风险、优先级、Human Gate 状态、阻塞状态、截止时间、成本区间、任务来源。
+**Labeling where the move came from**: after a card moves, a source icon (🔧/🤖/👤/🔗) appears briefly in its corner and fades out after 3 seconds. Hover the card to see the full status change history.
 
-筛选条件写入 URL，可保存为「我的视图」并分享。
+### 5.6 Manual Adjustment (the Exception Path)
 
-**视图切换**：
+Users can still drag cards, but:
 
-| 视图 | 说明 | MVP |
+1. Dragging onto a column the state machine doesn't allow puts the target column into a red rejected state with the reason spelled out (e.g. "This task's dependencies aren't finished — it can't enter Execution")
+2. An allowed drop **opens a reason prompt** (product doc 8.4.4 requires the reason to be recorded):
+
+```
+Move "Implement multi-filter query API" from Review to Execution
+
+Reason  ( ) Review found problems, needs rework
+        ( ) Requirements changed
+        ( ) The system judged the state wrong
+        (•) Other [                    ]
+
+☐ Also terminate the running Review Agent
+
+                    [Cancel]  [Confirm]
+```
+
+3. The reason goes into an event tagged `👤 human override`, and Analytics reports a "human override rate" from it — the key measure of how accurate the system's automation actually is
+
+### 5.7 Filters and Views (product doc 8.4.5)
+
+**Filter dimensions**: stage, work item type, owner (human / agent / a specific one), risk, priority, human gate state, blocked state, due date, cost range, task origin.
+
+Filters are written into the URL, and can be saved as "my view" and shared.
+
+**View switcher**:
+
+| View | What it is | MVP |
 | --- | --- | --- |
-| Kanban | 默认 | ✅ |
-| List | 表格，支持多列排序，适合批量操作 | ✅ |
-| Execution Graph | 跳 `07` | ✅ |
-| Agent View | 按 Agent 分泳道 | ✅ |
-| Human Decision View | 只看 Human Gate 卡片，按时限排序 | ✅ |
-| Timeline | 甘特 | P1 |
-| Calendar | 按截止日 | P1 |
-| Risk View | 按风险等级分组 | P1 |
-| Delivery View | 按里程碑分组 | P1 |
+| Kanban | Default | ✅ |
+| List | A table with multi-column sorting; good for bulk operations | ✅ |
+| Execution Graph | Jumps to `07` | ✅ |
+| Agent View | Swimlanes by agent | ✅ |
+| Human Decision View | Human gate cards only, sorted by deadline | ✅ |
+| Timeline | Gantt | P1 |
+| Calendar | By due date | P1 |
+| Risk View | Grouped by risk level | P1 |
+| Delivery View | Grouped by milestone | P1 |
 
-**Agent View** 是本产品特有的视图，值得强调：
+**Agent View** is the view unique to this product, and it deserves a closer look:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ [🤖 code-agent-1] ● 执行中  负载 2/5  今日 $18.40        │
-│  ├ 实现多条件查询 API      ▓▓▓▓▓▓░░ 65%  12m            │
-│  └ 查询结果缓存            排队中                         │
-├──────────────────────────────────────────────────────────┤
-│ [🤖 test-agent-1] ● 失败   连续 2 次                     │
-│  └ 支付回调测试            ❌ 再失败 1 次将转人工          │
-├──────────────────────────────────────────────────────────┤
-│ [👤 王强] DBA              1 项待决策 ⏰ 超时 2h          │
-│  └ 数据库索引变更审批                                     │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ [🤖 code-agent-1] ● Running   Load 2/5   Today $18.40        │
+│  ├ Implement multi-filter query API   ▓▓▓▓▓▓░░ 65%   12m     │
+│  └ Cache query results                Queued                 │
+├──────────────────────────────────────────────────────────────┤
+│ [🤖 test-agent-1] ● Failed    2 in a row                     │
+│  └ Payment callback test    ❌ 1 more failure → human        │
+├──────────────────────────────────────────────────────────────┤
+│ [👤 Wang Qiang] DBA          1 decision pending ⏰ 2h late   │
+│  └ Database index change approval                            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 5.8 批量操作（List 视图）
+### 5.8 Bulk Operations (List View)
 
-选中多张卡片后：批量改派、批量调整优先级、批量添加人类审核、批量重试失败任务。
+Select several cards, then: reassign in bulk, adjust priority in bulk, add human review in bulk, retry failed tasks in bulk.
 
-批量操作前显示影响预估（如「将重试 3 个任务，预计消耗 ~$6」）。
+Before a bulk operation runs, show an impact estimate (e.g. "This will retry 3 tasks, at an estimated ~$6").
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**日常巡检**
-
-```
-进入看板 → 顶部状态条看有无待办
-        → 打开「只看需我处理」→ 处理 2–3 张卡片 → 关闭开关
-        → 扫一眼 Execution 列有无红色（失败/阻塞）→ 离开
-（目标 < 2 分钟）
-```
-
-**处理阻塞**
+**The daily sweep**
 
 ```
-看到 ⛔ 8h12m 卡片 → 读阻塞原因「等待 DBA 审批」
-→ 卡片上直接 [催办]（不用进详情页）
-→ 若持续无响应 → [改派] 给备用 DBA
+open the board → scan the status bar for anything waiting on you
+              → turn on "Needs me" → handle 2–3 cards → turn it off
+              → glance at the Execution column for red (failed / blocked) → leave
+(target: under 2 minutes)
 ```
 
-**处理 Agent 失败**
+**Handling a block**
 
 ```
-❌ 失败 2/3 卡片 → [看日志] → 侧栏打开 09 Agent Run 详情
-→ 判断原因 → 三选一：
-   [补充上下文后重试] / [改派其他 Agent] / [我来接管]
+spot the ⛔ 8h12m card → read the reason: "waiting on DBA approval"
+→ hit [Nudge] right on the card (no need to open the detail page)
+→ still no response → [Reassign] to a backup DBA
 ```
 
-**旁观模式（本产品的独特体验）**
+**Handling an agent failure**
 
 ```
-用户什么都不做，只是把看板开在副屏
-→ 卡片自己从 Execution 滑到 Review 再滑到 Release
-→ 这是产品最有说服力的时刻，动画质量直接影响用户感知
+❌ Failed 2/3 card → [Logs] → 09 Agent Run Detail opens in the side drawer
+→ diagnose → pick one of three:
+   [Add context and retry] / [Reassign to another agent] / [I'll take it over]
+```
+
+**Spectator mode (this product's signature experience)**
+
+```
+the user does nothing at all — the board is just open on a second monitor
+→ cards slide from Execution to Review to Release on their own
+→ this is the product's most convincing moment; animation quality directly
+  shapes how the user perceives the system
 ```
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 加载 | 列结构先出，卡片骨架屏 |
-| 计划未批准 | 看板显示引导「计划尚未批准，任务不会开始流动」+ [去批准] → `04` |
-| 全空（计划刚批准） | Intake/Planning 有卡片，其余列显示「等待上游任务完成」 |
-| 筛选无结果 | 各列显示「无匹配」+ 清除筛选 |
-| 项目已暂停 | 全页灰色蒙层 + 顶部条「项目已暂停，卡片不会自动流动」 |
-| SSE 断线 | 顶部黄条「实时更新已断开，正在重连…」；卡片显示最后更新时间 |
-| 大量卡片同时移动 | 错峰动画 + 顶部汇总提示「6 张卡片状态已更新」 |
+| Loading | Column structure renders first, cards as skeletons |
+| Plan not yet approved | The board shows guidance: "The plan isn't approved yet, so nothing will start flowing" + [Go approve] → `04` |
+| Everything empty (plan just approved) | Intake/Planning have cards; every other column shows "Waiting on upstream tasks" |
+| No filter results | Each column shows "No matches" + clear filters |
+| Project paused | Full-page gray overlay + top bar: "Project is paused — cards won't move on their own" |
+| SSE disconnected | Yellow top bar: "Live updates disconnected, reconnecting…"; cards show their last-updated time |
+| Many cards moving at once | Staggered animation + a summary banner at the top: "6 cards updated" |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requires |
 | --- | --- |
-| 查看看板 | 项目成员 / `viewer` |
-| 拖拽卡片（人工覆盖） | `member` 及以上，必须填原因 |
-| 催办 | 项目成员 |
-| 改派任务 | `pm` / `tech_lead` |
-| 终止 Agent Run | `tech_lead` / `pm` / `agent_owner` |
-| 重试失败任务 | `member` 及以上（成本计入项目预算） |
-| 配置 WIP 限制 | `pm` / `tech_lead` |
-| 配置阶段（增删列） | `pm` / `org_admin` |
+| View the board | Project member / `viewer` |
+| Drag a card (human override) | `member` and above; a reason is mandatory |
+| Nudge | Project member |
+| Reassign a task | `pm` / `tech_lead` |
+| Terminate an agent run | `tech_lead` / `pm` / `agent_owner` |
+| Retry a failed task | `member` and above (cost counts against the project budget) |
+| Configure WIP limits | `pm` / `tech_lead` |
+| Configure stages (add/remove columns) | `pm` / `org_admin` |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`WorkItem`、`AgentRun`（进度与成本）、`Decision`（Human Gate）、`Agent`、`Event`（移动驱动）、`Policy`（WIP 与状态机校验）
+**Domain objects**: `WorkItem`, `AgentRun` (progress and cost), `Decision` (human gate), `Agent`, `Event` (drives movement), `Policy` (WIP and state machine validation)
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/projects/{id}/board?view=kanban&filters=...
@@ -294,7 +299,7 @@ GET  /api/projects/{id}/board?view=kanban&filters=...
 
 PATCH /api/work-items/{id}/status
      ← { to_status, reason, reason_category, terminate_running_run? }
-     → 409 若违反状态机，返回 { allowed_transitions[], reason }
+     → 409 on a state machine violation, returning { allowed_transitions[], reason }
 
 POST /api/work-items/{id}/retry
 POST /api/work-items/{id}/reassign   { assignee_type, assignee_id }
@@ -308,45 +313,45 @@ SSE  /api/stream?channels=project:{id}:board
      → agent_run_failed { work_item_id, attempt, next_action }
 ```
 
-**性能**：单项目 Work Item 可能上千。看板按列分页（每列首屏 20 张，滚动加载）；Done 列默认折叠。SSE 事件做前端合并，200ms 内的同卡片多次进度更新合并为一次渲染。
+**Performance**: a single project may hold thousands of work items. The board paginates per column (20 cards in the first screenful of each, more on scroll); Done is collapsed by default. SSE events are coalesced on the frontend — multiple progress updates for the same card within 200ms render once.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it's for |
 | --- | --- |
-| `board_viewed` / `board_dwell_time` | 使用频率与停留时长 |
-| **`card_manual_moved{from,to,reason}`** | **人工覆盖率——系统自动判断准确性的核心指标，应随时间下降** |
-| `only_mine_toggled` | 「只看需我处理」使用率 |
-| `card_action{action}` | 卡片上直接操作 vs 进详情页操作的比例（前者应远高于后者） |
-| `view_switched{to}` | 各视图真实使用分布，决定 P1 视图优先级 |
-| `blocked_card_action_latency` | 阻塞卡片出现到被处理的时长 |
-| `auto_move_observed` | 用户在场时发生的自动移动次数（"旁观体验"的暴露量） |
+| `board_viewed` / `board_dwell_time` | Usage frequency and dwell time |
+| **`card_manual_moved{from,to,reason}`** | **Human override rate — the core measure of how accurate the system's automated judgment is. It should fall over time** |
+| `only_mine_toggled` | How much the "Needs me" toggle gets used |
+| `card_action{action}` | Ratio of actions taken directly on a card vs. actions that required opening the detail page (the former should be far higher) |
+| `view_switched{to}` | Which views actually get used, which sets the priority order for the P1 views |
+| `blocked_card_action_latency` | How long a blocked card sits before someone deals with it |
+| `auto_move_observed` | How many automatic moves happened while a user was watching (the reach of the "spectator experience") |
 
-**页面成功标准**：人工覆盖率 < 15% 且逐月下降；80% 的卡片操作在看板上直接完成，不需进详情页。
+**Success criteria for this page**: human override rate under 15% and falling month over month; 80% of card actions completed on the board itself, without opening the detail page.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 单列卡片 > 50 | 滚动加载 + 列内二级分组（按风险或执行者） |
-| 卡片在用户查看时被删除 | 卡片淡出并提示「该任务已被合并到 XXX」 |
-| 用户拖拽时卡片被系统移动 | 以用户操作为准，落下后提示「系统同时将此卡片移到了 Review，你的操作已覆盖」 |
-| 两人同时拖同一卡片 | 后者失败并提示「张伟刚刚将其移到了 Execution」 |
-| WIP 满且有高优先级任务 | 不自动挤占，生成决策「WIP 已满，是否提升上限或暂停低优先级任务」 |
-| Agent 进度长时间不变 | 卡片显示「12 分钟无更新」+ [查看 Run]，超过阈值按 Policy 判定为阻塞 |
-| 成本在看板上暴涨 | 顶部插入红条「本项目成本 1 小时内增长 $80」+ [查看明细] [暂停调度] |
-| 阶段配置被修改（列增减） | 已有卡片按映射规则迁移，无法映射的进入 `未分类` 临时列并提示处理 |
+| More than 50 cards in one column | Load on scroll + a second level of grouping within the column (by risk or by owner) |
+| A card is deleted while the user is looking at it | The card fades out with "This task was merged into XXX" |
+| The system moves a card while the user is dragging it | The user's action wins; on drop, show "The system moved this card to Review at the same time — your action overrode it" |
+| Two people drag the same card at once | The second one fails with "Zhang Wei just moved it to Execution" |
+| WIP is full and a high-priority task arrives | Don't preempt automatically; raise a decision instead: "WIP is full — raise the limit, or pause a lower-priority task?" |
+| An agent's progress hasn't changed in a long time | The card shows "No update for 12 minutes" + [View run]; past the threshold, policy marks it blocked |
+| Cost spikes while you're on the board | A red bar drops in at the top: "This project's cost grew $80 in the last hour" + [View breakdown] [Pause scheduling] |
+| Stage configuration changes (columns added or removed) | Existing cards migrate by the mapping rules; anything that can't be mapped lands in a temporary `Unclassified` column with a prompt to sort it out |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. 卡片自动移动的动画在卡片数量多时可能造成干扰。是否需要「安静模式」（只更新不做动画）？倾向于提供开关，默认开动画。
-2. 手动拖拽是否应该在 `Agent-autonomous` 项目中完全禁用？倾向于不禁用但增加二次确认，因为兜底能力比纯粹性更重要。
-3. Done 列的卡片保留多久？涉及数据归档策略。
-4. Agent View 与 Kanban 的关系：是平级视图还是应该做成看板的分组方式？分组方式可能更自然。
-5. 「只看需我处理」是否应该成为默认视图？对 OPC 是，对 PM 可能不是——考虑按角色设默认。
+1. Automatic card movement may become distracting when there are a lot of cards. Do we need a "quiet mode" (state updates without animation)? Leaning toward offering the toggle, with animation on by default.
+2. Should manual dragging be disabled outright in `Agent-autonomous` projects? Leaning toward keeping it but adding a confirmation step — having a manual fallback matters more than being pure.
+3. How long do cards stay in the Done column? This ties into the data archival policy.
+4. How does Agent View relate to Kanban — a peer view, or a grouping mode of the board? Grouping may be the more natural framing.
+5. Should "Needs me" be the default view? For the OPC yes; for a PM probably not — consider a per-role default.

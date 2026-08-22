@@ -1,303 +1,305 @@
-# 06 Work Item 详情
+# 06 Work Item Detail
 
-## 1. 页面信息
+*[中文版本 / Chinese version](06-work-item-detail.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Field | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/items/:itemId`（独立页）<br>看板内以侧栏抽屉打开，URL 同步 |
-| 层级 | 四级页面 |
-| 主要角色 | 全部项目成员 |
-| 优先级 | P0 |
-| 对应产品文档 | 6.3 Work Item、8.5.5 人工接管、8.8.4 执行阶段 HITL、8.10 Review |
+| Route | `/projects/:projectId/items/:itemId` (standalone page)<br>Opens as a side drawer from the board, with the URL kept in sync |
+| Level | Level-4 page |
+| Primary roles | All project members |
+| Priority | P0 |
+| Related product docs | 6.3 Work Item, 8.5.5 Human takeover, 8.8.4 HITL during execution, 8.10 Review |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-一个 Work Item 的**完整档案与操作台**。要回答：
+The **complete record and control panel for one work item**. It has to answer:
 
-1. 这件事要做成什么样？（描述 + 验收标准）
-2. 现在谁在做、做到哪一步了？
-3. 产出了什么？质量如何？
-4. 为什么卡住了 / 为什么失败了？
-5. 我能做什么？
+1. What does "done" look like here? (description + acceptance criteria)
+2. Who is working on it right now, and how far have they gotten?
+3. What came out of it, and is it any good?
+4. Why is it blocked / why did it fail?
+5. What can I do about it?
 
-本页是"看板卡片"的展开，也是"Agent Run"的上层容器——一个 Work Item 可能对应多次 Run（重试、换 Agent）。
+This page is the board card expanded, and it is also the container one level above Agent Runs — a single work item may span several runs (retries, a switch to a different agent).
 
 ---
 
-## 3. 入口与出口
+## 3. Entry Points and Exits
 
-**入口**：看板卡片点击；执行图节点点击；Agent Workspace 任务队列；决策详情的关联任务；通知深链；搜索。
+**Entry points**: clicking a board card; clicking a node in the execution graph; the task queue in the Agent Workspace; the linked work item on a decision detail page; a deep link from a notification; search.
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| Run 记录 | `09 Agent Run 详情` |
-| 关联决策 | `11 决策详情` |
-| 父任务 / 子任务 / 依赖任务 | 本页（切换 item） |
-| 执行主体 Chip | `08 Agent Workspace` |
-| 产物链接 | 外部（PR / 报告 / 部署） |
-| 「在执行图中查看」 | `07 Execution Graph`（锚定节点） |
+| A run record | `09 Agent Run Detail` |
+| Linked decision | `11 Decision Detail` |
+| Parent / subtask / dependency | This page (switches to that item) |
+| Executor chip | `08 Agent Workspace` |
+| Artifact link | External (PR / report / deployment) |
+| "View in execution graph" | `07 Execution Graph` (anchored on the node) |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ ← 看板   实现多条件查询 API                          [⋯] [在执行图查看]  │
-│ ⚙ Task · P0 · 🔴 高风险 · Execution / 执行中                             │
-│ [🤖 code-agent-1] 执行中 12m ·  ▓▓▓▓▓▓░░ 65% · $8.20 · 预计还需 6m       │
-│                              [⏸ 暂停] [🙋 我来接管] [🔄 改派] [⏹ 终止]  │
-├───────────────────────────────────────────┬──────────────────────────────┤
-│ [概览] [执行记录] [产物] [审核] [依赖] [事件]│ 属性                        │
-│                                           │ ─────────────────────────── │
-│ 描述                              [编辑]  │ 类型      Task              │
-│ 实现支持手机号、订单号、时间段三种条件的  │ 状态      执行中 🤖         │
-│ 组合查询接口，P95 响应时间 < 500ms。      │ 阶段      Execution         │
-│                                           │ 优先级    P0                │
-│ ⚠ 执行中的额外约束（人类附加）            │ 风险      🔴 高              │
-│ · 仅限灰度 10% 流量                       │ 负责人    👤 张伟            │
-│ · 不修改现有接口签名                      │ 执行主体  [🤖 code-agent-1] │
-│                                           │ 计划工期  8h                │
-│ 验收标准                          4/6 ✓   │ 实际耗时  12m               │
-│ ☑ 支持手机号精确查询      🔧 自动校验通过 │ 计划开始  08-05 09:00       │
-│ ☑ 支持订单号精确查询      🔧 自动校验通过 │ 计划完成  08-05 17:00       │
-│ ☑ 支持时间段范围查询      🔧 自动校验通过 │ 成本      $8.20 / ~$6.40    │
-│ ☑ 单元测试覆盖率 ≥ 80%    🔧 84%          │           ⚠ 超预估 28%      │
-│ ☐ P95 < 500ms             ⏳ 待性能测试   │ ─────────────────────────── │
-│ ☐ 通过安全扫描            ⏳ 待执行       │ 父任务                       │
-│                                           │ 📋 服务端实现                │
-│ 当前进展                                  │ 子任务 (0)                   │
-│ ┌───────────────────────────────────────┐ │ ─────────────────────────── │
-│ │ 🤖 code-agent-1 · 12:34               │ │ 依赖 (2)                    │
-│ │ 已完成查询 DSL 解析与参数校验，正在实现│ │ ⬅ 前置                      │
-│ │ 索引查询逻辑。下一步：补充单元测试。   │ │  ✓ 设计搜索 API 接口         │
-│ │                        [查看完整 Run →]│ │  ⛔ 数据库索引变更 (阻塞 8h) │
-│ └───────────────────────────────────────┘ │ ➡ 后置                      │
-│                                           │  ⏸ 查询结果缓存             │
-│ 最近产物                                  │  ⏸ 集成测试                 │
-│ 📎 PR #42  order-service  +284 −37        │ ─────────────────────────── │
-│    Review Agent ✓ 通过 · 测试 48/48 ✓     │ Run 历史 (2)                │
-│    [查看 PR ↗]                            │ #2 执行中  code-agent-1     │
-│                                           │ #1 失败    code-agent-1     │
-│                                           │    上下文不足  [查看]        │
-└───────────────────────────────────────────┴──────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ← Board   Multi-condition query API                      [⋯] [View in execution graph]  │
+│ ⚙ Task · P0 · 🔴 High risk · Execution / Executing                                      │
+│ [🤖 code-agent-1] Executing 12m ·  ▓▓▓▓▓▓░░ 65% · $8.20 · ~6m left                      │
+│                                       [⏸ Pause] [🙋 Take over] [🔄 Reassign] [⏹ Abort]  │
+├────────────────────────────────────────────────────────┬────────────────────────────────┤
+│ [Overview] [Runs] [Artifacts] [Review] [Deps] [Events] │ Properties                     │
+│                                                        │ ────────────────────────────── │
+│ Description                                     [Edit] │ Type       Task                │
+│ Build one API for combined lookup by phone number,     │ Status     Executing 🤖        │
+│ order ID, and time range; P95 latency < 500ms.         │ Stage      Execution           │
+│                                                        │ Priority   P0                  │
+│ ⚠ Extra constraints added by a human                   │ Risk       🔴 High             │
+│ · Canary traffic only, 10%                             │ Owner      👤 Zhang Wei        │
+│ · Do not change existing API signatures                │ Executor   [🤖 code-agent-1]   │
+│                                                        │ Planned    8h                  │
+│ Acceptance criteria                            4/6 ✓   │ Elapsed    12m                 │
+│ ☑ Phone number exact match     🔧 auto-check passed    │ Start      08-05 09:00         │
+│ ☑ Order ID exact match         🔧 auto-check passed    │ Due        08-05 17:00         │
+│ ☑ Time range query             🔧 auto-check passed    │ Cost       $8.20 / ~$6.40      │
+│ ☑ Unit test coverage ≥ 80%     🔧 84%                  │            ⚠ 28% over est.     │
+│ ☐ P95 < 500ms                  ⏳ perf test pending    │ ────────────────────────────── │
+│ ☐ Security scan passes         ⏳ not run yet          │ Parent                         │
+│                                                        │ 📋 Server-side build-out       │
+│ Current progress                                       │ Subtasks (0)                   │
+│ ┌───────────────────────────────────────────────────┐  │ ────────────────────────────── │
+│ │ 🤖 code-agent-1 · 12:34                           │  │ Dependencies (2)               │
+│ │ Query DSL parsing and parameter validation are    │  │ ⬅ Upstream                     │
+│ │ done; implementing the index lookup now.          │  │  ✓ Design the search API       │
+│ │ Next up: unit tests.                              │  │  ⛔ DB index migration (8h)    │
+│ │                             [View full run →]     │  │ ➡ Downstream                   │
+│ └───────────────────────────────────────────────────┘  │  ⏸ Query result cache          │
+│                                                        │  ⏸ Integration tests           │
+│ Recent artifacts                                       │ ────────────────────────────── │
+│ 📎 PR #42  order-service  +284 −37                     │ Run history (2)                │
+│    Review Agent ✓ passed · tests 48/48 ✓               │ #2 Running  code-agent-1       │
+│    [Open PR ↗]                                         │ #1 Failed   code-agent-1       │
+│                                                        │    Context missing   [view]    │
+└────────────────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 头部与执行条
+### 5.1 Header and Execution Bar
 
-**执行条是本页与传统任务详情页最大的差异**——它是一个活的进程状态条，实时更新：
+**The execution bar is the biggest single difference between this page and a conventional task detail page** — it is a live process status bar that updates in real time:
 
-| 状态 | 执行条内容 |
+| Status | What the execution bar shows |
 | --- | --- |
-| 执行中 | Agent Chip、已耗时、进度条、当前成本、预计剩余 + [暂停][接管][改派][终止] |
-| 阻塞 | 阻塞时长、原因、责任对象 + [催办][改派][强制放行] |
-| 失败 | 失败次数、失败原因摘要、Policy 下一步 + [重试][补充上下文重试][改派][转人工] |
-| 待决策 | 决策标题、责任人、剩余时限 + [去处理][催办] |
-| 审核中 | Reviewer 列表与各自结论 + [追加人类审核] |
-| 人类执行中 | 执行人、开始时间 + [标记完成][交还给 Agent] |
-| 已完成 | 总耗时、Lead Time、总成本、验收人 |
+| Executing | Agent chip, elapsed time, progress bar, cost so far, estimated time remaining + [Pause][Take over][Reassign][Abort] |
+| Blocked | How long it has been blocked, why, who owns the blocker + [Nudge][Reassign][Force through] |
+| Failed | Failure count, a summary of the reason, what Policy says happens next + [Retry][Retry with more context][Reassign][Hand to a human] |
+| Awaiting decision | Decision title, who owns it, time left + [Go handle it][Nudge] |
+| Under review | The reviewer list with each one's verdict + [Add a human reviewer] |
+| Human executing | Who is doing it, when they started + [Mark done][Hand back to the agent] |
+| Done | Total time, lead time, total cost, who accepted it |
 
-**进度来源说明**：Agent 的进度百分比是估算值，悬停显示「基于子步骤完成度估算，仅供参考」——不要让用户把它当成精确进度。
+**Where the progress number comes from**: an agent's progress percentage is an estimate. Hovering shows 「基于子步骤完成度估算，仅供参考」(estimated from sub-step completion; indicative only) — don't let users read it as a precise measurement.
 
-### 5.2 人工接管（文档 8.5.5）
+### 5.2 Human Takeover (product doc 8.5.5)
 
-这是产品的关键安全阀，交互必须清晰。点击 [🙋 我来接管] 后：
+This is the product's key safety valve, so the interaction has to be unambiguous. Clicking [🙋 Take over] opens:
 
 ```
-接管「实现多条件查询 API」
+Take over "Multi-condition query API"
 
-当前 Agent 已完成：
-· 查询 DSL 解析（已提交到 PR #42）
-· 参数校验逻辑
-未完成：索引查询逻辑、单元测试
+The agent has finished:
+· Query DSL parsing (already pushed to PR #42)
+· Parameter validation
+Not finished: index lookup logic, unit tests
 
-Agent 处理方式
- (•) 立即停止，保留已有产物
- ( ) 等待当前步骤完成后停止
- ( ) 保持运行，我在旁边并行处理
+What the agent should do
+ (•) Stop immediately, keep what it has produced
+ ( ) Stop once the current step finishes
+ ( ) Keep running — I'll work alongside it
 
-接管后
- ☑ 任务执行主体改为「👤 我」
- ☑ 在 PR #42 上添加接管说明
- 接管原因 [                              ]  * 必填
+After the takeover
+ ☑ Change the executor to "👤 me"
+ ☑ Post a takeover note on PR #42
+ Reason for taking over [                        ]  * required
 
-                          [取消]  [确认接管]
+                          [Cancel]  [Confirm takeover]
 ```
 
-接管后：状态保持 `executing` 但执行主体变为人类，卡片显示 `🙋 已人工接管`，Analytics 记入「接管率」。
+After a takeover the status stays `executing` but the executor becomes a human, the card shows `🙋 已人工接管` (taken over by a human), and Analytics counts it toward the takeover rate.
 
-**交还给 Agent**：人类可以随时把任务交回，需要写一段"交接说明"作为 Agent 的新上下文——这是 human→agent 方向的上下文传递，容易被忽略但很重要。
+**Handing back to the agent**: a human can return the task at any time, and must write a handover note that becomes the agent's new context — this is context flowing in the human→agent direction, easy to forget and easy to underrate.
 
-### 5.3 描述与人类附加约束
+### 5.3 Description and Human-Added Constraints
 
-描述来自计划生成，可编辑。**人类附加的约束单独成区并高亮**（如「仅限灰度 10%」），因为它们通常来自决策时的 `Approve with Constraints`，Agent 执行时必须遵守，人类复查时也需要一眼看到。
+The description comes out of plan generation and is editable. **Constraints added by a human get their own highlighted block** (for example "canary traffic only, 10%"), because they usually come from an `Approve with Constraints` decision: the agent must honor them while executing, and a human reviewing the result needs to see them at a glance.
 
-约束的来源可追溯（点击跳转到产生该约束的决策）。
+Each constraint is traceable back to its source — click it to jump to the decision that produced it.
 
-### 5.4 验收标准（文档 6.3、8.10.1）
+### 5.4 Acceptance Criteria (product docs 6.3, 8.10.1)
 
-来自需求页的结构化验收标准，是本页最重要的区块之一。每条显示：
+The structured acceptance criteria carried over from the requirement page; one of the most important blocks on this page. Each line shows:
 
-| 元素 | 说明 |
+| Element | Description |
 | --- | --- |
-| 勾选状态 | ☑ 通过 / ☐ 未通过 / ⏳ 待验证 / ❌ 失败 |
-| 校验方式 | `🔧 自动校验` / `🤖 Agent 判定` / `👤 人工确认` |
-| 校验结果 | 具体数值（如覆盖率 84%）或链接到证据 |
+| Check state | ☑ passed / ☐ not passed / ⏳ awaiting verification / ❌ failed |
+| Verification method | `🔧 automated check` / `🤖 agent judgment` / `👤 human confirmation` |
+| Result | The concrete number (e.g. 84% coverage) or a link to the evidence |
 
-**未全部满足时不允许进入 Release**（文档 8.10.3 质量门禁）。人工强制放行需 `tech_lead` 且填写原因。
+**Release is not allowed while any criterion is unmet** (product doc 8.10.3, quality gate). Forcing it through manually requires `tech_lead` and a written reason.
 
-### 5.5 当前进展
+### 5.5 Current Progress
 
-Agent 用自然语言写的进展摘要，比原始日志友好。每次 Agent 完成一个子步骤时更新。
+A progress summary the agent writes in plain language — far friendlier than the raw log. It is refreshed every time the agent finishes a sub-step.
 
-**这是为"不想看日志的人"准备的**。想看细节的用户点 [查看完整 Run] 进 `09`。
+**This block exists for people who don't want to read logs.** Anyone who does want the detail clicks [View full run] and lands on `09`.
 
-### 5.6 Tab：执行记录
+### 5.6 Tab: Runs
 
-本 Work Item 的所有 Run 列表（重试、换 Agent 会产生多个 Run）：
-
-```
-#2  🤖 code-agent-1   执行中   12m    $8.20   ▓▓▓▓▓▓░░ 65%      [详情 →]
-#1  🤖 code-agent-1   失败     4m     $2.10   上下文不足         [详情 →]
-    └ 失败原因：无法定位订单表结构定义
-    └ 补救：已将 schema 文档加入上下文后重试
-```
-
-多次 Run 的成本累加显示，避免用户以为只花了最后一次的钱。
-
-### 5.7 Tab：产物（文档 6.8）
-
-代码 PR、测试报告、文档、截图、部署记录等。每个产物：类型图标、名称、产生者、产生时间、大小/规模、状态、外部链接。
-
-PR 类产物额外显示：分支、变更行数、CI 状态、Review 结论。
-
-### 5.8 Tab：审核（文档 8.10.2）
-
-多 Agent Review 的结果聚合：
+Every run for this work item — retries and agent swaps each produce a new one:
 
 ```
-Review 结论：⚠ 有条件通过 (2 通过 / 1 有意见)
-
-🤖 code-review-agent    ✓ 通过     "代码结构清晰，符合规范"        [详情]
-🤖 security-agent       ⚠ 有意见   "手机号查询未做脱敏，建议…"     [详情]
-🤖 test-agent           ✓ 通过     "48/48 通过，覆盖率 84%"        [详情]
-👤 张伟                 ⏳ 待审核   已通知 · 2h 前                  [催办]
-
-冲突处理：security-agent 的意见需人类裁决              [去裁决 →]
+#2  🤖 code-agent-1   Running   12m    $8.20   ▓▓▓▓▓▓░░ 65%      [Detail →]
+#1  🤖 code-agent-1   Failed    4m     $2.10   context missing   [Detail →]
+    └ Cause: couldn't locate the order table schema definition
+    └ Remedy: added the schema doc to the context and retried
 ```
 
-Agent 结论冲突时（文档 8.8.4「多 Agent 结论冲突」）自动生成决策并在此显示入口。
+Costs across runs are shown as a running total, so nobody assumes they only paid for the last attempt.
 
-### 5.9 Tab：依赖（文档 8.6.2）
+### 5.7 Tab: Artifacts (product doc 6.8)
 
-前置与后置依赖列表，标注依赖类型（完成-开始 / 开始-开始 / 产物依赖 / 决策依赖 / 权限依赖 / 外部系统依赖 / 数据准备依赖）与当前状态。
+Code PRs, test reports, documents, screenshots, deployment records, and so on. Each artifact carries a type icon, name, producer, timestamp, size/scale, status, and external link.
 
-阻塞源用红色标注并提供直达操作。右侧栏已有简版，Tab 内是完整视图 + 迷你依赖图。
+PR-type artifacts additionally show the branch, lines changed, CI status, and review verdict.
 
-### 5.10 Tab：事件
+### 5.8 Tab: Review (product doc 8.10.2)
 
-Event Timeline 组件（§5.8）。默认里程碑级别，可切换「显示全部细节」看到工具调用级事件。
+The aggregated result of a multi-agent review:
 
-支持按来源过滤，每条事件可展开原始数据（供排障）。
+```
+Review verdict: ⚠ Passed with conditions (2 pass / 1 with comments)
 
-### 5.11 右侧属性栏
+🤖 code-review-agent   ✓ Pass       "Clean structure, follows the conventions"     [Detail]
+🤖 security-agent      ⚠ Comments   "Phone lookup isn't masked; suggest…"          [Detail]
+🤖 test-agent          ✓ Pass       "48/48 passing, 84% coverage"                  [Detail]
+👤 Zhang Wei           ⏳ Pending    Notified · 2h ago                              [Nudge]
 
-字段见 §4 线框。要点：
+Conflict: security-agent's comment needs a human ruling            [Go rule on it →]
+```
 
-- **成本对比**：实际 vs 预估，超出时标红并显示百分比——成本失控的早期信号
-- **Run 历史**：常驻显示，因为"失败过几次"是判断任务健康度的关键信息
-- **依赖**：前置阻塞项用红色，可直接点击跳转
+When agent verdicts conflict (product doc 8.8.4, "conflicting multi-agent verdicts") a decision is generated automatically and its entry point appears here.
+
+### 5.9 Tab: Dependencies (product doc 8.6.2)
+
+Upstream and downstream dependency lists, each annotated with its dependency type (finish-to-start / start-to-start / artifact / decision / permission / external system / data preparation) and current status.
+
+Whatever is doing the blocking is marked in red and comes with a direct action. The right-hand rail already carries a condensed version; this tab is the full view plus a mini dependency graph.
+
+### 5.10 Tab: Events
+
+The Event Timeline component (§5.8). Milestone level by default, with a "show all detail" toggle that drops down to tool-call-level events.
+
+Filterable by source; every event expands to its raw payload for troubleshooting.
+
+### 5.11 Right-Hand Property Rail
+
+The fields are in the §4 wireframe. What matters:
+
+- **Cost comparison**: actual vs. estimate, turning red with a percentage when it overruns — the earliest signal that spend is getting away from you
+- **Run history**: always visible, because "how many times has this failed" is the single best read on a task's health
+- **Dependencies**: blocking upstream items in red, clickable straight through
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**处理失败任务**
-
-```
-进入 → 执行条显示「失败 2/3」→ 看失败原因
-→ 判断：
-   ├ 上下文不足 → 在描述区补充信息 → [补充上下文重试]
-   ├ Agent 能力不匹配 → [改派] 选择候选（带匹配度说明）
-   ├ 任务本身有问题 → [拆分任务] 或回到计划页
-   └ 需求有歧义 → [发起决策] → 11 决策详情
-```
-
-**审核 Agent 产出**
+**Dealing with a failed task**
 
 ```
-状态 = Reviewing → 看验收标准（4/6 ✓）
-→ 看产物 PR #42 → 点击外链查看代码
-→ 回到本页看 Review Tab 的三个 Agent 结论
-→ security-agent 有意见 → 裁决：接受意见
-→ [要求修改] → 任务回到 Execution，Agent 收到修改意见
+Open it → execution bar reads "Failed 2/3" → read the failure reason
+→ decide:
+   ├ context was missing → add the information to the description → [Retry with more context]
+   ├ agent isn't capable of this → [Reassign], pick from candidates (each with a fit explanation)
+   ├ the task itself is wrong → [Split task] or go back to the plan page
+   └ the requirement is ambiguous → [Raise a decision] → 11 Decision Detail
 ```
 
-**人工接管**
+**Reviewing what an agent produced**
 
 ```
-Agent 卡住 12 分钟无进展 → [我来接管] → 填原因「Agent 陷入循环」
-→ 状态主体变为人类 → 本地完成工作 → [标记完成] + 上传产物
-→ 或部分完成后 [交还给 Agent] + 交接说明
+Status = Reviewing → check the acceptance criteria (4/6 ✓)
+→ open artifact PR #42 → follow the external link to read the code
+→ come back and read the three agent verdicts in the Review tab
+→ security-agent has comments → rule on it: accept the comment
+→ [Request changes] → the task returns to Execution and the agent receives the comments
+```
+
+**Human takeover**
+
+```
+Agent stuck for 12 minutes with no progress → [Take over] → reason: "agent is looping"
+→ executor becomes a human → finish the work locally → [Mark done] + upload artifacts
+→ or, after finishing part of it, [Hand back to the agent] + a handover note
 ```
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 加载 | 头部与属性栏先出，Tab 内容懒加载 |
-| Work Item 已被删除/合并 | 显示「已合并到 XXX」+ 跳转链接 |
-| 无 Run 记录（尚未开始） | 执行记录 Tab 显示「尚未开始执行」+ 预计开始时间 + [立即开始] |
-| Agent 执行中 | 进度、成本、当前进展实时更新；用户编辑描述时暂停该区域刷新 |
-| 权限不足 | 内容可见，操作按钮置灰并说明所需角色 |
-| 任务已完成 | 执行条替换为交付摘要；操作按钮收敛为 [重新打开][复制为新任务] |
+| Loading | Header and property rail render first; tab content loads lazily |
+| Work item deleted / merged away | Show 「已合并到 XXX」(merged into XXX) plus a link to follow |
+| No runs yet (not started) | The Runs tab shows 「尚未开始执行」(not started yet) + the planned start time + [Start now] |
+| Agent executing | Progress, cost, and current progress update live; refreshing that region pauses while the user is editing the description |
+| Insufficient permission | Content stays visible; action buttons gray out and name the role required |
+| Task complete | The execution bar is replaced by a delivery summary; actions collapse to [Reopen][Copy as new task] |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看 | 项目成员 |
-| 编辑描述 / 验收标准 | `member` 及以上（执行中编辑会提示影响正在运行的 Agent） |
-| 暂停 / 终止 Run | `tech_lead` / `pm` / `agent_owner` |
-| 人工接管 | `member` 及以上 |
-| 改派 | `pm` / `tech_lead` |
-| 强制放行未满足的验收标准 | `tech_lead`，必填原因，记审计 |
-| 裁决 Agent 冲突结论 | `tech_lead` |
-| 重新打开已完成任务 | `pm` 及以上 |
+| View | Project member |
+| Edit description / acceptance criteria | `member` and above (editing mid-execution warns that it affects the running agent) |
+| Pause / abort a run | `tech_lead` / `pm` / `agent_owner` |
+| Human takeover | `member` and above |
+| Reassign | `pm` / `tech_lead` |
+| Force through unmet acceptance criteria | `tech_lead`, reason required, audited |
+| Rule on conflicting agent verdicts | `tech_lead` |
+| Reopen a completed task | `pm` and above |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`WorkItem`（全字段）、`AgentRun`、`Artifact`、`Event`、`Decision`、`Agent`、`Review`（多 Agent 结论）
+**Domain objects**: `WorkItem` (all fields), `AgentRun`, `Artifact`, `Event`, `Decision`, `Agent`, `Review` (multi-agent verdicts)
 
-**接口**
+**Endpoints**
 
 ```
 GET   /api/work-items/{id}
       → { item, current_run, runs[], artifacts[], reviews[], dependencies{}, constraints[] }
 GET   /api/work-items/{id}/events?level=&source=&cursor=
 
-PATCH /api/work-items/{id}                        编辑字段
-POST  /api/work-items/{id}/takeover               { agent_handling, reason }（reason 必填）
+PATCH /api/work-items/{id}                        edit fields
+POST  /api/work-items/{id}/takeover               { agent_handling, reason }  (reason required)
 POST  /api/work-items/{id}/handback               { handover_note }
 POST  /api/work-items/{id}/reassign               { assignee_type, assignee_id, reason }
 POST  /api/work-items/{id}/retry                  { additional_context? }
 POST  /api/work-items/{id}/split                  { subtasks[] }
-POST  /api/work-items/{id}/acceptance/{criterion} { passed, note }   人工确认验收项
-POST  /api/work-items/{id}/force-pass             { reason }（tech_lead，审计）
+POST  /api/work-items/{id}/acceptance/{criterion} { passed, note }   human sign-off on one criterion
+POST  /api/work-items/{id}/force-pass             { reason }  (tech_lead, audited)
 POST  /api/reviews/{id}/resolve-conflict          { decision, note }
 
 SSE   /api/stream?channels=work_item:{id}
@@ -305,41 +307,41 @@ SSE   /api/stream?channels=work_item:{id}
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it tells us |
 | --- | --- |
-| `work_item_viewed{status}` | 用户在什么状态下会点开详情（应集中在失败/阻塞） |
-| **`takeover{reason_category}`** | **接管率与接管原因分布——Agent 能力缺口的直接证据** |
-| `retry{with_context}` | 补充上下文重试 vs 直接重试的成功率差异 |
-| `acceptance_manual_override` | 强制放行频率（治理风险信号） |
-| `review_conflict_resolved{outcome}` | 多 Agent 冲突的人类裁决倾向 |
-| `progress_trust`（悬停进度条次数） | 用户对进度估算的怀疑程度 |
-| `detail_to_run_navigation` | 有多少人真的会去看 Run 日志 |
+| `work_item_viewed{status}` | Which statuses make people open the detail page (should cluster on failed/blocked) |
+| **`takeover{reason_category}`** | **Takeover rate and the distribution of reasons — direct evidence of where agent capability falls short** |
+| `retry{with_context}` | Success-rate gap between retrying with added context and retrying as-is |
+| `acceptance_manual_override` | How often criteria get forced through (a governance risk signal) |
+| `review_conflict_resolved{outcome}` | Which way humans lean when agents disagree |
+| `progress_trust` (progress-bar hovers) | How much users doubt the progress estimate |
+| `detail_to_run_navigation` | How many people actually go read the run log |
 
-**页面成功标准**：接管率 < 10%；失败任务在本页一次操作内解决的比例 > 70%。
+**Success criteria for this page**: takeover rate < 10%; more than 70% of failed tasks resolved in a single action on this page.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases and Exceptions
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 编辑描述时 Agent 正在执行 | 提示「Agent 正在执行，修改将在下次 Run 生效」+ 可选 [立即重启 Run 应用修改] |
-| 同时多人编辑 | 字段级锁 + 协作者提示 |
-| Run 数量 > 10（反复失败） | 执行记录折叠，顶部红色提示「已失败 8 次，建议人工介入或拆分任务」 |
-| 成本远超预估（> 3x） | 执行条变红 + 「成本异常」标记，按 Policy 可能已自动暂停 |
-| 依赖成环 | 依赖 Tab 显示环路警告 + [去执行图查看] |
-| 产物外部链接失效 | 显示「链接不可访问」+ 保留元信息，不删除记录 |
-| 验收标准被后续需求变更修改 | 已通过的项标注「基于旧标准通过」，需重新验证 |
-| 接管后人类长期无动作 | 24h 后生成提醒；48h 后询问是否交还 Agent |
+| Editing the description while the agent is running | Warn 「Agent 正在执行，修改将在下次 Run 生效」(the agent is running; your change takes effect on the next run) + an optional [Restart the run now to apply it] |
+| Several people editing at once | Field-level locking + a collaborator indicator |
+| More than 10 runs (repeated failures) | Collapse the run list and put a red banner on top: 「已失败 8 次，建议人工介入或拆分任务」(failed 8 times — consider stepping in or splitting the task) |
+| Cost far above estimate (> 3x) | The execution bar turns red with a 「成本异常」(cost anomaly) marker; Policy may already have paused the run |
+| Circular dependency | The Dependencies tab shows a cycle warning + [View in execution graph] |
+| Artifact's external link is dead | Show 「链接不可访问」(link unreachable) and keep the metadata — never delete the record |
+| Acceptance criteria changed by a later requirement change | Already-passed items are marked 「基于旧标准通过」(passed against the old criteria) and need re-verification |
+| Human takes over, then does nothing for a long time | A reminder after 24h; after 48h, ask whether to hand it back to the agent |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. Agent 进度百分比的估算方法需要定义。若不可靠，是否改为显示"已完成的子步骤 / 计划子步骤"更诚实？
-2. 人类执行任务时如何记录工作过程？MVP 是否只需要「标记完成 + 上传产物」，不做工时记录？
-3. 「交还给 Agent」时的交接说明如何保证 Agent 真的读懂？是否需要 Agent 回述确认？
-4. 多 Agent Review 结论冲突的裁决是否应强制走 Decision 对象（可追溯），而不是在本页直接操作？倾向于强制走 Decision。
-5. 验收标准的自动校验依赖 CI 与测试系统集成，MVP 若集成不完整，是否降级为"人工勾选 + 标注未自动验证"？
+1. The method behind the agent progress percentage needs a definition. If it can't be made reliable, would "sub-steps completed / sub-steps planned" be the more honest thing to show?
+2. How should a human's own work be recorded while they execute a task? Is "mark done + upload artifacts" enough for MVP, with no time tracking?
+3. How do we make sure the agent genuinely understands the handover note on a hand-back? Should the agent be required to restate it for confirmation?
+4. Should ruling on conflicting multi-agent review verdicts be forced through a Decision object (traceable) rather than acted on directly from this page? Leaning toward forcing the Decision.
+5. Automated verification of acceptance criteria depends on CI and test-system integration. If that integration is incomplete at MVP, do we fall back to "manual check-off + flagged as not automatically verified"?

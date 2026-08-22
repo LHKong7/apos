@@ -14,29 +14,38 @@ import { RepositoryCard, RepositoryForm } from './Repositories';
 import { StorageTargetCard, StorageTargetForm } from './StorageTargets';
 
 /**
- * 工作区来源 —— Agent 的活儿从哪来、产出去哪。
+ * Workspace sources — where the agent's work comes from and where its output goes /
+ * 工作区来源。
  *
- * ★★ **一张列表**，不是「代码仓库」和「存储目标」两个板块。
+ * ★★ **One list**, not two separate blocks for "repositories" and "storage targets".
  *
- *   这两类曾经分处两地：仓库是「Agent 配置」的第三个标签页，存储目标是
- *   导航里独立的一格。分处的理由是数据层的 —— 两张表的列几乎不重叠，
- *   交货语义也不同（推分支 vs 同步对象，后者会删远端 key）。但那些理由
- *   说的是**表和表单**，不是**列表和导航**：用户站在这一页上想的是
- *   「这个项目的代码和数据在哪」，一个问题不该分两个地方回答。
+ *   The two used to live apart: repositories were the third tab of "Agent config",
+ *   storage targets had their own slot in the nav. The reasons for splitting them
+ *   were data-layer reasons — the two tables share almost no columns, and delivery
+ *   means different things (pushing a branch vs. syncing objects, where the latter
+ *   deletes remote keys). But those reasons are about **tables and forms**, not about
+ *   **lists and navigation**: standing on this page a user is asking "where do this
+ *   project's code and data live", and one question should not be answered in two
+ *   places.
  *
- *   所以：一张列表、一个登记入口，点「登记」时先选类型、再给该类型
- *   自己的表单。底下仍然是两张表、两条权限（repository.manage /
- *   storage_target.manage）—— 合并的是入口，不是模型。
+ *   Hence: one list, one registration entry point; clicking "register" asks for the
+ *   kind first, then shows that kind's own form. Underneath there are still two
+ *   tables and two permissions (repository.manage / storage_target.manage) — what was
+ *   merged is the entry point, not the model.
  *
- * ★ 登记 ≠ 授权。哪个 Agent 能用哪个来源仍在「Agent 配置」里配
- *   （resourceScopes 的 repo / dataset），页尾显式指回去。
- *   唯一的例外是**项目级仓库对项目内 Agent 默认只读**
- *   （domain 的 effectiveResourceScopes）—— 一个项目通常只有一个仓库，
- *   逐个 Agent 授权一遍换不到任何安全性。`write` 仍然要显式授。
+ * ★ Registering is not authorizing. Which agent may use which source is still
+ *   configured in "Agent config" (resourceScopes' repo / dataset), and the page
+ *   footer points back there explicitly. The one exception is that **a project-level
+ *   repository is read-only by default for agents in that project** (domain's
+ *   effectiveResourceScopes) — a project usually has exactly one repository, and
+ *   granting it agent by agent buys no security whatsoever. `write` still has to be
+ *   granted explicitly.
  *
- * One list, not two blocks. Repositories and storage targets stay two tables
- * with two permissions underneath — the merge is of the entry point, because
- * "where does this project's code and data live" is one question.
+ * ★★ 一张列表，不是「代码仓库」和「存储目标」两个板块。底下仍然是两张表、两条权限
+ *   （repository.manage / storage_target.manage）—— 合并的是入口，不是模型。
+ *
+ * ★ 登记 ≠ 授权。哪个 Agent 能用哪个来源仍在「Agent 配置」里配，页尾显式指回去；
+ *   唯一的例外是项目级仓库对项目内 Agent 默认只读。
  */
 export function WorkspaceSourcesPage() {
   const t = useT();
@@ -67,12 +76,12 @@ export function WorkspaceSourcesPage() {
   );
 }
 
-/** 登记时可选的三类来源 / The three source kinds you can register */
+/** The three source kinds you can register / 登记时可选的三类来源 */
 type SourceKind = 'git' | 'object_storage' | 'local';
 
 /**
- * 类型 → 词条键。模块级常量只存键，不存译文
- * （取不到 hook，而且切语言时不会重算）。
+ * Kind → message key. Module-level constants store keys, never translated strings:
+ * they cannot reach a hook, and they are not recomputed when the language changes.
  */
 const KIND_KEYS: Record<SourceKind, { label: MessageKey; hint: MessageKey }> = {
   git: { label: 'ws.kindGit', hint: 'ws.kindGitHint' },
@@ -80,7 +89,7 @@ const KIND_KEYS: Record<SourceKind, { label: MessageKey; hint: MessageKey }> = {
   local: { label: 'ws.kindLocal', hint: 'ws.kindLocalHint' },
 };
 
-/** 列表里的一行：两类来源在这里被抹平成同一个形状 */
+/** One row of the list: both source kinds are flattened into the same shape here */
 type SourceRow =
   | { kind: 'git'; ref: string; repo: RepositoryRow }
   | { kind: 'object_storage' | 'local'; ref: string; target: StorageTargetRow };
@@ -113,9 +122,9 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
 
   if (repoQ.isLoading || storeQ.isLoading) return <CardSkeleton />;
   /**
-   * ★ 两个查询里任何一个塌了都整页报错，而不是显示半张列表。
-   *   半张列表看起来就是「另一类一个都没登记」—— 而那正是用户接下来
-   *   会去重复登记一遍的理由。
+   * ★ If either query fails the whole page errors out, rather than rendering half a
+   *   list. Half a list looks exactly like "nothing of the other kind is registered"
+   *   — which is precisely what sends the user off to register a duplicate.
    */
   const failed = repoQ.error ?? storeQ.error;
   if (failed) {
@@ -134,8 +143,9 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
   const storeData = storeQ.data!;
 
   /**
-   * ★ 按 ref 排序而不是按类型分组 —— 分组渲染出来又是两个板块，
-   *   而 ref 是用户在 Agent 授权里实际会引用的那个键。
+   * ★ Sorted by ref rather than grouped by kind — grouping renders as two blocks all
+   *   over again, and ref is the key the user actually cites when granting agent
+   *   access.
    */
   const rows: SourceRow[] = [
     ...repoData.repositories.map((repo): SourceRow => ({ kind: 'git', ref: repo.ref, repo })),
@@ -163,7 +173,7 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
         </Button>
       </div>
 
-      {/* ★ 环境问题在这一页说清楚，而不是等第一次派发才炸 */}
+      {/* ★ Environment problems are stated on this page, not blown up on first dispatch */}
       {!repoData.gitAvailable && (
         <Notice tone="error">
           {t('agentCfg.repo.gitProblem', { problem: repoData.gitProblem ?? '' })}
@@ -174,20 +184,22 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
       )}
 
       {/*
-        ★★ 白名单只管宿主机目录那一类，但要一直显示。
-          它是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员在界面上
-          改不动也看不到，而一条 local 登记过不过闸完全由它决定 ——
-          不显示的话，被闸掉的登记在页面上和正常的一模一样，
-          直到第一次派发才报「不在允许挂载的范围内」。
+        ★★ The allowlist only governs the host-directory kind, but it is shown at all
+          times. It is a **deployment environment** variable
+          (APOS_LOCAL_MOUNT_ROOTS) that an admin can neither see nor change from the
+          UI, yet it alone decides whether a local registration passes the gate.
+          Hidden, a gated registration looks identical to a working one until the
+          first dispatch reports "outside the permitted mount roots".
       */}
       <Notice tone={storeData.localMountRestricted ? 'info' : 'warning'}>
         {storeData.localMountRestricted ? (
           <>
             {t('storage.mountRoots')}
             {/*
-              ★ 多条根目录之间要有分隔符。只靠 mx-1 的话两个 code 块之间
-                只有一点空白，读起来像一条被折行的长路径；而说明句以句号
-                开头，末尾那点又被 margin 推成一个孤零零的圆点。
+              ★ Multiple roots need a separator between them. With only mx-1 the two
+                code blocks are parted by a sliver of whitespace and read as one long
+                wrapped path; and since the explanatory sentence opens with a period,
+                the trailing one gets pushed by the margin into a lone floating dot.
             */}
             {storeData.localMountRoots.map((r, i) => (
               <span key={r}>
@@ -235,9 +247,10 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
       )}
 
       {/*
-        ★ 授权在 Agent 配置那一页 —— 登记一个来源不等于哪个 Agent 看得见它。
-          唯一的例外是项目级仓库的默认只读，这条也要说出来：不说的话，
-          「我什么都没配，它怎么读到了」同样是个查不出来的问题。
+        ★ Authorization lives on the Agent config page — registering a source does not
+          make any agent able to see it. The one exception, a project-level
+          repository's default read access, has to be spelled out too: left unsaid,
+          "I configured nothing, how did it read that" is just as unanswerable.
       */}
       <p className="text-[11px] text-slate-500">
         {t('ws.grantHint')}{' '}
@@ -292,12 +305,13 @@ function WorkspaceSourcesSection({ projectId }: { projectId: string }) {
 }
 
 /**
- * 先选类型，再填表单。
+ * Pick the kind first, then fill in the form / 先选类型，再填表单。
  *
- * ★★ 类型必须在**表单之前**问，而不是做成表单里的一个下拉框。
- *   三类的字段几乎不重叠（远端地址 / 默认分支 vs bucket / 寻址风格 vs
- *   宿主机路径），同一张表单里切类型会让已填的一半字段突然消失，
- *   而用户不会认为那是「不适用」，只会认为自己填的东西丢了。
+ * ★★ The kind must be asked **before** the form rather than being a dropdown inside
+ *   it. The three kinds share almost no fields (remote URL / default branch vs.
+ *   bucket / addressing style vs. host path), so switching kind inside one form makes
+ *   half of what the user already typed vanish — and they will not read that as "not
+ *   applicable", they will read it as having lost their input.
  */
 function KindPicker({
   onPick,

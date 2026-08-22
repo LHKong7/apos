@@ -17,24 +17,25 @@ import { DeliveryTargetPicker } from './StorageTargets';
 import { Label } from '@/components/ui/label';
 
 /**
- * 代码仓库登记 —— 工作区来源的一种。
+ * Repository registration — one kind of workspace source / 代码仓库登记。
  *
- * ★★ 从「Agent 配置」里搬出来的。它此前是那一页的第三个标签页，而那个位置
- *   说错了归属：仓库不是某个 Agent 的属性，是**项目（或组织）级的资源登记**，
- *   一个 monorepo 被五个 Agent 引用是常态。存储目标先一步搬走了，
- *   仓库留在原地就成了「同一条理由只执行了一半」——
- *   两类工作区来源隔着一层标签页，而它们回答的是同一个问题：
- *   Agent 的活儿从哪来、产出去哪。
+ * ★★ Moved out of "Agent config". It used to be the third tab there, and that spot
+ *   asserted the wrong ownership: a repository is not a property of some agent, it is
+ *   a **project-level (or org-level) resource registry**, and one monorepo referenced
+ *   by five agents is the normal case. Storage targets moved out first, so leaving
+ *   repositories behind executed only half of the same argument — two kinds of
+ *   workspace source separated by a tab, both answering the same question: where does
+ *   the agent's work come from and where does its output go.
  *
- * ★ 与存储目标共处一页但**各自一张表单**：两类的字段完全不重叠
- *   （默认分支 / 分支前缀 / 主机密钥 vs bucket / 寻址风格 / 根路径），
- *   合成一张表单，不适用的那一半只能灰掉当占位符 —— 而占位符会被当成
- *   真实配置（「默认分支：main」出现在一个 S3 bucket 上）。
+ * ★ They share a page with storage targets but keep **separate forms**: the fields of
+ *   the two kinds do not overlap at all (default branch / branch prefix / host key vs.
+ *   bucket / addressing style / root path). Fused into one form, the inapplicable half
+ *   can only be grayed out as a placeholder — and placeholders get read as real
+ *   configuration ("default branch: main" showing up on an S3 bucket).
  *
- * Repositories are a project-level resource registry, not a property of any
- * one agent — so they live next to storage targets on the workspace-sources
- * page. Same page, separate forms: the two kinds share almost no fields, and
- * grayed-out placeholders read as real configuration.
+ * ★★ 仓库是项目级的资源登记，不是某个 Agent 的属性，所以它和存储目标同处
+ *   「工作区来源」一页；同页但各自一张表单 —— 两类字段不重叠，灰掉的占位符
+ *   会被当成真实配置。
  */
 export function RepositoriesSection({ projectId }: { projectId: string }) {
   const t = useT();
@@ -68,13 +69,13 @@ export function RepositoriesSection({ projectId }: { projectId: string }) {
         </Button>
       </div>
 
-      {/* ★ git 环境问题在这一页说清楚，而不是等第一次派发才炸 */}
+      {/* ★ git environment problems are stated on this page, not blown up on first dispatch */}
       {!data.gitAvailable && (
         <Notice tone="error">
           {t('agentCfg.repo.gitProblem', { problem: data.gitProblem ?? '' })}
         </Notice>
       )}
-      {/* ★ 同理：少装 openssh-client 的话，ssh 形态的仓库一个都用不了 */}
+      {/* ★ Likewise: without openssh-client installed, not one ssh-style repository works */}
       {!data.sshAvailable && data.repositories.some((r) => r.authKind === 'ssh_key') && (
         <Notice tone="error">{data.sshProblem}</Notice>
       )}
@@ -121,11 +122,12 @@ export function RepositoriesSection({ projectId }: { projectId: string }) {
 }
 
 /**
- * 表单占位符跟着 git 地址变。
+ * Form placeholders follow the git URL / 表单占位符跟着 git 地址变。
  *
- * ★ 与服务端的 resolveAuthUsername 是同一套判据，但这里只用来**提示**，
- *   真正生效的是服务端算的那份（回显在卡片上）。前端算错顶多提示不准，
- *   不会让认证行为不一致。
+ * ★ Same rules as the server's resolveAuthUsername, but here they only produce a
+ *   **hint**. What actually takes effect is the server's computation (echoed back on
+ *   the card). Getting it wrong on the client makes the hint inaccurate at worst; it
+ *   cannot make authentication behave inconsistently.
  */
 function guessedAuthUsername(remoteUrl: string): string {
   const u = remoteUrl.toLowerCase();
@@ -137,9 +139,11 @@ function guessedAuthUsername(remoteUrl: string): string {
 }
 
 /**
- * 用户名来源 → 词条键 / Auth username source → message key.
+ * Auth username source → message key / 用户名来源 → 词条键。
  *
- * ★ 模块级常量取不到 hook，存译文的话切语言不重算 —— 存键，渲染处 t()。
+ * ★ A module-level constant cannot reach a hook, and a translated string stored here
+ *   is not recomputed when the language changes — so store the key and call t() at
+ *   render time.
  */
 const AUTH_SOURCE_KEYS: Record<string, MessageKey> = {
   explicit: 'agentCfg.repo.authManual',
@@ -174,10 +178,11 @@ export function RepositoryCard({
         </span>
         <div className="ml-auto flex gap-1.5">
           {/*
-            ★ 「测试连接」是这张卡片上最该有的按钮。
-              没有它，验证凭证的唯一办法是派一个任务，然后看它以
-              「准备工作区失败：… 401」告终 —— 那条报错分不清是
-              token 过期、scope 不够，还是用户名占位不对。
+            ★ "Test connection" is the button this card most needs.
+              Without it, the only way to verify a credential is to dispatch a task and
+              watch it end in "failed to prepare workspace: … 401" — and that error
+              cannot tell an expired token from insufficient scope from a wrong
+              username placeholder.
           */}
           <Button variant="outline" size="xs"
             onClick={() => probe.mutate()}
@@ -204,10 +209,12 @@ export function RepositoryCard({
           {repo.credentialHint ?? <span className="text-slate-400">{t('agentCfg.notConfigured')}</span>}
         </Field>
         {/*
-          ★ 两种认证形态各显示各的那一项。
-            token 这边最容易错的是用户名占位（错了就是 401，而 401 的报错
-            不指向它 —— 自建 GitLab 踩的就是这个坑）；ssh 这边最容易被忽略
-            的是主机公钥有没有固定 —— 没固定的话 TOFU 等于没有校验。
+          ★ Each auth style shows only its own field.
+            On the token side the easiest thing to get wrong is the username
+            placeholder (wrong means 401, and nothing in a 401 points at it — this is
+            exactly the trap self-hosted GitLab falls into); on the ssh side the
+            easiest thing to overlook is whether the host key is pinned — unpinned,
+            TOFU amounts to no verification at all.
         */}
         {repo.authKind === 'token' ? (
           <Field label={t('agentCfg.repo.authUsername')}>
@@ -280,9 +287,9 @@ export function RepositoryForm({
   onDone,
 }: {
   projectId: string;
-  /** 传了就是编辑，标识与远端不可改 */
+  /** Passing one means edit mode; the ref and the remote cannot be changed */
   existing?: RepositoryRow | null;
-  /** 直接粘贴的凭证是不是密文入库。两种都能存，只影响提示语 */
+  /** Whether a pasted credential is stored encrypted. Both work; it only changes the hint */
   encryptsInline: boolean;
   onClose: () => void;
   onDone: () => void;
@@ -295,8 +302,8 @@ export function RepositoryForm({
     remoteUrl: existing?.remoteUrl ?? '',
     defaultBranch: existing?.defaultBranch ?? 'main',
     branchPrefix: existing?.branchPrefix ?? 'apos/',
-    // ★ 只回填手填过的那份。推断出来的值回填进去会把它「钉死」成显式值，
-    //   之后换了域名也不会跟着变
+    // ★ Only prefill a value the user typed. Prefilling an inferred one pins it as an
+    //   explicit value, so it stops following a later change of host
     authUsername: existing?.authUsernameSource === 'explicit' ? existing.authUsername : '',
     checkCommand: existing?.checkCommand ?? '',
     credential: '',
@@ -306,8 +313,9 @@ export function RepositoryForm({
   const [deliveryTargetId, setDeliveryTargetId] = useState(existing?.deliveryTargetId ?? null);
 
   /**
-   * ★ 候选来自「存储目标」那一页 —— 交货目标只能是登记过的东西，
-   *   因为投递要用凭证，而凭证只以引用存在登记表里。
+   * ★ The candidates come from the storage-targets page — a delivery target can only
+   *   be something already registered, because delivery needs a credential and
+   *   credentials exist only as references in the registry.
    */
   const storage = useQuery({
     queryKey: qk.storageTargets(projectId),
@@ -317,10 +325,11 @@ export function RepositoryForm({
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
   /**
-   * ★ 两种认证形态的字段不重叠，同时摆出来只会让人填错栏 ——
-   *   往 ssh 仓库里填 token、往 https 仓库里贴私钥都是真实发生过的错误。
-   *   判据和服务端的 isHttpRemote 一致；这里只决定显示什么，
-   *   真正生效的判定在服务端。
+   * ★ The fields of the two auth styles do not overlap, and showing both at once only
+   *   gets people to fill in the wrong box — pasting a token into an ssh repository
+   *   and a private key into an https one have both really happened. The rule matches
+   *   the server's isHttpRemote; here it only decides what is displayed, the binding
+   *   decision is made on the server.
    */
   const isSsh = !/^https?:\/\//i.test((isEdit ? existing!.remoteUrl : form.remoteUrl).trim());
 
@@ -334,9 +343,9 @@ export function RepositoryForm({
             authUsername: form.authUsername.trim() || null,
             checkCommand: form.checkCommand.trim() || null,
             deliveryTargetId,
-            // null = 清空（下次连接重新学习），这是服务器换了密钥时的出路
+            // null = clear it (relearn on next connect); the way out when the server rotates its key
             sshKnownHosts: form.sshKnownHosts.trim() || null,
-            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            // Empty = leave the credential alone (so editing other fields cannot wipe it)
             ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
           })
         : api.createRepository({
@@ -345,9 +354,9 @@ export function RepositoryForm({
         remoteUrl: form.remoteUrl,
         defaultBranch: form.defaultBranch,
         branchPrefix: form.branchPrefix,
-        // ★ 这两个此前一直躺在表单 state 里没被提交 ——
-        //   checkCommand 因此只能改数据库才配得上，而它是
-        //   reviewing 阶段唯一的真实测试数据源
+        // ★ These two sat in form state without ever being submitted — which meant
+        //   checkCommand could only be configured by editing the database, and it is the
+        //   sole source of real test data in the reviewing stage
         authUsername: form.authUsername.trim() || null,
         checkCommand: form.checkCommand.trim() || null,
             deliveryTargetId,
@@ -448,9 +457,10 @@ export function RepositoryForm({
               placeholder={guessedAuthUsername(form.remoteUrl)}
               className="mt-1" />
             {/*
-              ★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
-                留空能按 github.com / gitlab.com 推断出来，但**自建** GitLab
-                装在 git.acme.com 上推不出来 —— 那正是最常见的部署形态。
+              ★ Getting this field wrong shows up as a 401, and nothing in a 401 points
+                at it. Left blank it can be inferred for github.com / gitlab.com, but a
+                **self-hosted** GitLab sitting on git.acme.com cannot be inferred — and
+                that is the most common deployment shape there is.
             */}
             <p className="mt-1 text-[11px] text-slate-500">
               {t('agentCfg.repo.authUsernameHint')}
@@ -473,10 +483,12 @@ export function RepositoryForm({
               className="mt-1 font-mono"
             />
             {/*
-              ★ 留空不等于不校验 —— 首次连接会 TOFU 学到并自动固定。
-                但那一次窗口是真实存在的，所以要给出关掉它的办法。
-              ★ 这一栏**不加密**，因为主机公钥本来就是公开比对的那一份。
-                必须说清楚，否则会有人把私钥贴进来。
+              ★ Blank does not mean unverified — the first connection learns the key via
+                TOFU and pins it automatically. But that one window is genuinely open,
+                so there has to be a way to close it.
+              ★ This field is **not encrypted**, because a host public key is the part
+                meant to be compared in the open. Say so plainly, or someone will paste
+                a private key in here.
             */}
             <p className="mt-1 text-[11px] text-slate-500">
               {t('agentCfg.repo.keyscanHint')}
@@ -497,7 +509,8 @@ export function RepositoryForm({
             placeholder="pnpm test"
             className="mt-1" />
           {/*
-            ★ 不填不是「少个功能」，是 reviewing 阶段的门禁没有数据可依据。
+            ★ Leaving it empty is not "one feature missing" — it leaves the reviewing
+              stage's gate with no data to judge on.
           */}
           <p className="mt-1 text-[11px] text-slate-500">
             {t('agentCfg.repo.checkHint')}
@@ -516,9 +529,10 @@ export function RepositoryForm({
             {isSsh ? t('agentCfg.repo.sshKey') : t('agentCfg.repo.accessToken')}
           </span>
           {/*
-            ★★ 私钥必须用 textarea：`<input>` 会把粘贴内容里的换行吃掉，
-              而 PEM 是多行的 —— 单行输入框根本装不下一把 key，
-              表现是保存后提示「格式不正确」，而用户明明整段复制了。
+            ★★ A private key must use a textarea: `<input>` swallows the newlines in
+              pasted content, and PEM is multi-line — a single-line box simply cannot
+              hold a key. The symptom is a "malformed" error after saving even though
+              the user copied the whole thing.
           */}
           {isSsh ? (
             <Textarea

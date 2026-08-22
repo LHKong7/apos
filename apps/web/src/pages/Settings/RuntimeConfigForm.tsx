@@ -14,30 +14,32 @@ import {
 } from '@/components/ui/select';
 
 /**
- * 运行时配置 —— 逐键的表单 / Per-key runtime configuration form.
+ * Per-key runtime configuration form / 运行时配置 —— 逐键的表单。
  *
- * ★★ 这一段此前是**一个 25 行的 JSON 文本框**，旁边挂着一份说明书。
+ * ★★ This used to be **one 25-line JSON textarea** with a manual next to it.
  *
- *   schema 里明明写着每个键的类型、取值范围、默认值和「改了会影响成本
- *   还是安全」，而界面把这些全部降级成了一段可以随便打字的文本。
- *   代价有三层：不懂 JSON 的人配不了；懂的人也会把 `"maxTurns": "30"`
- *   写成字符串；而「取值范围」这类约束只有服务端会拦 ——
- *   报错来得比输入晚了整整一次保存（问题记录 #18 / #46）。
+ *   The schema already states each key's type, permitted range, default, and
+ *   whether changing it affects cost or safety — and the UI degraded all of
+ *   that into free text anyone could type into. The cost came in three layers:
+ *   people who do not know JSON could not configure it at all; people who do
+ *   still wrote `"maxTurns": "30"` as a string; and constraints like the
+ *   permitted range were caught only by the server — so the error arrived a
+ *   whole save later than the input (issues #18 / #46).
  *
- *   schema 已经是数据了，这里只是把它当数据用。
+ *   The schema is already data; this just uses it as data. It renders type,
+ *   range, default, and blast radius for every key instead of degrading them to
+ *   free text.
  *
- * ★★ 但 JSON 那条路必须留着，而且**不能只是个只读预览**：
- *   平台不认识的键（新版 CLI 刚加的参数、私有分支的开关）只能从那儿进来，
- *   而服务端本来就照收（保存后提示一句「有几个键我不认识」）。
- *   把逃生口封掉，等于让界面的更新速度成为运行时能力的上限。
+ * ★★ But the JSON path has to stay, and it **must not be a read-only preview**:
+ *   keys the platform does not know about (a flag a new CLI version just added,
+ *   a switch on a private branch) can only get in that way, and the server
+ *   accepts them anyway (it just notes after saving that a few keys were
+ *   unrecognized). Sealing the escape hatch would make the UI's release cadence
+ *   the ceiling on what the runtime can do.
  *
- * ★ 高级项默认收起。它们大多带着 `impact: 'safety'` —— 一个默认展开的
- *   危险开关，被误碰的概率比被用到的概率高。
- *
- * The schema already carries type, range, default and blast radius for every
- * key; this renders it instead of degrading it to free text. The raw JSON path
- * stays fully editable, because unknown keys are the only way a new CLI flag
- * gets through before the UI knows about it.
+ * ★ Advanced fields are collapsed by default. Most of them carry
+ *   `impact: 'safety'` — a dangerous switch that is expanded by default is more
+ *   likely to be hit by accident than to be used on purpose.
  */
 export function RuntimeConfigForm({
   spec,
@@ -48,7 +50,7 @@ export function RuntimeConfigForm({
   spec: RuntimeKindSpec;
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
-  /** JSON 逃生口由调用方渲染 —— 它带着自己的解析错误状态，不该在这里复制一份 */
+  /** The caller renders the JSON escape hatch — it owns its own parse-error state, which must not be duplicated here */
   renderJson: () => React.ReactNode;
 }) {
   const t = useT();
@@ -58,7 +60,7 @@ export function RuntimeConfigForm({
   const basic = spec.fields.filter((f) => !f.advanced);
   const advanced = spec.fields.filter((f) => f.advanced);
 
-  /** ★ 平台不认识的键：表单渲染不了它们，但要让用户知道它们还在 */
+  /** ★ Keys the platform does not know: the form cannot render them, but the user must see they are still there */
   const unknownKeys = Object.keys(value).filter((k) => !spec.fields.some((f) => f.key === k));
 
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
@@ -126,8 +128,9 @@ export function RuntimeConfigForm({
           )}
 
           {/*
-            ★ `json` 类型的字段（环境变量表）在表单模式下渲染不了得体的控件，
-              直说让用户切过去，而不是给一个假的输入框。
+            ★ A `json`-typed field (the environment variable map) has no decent
+              control in form mode, so say so and point the user at the JSON
+              tab instead of offering a fake input.
           */}
           {spec.fields.some((f) => f.type === 'json') && (
             <p className="text-[11px] text-slate-500">{t('agentCfg.form.jsonFieldsHint')}</p>
@@ -151,7 +154,7 @@ function FieldInput({
   const sx = useSpecText();
   const label = sx(field.label, field.labelEn);
   const help = field.help ? sx(field.help, field.helpEn) : null;
-  /** ★ 没设过就落到默认值 —— 空着的输入框和「默认是 30」是两件事 */
+  /** ★ Never set falls back to the default — an empty input and "the default is 30" are two different things */
   const current = value === undefined ? field.default : value;
 
   return (
@@ -160,9 +163,10 @@ function FieldInput({
         <Label className="text-[11px] font-medium text-slate-700">{label}</Label>
         <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-500">{field.key}</code>
         {/*
-          ★ 影响范围就地标出来，不埋在说明书里。
-            「改这个会花更多钱」「改这个会放宽安全边界」是按下去之前
-            就该看见的，不是保存之后才发现的。
+          ★ The blast radius is marked in place, not buried in a manual.
+            "Changing this will cost more money" and "changing this widens the
+            safety boundary" are things to see before pressing the control, not
+            to discover after saving.
         */}
         {field.impact === 'cost' && (
           <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-800">
@@ -206,8 +210,9 @@ function FieldInput({
             max={field.max}
             value={current === null || current === undefined ? '' : String(current)}
             /**
-             * ★ 空串存 undefined 而不是 0 —— 「清空」和「填 0」是两个意思，
-             *   而 0 在 maxTurns 这类字段上意味着「一步都不许走」。
+             * ★ An empty string stores undefined, not 0 — "cleared" and "set
+             *   to 0" mean different things, and on a field like maxTurns 0
+             *   means "not allowed to take a single step".
              */
             onChange={(e) =>
               onChange(e.target.value === '' ? undefined : Number(e.target.value))
@@ -246,7 +251,7 @@ function FieldInput({
   );
 }
 
-/** ★ 默认值一直显示着 —— 「我改成什么了」只有对着原值才说得清 */
+/** ★ The default stays on screen — "what did I change it to" only makes sense next to the original */
 function describeDefault(f: ConfigField): string {
   const v = f.default;
   if (Array.isArray(v)) return v.join(', ') || '—';

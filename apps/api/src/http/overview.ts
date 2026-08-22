@@ -27,9 +27,13 @@ import { serializeEvent } from './serialize';
 import { getProjectDiagnostics } from './graph';
 
 /**
- * 项目总览（页面文档 02）。
+ * Project overview (page doc 02) / 项目总览（页面文档 02）。
  *
- * ★ 「本页不是数据大屏。每个指标旁都必须有下一步动作，否则不放。」
+ * ★ "This page is not a metrics wall. Every number on it must come with a next action, or it
+ *   does not go on the page." So every block returned below carries its own jump target:
+ *   pending items carry a decisionId, blocked items a workItemId, agent cards an agentId.
+ *   A number you can only stare at has no place here.
+ *   「本页不是数据大屏。每个指标旁都必须有下一步动作，否则不放。」
  *   所以这里返回的每一块都自带一个可跳转的落点：
  *   待处理项带 decisionId、阻塞项带 workItemId、Agent 卡带 agentId。
  *   一个只能看不能点的数字，在这一页上没有位置。
@@ -53,8 +57,9 @@ export async function getOverview(db: Database, projectId: string, userId: strin
   const userRows = await db.select().from(users);
   const userName = new Map(userRows.map((u) => [u.id, u.name]));
 
-  // ── 指标：复用 Analytics 的口径，不另起一套 ──
-  // 同一个「流动效率」在两页给出不同数字，用户会不知道该信哪个
+  // ── Metrics: reuse the Analytics definitions, don't start a second set ──
+  // Two pages reporting different numbers for the same "flow efficiency" leave the user with no
+  // way to know which one to trust / 同一个「流动效率」在两页给出不同数字，用户会不知道该信哪个
   const window = windowFor('30d', now);
   const input: AnalyticsInput = await loadAnalyticsInput(db, project, window, now);
   const flow = computeFlow(input, now);
@@ -90,8 +95,9 @@ export async function getOverview(db: Database, projectId: string, userId: strin
     now,
   });
 
-  // ── 需要你处理 ──
-  // 只列真正等着这个人的，不把全项目的待办堆给他看
+  // ── Needs you ──
+  // List only what is genuinely waiting on this person; don't pile the whole project's backlog
+  // in front of them / 只列真正等着这个人的，不把全项目的待办堆给他看
   const mine = userId ? pending.filter((d) => d.assigneeId === userId || d.assigneeId === null) : [];
   const [awaitingPlan] = await db
     .select()
@@ -100,7 +106,7 @@ export async function getOverview(db: Database, projectId: string, userId: strin
     .orderBy(desc(plans.version))
     .limit(1);
 
-  // ── Agent 团队 ──
+  // ── Agent team ──
   const agentIds = [...new Set(input.runs.map((r) => r.agentId))];
   const agentRows =
     agentIds.length > 0
@@ -118,22 +124,27 @@ export async function getOverview(db: Database, projectId: string, userId: strin
   const perfById = new Map(agentMetrics.agents.map((a) => [a.agentId, a]));
   const itemTitle = new Map(items.map((i) => [i.id, i.title]));
 
-  // ── 人类成员 ──
+  // ── Human members ──
   const memberRows = await db
     .select()
     .from(projectMembers)
     .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.actorType, 'human')));
 
   /**
-   * ── 问题诊断 ──
+   * ── Problem diagnostics / 问题诊断 ──
    *
-   * ★★ 「延期主因是决策等了 5.6 天」这类归因此前只在执行图那一页 ——
+   * ★★ Attributions like "the main cause of the delay is a decision that sat for 5.6 days" used
+   *   to appear only on the execution-graph page — yet that sentence is precisely the distilled
+   *   form of "what should the owner go fix", so it belongs on the page they open first every
+   *   day (issues #38 / #40). Shares the same domain computation as the execution graph; only
+   *   the layout is skipped.
+   *   「延期主因是决策等了 5.6 天」这类归因此前只在执行图那一页 ——
    *   而它恰恰是「负责人该去解决什么」的浓缩，理应出现在他每天先看的这一页
    *   （问题记录 #38 / #40）。与执行图共用同一套 domain 判定，跳过布局。
    */
   const { metrics: graphMetrics, diagnostics } = await getProjectDiagnostics(db, projectId);
 
-  // ── 最近活动 ──
+  // ── Recent activity ──
   const recent = await db
     .select()
     .from(events)
@@ -161,14 +172,22 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       pending: pending.length,
       overdue: overdueDecisions,
       /**
-       * ★ 没指派责任人的决策要单独报出来。
-       *   把它们摊进成员列表里，每个人都显示 0，看起来像「没人有待办」——
-       *   而真相是「有 5 件事没人认领」。无主的决策正是最容易烂在队列里的那批。
+       * ★ Decisions with no assignee get their own count.
+       *   Folded into the member list they show as 0 next to every name, which reads as "nobody
+       *   has anything pending" — when the truth is "5 things have no owner". Ownerless
+       *   decisions are exactly the batch most likely to rot in the queue.
+       *   没指派责任人的决策要单独报出来。把它们摊进成员列表里，每个人都显示 0，
+       *   看起来像「没人有待办」—— 而真相是「有 5 件事没人认领」。
+       *   无主的决策正是最容易烂在队列里的那批。
        */
       unassigned: pending.filter((d) => d.assigneeId === null).length,
     },
 
-    /** ★ 每一条都能直接点进去处理，这一区的存在意义就是这个 */
+    /**
+     * ★ Every row here can be clicked straight through to the thing that resolves it — that is
+     *   the entire reason this section exists /
+     *   每一条都能直接点进去处理，这一区的存在意义就是这个
+     */
     actionItems: [
       ...(awaitingPlan
         ? [
@@ -176,15 +195,19 @@ export async function getOverview(db: Database, projectId: string, userId: strin
               kind: 'plan' as const,
               id: awaitingPlan.id,
               /**
-               * ★ 标题走码 + 参数，不在这里拼句子。
+               * ★ The title travels as a code plus params; no sentence is assembled here.
                *
-               *   此前是 `执行计划 v${n} 待批准` —— 服务端**现拼**的一句中文
-               *   （不是存量数据），于是英文界面上「Needs you」那一区
-               *   第一行就是中文。版本号是语言中立的值，作为参数带过去。
+               *   It used to be `执行计划 v${n} 待批准` — a Chinese sentence the server built
+               *   **on the fly** (not legacy data), so the very first row of the "Needs you"
+               *   section came out in Chinese on the English UI. The version number is a
+               *   language-neutral value, so it rides along as a param.
+               *   标题走码 + 参数，不在这里拼句子。此前是 `执行计划 v${n} 待批准` ——
+               *   服务端**现拼**的一句中文（不是存量数据），于是英文界面上「Needs you」
+               *   那一区第一行就是中文。版本号是语言中立的值，作为参数带过去。
                */
               titleCode: 'plan_awaiting_approval' as const,
               titleParams: { version: awaitingPlan.version },
-              /** @deprecated 中文兜底，给日志与存量客户端 */
+              /** @deprecated Chinese fallback, for logs and legacy clients / 中文兜底，给日志与存量客户端 */
               title: `执行计划 v${awaitingPlan.version} 待批准`,
               riskLevel: 'medium',
               overdueMinutes: null as number | null,
@@ -197,8 +220,15 @@ export async function getOverview(db: Database, projectId: string, userId: strin
         id: d.id,
         title: d.title,
         /**
-         * ★★ 决策标题必须带上 reasonDetail，和决策中心走同一条路。
+         * ★★ Decision titles must carry reasonDetail, taking the same path as the decision
+         *   center.
          *
+         *   The decision center composes "X — needs your confirmation" out of
+         *   `reasonDetail.subjectTitle` plus t('decision.needsYou'); the overview used to hand
+         *   back `d.title` alone, i.e. the sentence the server had already assembled,
+         *   `「X」—— 需要你确认`. The same decision therefore read in a different language on
+         *   the two pages — and the two pages are one click apart.
+         *   决策标题必须带上 reasonDetail，和决策中心走同一条路。
          *   决策中心用 `reasonDetail.subjectTitle` + t('decision.needsYou')
          *   拼出「X — needs your confirmation」；总览这边此前只给
          *   `d.title`，也就是服务端拼好的那句 `「X」—— 需要你确认`。
@@ -225,7 +255,10 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       detail: i.blockedDetail ?? null,
       minutes: i.blockedSince ? Math.round((now - i.blockedSince.getTime()) / 60_000) : null,
       /**
-       * ★ 查不到名字时给 null，不要拼一个「未知」。
+       * ★ Hand back null when the name cannot be resolved; do not substitute a literal
+       *   "unknown". That word belongs to the UI, not to the data — bake it in on the server
+       *   and the English UI has no choice but to render Chinese.
+       *   查不到名字时给 null，不要拼一个「未知」。
        *   'unknown' 这个词属于界面，不属于数据 —— 服务端拼进去，
        *   英文界面上就只能显示中文。
        */
@@ -260,14 +293,16 @@ export async function getOverview(db: Database, projectId: string, userId: strin
       ).length,
     })),
 
-    /** 近 7 日完成与阻塞，给的是趋势不是精确值 */
+    /** Last 7 days of completion and blockage — a trend, not exact values */
     trend: {
       wip: flow.wipTrend.slice(-7),
       blocked: flow.blockedTrend.slice(-7),
     },
 
     /**
-     * ★ 只给前三条 —— 总览是指挥台不是问题清单。
+     * ★ Top three only — the overview is a command deck, not an issue list.
+     *   The full list lives on the execution graph, where every row carries an action button.
+     *   只给前三条 —— 总览是指挥台不是问题清单。
      *   看全的入口是执行图，那里每条都带着可执行按钮。
      */
     diagnostics: diagnostics.slice(0, 3),

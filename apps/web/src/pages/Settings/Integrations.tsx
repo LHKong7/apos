@@ -30,15 +30,21 @@ const CATEGORY_ICONS: Record<string, string> = {
 const CATEGORY_ORDER = ['code', 'project_management', 'communication'];
 
 /**
- * 项目集成设置（页面文档 14）。
+ * Project integration settings (page doc 14) / 项目集成设置。
  *
- * ★ 要回答四个问题：连了哪些系统、数据往哪个方向同步、通知发到哪里、
- *   连接授予了什么权限。前三个是功能，第四个是这一页存在的理由 ——
- *   一个看不出边界的集成，等于把外部系统的写权限交出去之后就不再管了。
+ * ★ It has to answer four questions: which systems are connected, which
+ *   direction data syncs, where notifications go, and what the connection was
+ *   granted. The first three are features; the fourth is why this page exists —
+ *   an integration whose boundary you cannot see amounts to handing an external
+ *   system write access and then never looking again.
  *
- * ★ 所以每张卡片都同时列出允许项与**禁止项**（§5.1），
- *   和 08 Agent Workspace 完全同一条原则：用户需要确认的往往是
- *   「这个连接**不能**合并我的代码」，而只列允许项的清单回答不了这个问题。
+ *   要回答四个问题：连了哪些系统、数据往哪个方向同步、通知发到哪里、
+ *   连接授予了什么权限。第四个才是这一页存在的理由。
+ *
+ * ★ So every card lists what is allowed **and what is denied** (§5.1) — the
+ *   same principle as 08 Agent Workspace: what the user usually needs to
+ *   confirm is that this connection **cannot** merge their code, and a list of
+ *   allowed items alone cannot answer that.
  */
 export function IntegrationsPage() {
   const t = useT();
@@ -90,9 +96,10 @@ export function IntegrationsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
         <div className="mx-auto max-w-4xl space-y-3">
             {/*
-              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
-                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
-                「这跟我有关系吗」（问题记录 #42）。
+              ★ This page speaks domain vocabulary (Policy / roles / integrations
+                / members and grants) — precise to whoever wrote it, a wall to a
+                project manager. The opening line answers "does this concern me"
+                first (issue #42).
             */}
             <WhatIsThis storageKey="integrations" title={t('whatIs.integrations.title')}>
               <p>{t('whatIs.integrations.p1')}</p>
@@ -140,7 +147,7 @@ export function IntegrationsPage() {
               );
             })}
 
-          {/* ── Agent 与模型（§5.4）── */}
+          {/* ── Agents and models (§5.4) ── */}
           <section className="space-y-2">
             <h2 className="text-xs font-medium text-slate-600">{t('integ.agentsSection')}</h2>
             {runtimes.data?.runtimes.length === 0 && (
@@ -188,8 +195,10 @@ export function IntegrationsPage() {
           </section>
 
           {/**
-           * ★ 企业数据系统：产品文档十三明确「全量 ERP / CRM 集成」暂不实现。
-           *   这里只做占位说明与组织级引导，不放一个能点的「连接」按钮。
+           * ★ Enterprise data systems: product doc 13 explicitly defers full ERP
+           *   / CRM integration. This is a placeholder note plus a pointer to
+           *   the organization level — no clickable "Connect" button that would
+           *   promise something that does not exist yet.
            */}
           <section className="space-y-2">
             <h2 className="text-xs font-medium text-slate-600">{t('integ.dataSection')}</h2>
@@ -261,9 +270,9 @@ function IntegrationCard({
         </span>
 
         <div className="ml-auto flex gap-1.5">
-          {/* ★ 只有真的会同步字段的集成才给这个按钮。
-              通知渠道没有字段映射也没有关联对象，给一个点了什么也不发生的
-              「立即同步」，用户会以为是坏的 */}
+          {/* ★ Only integrations that actually sync fields get this button. A
+              notification channel has neither field mappings nor linked objects,
+              so a "Sync now" that does nothing when clicked would read as broken */}
           {row.syncMappings.length > 0 && (
             <Button variant="outline" size="xs"
               disabled={sync.isPending || !row.transportReady}
@@ -287,9 +296,10 @@ function IntegrationCard({
       )}
 
       {/**
-       * ★ 传输层没实现要说清楚，且和「配置错了」区分开。
-       *   两者在界面上都表现为「同步不动」，但一个要找管理员、
-       *   一个要等版本 —— 混在一起用户只会反复重试。
+       * ★ An unimplemented transport has to be stated, and kept distinct from
+       *   "misconfigured". Both look like "sync is stuck" on screen, but one
+       *   means go find an admin and the other means wait for a release — blur
+       *   them together and the user just retries forever.
        */}
       {!row.transportReady && (
         <p className="mx-3 mb-2 rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600">
@@ -298,7 +308,7 @@ function IntegrationCard({
       )}
 
       <div className="border-t border-slate-100 px-3 py-1.5">
-        {/* ★ 允许项与禁止项都要列（§5.1）*/}
+        {/* ★ List both what is allowed and what is denied (§5.1) */}
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
           <span className="text-slate-500">{t('integ.permissions')}</span>
           {row.scopes.allowed.map((s) => (
@@ -312,13 +322,13 @@ function IntegrationCard({
             </span>
           ))}
         </div>
-        {/* ★ 「不知道」和「确实没有」不能长得一模一样 */}
+        {/* ★ "We do not know" and "there genuinely is none" must not look alike */}
         {row.scopes.probed === false && (
           <p className="mt-0.5 text-[11px] text-amber-700">
             {t('integ.scopesUnprobed')}
           </p>
         )}
-        {/* 措辞跟着类别走 —— 在 Slack 卡片下写「合并代码」只会让人以为文案是抄的 */}
+        {/* Wording follows the category — "merge code" under a Slack card just reads as copy-pasted text */}
         <p className="mt-0.5 text-[11px] text-slate-400">
           {t('integ.denyHardcoded')}
           {row.category === 'code'
@@ -337,7 +347,7 @@ function IntegrationCard({
           {typeof stats['syncRuns'] === 'number' && (
             <span>{t('integ.syncRuns', { count: stats['syncRuns'] })}</span>
           )}
-          {/* ★ §11「页面显示已阻止 N 次循环同步」*/}
+          {/* ★ §11: "the page shows N loop syncs blocked" */}
           {typeof stats['echoesBlocked'] === 'number' && stats['echoesBlocked'] > 0 && (
             <span title={t('integ.loopGuarded')}>
               {t('integ.echoesBlocked', { count: String(stats['echoesBlocked']) })}
@@ -390,11 +400,12 @@ function IntegrationCard({
 }
 
 /**
- * 断开确认。
+ * The disconnect confirmation / 断开确认。
  *
- * ★ 先拉影响再让人点（§7）。「断开后 5 个任务的状态不再同步、
- *   2 个未处理冲突会一并消失」—— 一个只问「确定吗」的确认框等于没问，
- *   因为用户点确定时并不知道自己在放弃什么。
+ * ★ Fetch the impact before letting anyone click (§7). "After disconnecting, 5
+ *   work items stop syncing status and 2 unresolved conflicts disappear with
+ *   it" — a dialog that only asks "are you sure?" asks nothing at all, because
+ *   the user pressing confirm has no idea what they are giving up.
  */
 function DisconnectDialog({
   row,
@@ -533,7 +544,7 @@ function AddRow({
               type="password"
               value={credential}
               onChange={(e) => setCredential(e.target.value)} />
-            {/* ★ 明说它去哪了。用户交出凭证时有权知道系统怎么保管 */}
+            {/* ★ Say where it goes. Anyone handing over a credential is entitled to know how it is stored */}
             <span className="mt-0.5 block text-[11px] text-slate-400">
               {t('integ.credentialStorage')}
             </span>

@@ -15,16 +15,20 @@ import { fail, notFound } from './errors';
 import { syncBuiltinRoles } from './roles';
 
 /**
- * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace）。
+ * Organization — the top-level container for all data (Plane calls it a
+ * Workspace) / 组织，一切数据的顶层容器。
  *
- * ★★ 不叫 workspace 是刻意的：这个代码库里 `workspace` 已经指 Agent 的
- *   git 工作区（`AGENT_WORKSPACE_ROOT` / `WorkspaceService`）。
- *   两个都叫这个名字，「清理 workspace」会同时指向两件毫不相干的事。
- *   见 packages/db/src/schema/core.ts 上 organizations 的注释。
+ * ★★ Not calling it `workspace` is deliberate: in this codebase `workspace`
+ *   already means an agent's git working directory (`AGENT_WORKSPACE_ROOT` /
+ *   `WorkspaceService`). Give both the same name and "clean up the workspace"
+ *   points at two entirely unrelated things at once. See the comment on
+ *   organizations in packages/db/src/schema/core.ts.
  *
- * ★★ 在此之前组织只是一列 `org_id`：表在、外键在、多租户判定也在，
- *   但**没有任何接口能创建、改名或切换它**，唯一的来源是 seed 脚本。
- *   于是「多租户」这件事只在数据库层面成立，产品上是个单租户实例。
+ * ★★ Before this, an organization was just an `org_id` column: the table was
+ *   there, the foreign keys were there, the multi-tenant checks were there —
+ *   but **no endpoint could create, rename, or switch one**, and the only
+ *   source was the seed script. So "multi-tenant" held at the database layer
+ *   while the product was a single-tenant instance.
  */
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -32,9 +36,11 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 export const OrganizationInput = z.object({
   name: z.string().min(1, '组织名不能为空').max(120),
   /**
-   * ★ 留空就按名字推。中文名推不出可用的 slug（正则之后是空串），
-   *   那时回落到 `org-xxxxxxxx` —— 而不是拒绝创建。
-   *   要求用户先想一个英文短名，是把实现细节变成了他的问题。
+   * ★ Left empty, it is derived from the name. A Chinese name derives no usable
+   *   slug (the regex leaves an empty string), and that falls back to
+   *   `org-xxxxxxxx` rather than refusing to create the org. Demanding that the
+   *   user think up a short English name first turns an implementation detail
+   *   into their problem.
    */
   slug: z
     .string()
@@ -45,7 +51,7 @@ export const OrganizationInput = z.object({
 
 export const OrganizationPatch = OrganizationInput.partial();
 
-/** 我属于哪些组织 —— 切换器的数据源 */
+/** Which organizations I belong to — the data source for the org switcher */
 export async function listMyOrganizations(db: Database, userId: string) {
   const rows = await db
     .select({
@@ -86,15 +92,16 @@ export async function listMyOrganizations(db: Database, userId: string) {
 }
 
 /**
- * 建组织。
+ * Create an organization / 建组织。
  *
- * ★★ 三件事必须在同一个事务里：建组织、把创建者设成 org_admin、
- *   预置内置角色。
+ * ★★ Three things must happen in one transaction: create the org, make the
+ *   creator an org_admin, and seed the built-in roles.
  *
- *   少了第二件，创建者进不去自己刚建的组织；少了第三件，
- *   `project_members.role` 的外键指向 `roles(org_id, key)`，
- *   于是这个组织里**一个成员都加不进任何项目** ——
- *   而那个报错是一句外键冲突，跟「组织建歪了」看不出关系。
+ *   Without the second, the creator cannot get into the org they just made.
+ *   Without the third, `project_members.role` carries a foreign key onto
+ *   `roles(org_id, key)`, so **no member can be added to any project** in this
+ *   org — and the error is a foreign-key violation that looks nothing like
+ *   "the organization was created wrong".
  */
 export async function createOrganization(
   db: Database,
@@ -140,15 +147,19 @@ export async function createOrganization(
 }
 
 /**
- * 建组织的事务体：建组织 + 把创建者设成 org_admin + 预置内置角色。
+ * The transaction body behind creating an organization: create the org, make
+ * the creator an org_admin, seed the built-in roles.
  *
- * ★★ 单独拆出来，是为了让**自助注册**能把「建账号」和「建组织」放进
- *   同一个事务（`modules/auth/service.ts` 的 `registerAccount`）。
- *   分成两个事务的话，第二步失败会留下一个「存在但不属于任何组织」的账号：
- *   他能登录，但登录后每个请求都是 401 —— 而注册页那边显示的是「注册失败」，
- *   于是他会换个邮箱再注册一次，库里就多一个永远登不进去的号。
+ * ★★ It is split out so that **self-service signup** can put "create account"
+ *   and "create org" into one transaction (`registerAccount` in
+ *   `modules/auth/service.ts`). Across two transactions, a failure in the
+ *   second step leaves an account that exists but belongs to no organization:
+ *   they can log in, but every request afterward is a 401 — while the signup
+ *   page told them "registration failed", so they sign up again with another
+ *   email and the database gains one more account that can never get in.
  *
- * ★ 抄一份而不是拆出来的下场，是新组织和老组织的内置角色慢慢长得不一样。
+ * ★ Copying this instead of sharing it ends with new orgs and old orgs slowly
+ *   drifting apart on their built-in roles.
  */
 export async function insertOrganizationTx(
   tx: DbTransaction,
@@ -174,10 +185,11 @@ export async function insertOrganizationTx(
 }
 
 /**
- * 给定名字挑一个没被占用的 slug。
+ * Pick a free slug for the given name / 给定名字挑一个没被占用的 slug。
  *
- * ★ 导出是给自助注册用的：它要在开事务**之前**把 slug 定下来
- *   （这一步是读，放进事务里只会白白拉长事务持有时间）。
+ * ★ Exported for self-service signup, which has to settle the slug **before**
+ *   opening its transaction (this step is a read; inside the transaction it
+ *   would only lengthen how long the transaction is held).
  */
 export async function freeOrganizationSlug(db: Database, name: string): Promise<string> {
   return freeSlug(db, name);
@@ -208,7 +220,7 @@ export async function updateOrganization(
     .set({
       ...(input.name ? { name: input.name.trim() } : {}),
       ...(input.slug ? { slug: input.slug } : {}),
-      // null = 清空，undefined = 这次没提这个字段
+      // null = clear it, undefined = the field was not mentioned this time
       ...(input.description !== undefined
         ? { description: input.description?.trim() || null }
         : {}),
@@ -232,17 +244,19 @@ export async function updateOrganization(
 }
 
 /**
- * 删组织。
+ * Delete an organization / 删组织。
  *
- * ★★ 只在**没有项目**时允许。
+ * ★★ Allowed only when the org has **no projects**.
  *
- *   组织下面挂着项目、工作项、Agent、仓库、Run、审计事件 ——
- *   级联删除它们等于一次点击抹掉整个租户的历史，而且不可逆
- *   （事件流本身也在里面，连"谁删的"都留不下）。
- *   要求先清空项目，是让这件事变成一串有迹可循的动作。
+ *   An org carries projects, work items, agents, repositories, runs, and audit
+ *   events — cascading a delete through all of them wipes an entire tenant's
+ *   history in one click, irreversibly (the event stream is in there too, so
+ *   not even "who deleted it" survives). Requiring the projects to be cleared
+ *   first turns this into a sequence of actions that leaves a trail.
  *
- * ★ 也不能删掉自己最后一个组织：删完之后这个账号没有任何组织，
- *   每个请求都会 401，表现成"登录坏了"。
+ * ★ Nor can you delete your own last organization: afterward the account
+ *   belongs to no org at all, every request 401s, and it presents to them as
+ *   "login is broken".
  */
 export async function deleteOrganization(
   db: Database,
@@ -295,7 +309,7 @@ export async function deleteOrganization(
   return { ok: true as const };
 }
 
-// ── 成员 ──────────────────────────────────────────────────────────────
+// ── Members ───────────────────────────────────────────────────────────
 
 export async function listOrganizationMembers(db: Database, orgId: string) {
   const rows = await db
@@ -332,11 +346,13 @@ export async function listOrganizationMembers(db: Database, orgId: string) {
 }
 
 /**
+ * Add an existing account to the org, or change its org role /
  * 把一个已有账号加进组织，或改它的组织角色。
  *
- * ★ 按 email 找人而不是按 id：邀请的人手上有的是邮箱，不是 uuid。
- *   账号现在是全局的，所以"这个人已经在别的组织里"是正常情况，
- *   直接把他加进来即可，不用也不该新建账号。
+ * ★ People are looked up by email, not by id: whoever is inviting them has an
+ *   email address in hand, not a uuid. Accounts are global now, so "this person
+ *   is already in another org" is the normal case — just add them, and neither
+ *   need nor create a second account for them.
  */
 export async function addOrganizationMember(
   db: Database,
@@ -420,11 +436,13 @@ export async function removeOrganizationMember(
 }
 
 /**
- * ★★ 不能拿掉组织里最后一个管理员。
+ * ★★ The last admin in an organization cannot be removed.
  *
- *   没有这条的话，一次手滑就让整个组织再也没有人能管身份、定义角色、
- *   改组织级 Policy、看审计 —— 而恢复它需要直接改数据库。
- *   「把自己锁在门外」是权限系统最常见的自伤方式。
+ *   Without this rule, one slip leaves a whole org with nobody who can manage
+ *   identities, define roles, change org-level policies, or read the audit
+ *   trail — and recovering from it means editing the database by hand. Locking
+ *   yourself out is the most common way a permission system wounds its own
+ *   users. 「把自己锁在门外」是权限系统最常见的自伤方式。
  */
 export async function assertNotLastAdmin(db: Database, orgId: string, exceptUserId: string) {
   const others = await db
@@ -448,7 +466,7 @@ export async function assertNotLastAdmin(db: Database, orgId: string, exceptUser
   }
 }
 
-// ── 共用 ──────────────────────────────────────────────────────────────
+// ── Shared ────────────────────────────────────────────────────────────
 
 async function loadOrg(db: Database, orgId: string) {
   const [row] = await db
@@ -459,7 +477,7 @@ async function loadOrg(db: Database, orgId: string) {
   return row;
 }
 
-/** 名字 → slug；中文名推不出东西时回落到随机短串 */
+/** Name → slug; when a Chinese name derives nothing, fall back to a random short string */
 export function slugify(name: string): string {
   const base = name
     .toLowerCase()

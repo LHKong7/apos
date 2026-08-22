@@ -10,10 +10,15 @@ import { dispatchRun } from './dispatch';
 import { resolveExecutor } from './matching';
 
 /**
- * 项目级仓库对项目内 Agent 默认只读，在**派发快照**里必须如实标注出处。
+ * A project-level repository is read-only by default for Agents in that project, and the
+ * **dispatch snapshot** has to record truthfully where that access came from.
  *
- * ★ 这几条测的是「授权从哪来」这件事在库里留没留痕。纯判定规则的穷举在
- *   packages/domain/src/permissions/resource-scopes.test.ts。
+ * ★ These cases test whether "where did this authorization come from" leaves a trace in the
+ *   database. The exhaustive enumeration of the decision rules themselves lives in
+ *   packages/domain/src/permissions/resource-scopes.test.ts.
+ *
+ *   项目级仓库对项目内 Agent 默认只读，派发快照里必须如实标注出处；这几条测的是
+ *   「授权从哪来」有没有在库里留痕。
  */
 const db = testDb();
 let fx: Fixture;
@@ -70,13 +75,17 @@ describe('★ 项目级仓库的默认只读', () => {
   });
 
   /**
-   * ★★ 出处不标出来的话，审计时「这个 Agent 当时能读这个仓库」有两种读法 ——
-   *   管理员授了权，还是平台默认给的。事后追责最需要区分的正是这两者。
+   * ★★ Without the origin recorded, "this Agent could read that repository at the time" has two
+   *   readings during an audit — an administrator granted it, or the platform handed it over by
+   *   default. Telling those two apart is exactly what accountability after the fact needs.
+   *
+   *   出处不标出来，审计时分不清是管理员授的权还是平台默认给的。
    */
   it('显式配的授权标成 explicit，与默认档在快照里分得开', async () => {
     await registerRepo();
     const registry = new RuntimeRegistry();
-    /** ★ 显式授权现在配在**项目**里，不再挂在组织级 Agent 上 */
+    /** ★ Explicit grants now live on the **project**, no longer on the org-level Agent
+     *  显式授权现在配在项目里，不再挂在组织级 Agent 上 */
     const agent = await seedAgent(db, fx, {
       registry,
       grant: { resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }] },
@@ -104,9 +113,12 @@ describe('★ 项目级仓库的默认只读', () => {
   });
 
   /**
-   * ★★ 候选筛选与派发必须用同一份生效范围。
-   *   两边不一致的表现是「调度器说没有候选，而真派下去其实能跑」，
-   *   而候选面板给出的理由会把人指去逐个 Agent 配授权 —— 那件事平台已经做了。
+   * ★★ Candidate filtering and dispatch must use the same effective scopes.
+   *   When the two disagree the symptom is "the scheduler says there is no candidate, yet
+   *   dispatching by hand actually runs", and the reason shown on the candidate panel sends the
+   *   user off to grant that access on each Agent one by one — something the platform already did.
+   *
+   *   两边不一致会让人去做一件平台已经替他做完的事。
    */
   it('候选筛选认这条默认，不会把需要该仓库的任务判成无人可派', async () => {
     await registerRepo();
@@ -119,8 +131,11 @@ describe('★ 项目级仓库的默认只读', () => {
     const result = await resolveExecutor(db, item);
 
     /**
-     * ★ 正面断言它进了候选，而不是只断言「没出现某条拒绝理由」——
-     *   后者在候选列表整个为空时也是绿的，测不出任何东西。
+     * ★ Assert positively that it made the candidate list, rather than only asserting that some
+     *   rejection reason is absent — the latter stays green when the candidate list is entirely
+     *   empty, which proves nothing.
+     *
+     *   只断言「没出现某条拒绝理由」的话，候选列表整个为空时也是绿的。
      */
     expect(result.candidates.map((c) => c.agentId)).toContain(agent.agentId);
     expect(result.rejected.some((r) => r.reason.includes('资源范围里没有'))).toBe(false);

@@ -20,27 +20,32 @@ import {
 } from '@/components/ui/select';
 
 /**
- * 项目里某个 Agent 的生效权限。
+ * The effective permissions of one Agent inside one project / 项目里某个 Agent
+ * 的生效权限。
  *
- * ★★ 这一页刻意**不显示运行时工具名**。
+ * ★★ This panel deliberately shows **no runtime tool names**.
  *
- *   `Read` / `Edit` / `Bash(npm test:*)` 是运行时的词汇，而运行时是 Agent 的
- *   一个属性，不是用户要做的选择。让用户在这里配工具名有三个后果：他得先
- *   懂某个 CLI；换运行时等于重配一遍；而最要命的是 `repo:write` 这一个词
- *   同时表示「在隔离工作区改文件」「推到远端」「合进主干」——
- *   三件风险差了两个数量级的事，在授权界面上长得一模一样。
+ *   `Read` / `Edit` / `Bash(npm test:*)` is a runtime's vocabulary, and the
+ *   runtime is a property of the Agent, not a choice the user came here to
+ *   make. Configuring tool names here would cost three things: the user has to
+ *   learn some CLI first; switching runtimes means configuring it all over
+ *   again; and worst of all, the single word `repo:write` used to mean "edit
+ *   files in an isolated workspace", "push to the remote", and "merge to main"
+ *   at once — three operations whose risk differs by two orders of magnitude,
+ *   rendered identically on the authorization screen.
  *
- *   这里显示的是**能力**（服务端已经算好并翻译成人话的那一份），
- *   以及一句「这条能力意味着什么」。
+ *   What is shown instead are **capabilities** (the set the server already
+ *   evaluated and translated into plain language), each with one sentence
+ *   saying what that capability actually lets the Agent do.
  *
- * ★ 数值全部来自服务端那一次求值，前端不自己算。前端再算一遍等于把求值器
- *   抄第二份，而两份的分歧会表现成「界面说它能推分支，实际派下去推不了」。
+ * ★ Every value comes from that one server-side evaluation; the frontend never
+ *   recomputes. Recomputing would be a second copy of the evaluator, and the
+ *   two copies disagreeing shows up as "the screen says it can push a branch,
+ *   but dispatching it fails".
  *
- * This panel deliberately shows no runtime tool names. They are a runtime's
- * vocabulary, and one word (`repo:write`) used to cover three operations whose
- * risk differs by orders of magnitude. Everything shown comes from the server's
- * single evaluation — recomputing here would be a second evaluator, and the two
- * would disagree exactly where nobody is looking.
+ *   这一页刻意不显示运行时工具名，显示的是服务端算好并翻译成人话的能力。
+ *   数值全部来自服务端那一次求值，前端不自己算 —— 抄第二份求值器，分歧会
+ *   表现成「界面说它能推分支，实际派下去推不了」。
  */
 
 const RISK_LABEL: Record<string, MessageKey> = {
@@ -97,16 +102,20 @@ export function AgentAccessPanel({
       </div>
 
       {/*
-        ★ 「没配过」要说出来，而不是显示一份看起来像用户配的配置。
-          两者在界面上一样的话，用户不知道这份权限是他定的还是平台给的默认。
+        ★ "Never configured" has to be stated, not rendered as a configuration
+          that looks like the user's own. If the two look alike on screen, the
+          user cannot tell whether these permissions are theirs or the
+          platform's default.
       */}
       {data.usingDefault && (
         <p className="mt-1 text-[11px] text-slate-500">{t('access.usingDefault')}</p>
       )}
 
       {/*
-        ★★ 档案有新版只**提示**，不自动升级。自动升级等于「平台改一次档案，
-          所有 Agent 跟着变宽」—— 权限累积最典型的发生方式。
+        ★★ A newer profile version is only **announced**, never applied
+          automatically. Auto-upgrading would mean "the platform edits one
+          profile and every Agent widens with it" — the textbook way permission
+          creep happens.
       */}
       {data.profileOutdated && <Notice tone="warning">{t('access.outdated')}</Notice>}
 
@@ -145,8 +154,10 @@ export function AgentAccessPanel({
       </dl>
 
       {/*
-        ★★ 运行时兜不住的限制必须显示。授权界面上这条能力和别处长得一样，
-          而在这个运行时上它实际不生效 —— 不说的话，用户以为限制住了。
+        ★★ Restrictions the runtime cannot actually enforce must be shown. On
+          this screen such a capability looks exactly like any other, yet on
+          this runtime it does not take effect — stay silent and the user
+          believes they have constrained something they have not.
       */}
       {data.warnings.length > 0 && (
         <Notice tone="warning">
@@ -190,9 +201,11 @@ function AccessForm({
   const [scopes, setScopes] = useState<ScopeRow[]>(
     current.resourceScopes
       /**
-       * ★ 平台默认给的那几条不进表单。它们不是用户配的 —— 放进来，
-       *   用户一保存就把默认变成了显式配置，而两者的语义不同：
-       *   显式配置在项目仓库登记变化时不会跟着走。
+       * ★ The rows the platform supplies by default never enter the form. They
+       *   are not the user's configuration — include them and the first save
+       *   freezes a default into an explicit setting, which is not the same
+       *   thing: an explicit scope stops tracking the project when its
+       *   registered repositories change.
        */
       .filter((s) => s.origin !== 'project_default')
       .map((s) => ({ kind: s.kind, ref: s.ref, access: s.access })),
@@ -206,10 +219,12 @@ function AccessForm({
   });
 
   /**
-   * ★★ 保存前先问服务端「会发生什么」，用的是**保存那条路径同一个求值器**。
-   *   前端自己比较两个档案的能力清单也能算出个差异，但那是第二份实现 ——
-   *   而它和服务端的分歧会正好出现在最需要预览的那些复杂输入上
-   *   （上限收窄、运行时不支持、资源范围升级）。
+   * ★★ Before saving, ask the server what would happen — through the **same
+   *   evaluator the save path uses**. The frontend could diff two profiles'
+   *   capability lists on its own, but that is a second implementation, and it
+   *   would disagree with the server precisely on the complex inputs that most
+   *   need a preview: a narrowed ceiling, an unsupported runtime, a resource
+   *   scope being widened.
    */
   const preview = useQuery<AgentAccessPreview>({
     queryKey: [
@@ -237,10 +252,12 @@ function AccessForm({
       <Labeled label={t('access.profile')}>
         <Select value={profileKey} onValueChange={setProfileKey}>
           {/*
-            ★ 触发器要自带 aria-label。Labeled 是**包起来**而不是 htmlFor，
-              而隐式关联只对原生表单控件成立 —— Radix 的触发器是个
-              `role="combobox"` 的 button，包在 <label> 里读屏器照样只念
-              「按钮」。ResourceScopeEditor 里那几个 Select 早就是这么写的。
+            ★ The trigger carries its own aria-label. Labeled **wraps** instead
+              of using htmlFor, and implicit association only holds for native
+              form controls — Radix's trigger is a button with
+              `role="combobox"`, so wrapping it in a <label> still leaves a
+              screen reader announcing nothing but "button". The Selects in
+              ResourceScopeEditor have been written this way all along.
           */}
           <SelectTrigger aria-label={t('access.profile')}>
             <SelectValue />
@@ -252,10 +269,12 @@ function AccessForm({
               </SelectItem>
             ))}
             {/*
-              ★ 迁移进来的授权（legacy_import）不是内置档案，选项里没有它。
-                保留当前值，否则打开表单就把它换成了别的档案。
+              ★ A migrated grant (legacy_import) is not a built-in profile, so
+                it has no option of its own. Keep the current value as one, or
+                merely opening the form silently swaps it for a different
+                profile.
             */}
-            {/* ★ `profileKey &&` 同 Members 那处：空串会让 Radix 抛错，不是少一项 */}
+            {/* ★ `profileKey &&` as in Members: an empty string makes Radix throw, not drop an item */}
             {profileKey && !current.profiles.some((p) => p.key === profileKey) && (
               <SelectItem value={profileKey}>{profileKey}</SelectItem>
             )}
@@ -265,9 +284,11 @@ function AccessForm({
       <p className="text-[11px] text-slate-500">
         {(() => {
           /**
-           * ★ 档案说明服务端两种语言都给了（description / descriptionEn），
-           *   此前这里只画中文那份 —— 英文界面上于是一整段中文。
-           *   这不是缺翻译，是把已经在线上的英文丢掉了。
+           * ★ The server returns the profile description in both languages
+           *   (description / descriptionEn); this spot used to render only the
+           *   Chinese one, so the English UI showed a full Chinese paragraph.
+           *   That was not a missing translation — it was throwing away English
+           *   text that had already shipped.
            */
           const p = current.profiles.find((x) => x.key === profileKey);
           return p ? sx(p.description, p.descriptionEn) : null;
@@ -281,8 +302,9 @@ function AccessForm({
       {impact && <ImpactSummary impact={impact} />}
 
       {/*
-        ★ 原因框只在放宽时出现。收紧也要填理由的话，收紧就和放宽一样麻烦了，
-          而我们恰恰希望收紧是随手能做的那件事。
+        ★ The reason box appears only when loosening. Demanding a reason for
+          tightening too would make tightening as much work as loosening — and
+          tightening is exactly the action we want to stay effortless.
       */}
       {impact?.requiresReason && (
         <Labeled label={t('access.reason')} help={t('access.reasonHelp')}>
@@ -318,10 +340,12 @@ function AccessForm({
 }
 
 /**
- * 保存前的影响摘要。
+ * The impact summary shown before saving / 保存前的影响摘要。
  *
- * ★★ 说的是**后果**，不是配置差异。「新增 repository.push」对用户没有意义，
- *   「它将能把分支推到远端仓库」才有。目录里那句 consequence 就是为这里写的。
+ * ★★ It states the **consequence**, not the config diff. "Adds
+ *   repository.push" means nothing to the user; "it will be able to push
+ *   branches to the remote repository" does. The `consequence` sentence in the
+ *   capability catalog exists for exactly this spot.
  */
 function ImpactSummary({ impact }: { impact: AgentAccessPreview }) {
   const t = useT();

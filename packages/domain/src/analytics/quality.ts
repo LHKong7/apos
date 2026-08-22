@@ -2,48 +2,50 @@ import { dayKey, isTerminal } from './timeline';
 import type { AnalyticsInput, ItemRow } from './types';
 
 /**
- * 质量 Tab（页面文档 12 §5.x）。
+ * The Quality tab (page doc 12 §5.x).
  *
- * ★ 这一页曾经因为「CI 与事故系统都没接」而整个不做。
- *   现在 CI 有了（GitHub check-runs → typeData.qualityGate），
- *   事故也有了（work_items.type === 'incident'），所以它可以真的算了。
+ * ★ This page was once skipped entirely because "neither CI nor an incident system is connected".
+ *   CI now exists (GitHub check-runs → typeData.qualityGate) and so do incidents
+ *   (work_items.type === 'incident'), so it can genuinely be computed.
  *
- * ★ 但**每一项都必须自报数据源与接入状态**。
- *   一个混着真数字和占位符、却不说明哪个是哪个的页面，
- *   比整个不做更糟：用户会把占位符当成真的，
- *   然后据此判断「质量在变好」。
- *   所以每个指标都带 `wired` 与 `source`，没接的显式说没接、不给 0。
+ * ★ But **every metric must declare its data source and whether it is wired up**. A page that
+ *   mixes real numbers with placeholders without saying which is which is worse than no page at
+ *   all: users take the placeholder as real and conclude "quality is improving". So each metric
+ *   carries `wired` and `source`, and anything unconnected says so outright instead of showing 0.
+ *
+ *   每个指标都带 `wired` 与 `source`，没接的显式说没接、不给 0 —— 混着假数字的页面
+ *   比整个不做更糟。
  */
 
 export type MetricSource = 'ci' | 'work_items' | 'events';
 
 export interface QualityMetric {
   /**
-   * ★★ 界面按它从词条表取词（`analytics.quality.<key>.label` / `.hint`），
-   *   不画下面那两个中文字段。这一层只保证一个 key 一句话。
+   * ★★ The UI resolves copy from this key (`analytics.quality.<key>.label` / `.hint`) rather than
+   *   rendering the two Chinese fields below. This layer only guarantees one key, one sentence.
    */
   key: string;
-  /** 中文说法 —— 日志与兜底用的那一份。界面读码，日志读句子 */
+  /** The Chinese wording — for logs and as a fallback. The UI reads codes, logs read sentences */
   label: string;
-  /** `label` / `hint` 里的数字，供词条按各自语言的语序组织 */
+  /** Numbers appearing in `label` / `hint`, so each language can order them its own way */
   params?: Record<string, string | number>;
-  /** null = 这项没有数据源，页面必须显示「未接入」而不是 0 */
+  /** null = no data source for this metric; the page must show "not wired up", never 0 */
   value: number | null;
   unit: 'percent' | 'count' | 'days';
   source: MetricSource;
-  /** 数据源接没接上。false 时 value 一定是 null */
+  /** Whether the data source is connected. When false, value is always null */
   wired: boolean;
-  /** 没接上时告诉用户缺什么、怎么接 */
+  /** When it is not connected: what is missing and how to connect it */
   hint: string;
-  /** 参与计算的样本量 —— 3 个样本算出的 100% 说明不了任何事 */
+  /** Sample size behind the number — 100% computed from 3 samples proves nothing */
   sample: number;
 }
 
 export interface QualityMetrics {
   metrics: QualityMetric[];
-  /** 覆盖率随时间的变化；没有 CI 时为空数组而不是编造的线 */
+  /** Coverage over time; an empty array when there is no CI, never an invented line */
   coverageTrend: { day: string; coverage: number }[];
-  /** 发布后短期内出现的事故，逐条列出 —— 只给一个数字没法追查 */
+  /** Incidents shortly after a release, listed one by one — a bare count cannot be investigated */
   postReleaseIncidents: {
     id: string;
     title: string;
@@ -51,11 +53,11 @@ export interface QualityMetrics {
     daysAfterRelease: number;
     relatedReleaseId: string | null;
   }[];
-  /** 有 CI 结果的任务占比 —— 低于这个数说明 CI 只接了一部分 */
+  /** Share of work items that carry a CI result — a low value means CI is only partly wired up */
   ciCoverageOfItems: number | null;
 }
 
-/** 发布后多少天内出现的事故算「发布引入的」 */
+/** How many days after a release an incident still counts as introduced by that release */
 const INCIDENT_WINDOW_DAYS = 7;
 
 export function computeQuality(input: AnalyticsInput): QualityMetrics {
@@ -111,12 +113,14 @@ export function computeQuality(input: AnalyticsInput): QualityMetrics {
     {
       key: 'post_release_incidents',
       label: `发布后 ${INCIDENT_WINDOW_DAYS} 天内事故`,
-      /** ★ 这条 label 里有个数字，英文句子要用它重新组织语序 */
+      /** ★ This label carries a number, and the English sentence orders it differently */
       params: { days: INCIDENT_WINDOW_DAYS },
       /**
-       * ★ 没有发布过就是 null，不是 0。
-       *   「0 起事故」和「这个周期没发过版」是完全不同的两件事，
-       *   显示成 0 会让人以为质量很好。
+       * ★ With no releases at all the answer is null, not 0.
+       *   "Zero incidents" and "nothing shipped this period" are completely different facts, and
+       *   rendering the second as 0 leaves the reader believing quality is excellent.
+       *
+       *   没发过版就是 null，显示成 0 会让人以为质量很好。
        */
       value: releases.length === 0 ? null : incidents.length,
       unit: 'count',
@@ -146,14 +150,17 @@ export function computeQuality(input: AnalyticsInput): QualityMetrics {
 }
 
 /**
- * 发布后短期内出现的事故。
+ * Incidents appearing shortly after a release.
  *
- * ★ 归因到「最近一次发布」而不是全部发布：
- *   一周内发了三次版、之后出了一个事故，把它算成三次发布各有一个事故，
- *   会让「每次发布的事故数」凭空翻三倍。
+ * ★ Attributed to the **most recent** release, not to all of them: three releases in one week
+ *   followed by one incident, counted as one incident per release, would triple
+ *   "incidents per release" out of thin air.
  *
- * ★ 只统计发布**之后**创建的事故。发布前就存在的问题不是这次发布引入的，
- *   算进去会让「刚上线就出事」这个信号彻底失真。
+ * ★ Only incidents created **after** the release count. A problem that already existed before the
+ *   release was not introduced by it, and folding it in destroys the "it broke right after we
+ *   shipped" signal entirely.
+ *
+ *   归因到最近一次发布，且只算发布之后创建的事故。
  */
 export function findPostReleaseIncidents(
   items: ItemRow[],
@@ -171,7 +178,7 @@ export function findPostReleaseIncidents(
   return items
     .filter((i) => i.type === 'incident' && i.createdAt >= from && i.createdAt <= to)
     .map((incident) => {
-      // 找它之前最近的一次发布
+      // Find the most recent release before it
       let latest: ItemRow | null = null;
       for (const r of releases) {
         if (r.actualEnd! <= incident.createdAt) latest = r;
@@ -191,10 +198,13 @@ export function findPostReleaseIncidents(
 }
 
 /**
- * 覆盖率趋势。
+ * Coverage trend.
  *
- * ★ 同一天多条取**最后一条**，不取平均。覆盖率是一个瞬时值，
- *   把一天里三次 CI 的覆盖率平均起来，得到的是一个从未真实存在过的数。
+ * ★ When a day has several readings, take the **last** one rather than the average. Coverage is
+ *   an instantaneous value; averaging three CI runs from one day yields a number that never
+ *   actually existed.
+ *
+ *   同一天多条取最后一条不取平均，平均出来的是一个从未真实存在过的数。
  */
 function buildCoverageTrend(items: ItemRow[]): { day: string; coverage: number }[] {
   const byDay = new Map<string, { at: number; coverage: number }>();

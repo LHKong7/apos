@@ -2,45 +2,51 @@ import { percent, round } from './stats';
 import type { FlowMetrics, HitlMetrics } from './types';
 
 /**
- * 项目健康度与延期预测（页面文档 02 §5.2，产品文档 8.13.4 / 8.6.6）。
+ * Project health and delay prediction (page doc 02 §5.2, product doc 8.13.4 / 8.6.6).
  *
- * ★ 这两个数字最容易变成「玄学分数」。用户看到「健康度 62」的第一反应是
- *   「凭什么」——答不上来他就不会据此做任何事，这张卡片也就成了装饰。
- *   所以两者都必须逐项给出**贡献度**：哪几项拉低了分、各拉低多少。
- *   一个说不清来源的预测，比没有预测更糟：它会被当成事实引用。
+ * ★ These two numbers are the ones most likely to turn into mystic scores. A user who sees
+ *   "health 62" reacts with "says who?" — and if that has no answer they will act on none of it,
+ *   which makes the card decoration. So both must break out their **contributions** item by item:
+ *   which factors pulled the score down, and by how much each. A prediction that cannot explain
+ *   itself is worse than no prediction: it gets quoted as fact.
+ *
+ *   分数必须逐项给出贡献度，否则用户答不上「凭什么」，这张卡片就成了装饰 ——
+ *   而说不清来源的预测会被当成事实引用，比没有预测更糟。
  */
 
 export interface Contribution {
   /**
-   * 这一项是什么 / What this contribution is.
+   * What this contribution is / 这一项是什么。
    *
-   * ★★ 界面按它取词（`analytics.health.<key>` / `analytics.delay.<key>`），
-   *   而不是画 `label` 与 `detail` —— 那两个字段是中文。
-   *   同一个 key 在健康度与延期预测里说的是两句不同的话，所以命名空间
-   *   由调用方给：这一层只保证「同一个命名空间下，一个 key 一句话」。
+   * ★★ The UI resolves its copy from this key (`analytics.health.<key>` /
+   *   `analytics.delay.<key>`) rather than rendering `label` and `detail`, which are Chinese.
+   *   The same key says two different things under health versus delay prediction, so the
+   *   namespace is supplied by the caller: this layer only guarantees "one key, one sentence,
+   *   within a namespace".
    *
-   *   The UI resolves copy from this key. A key means one sentence within a
-   *   namespace, which is why the two computations namespace theirs apart.
+   *   界面按它取词而不是画 `label` / `detail`；命名空间由调用方给。
    */
   key: string;
   /**
-   * 中文说法 / Chinese prose.
+   * Chinese prose / 中文说法.
    *
-   * ★ 留着是给日志、导出与认不出 key 的界面兜底用的 —— 界面读码，日志读句子。
-   *   删掉它会让「服务端算出了什么」在日志里彻底不可读。
+   * ★ Kept as the fallback for logs, exports, and any UI that does not recognize the key — the
+   *   UI reads codes, logs read sentences. Dropping it would make "what did the server actually
+   *   compute" completely unreadable in the logs.
    */
   label: string;
-  /** 该项的原始表现，用人话写。同上，是兜底不是显示源 */
+  /** The raw reading for this item, in plain words. As above: a fallback, not the display source */
   detail: string;
   /**
-   * `detail` 那句话里的数字 / The numbers `detail` interpolates.
+   * The numbers `detail` interpolates / `detail` 那句话里的数字。
    *
-   * ★★ 没有它，界面就只能画那句中文。`detail` 里的百分比、任务数、周数
-   *   都是算出来的，英文句子要用同一批数字重新组织语序 ——
-   *   把它们从句子里再解析出来是不可能的，所以必须原样带出来。
+   * ★★ Without these the UI can only render the Chinese sentence. The percentages, task counts,
+   *   and week counts inside `detail` are computed values, and the English sentence has to
+   *   arrange the same numbers in its own word order — parsing them back out of a sentence is
+   *   not viable, so they must be carried out verbatim.
    */
   params: Record<string, string | number>;
-  /** 对总分的影响，负数是扣分 */
+  /** Effect on the total; a negative value is a deduction */
   delta: number;
 }
 
@@ -53,7 +59,7 @@ export interface Health {
 export interface DelayRisk {
   level: 'low' | 'medium' | 'high';
   probability: number;
-  /** 预计比计划晚多少天；null = 没有排期基准，给不出天数 */
+  /** Days expected to slip past the plan; null = no schedule baseline, so no day count */
   estimatedSlipDays: number | null;
   contributions: Contribution[];
 }
@@ -61,7 +67,7 @@ export interface DelayRisk {
 export interface HealthInput {
   flow: FlowMetrics;
   hitl: HitlMetrics;
-  /** Agent 加权平均成功率；null = 窗口内没有执行记录 */
+  /** Weighted average Agent success rate; null = no execution records inside the window */
   agentSuccessRate: number | null;
   totalTasks: number;
   doneTasks: number;
@@ -72,16 +78,16 @@ export interface HealthInput {
 }
 
 /**
- * 健康度 = 100 分起扣。
+ * Health starts at 100 and gets deducted from / 健康度 = 100 分起扣。
  *
- * ★ 用扣分制而不是加权平均，是为了让「为什么不是 100」有直接答案。
- *   加权平均能算出同样的数字，但拆不出「这 38 分是被谁扣掉的」——
- *   而用户唯一关心的就是这个。
+ * ★ Deductions rather than a weighted average, so that "why isn't it 100?" has a direct answer.
+ *   A weighted average produces the same number but cannot be taken apart into "who took these
+ *   38 points" — and that is the only thing the user cares about.
  */
 export function computeHealth(input: HealthInput): Health {
   const c: Contribution[] = [];
 
-  // 流动效率：本产品最核心的主张，权重也最大
+  // Flow efficiency: this product's central claim, and the heaviest weight
   if (input.flow.flowEfficiency !== null) {
     const eff = input.flow.flowEfficiency;
     const delta = eff >= 0.5 ? 0 : -Math.round((0.5 - eff) * 60);
@@ -96,7 +102,7 @@ export function computeHealth(input: HealthInput): Health {
     }
   }
 
-  // 阻塞
+  // Blocked
   if (input.blockedTasks > 0) {
     c.push({
       key: 'blocked',
@@ -107,7 +113,7 @@ export function computeHealth(input: HealthInput): Health {
     });
   }
 
-  // 超时决策 —— 直接指向「人没跟上」，扣得重
+  // Overdue decisions — these point straight at "the humans fell behind", so they cost more
   if (input.overdueDecisions > 0) {
     c.push({
       key: 'overdue_decisions',
@@ -118,7 +124,7 @@ export function computeHealth(input: HealthInput): Health {
     });
   }
 
-  // 返工
+  // Rework
   if (input.flow.reworkRate !== null && input.flow.reworkRate > 0.15) {
     c.push({
       key: 'rework',
@@ -129,7 +135,7 @@ export function computeHealth(input: HealthInput): Health {
     });
   }
 
-  // Agent 成功率
+  // Agent success rate
   if (input.agentSuccessRate !== null && input.agentSuccessRate < 0.85) {
     c.push({
       key: 'agent_success',
@@ -140,11 +146,12 @@ export function computeHealth(input: HealthInput): Health {
     });
   }
 
-  // 预算
+  // Budget
   if (input.tokenBudget !== null && input.tokenBudget > 0) {
     const used = input.tokensSpent / input.tokenBudget;
     const doneRatio = input.totalTasks > 0 ? input.doneTasks / input.totalTasks : 0;
-    // 配额用得比活干得快才扣分 —— 单纯「用了很多」不是问题
+    // Deduct only when budget is burning faster than work is finishing — spending a lot is not
+    // itself a problem
     if (used > doneRatio + 0.2) {
       c.push({
         key: 'budget_pace',
@@ -170,30 +177,33 @@ export interface DelayInput {
   remainingTasks: number;
   blockedTasks: number;
   overdueDecisions: number;
-  /** 项目计划完成日（毫秒）；null = 没排期 */
+  /** Planned project completion date in milliseconds; null = nothing scheduled */
   plannedEnd: number | null;
   now: number;
 }
 
 /**
- * 延期风险（产品文档 8.6.6）。
+ * Delay risk (product doc 8.6.6) / 延期风险。
  *
- * 输入是七项：剩余工作量、历史周期时间、Agent 成功率、阻塞任务数、
- * 决策等待、返工率、排期余量。每一项都给出它把概率推高了多少 ——
- * 页面文档 §5.2 明确要求「用户必须能看懂预测是怎么来的，否则不会信任它」。
+ * Seven inputs: remaining workload, historical cycle time, Agent success rate, blocked task
+ * count, decision waiting, rework rate, and schedule slack. Each one reports how far it pushed
+ * the probability up — page doc §5.2 requires that "the user must be able to see how the
+ * prediction was made, or they will not trust it".
  *
- * ★ 这不是一个统计模型，是一组显式的经验规则。
- *   把它包装成「AI 预测」会让人以为背后有什么了不起的东西；
+ * ★ This is not a statistical model; it is an explicit set of heuristics. Dressing it up as an
+ *   "AI prediction" makes people assume something impressive is behind it. Calling it what it
+ *   is lets the user know how to read it, and when to ignore it.
+ *
  *   如实说是经验规则，用户反而知道该怎么读它、什么时候该忽略它。
  */
 export function predictDelay(input: DelayInput): DelayRisk {
   const c: Contribution[] = [];
-  let risk = 0.1; // 任何项目都有基础风险
+  let risk = 0.1; // Every project carries baseline risk
 
   const cycleHours = input.flow.cycleTime.median || 8;
   const throughputPerWeek = input.flow.throughputPerWeek || 0;
 
-  // 剩余工作量 vs 吞吐
+  // Remaining workload vs. throughput
   let weeksNeeded: number | null = null;
   if (input.remainingTasks > 0 && throughputPerWeek > 0) {
     weeksNeeded = input.remainingTasks / throughputPerWeek;
@@ -206,8 +216,11 @@ export function predictDelay(input: DelayInput): DelayRisk {
       const add = Math.min(0.5, gap * 0.2);
       risk += add;
       /**
-        * ★ 与下面那条分开成两个 key。同一个 key 底下不能有两句不同的话 ——
-        *   界面按 key 取词，一个 key 对应两句就只能取到其中一句。
+        * ★ Split into a separate key from the one below. One key cannot carry two different
+        *   sentences — the UI resolves copy by key, so a key mapped to two sentences can only
+        *   ever surface one of them.
+        *
+        *   同一个 key 底下不能有两句不同的话。
         */
       c.push({
         key: 'workload_projected',
@@ -222,7 +235,7 @@ export function predictDelay(input: DelayInput): DelayRisk {
       });
     }
   } else if (weeksNeeded === null && input.remainingTasks > 0) {
-    // 没有吞吐数据时不硬编一个数，只如实说算不出来
+    // With no throughput data, do not invent a number — say plainly that the rate is unknown
     c.push({
       key: 'workload_unknown_rate',
       label: '剩余工作量',
@@ -310,7 +323,8 @@ export function predictDelay(input: DelayInput): DelayRisk {
   };
 }
 
-/** 进度：完成数 / 总数。刻意不按工时加权 —— 工时是估的，任务数是真的。 */
+/** Progress: done / total. Deliberately not weighted by hours — hours are estimated, task counts
+ *  are real / 工时是估的，任务数是真的 */
 export function computeProgress(done: number, total: number): { pct: number; done: number; total: number } {
   return { pct: percent(done, total), done, total };
 }

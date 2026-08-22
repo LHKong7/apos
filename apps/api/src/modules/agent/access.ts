@@ -30,29 +30,30 @@ import { capabilityTranslator } from '@apos/agent-runtimes';
 import { fail, notFound } from '../../http/errors';
 
 /**
- * 项目级 Agent 权限 —— 读、预览、保存，三件事共用**同一个**求值器。
+ * Project-level Agent permissions — read, preview and save all share **one**
+ * evaluator / 项目级 Agent 权限。
  *
- * ★★ 预览与保存必须给出同一个结论。
+ * ★★ Preview and save must reach the same conclusion.
  *
- *   两边各算一套的话，「保存前告诉你会发生什么」这个承诺就失效了 ——
- *   而它失效的方式最难发现：预览说「不会有变化」，保存之后权限变了，
- *   两条记录都各自自洽。这一整个模块只有一处调用求值器，
- *   preview 与 save 的差别仅仅是「写不写库」。
- *
- * The read, preview and save paths share one evaluator. Two evaluators would
- * break the promise the preview makes, and break it in the least visible way:
- * the preview says nothing changes, the save changes something, and both
- * records look internally consistent.
+ *   With one evaluation on each side, the promise "we tell you what will happen
+ *   before you save" quietly stops holding — and it fails in the least visible
+ *   way possible: the preview says nothing changes, the save changes the
+ *   permissions, and both records look internally consistent. This whole module
+ *   calls the evaluator in exactly one place; the only difference between
+ *   preview and save is whether the result is written to the database.
  */
 
 export const AgentAccessInput = z.object({
   profileKey: z.string(),
   /**
-   * 在档案之上单加/单减的能力。
+   * Capabilities added to or removed from the profile one at a time / 在档案之上
+   * 单加、单减的能力。
    *
-   * ★ 默认界面不该出现它们（选档案就够了）。留这个口子是因为「档案差一条」
-   *   的真实需求一定会出现，而没有口子时用户的办法是选一个更宽的档案 ——
-   *   那等于为了一条能力多授出去五条。
+   * ★ The default UI should not surface these — picking a profile is enough.
+   *   The escape hatch exists because "the profile is short by exactly one
+   *   capability" is a real need that will come up, and without it the user's
+   *   only move is to pick a wider profile — granting five extra capabilities
+   *   to get the one they needed.
    */
   addCapabilities: z.array(AgentCapability).default([]),
   removeCapabilities: z.array(AgentCapability).default([]),
@@ -61,16 +62,19 @@ export const AgentAccessInput = z.object({
 });
 export type AgentAccessInput = z.infer<typeof AgentAccessInput>;
 
-/** 库里存的能力名过一道校验 —— 目录改名之后，旧行里的字符串不再是合法能力 */
+/** Validate capability names read from the database — after a catalog rename, the strings in old rows are no longer valid capabilities */
 function knownCapabilities(values: readonly string[]): Capability[] {
   return sortCapabilities(values.filter(isAgentCapability));
 }
 
 /**
- * 读某个项目里这个 Agent 的授权。null = 没配过。
+ * Reads this Agent's grant inside one project; null means never configured /
+ * 读某个项目里这个 Agent 的授权，null = 没配过。
  *
- * ★ 「没配过」与「配成空」必须分得开：前者用默认档案，后者是「一条都不给」。
- *   返回 null 而不是一个空对象，就是为了让调用方没法把两者混起来。
+ * ★ "Never configured" and "configured to be empty" have to stay separable: the
+ *   first falls back to the default profile, the second means "not a single
+ *   capability". Returning null rather than an empty object is what makes it
+ *   impossible for a caller to conflate them.
  */
 export async function loadProjectGrant(
   db: Database,
@@ -98,7 +102,7 @@ function toExpanded(row: typeof projectAgentPermissions.$inferSelect): ExpandedP
   };
 }
 
-/** 批量读 —— 调度器要对一个项目里所有 Agent 求值，逐个查会变成 N+1 */
+/** Batch read — the scheduler evaluates every Agent in a project, and one query each would be an N+1 */
 export async function loadProjectGrants(
   db: Database,
   projectId: string,
@@ -122,9 +126,11 @@ export type AgentRow = typeof agents.$inferSelect;
 export function ceilingOf(agent: Pick<AgentRow, 'capabilityCeiling' | 'deniedCapabilities'>): AgentCeiling {
   return {
     /**
-     * ★ NULL = 不设上限。空数组 = 一条都不给。两者含义相反，
-     *   而这个区别只有在这一行代码里表达得出来 —— 别处一旦把 null
-     *   当成空数组，所有没设上限的 Agent 会瞬间失去全部能力。
+     * ★ NULL means no ceiling at all. An empty array means not one capability.
+     *   The two mean opposite things, and this line is the only place the
+     *   distinction gets expressed — the moment anywhere else treats null as an
+     *   empty array, every Agent without a ceiling loses all of its
+     *   capabilities at once.
      */
     allowedCapabilities:
       agent.capabilityCeiling === null ? null : knownCapabilities(agent.capabilityCeiling),
@@ -132,7 +138,7 @@ export function ceilingOf(agent: Pick<AgentRow, 'capabilityCeiling' | 'deniedCap
   };
 }
 
-/** 项目级登记且启用的仓库 ref —— 它们对项目内 Agent 默认只读 */
+/** Repository refs registered and active for this project — Agents in the project can read them by default */
 export async function projectRepoRefs(
   db: Database,
   orgId: string,
@@ -154,18 +160,20 @@ export async function projectRepoRefs(
 export interface ResolveContext {
   orgId: string;
   projectId: string;
-  /** 预算好的项目仓库 ref；不传就现查 */
+  /** Pre-fetched project repository refs; queried on the spot when omitted */
   repoRefs?: readonly string[];
-  /** 覆盖库里那份授权 —— preview 用它算「保存之后会怎样」 */
+  /** Overrides the stored grant — preview uses it to compute what saving would do */
   grantOverride?: ExpandedProfile | null;
   scopeOverride?: readonly ResourceScope[];
 }
 
 /**
- * 求出某个 Agent 在某个项目里的生效权限。
+ * Resolves one Agent's effective permissions inside one project / 求出某个 Agent
+ * 在某个项目里的生效权限。
  *
- * ★★ 这是 API、调度器匹配、派发三条路径**唯一**的入口。
- *   分头实现的代价见 domain/capabilities/evaluate.ts 开头那段。
+ * ★★ This is the **only** entry point for all three paths: the API, the
+ *   scheduler's candidate matching, and dispatch. What separate implementations
+ *   cost is spelled out at the top of domain/capabilities/evaluate.ts.
  */
 export async function resolveAgentAccess(
   db: Database,
@@ -192,35 +200,31 @@ export async function resolveAgentAccess(
       : [undefined];
 
   /**
-   * ★★ 没有项目授权时，资源范围是**空的** —— 不再回落到 Agent 上那份旧字段。
+   * ★★ With no project grant, the resource scopes are **empty** — there is no
+   *   fallback to the old field on the Agent row.
    *
-   *   旧字段是组织级的，回落等于「在 A 项目配的仓库，B 项目也算数」，
-   *   而那正是权限下沉到项目级要消灭的东西。0031 那次迁移已经给每个
-   *   既有的项目内 Agent 补过授权行，回落只会掩盖漏补的那些。
+   *   That field is organization-level, so falling back to it would mean "a
+   *   repository granted in project A also counts in project B", which is
+   *   exactly what moving permissions down to project scope removes. Migration
+   *   0031 already backfilled a grant row for every existing in-project Agent,
+   *   so a fallback would only mask the ones it missed.
    *
-   *   空不等于什么都读不到：项目级登记的仓库仍然默认只读
-   *   （下面 projectRepoRefs 那一档），一个刚进项目、还没人配过授权的
-   *   Agent 照样能读这个项目的代码。
-   *
-   * No fallback to the org-level field: it would mean "a repository granted in
-   * project A also counts in project B", which is exactly what moving
-   * permissions to project scope removes. Project-registered repositories are
-   * still readable by default, so an unconfigured agent is not blind.
+   *   Empty does not mean blind: repositories registered on the project stay
+   *   readable by default (the projectRepoRefs tier below), so an Agent that
+   *   just joined and has no grant configured can still read the project's code.
    */
   const scopes = row?.resourceScopes ?? [];
 
   /**
-   * ★★ 翻译器只取决于**运行时类型**，与「有没有注册进本进程」无关。
+   * ★★ The translator depends on the **runtime kind** alone, and not at all on
+   *   whether that runtime is registered in this process.
    *
-   *   这两件事曾经被混成一件，代价是调度器（它不带注册表）算出来的
-   *   工具集是空的 —— 于是每个 Agent 都被判成「缺少所需工具权限」，
-   *   任务安静地停在 ready。「这个 CLI 能做什么」是它的固有属性；
-   *   「它此刻在不在本进程里」是另一个问题，由候选的 registered 那一栏回答。
-   *
-   * A translator depends on the runtime kind alone — whether that runtime is
-   * registered in this process is a different question, answered by the
-   * candidate's `registered` flag. Conflating them made the scheduler (which
-   * carries no registry) translate every agent to an empty tool set.
+   *   The two were once conflated, and the cost was that the scheduler — which
+   *   carries no registry — translated every Agent to an empty tool set. Every
+   *   Agent was then judged to be "missing the required tool permissions", and
+   *   work sat silently in ready. "What this CLI can do" is an intrinsic
+   *   property of it; "is it loaded in this process right now" is a separate
+   *   question, answered by the candidate's `registered` flag.
    */
   return resolveEffectiveAgentAccess({
     projectGrant: grant,
@@ -237,7 +241,7 @@ async function loadOwnedAgentInProject(
   agentId: string,
 ): Promise<AgentRow> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-  // ★ 越界与不存在都回 404：403 会把 id 变成可枚举的探针
+  // ★ Out-of-org and nonexistent both return 404: a 403 turns the id into an enumeration probe
   if (!agent || agent.orgId !== ctx.orgId) throw notFound('agent');
 
   const [member] = await db
@@ -268,16 +272,16 @@ export interface AgentAccessView {
   runtimeKind: string;
   profileKey: string;
   profileVersion: number;
-  /** 库里没配过时为 true —— 界面据此说「用的是默认档案」而不是显示一份假配置 */
+  /** True when nothing was ever stored — the UI says "using the default profile" instead of rendering a fake configuration */
   usingDefault: boolean;
-  /** 选中的档案有没有出新版；有的话界面提示，但**不自动升级** */
+  /** Whether the selected profile has a newer version; the UI announces it but does **not** auto-upgrade */
   profileOutdated: boolean;
   capabilities: Capability[];
   deniedCapabilities: Capability[];
   resourceScopes: ResourceScope[];
   sources: EffectiveAgentAccess['sources'];
   warnings: string[];
-  /** 已渲染成人话的能力后果，界面直接显示，不需要再查目录 */
+  /** Capability consequences already rendered in plain language, so the UI need not consult the catalog */
   explained: { capability: Capability; label: string; labelEn: string; risk: string }[];
   profiles: {
     key: string;
@@ -310,8 +314,9 @@ export async function getAgentAccess(
     profileVersion: access.profileVersion,
     usingDefault: grant === null,
     /**
-     * ★ 只提示，不自动升级。自动升级等于「平台改一次档案，
-     *   所有 Agent 跟着变宽」—— 权限累积最典型的发生方式。
+     * ★ Announce only, never auto-upgrade. Auto-upgrading would mean "the
+     *   platform edits one profile and every Agent widens with it" — the
+     *   textbook way permission creep happens.
      */
     profileOutdated: builtin !== null && builtin.version > access.profileVersion,
     capabilities: access.capabilities,
@@ -345,11 +350,13 @@ export interface AgentAccessPreview {
 }
 
 /**
- * 「保存之后会变成什么样」。
+ * What things will look like after saving / 「保存之后会变成什么样」。
  *
- * ★★ 与 {@link setAgentAccess} 走同一条计算路径：预览调这个函数，
- *   保存也调这个函数（拿它的 direction 去要权限）。所以两者不可能给出
- *   不同的结论 —— 这不是靠纪律保证的，是靠只有一份实现保证的。
+ * ★★ Shares one computation path with {@link setAgentAccess}: the preview calls
+ *   this function, and so does the save (it takes the `direction` from here to
+ *   decide which permission to demand). The two therefore cannot reach
+ *   different conclusions — that is guaranteed by there being one
+ *   implementation, not by anyone's discipline.
  */
 export async function previewAgentAccess(
   db: Database,
@@ -398,10 +405,11 @@ export async function previewAgentAccess(
   return {
     ...impact,
     /**
-     * ★ 运行时降级警告要一起给出来。「这条能力在这个运行时上不生效」
-     *   是保存前最该知道的一件事，而它不属于「改动影响」——
-     *   不合并的话，用户会在预览里看到一条绿色的「已授予」，
-     *   而实际什么也不会发生。
+     * ★ Runtime degradation warnings ship alongside. "This capability does not
+     *   take effect on this runtime" is the single most useful thing to know
+     *   before saving, and it is not part of "impact of the change" — leave the
+     *   two lists unmerged and the user sees a green "granted" in the preview
+     *   while nothing at all will actually happen.
      */
     warnings: [...impact.warnings, ...after.warnings],
     next,
@@ -409,10 +417,11 @@ export async function previewAgentAccess(
 }
 
 /**
- * 保存项目级授权。
+ * Saves the project-level grant / 保存项目级授权。
  *
- * ★ 治理（要哪条权限、要不要填原因）由 executeGovernedMutation 按固定顺序跑，
- *   这里只负责「算出方向」与「写库」。
+ * ★ Governance — which permission is required, whether a reason is mandatory —
+ *   runs in executeGovernedMutation in a fixed order. All this code does is
+ *   work out the direction and write the row.
  */
 export interface AgentAccessSaveResult {
   ok: true;
@@ -430,9 +439,10 @@ export async function setAgentAccess(
   agentId: string,
   input: AgentAccessInput,
   /**
-   * ★ 治理这一段由调用方注入，而不是这里直接调 rbac。
-   *   这个模块要能脱离 HTTP 层单测（判定是纯的，写库是它自己的事），
-   *   而 rbac 需要一个 FastifyRequest 才活得起来。
+   * ★ Governance is injected by the caller rather than calling rbac here. This
+   *   module has to be unit-testable without the HTTP layer (the decision is
+   *   pure and the write is its own business), and rbac cannot run without a
+   *   FastifyRequest.
    */
   governed: (args: {
     direction: 'loosen' | 'tighten' | 'neutral';

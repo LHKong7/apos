@@ -4,27 +4,32 @@ import { computeAgents, windowFor, type AgentPerf } from '@apos/domain';
 import { loadAnalyticsInput } from '../../http/analytics';
 
 /**
- * 把实测效能回写到 `agents.stats`。
+ * Write measured performance back into `agents.stats` / 把实测效能回写到 `agents.stats`。
  *
- * ★ 这是调度闭环缺的那一环。
+ * ★ This is the missing link in the scheduling loop.
  *
- *   `computeAgents` 一直能从 agent_runs 算出成功率、首次成功率、接管率、
- *   平均成本，但算完只给页面看，从没喂回 `agents.stats` ——
- *   而 `matchExecutors` 读的正是 `stats`。结果是：真实注册的 Agent
- *   永远是 `successRate: null, sampleSize: 0`，**调度匹配学不到任何东西**。
- *   跑得好的和跑得烂的，在选人时长得一模一样。
+ *   `computeAgents` has always been able to derive success rate, first-try success rate, override
+ *   rate and average cost from agent_runs, but the result only ever reached the analytics page —
+ *   it was never fed back into `agents.stats`, and `stats` is exactly what `matchExecutors`
+ *   reads. The consequence: every actually registered Agent stayed at
+ *   `successRate: null, sampleSize: 0`, so **matching learned nothing at all**. A great Agent and
+ *   a terrible one looked identical at selection time.
  *
- * ★ 样本量一起写。没有它，匹配器无法区分「成功率 100%（跑过 1 次）」
- *   和「成功率 92%（跑过 200 次）」—— 前者会把新 Agent 顶到第一位，
- *   而它可能只是运气好。
+ * ★ Write the sample size alongside it. Without it the matcher cannot tell "100% success over 1
+ *   run" from "92% success over 200 runs" — the former would push a brand-new Agent to the top of
+ *   the list when it may simply have gotten lucky once.
+ *
+ * 这是调度闭环缺的那一环：算出来的效能从没喂回 `agents.stats`，而匹配器读的正是它。
+ * 样本量必须一起写，否则跑过一次的新 Agent 会顶到第一位。
  */
 
-/** 低于这个样本量时，效能分只作参考，匹配器应退到中性分 */
+/** Below this sample size the performance score is indicative only; the matcher falls back to a
+ *  neutral score / 样本量低于此值时匹配器退到中性分 */
 export const MIN_SAMPLE_SIZE = 5;
 
 export interface StatsRefreshReport {
   agentsUpdated: number;
-  /** 样本不足、按中性分参与匹配的 Agent */
+  /** Agents with too little data, participating in matching at a neutral score */
   lowConfidence: string[];
 }
 
@@ -37,7 +42,8 @@ export async function refreshAgentStats(
 
   const projectRows = await db.select().from(projects).where(eq(projects.status, 'active'));
 
-  /** 跨项目按 Run 数加权合并 —— 简单平均会让只跑过一次的项目权重过大 */
+  /** Merge across projects weighted by run count — a plain average over-weights a project the
+   *  Agent ran in exactly once / 简单平均会让只跑过一次的项目权重过大 */
   const merged = new Map<string, AgentPerf>();
 
   for (const project of projectRows) {
@@ -71,7 +77,7 @@ export async function refreshAgentStats(
           total: seen.tokens.total + perf.tokens.total,
         },
         cacheHitRate: mergeRate(seen, perf),
-        tokensPerSuccess: null, // 合并后重算意义不大，页面按项目看
+        tokensPerSuccess: null, // Not worth recomputing post-merge; the page views it per project
       });
     }
   }
@@ -95,7 +101,8 @@ export async function refreshAgentStats(
           sampleSize: perf.runs,
           tokens: perf.tokens,
           cacheHitRate: perf.cacheHitRate,
-          /** ★ 样本不足要标出来，匹配器据此退到中性分 */
+          /** ★ Flag thin samples explicitly so the matcher can fall back to a neutral score
+           *  样本不足要标出来，匹配器据此退到中性分 */
           lowConfidence,
           window: { from: window.from, to: window.to },
           refreshedAt: new Date(now).toISOString(),

@@ -1,26 +1,28 @@
 # 05 Policy Engine
 
-产品文档 3.2 的核心主张之一：「Policy 驱动，而不是每一步都审批」。Policy Engine 决定哪些事 Agent 可以自己做，哪些必须找人。
+*[中文版本 / Chinese version](05-policy-engine.zh.md)*
 
-它是整个治理体系的落点——**如果 Policy Engine 不可信，用户就不敢放开自动化；不放开自动化，产品价值就归零。**
+One of the central claims of product doc 3.2: "Policy-driven, not approve-every-step." The Policy Engine decides what an Agent gets to do on its own and what has to go to a human.
+
+It is where the entire governance story lands — **if the Policy Engine can't be trusted, users won't loosen automation; and without loosened automation the product is worth nothing.**
 
 ---
 
-## 1. 三条设计约束
+## 1. Three design constraints
 
-| 约束 | 来源 | 影响 |
+| Constraint | Where it comes from | Consequence |
 | --- | --- | --- |
-| **快** | 在每次状态流转的关键路径上 | 规则编译进内存，评估不查库，P99 < 10ms |
-| **可模拟** | 页面文档 13 要求用历史数据验证规则 | 规则必须是纯函数；事件必须携带上下文快照 |
-| **可解释** | 页面文档 13 要求自然语言解释；11 要求展示触发规则 | 规则是结构化 AST 而非代码字符串；评估返回完整 trace |
+| **Fast** | It sits on the critical path of every state transition | Rules compile into memory, evaluation touches no database, P99 < 10ms |
+| **Simulatable** | Page doc 13 requires validating a rule against historical data | Rules must be pure functions; events must carry a context snapshot |
+| **Explainable** | Page doc 13 requires a natural-language explanation; 11 requires showing which rule fired | Rules are a structured AST, not a code string; evaluation returns a full trace |
 
-第三条决定了规则不能用 JS 表达式或嵌入式脚本——那样无法生成可靠的自然语言解释，也无法在 UI 里做可视化编辑。
+The third constraint rules out JS expressions and embedded scripts: you can't generate a trustworthy natural-language explanation from them, and you can't edit them visually in the UI.
 
 ---
 
-## 2. 规则表示
+## 2. Rule representation
 
-### 2.1 结构
+### 2.1 Shape
 
 ```typescript
 // packages/contracts/src/policy/rule.ts
@@ -28,10 +30,10 @@
 interface Policy {
   id: string;
   orgId: string;
-  projectId: string | null;      // null = 组织级
+  projectId: string | null;      // null = organization-level
   name: string;
   description: string;
-  priority: number;              // 越小越先评估
+  priority: number;              // lower numbers evaluate first
   enabled: boolean;
   condition: Condition;
   action: Action;
@@ -53,7 +55,7 @@ type Action =
   | { type: 'require_agent_review'; agents: string[] }
   | { type: 'require_human_review'; assignee: Recipient; dueInHours: number }
   | { type: 'require_multiple_approvals'; approvers: Recipient[]; mode: 'all' | 'majority' }
-  | { type: 'ask'; assignee: Recipient }          // 不阻断，给建议
+  | { type: 'ask'; assignee: Recipient }          // advisory, does not block
   | { type: 'pause'; resumeCondition?: string }
   | { type: 'deny'; message: string }
   | { type: 'escalate'; to: Recipient }
@@ -66,9 +68,11 @@ type Recipient =
   | { kind: 'owner_of'; subject: 'work_item' | 'agent' };
 ```
 
-**用角色而非具体人**：产品文档 8.7.5 的责任映射是按角色定义的（数据库变更 → DBA）。人员变动时规则不用改。
+**Roles, not named individuals**: the responsibility map in product doc 8.7.5 is defined by role (database change → DBA). When people move around, the rules don't have to be rewritten.
 
-### 2.2 示例：产品文档 8.9.3 的三条规则
+### 2.2 Example: the three rules from product doc 8.9.3
+
+The rule names below are sample user-authored data and stay in Chinese: "auto-approve low-risk tasks", "production database changes must be approved by a DBA", and "hand off to a human after three consecutive Agent failures".
 
 ```json
 [
@@ -115,57 +119,57 @@ type Recipient =
 ]
 ```
 
-### 2.3 Fact 清单
+### 2.3 Fact list
 
-**这份清单是事件快照的设计依据**（[03 事件模型](03-event-model.md) §4）。新增 fact 会导致该 fact 之前的历史数据无法模拟，因此首版要尽量覆盖。
+**This list is what the event snapshot is designed against** ([03 Event model](03-event-model.md) §4). Adding a fact later means no history from before that point can be simulated against it, so the first version should cover as much ground as it can.
 
-对应产品文档 8.9.1 列出的十六类条件：
+These correspond to the sixteen categories of condition listed in product doc 8.9.1:
 
-| Fact | 类型 | 来源 |
+| Fact | Type | Source |
 | --- | --- | --- |
 | `projectType` | string | project.type |
 | `workItemType` | enum | work_item.type |
 | `riskLevel` | enum | work_item.risk_level |
-| `reversible` | boolean | 操作元数据 |
-| `externalFacing` | boolean | 是否影响外部客户 |
-| `environment` | enum | 操作目标环境 |
-| `dataSensitivity` | enum | 涉及数据的分级 |
-| `impactScope.tasks` | number | 影响的下游任务数 |
-| `impactScope.services` | string[] | 涉及的服务 |
+| `reversible` | boolean | Operation metadata |
+| `externalFacing` | boolean | Whether external customers are affected |
+| `environment` | enum | Target environment of the operation |
+| `dataSensitivity` | enum | Classification of the data involved |
+| `impactScope.tasks` | number | Number of downstream tasks affected |
+| `impactScope.services` | string[] | Services involved |
 | `operationType` | string | db_ddl / deploy / delete_resource / send_external / payment / … |
 | `agentType` | string | agent.type |
-| `agentConfidence` | number | Agent 上报的置信度 |
+| `agentConfidence` | number | Confidence reported by the Agent |
 | `agentSuccessRate` | number | agent.stats |
-| `consecutiveFailures` | number | 该 Work Item 连续失败次数 |
-| `runCost` | number | 本次 Run 成本 |
-| `projectCostSpent` | number | 项目累计成本 |
-| `projectBudget` | number\|null | 项目预算 |
-| `budgetUsedPct` | number | 派生：spent / budget |
+| `consecutiveFailures` | number | Consecutive failures on this work item |
+| `runCost` | number | Cost of this run |
+| `projectCostSpent` | number | Cumulative project cost |
+| `projectBudget` | number\|null | Project budget |
+| `budgetUsedPct` | number | Derived: spent / budget |
 | `testsResult` | enum | passed / failed / not_run |
-| `testCoverage` | number\|null | CI 上报 |
+| `testCoverage` | number\|null | Reported by CI |
 | `securityScan` | enum | passed / failed / not_run |
 | `agentReview` | enum | passed / concerns / failed / not_run |
 | `autonomyLevel` | enum | project.autonomy_level |
 
-**派生 fact**（如 `budgetUsedPct`）在上下文构建时计算，不让规则编写者自己算——降低出错概率。
+**Derived facts** (such as `budgetUsedPct`) are computed while the context is built rather than left for the rule author to work out — fewer chances to get it wrong.
 
 ---
 
-## 3. 评估
+## 3. Evaluation
 
-### 3.1 算法
+### 3.1 Algorithm
 
 ```typescript
 function evaluate(ctx: PolicyContext, rules: CompiledRule[]): PolicyVerdict {
   const trace: TraceEntry[] = [];
 
-  for (const rule of rules) {          // 已按 priority 升序排列
+  for (const rule of rules) {          // already sorted by ascending priority
     const matched = matchCondition(rule.condition, ctx);
     trace.push({
       policyId: rule.id,
       name: rule.name,
       matched,
-      // 未命中时记录哪个子条件失败，供 UI 展示"为什么没走这条"
+      // on a miss, record which sub-condition failed so the UI can show "why this one didn't fire"
       failedAt: matched ? null : firstFailingLeaf(rule.condition, ctx),
     });
 
@@ -173,8 +177,8 @@ function evaluate(ctx: PolicyContext, rules: CompiledRule[]): PolicyVerdict {
       return {
         action: rule.action,
         matchedPolicyId: rule.id,
-        trace,                          // 含已评估的所有规则
-        contextSnapshot: ctx,           // ★ 写入事件，供后续模拟
+        trace,                          // includes every rule evaluated so far
+        contextSnapshot: ctx,           // ★ written into the event, for later simulation
       };
     }
   }
@@ -183,13 +187,13 @@ function evaluate(ctx: PolicyContext, rules: CompiledRule[]): PolicyVerdict {
 }
 ```
 
-**首次命中即停止**。这是最容易被误解的语义，因此页面文档 13 §5.7 要求在模拟测试里展示完整匹配过程，让用户看到"被高优先级规则拦截了"。
+**First match wins, and evaluation stops there.** This is the semantic users most often misread, which is why page doc 13 §5.7 requires the simulation view to show the whole matching sequence — so the user can see "a higher-priority rule caught it first."
 
-**同优先级时更严的先评估**。命中即停意味着两条优先级相同、又都能匹配同一上下文的规则，谁排前面谁说了算。不定序的话这个"谁"由数据库返回行的顺序决定——同一份配置在两台机器上可能给出相反的判定，而这种问题几乎不可能复现。平局倒向更严的那一条：并列意味着用户没有表态哪条更重要，而在治理配置上，没表态时选安全的那一侧是唯一说得过去的默认。
+**At equal priority, the stricter rule goes first.** First-match-wins means that when two rules share a priority and both match the same context, whichever comes first decides. Leave the order undefined and that "whichever" is whatever order the database happened to return the rows in — the same configuration can produce opposite verdicts on two machines, and that is a problem you will almost never reproduce. Ties break toward the stricter rule: a tie means the user never said which one matters more, and in governance configuration, taking the safe side when nobody has said is the only defensible default.
 
-### 3.2 默认动作
+### 3.2 Default action
 
-无规则命中时，按项目自治等级决定（产品文档 8.9.4）：
+When no rule matches, the project's autonomy level decides (product doc 8.9.4):
 
 ```typescript
 function defaultAction(ctx: PolicyContext): Action {
@@ -208,17 +212,17 @@ function defaultAction(ctx: PolicyContext): Action {
 }
 ```
 
-**安全底线**：无论自治等级与项目规则如何，这三类操作永远不会得到 `allow`：
+**The safety floor**: whatever the autonomy level, and whatever the project's rules say, these three classes of operation never come back `allow`:
 
-删除资源 · 修改权限 · 执行付款
+Deleting resources · Changing permissions · Executing payments
 
-它们**硬编码在求值器里**（`NEVER_AUTO_APPROVE`，`enforceSafetyFloor`），不是一条可以被删掉或改写的规则——一条能被配置绕过的底线不是底线。产品文档 10.4 的另外六类高风险操作由用户自己配规则管住；一条都没配时，体检会把"这类操作现在走的是自治等级默认"如实说出来（`coverage_gap`）。
+They are **hard-coded in the evaluator** (`NEVER_AUTO_APPROVE`, `enforceSafetyFloor`), not a rule that can be deleted or rewritten — a floor that configuration can get around is not a floor. The other six high-risk operation classes in product doc 10.4 are left to rules the user writes; when none have been written, the health check says so plainly — this class of operation is currently running on the autonomy-level default (`coverage_gap`).
 
-> **它们曾经是十条硬编码的组织级基线规则**（`BASELINE_POLICIES`），无论库里有没有规则都参与求值。删掉的理由不是它们管得不对，是它们让"这个项目现在到底按什么规则跑"这个问题在界面上答不出来：用户看得见的规则列表和实际生效的规则不是同一份。现在**生效规则 = 库里用户录入的那些，一条都没有就是零条**；真正不能商量的那三类，改由求值器直接兜住。
+> **They used to be ten hard-coded organization-level baseline rules** (`BASELINE_POLICIES`) that took part in evaluation whether or not the database held any rules at all. They weren't removed because they governed the wrong things; they were removed because they made "so which rules is this project actually running under?" unanswerable in the UI: the rule list the user could see was not the set that actually ran. Now **the effective rule set is exactly what the user entered into the database — none entered means zero rules**; the three that genuinely aren't negotiable are caught by the evaluator itself.
 
-**读不懂的 fact 取值一律拒收**。`operationType` / `environment` / `dataSensitivity` 从工作项的 `typeData` 里读出来时逐个按枚举解析，认不出就抛错，而不是兜底成一个近似值。兜底往宽的一侧猜的代价是：`"delete_resrouce"`（拼错一个字母）会原样进到上下文里，`NEVER_AUTO_APPROVE` 认不出它，安全底线就被一个拼写错误整条绕过去——而现场毫无迹象，任务照常跑完，规则一条都没命中。计划输出侧同样是严格枚举，拒收发生在解析那一步，也就是重试与澄清还来得及的地方。
+**A fact value that can't be read is rejected outright.** `operationType` / `environment` / `dataSensitivity` are parsed one by one against their enums as they come out of the work item's `typeData`; anything unrecognized throws instead of falling back to an approximation. Here is what guessing toward the permissive side costs: `"delete_resrouce"` (one letter off) travels into the context intact, `NEVER_AUTO_APPROVE` doesn't recognize it, and one typo has bypassed the entire safety floor — with no sign of it at the scene, the task finishing normally, and not a single rule having matched. The planning output side uses the same strict enums, and rejects at the parse step — which is exactly where a retry or a clarification is still possible.
 
-### 3.3 编译与缓存
+### 3.3 Compilation and caching
 
 ```typescript
 class PolicyCache {
@@ -235,58 +239,58 @@ class PolicyCache {
   }
 
   private compile(orgId: string, projectId: string): CompiledRule[] {
-    const org = loadOrgPolicies(orgId);        // 组织级
+    const org = loadOrgPolicies(orgId);        // organization-level
     const proj = loadProjectPolicies(projectId);
     return [...org, ...proj]
       .filter(p => p.enabled)
       .sort((a, b) => a.priority - b.priority)
       .map(p => ({ ...p, condition: compileCondition(p.condition) }));
-      // compileCondition 把 AST 编译成闭包，避免每次评估遍历 JSON
+      // compileCondition turns the AST into closures, so evaluation never walks JSON
   }
 
-  // 规则变更时通过 Redis Pub/Sub 广播失效，所有实例同步
+  // On a rule change, broadcast invalidation over Redis Pub/Sub so every instance stays in sync
   invalidate(orgId: string, projectId?: string) { /* ... */ }
 }
 ```
 
-**缓存失效的一致性**：规则变更到全部实例生效有几百毫秒延迟。页面文档 13 §7 要求明确提示生效时间，且**进行中的 Run 使用启动时的规则快照**——避免任务跑到一半规则变了导致行为不一致。
+**Consistency of cache invalidation**: a rule change takes a few hundred milliseconds to reach every instance. Page doc 13 §7 requires that the time it takes effect be stated explicitly, and that **an in-flight Run keep the rule snapshot it started with** — so a rule that changes mid-task can't make one task behave two different ways.
 
 ---
 
-## 4. 组织级与项目级的继承
+## 4. Organization-level and project-level inheritance
 
-产品文档隐含要求（第十章权限与安全）：企业治理底线不能被单个项目绕过。
+An implicit requirement of the product doc (chapter 10, permissions and security): no single project may get around the enterprise's governance floor.
 
-### 4.1 规则
+### 4.1 Rules
 
-| 规则 | 实现 |
+| Rule | Implementation |
 | --- | --- |
-| 组织级规则优先评估 | priority 区间划分：组织级 1–99，项目级 100+ |
-| 项目不能删除组织规则 | UI 与 API 双重限制 |
-| 项目**只能收紧，不能放宽** | 见 §4.2 |
+| Organization rules evaluate first | Priority bands: organization 1–99, project 100+ |
+| A project can't delete an organization rule | Enforced in both the UI and the API |
+| A project **can only tighten, never loosen** | See §4.2 |
 
-项目级那一段（100+）内部再分两格：
+The project band (100+) is split again into two slots:
 
-| 区间 | 谁占 | 分配方式 |
+| Band | Who occupies it | How it's assigned |
 | --- | --- | --- |
-| 100 | 操作开关矩阵（每个操作类型至多一条） | 固定 |
-| 101+ | 手写规则 | 服务端往后追加（`nextAuthoredPriority`） |
+| 100 | The operation toggle matrix (at most one per operation type) | Fixed |
+| 101+ | Hand-written rules | Appended by the server (`nextAuthoredPriority`) |
 
-开关排在手写规则**前面**：开关是用户刚刚做出的表态，被一条半年前写的规则默默盖掉是最难查的一类问题。同格内不会冲突——每条开关各锁一个 `operationType`，两条永远不会同时命中。
+Toggles sit **ahead of** hand-written rules: a toggle is what the user just said out loud, and having it silently overridden by a rule someone wrote six months ago is the hardest class of problem to track down. Nothing conflicts inside the slot — each toggle locks exactly one `operationType`, so two of them can never match at once.
 
-优先级不再出现在编辑界面上。它要求用户同时理解"越小越先""命中即停""组织规则占了前面那一段"三件事才填得对，而填错的表现是规则安静地不生效——一个填错了不报错、还看不出来的输入框，换来的是一次困惑，不是一次配置。真要手动排的人在编辑器的"高级"里仍然改得到。
+Priority no longer appears in the editing UI. Filling it in correctly requires holding three things in your head at once — "lower goes first", "first match wins", "organization rules already own the front of the range" — and getting it wrong shows up as a rule quietly not taking effect. An input box that doesn't complain when you get it wrong, and doesn't show you that you did, buys you one bout of confusion, not one act of configuration. Anyone who really does want to order rules by hand can still do it under "Advanced" in the editor.
 
-### 4.2 "只能收紧"如何强制
+### 4.2 How "tighten only" is enforced
 
-严格的形式化验证（对任意上下文证明项目规则不会比组织规则更宽松）计算上不可行。实际采用两层保护：
+Strict formal verification — proving that for any context a project rule is never more permissive than an organization rule — is computationally infeasible. In practice there are two layers of protection:
 
-**第一层（运行时，硬保证）**：组织规则先评估且命中即终止。因此如果组织规则说"生产 DDL 需 DBA 审批"，项目规则无论怎么写都不可能让这个场景自动通过——它根本走不到项目规则。
+**Layer one (runtime, a hard guarantee)**: organization rules evaluate first and stop on match. So if an organization rule says "production DDL needs DBA approval", no project rule, however it is written, can let that scenario through automatically — evaluation never reaches the project rules.
 
-**第二层（保存时，静态检查）**：保存项目规则时，做有限的静态分析：
+**Layer two (save time, a static check)**: when a project rule is saved, run a limited static analysis:
 
 ```typescript
 function checkPermissiveness(draft: Policy, orgRules: Policy[]): Warning[] {
-  // 找出与该草稿条件有交集、且动作更严格的组织规则
+  // find organization rules whose condition overlaps this draft's and whose action is stricter
   const overlapping = orgRules.filter(o =>
     conditionsMayOverlap(o.condition, draft.condition) &&
     strictness(o.action) > strictness(draft.action)
@@ -294,37 +298,39 @@ function checkPermissiveness(draft: Policy, orgRules: Policy[]): Warning[] {
 
   return overlapping.map(o => ({
     level: 'info',
+    // "Organization rule «name» is stricter in some scenarios; those will be handled by it,
+    //  and this rule will not fire"
     message: `组织规则「${o.name}」在部分场景下更严格，那些场景将由它处理，此规则不会生效`,
     orgPolicyId: o.id,
   }));
 }
 ```
 
-`conditionsMayOverlap` 用区间/枚举集合的粗略相交判断——宁可误报（提示了实际不重叠的），不可漏报。
+`conditionsMayOverlap` uses a coarse interval/enum-set intersection test — better a false positive (flagging a pair that doesn't actually overlap) than a miss.
 
-这不是拒绝保存，只是提示。因为**运行时已经有硬保证**，静态检查的作用是帮用户理解为什么自己的规则不生效。
+This doesn't refuse the save; it's a heads-up. **The runtime guarantee is already hard**; the static check exists to help the user understand why their rule isn't firing.
 
 ---
 
-## 5. 模拟：本模块最重要的功能
+## 5. Simulation: the most important feature in this module
 
-页面文档 13 §5.7 把模拟称为"让用户敢于配置 Policy 的关键"。
+Page doc 13 §5.7 calls simulation "the thing that makes users willing to configure Policy at all."
 
-### 5.1 原理
+### 5.1 How it works
 
 ```
-从 events 表取出历史上所有 policy.evaluated 事件（含 context_snapshot）
+Pull every historical policy.evaluated event (with its context_snapshot) out of the events table
       ↓
-用草稿规则对每个快照重新评估
+Re-evaluate each snapshot against the draft rule
       ↓
-与当时的实际结果对比
+Compare against what actually happened at the time
       ↓
-输出：会自动处理多少次 / 其中多少次与人类判断不一致
+Report: how many cases it would handle automatically / how many of those the human judged differently
 ```
 
 ```typescript
 async function simulate(draft: Policy, projectId: string, range: string): Promise<SimResult> {
-  // 只取带完整快照的评估事件
+  // only evaluation events that carry a complete snapshot
   const samples = await db.query`
     SELECT e.id, e.context_snapshot, e.payload,
            d.status AS human_decision, d.resolved_at, d.resolution_note
@@ -340,15 +346,15 @@ async function simulate(draft: Policy, projectId: string, range: string): Promis
   const mismatches: Mismatch[] = [];
 
   for (const s of samples) {
-    // 检查草稿规则引用的 fact 在快照里是否都有
+    // check that every fact the draft rule references is present in the snapshot
     const missing = requiredFacts(draft.condition)
       .filter(f => !(f in s.context_snapshot));
-    if (missing.length) continue;                 // 跳过，并在结果中统计
+    if (missing.length) continue;                 // skip it, and count it in the result
 
     if (!matchCondition(draft.condition, s.context_snapshot)) continue;
     applicable.push(s);
 
-    // 关键对比：草稿会自动放行，但人类当时驳回了
+    // the comparison that matters: the draft would auto-approve, but the human rejected it
     const draftAutoApproves = isAutoApprove(draft.action);
     const humanRejected = s.human_decision === 'rejected'
                        || s.human_decision === 'revision_requested';
@@ -375,18 +381,18 @@ async function simulate(draft: Policy, projectId: string, range: string): Promis
 }
 ```
 
-### 5.2 从不一致案例推导条件补充建议
+### 5.2 Deriving suggested extra conditions from the disagreements
 
-页面文档 13 §4.2 展示的效果：
+The effect shown in page doc 13 §4.2:
 
 ```
-⚠ 其中 2 次人类当时是「驳回」的：
-   · 08-02 修改支付文案（人类认为需法务确认）
-   · 07-28 删除废弃接口（人类认为影响外部调用）
-→ 建议：增加条件「不涉及对外接口」「不涉及支付相关」
+⚠ In 2 of them the human chose "Reject" at the time:
+   · 08-02 Reword payment copy (human: needs legal sign-off)
+   · 07-28 Remove deprecated endpoint (human: external callers affected)
+→ Suggested: add the conditions "does not touch external interfaces" and "is not payment-related"
 ```
 
-推导方法：找出不一致样本与一致样本之间**取值分布差异最大的 fact**：
+The derivation: find the fact whose **value distribution differs most** between the disagreeing samples and the agreeing ones.
 
 ```typescript
 function deriveSuggestions(mismatches: Mismatch[], matched: Sample[]): Suggestion[] {
@@ -396,7 +402,7 @@ function deriveSuggestions(mismatches: Mismatch[], matched: Sample[]): Suggestio
     const mismatchValues = mismatches.map(m => m.context[fact]);
     const okValues = matched.map(s => s.context[fact]);
 
-    // 该 fact 在不一致样本中高度集中，且在一致样本中罕见
+    // this fact clusters hard on one value among the disagreements, and is rare at it among the rest
     const dominant = mode(mismatchValues);
     const concentration = count(mismatchValues, dominant) / mismatchValues.length;
     const baseRate = count(okValues, dominant) / Math.max(okValues.length, 1);
@@ -404,6 +410,7 @@ function deriveSuggestions(mismatches: Mismatch[], matched: Sample[]): Suggestio
     if (concentration >= 0.8 && baseRate < 0.2) {
       suggestions.push({
         addCondition: { fact, op: 'ne', value: dominant },
+        // "the {fact label} of N disagreeing cases was «dominant» in every one"
         rationale: `${count(mismatchValues, dominant)} 个不一致案例的 ${factLabel(fact)} 都是「${dominant}」`,
         wouldEliminate: count(mismatchValues, dominant),
       });
@@ -413,28 +420,28 @@ function deriveSuggestions(mismatches: Mismatch[], matched: Sample[]): Suggestio
 }
 ```
 
-这是**统计启发，不是因果推断**。因此建议要标注"基于 N 个案例的模式，请人工确认是否合理"，绝不自动应用。
+This is a **statistical heuristic, not causal inference**. So a suggestion has to be labeled "a pattern across N cases — please confirm it makes sense" and must never be applied automatically.
 
-### 5.3 模拟的诚实性
+### 5.3 Simulation has to be honest
 
-模拟必须明确告知局限，否则用户会过度信任：
+Simulation must state its limits, or users will over-trust it:
 
-| 情况 | 提示 |
+| Situation | What it says |
 | --- | --- |
-| 样本 < 20 | 「样本量较小（N=12），结果仅供参考」 |
-| 部分样本缺 fact | 「N 个历史样本缺少条件所需数据，未纳入模拟」 |
-| 引用了新增 fact | 「条件「Agent 置信度」自 2026-08-06 起才有数据，此前样本无法模拟」 |
-| 无不一致但样本少 | 不显示"零风险"，显示"在有限样本中未发现不一致" |
+| Fewer than 20 samples | "Small sample (N=12); treat the result as indicative only" |
+| Some samples missing a fact | "N historical samples lack data this condition needs and were left out of the simulation" |
+| References a newly added fact | "The condition 'Agent confidence' only has data from 2026-08-06 onward; earlier samples can't be simulated" |
+| No disagreements, but few samples | Don't say "zero risk"; say "no disagreements found within a limited sample" |
 
-**放宽类规则变更强制要求模拟**：API 层校验 `PATCH /api/policies/{id}` 在 direction=loosen 时必须携带有效的 `simulation_id`（[02 领域模型](02-domain-model.md) `policy_versions.simulation_id`）。
+**A loosening change is required to have been simulated**: the API layer validates that `PATCH /api/policies/{id}` carries a valid `simulation_id` when direction=loosen ([02 Domain model](02-domain-model.md), `policy_versions.simulation_id`).
 
 ---
 
-## 6. 自然语言解释
+## 6. Natural-language explanation
 
-页面文档 13 §5.6 要求规则编辑时实时生成人话解释。
+Page doc 13 §5.6 requires a plain-language explanation generated live while a rule is being edited.
 
-**必须用模板拼接，不能用 LLM。** 理由：解释与实际执行逻辑必须严格一致，LLM 生成会有偏差，而这个偏差会直接导致用户误配规则——治理功能上的偏差是不可接受的。
+**It has to be template assembly, not an LLM.** The reason: the explanation and the logic that actually executes must agree exactly. LLM output drifts, and that drift leads users to misconfigure rules — drift in a governance feature is not acceptable.
 
 ```typescript
 function explain(policy: Policy): string {
@@ -448,90 +455,95 @@ function explainCondition(c: Condition): string {
   if ('any' in c) return c.any.map(explainCondition).join('或');
   if ('not' in c) return `不满足（${explainCondition(c.not)}）`;
 
-  const label = FACT_LABELS[c.fact];          // "风险等级"
-  const value = formatValue(c.fact, c.value); // "低"
+  const label = FACT_LABELS[c.fact];          // "风险等级" (risk level)
+  const value = formatValue(c.fact, c.value); // "低" (low)
   const op = OP_PHRASES[c.op];                // { eq: '是', lt: '低于', ... }
   return `${label}${op}${value}`;
 }
 ```
 
-对应示例规则生成：
+What it generates for the example rule:
 
 > 当风险等级是低、且自动测试结果是通过、且 Review Agent 结论是通过、且本次执行成本低于 $10 时，系统会自动批准并在飞书通知项目负责人。你不需要手动审批。
+>
+> (In English: when the risk level is low, the automated tests passed, the Review Agent signed off, and this run costs less than $10, the system approves automatically and notifies the project owner on Feishu. You don't have to approve anything by hand.)
 
-**模板覆盖度是实现成本的主要来源**：23 个 fact × 8 个操作符 × 10 种动作。需要一套结构化的短语表，而不是逐组合写模板。
+**Template coverage is where most of the implementation cost goes**: 23 facts × 8 operators × 10 actions. That calls for a structured phrase table, not a template written per combination.
 
 ---
 
-## 7. 成本护栏
+## 7. Cost guardrails
 
-产品文档多处提到成本控制（8.6.3 WIP 的"每个项目最大运行成本"、8.9.1 的模型成本与累计预算）。成本检查在两个位置：
+The product doc raises cost control in several places (the "maximum run cost per project" under WIP in 8.6.3; model cost and cumulative budget in 8.9.1). Cost is checked in two places:
 
-### 7.1 派发前（预防）
+### 7.1 Before dispatch (prevention)
 
 ```typescript
-// Scheduler 派发 Agent Run 前
+// before the scheduler dispatches an Agent Run
 const projected = project.costSpent + estimatedRunCost;
 if (project.budgetAmount && projected > project.budgetAmount) {
   return createDecision('budget_overrun', {
-    assignee: { kind: 'project_role', role: 'sponsor' },   // 8.7.5：预算超限 → Sponsor
+    assignee: { kind: 'project_role', role: 'sponsor' },   // 8.7.5: budget overrun → Sponsor
+    // "will exceed the budget by $X"
     consequence: `将超出预算 $${(projected - project.budgetAmount).toFixed(2)}`,
   });
 }
 ```
 
-### 7.2 执行中（中断）
+### 7.2 During execution (interruption)
 
-Agent Run 的成本实时累加，触及阈值时按 Policy 处理：
+An Agent Run's cost accrues in real time; when it reaches a threshold, Policy decides what happens:
 
 ```
-成本达到单 Run 上限 80%  → 事件 + 页面警示
-成本达到单 Run 上限 100% → 按 agent.cost_limit 配置的动作：
-                            pause_and_ask（默认）/ terminate / allow_overrun
-项目累计成本达预算 100%  → 停止调度新任务（执行中的允许跑完，避免半成品）
+Cost hits 80% of the per-Run ceiling   → event + on-page warning
+Cost hits 100% of the per-Run ceiling  → whatever agent.cost_limit is configured to do:
+                                          pause_and_ask (default) / terminate / allow_overrun
+Cumulative project cost hits 100% of budget → stop scheduling new tasks
+                                              (running ones finish, so nothing is left half-built)
 ```
 
-**执行中的 Run 允许跑完**是刻意选择：中途杀掉一个跑了 20 分钟、改了一半代码的 Run，产生的烂摊子比多花几美元更贵。
+**Letting in-flight Runs finish is a deliberate choice**: killing a Run twenty minutes in, with code half-rewritten, leaves a mess that costs more to clean up than the few extra dollars.
 
 ---
 
-## 8. 与 Agent 权限的关系
+## 8. Relationship to Agent permissions
 
-两者容易混淆：
+The two are easy to confuse:
 
-| | Agent 权限（[09 安全](09-security.md)） | Policy |
+| | Agent permissions ([09 Security](09-security.md)) | Policy |
 | --- | --- | --- |
-| 回答 | Agent **能不能**做（能力边界） | 做这件事**要不要**人批准（治理判断） |
-| 违反后果 | 工具调用直接被拒绝 | 生成决策，等人 |
-| 配置位置 | Agent Workspace | Policy 配置页 |
-| 时机 | 工具调用时 | 状态流转时 |
+| Answers | **Can** the Agent do it (capability boundary) | **Does** doing it need a human's approval (governance judgment) |
+| What a violation does | The tool call is refused outright | A decision is created and waits for a person |
+| Configured in | Agent Workspace | The Policy configuration page |
+| When it applies | At tool-call time | At state-transition time |
 
-举例：
-- Agent 没有 `merge_pr` 工具权限 → 它根本无法合并代码，这是**权限**
-- Agent 有 `deploy` 权限，但部署到生产需要审批 → 这是 **Policy**
+For example:
+- The Agent has no `merge_pr` tool permission → it simply cannot merge code. That is **permissions**.
+- The Agent has `deploy` permission, but deploying to production needs approval → that is **Policy**.
 
-**两者都要有**。只有权限没有 Policy，Agent 要么完全不能做要么完全自由；只有 Policy 没有权限，Agent 可能通过意外路径绕过治理。
+**You need both.** Permissions without Policy leaves an Agent either wholly blocked or wholly free; Policy without permissions leaves an Agent able to reach the same effect down some unanticipated path, governance never consulted.
 
 ---
 
-## 9. 测试策略
+## 9. Testing strategy
 
-| 层次 | 内容 |
+| Level | What it covers |
 | --- | --- |
-| 单元 | 条件 AST 求值：每个操作符、嵌套组合、类型不匹配 |
-| 单元 | 优先级顺序与首次命中语义 |
-| 单元 | 默认动作在三种自治等级下的行为 |
-| 单元 | 自然语言解释：快照测试覆盖所有 fact × 操作符组合 |
-| 集成 | 组织规则不可被项目规则绕过（构造尝试绕过的项目规则，断言仍被拦截） |
-| 集成 | 缓存失效：规则变更后 N 毫秒内所有实例生效 |
-| 集成 | 模拟：构造已知的历史事件，断言模拟结果 |
-| 性能 | 100 条规则 × 10000 次评估的 P99 延迟 |
+| Unit | Condition AST evaluation: every operator, nested combinations, type mismatches |
+| Unit | Priority ordering and first-match-wins semantics |
+| Unit | Default action under each of the three autonomy levels |
+| Unit | Natural-language explanation: snapshot tests covering every fact × operator combination |
+| Integration | Organization rules can't be bypassed by project rules (construct project rules that try, assert they're still caught) |
+| Integration | Cache invalidation: a rule change takes effect on every instance within N milliseconds |
+| Integration | Simulation: construct known historical events, assert the simulation result |
+| Performance | P99 latency for 100 rules × 10,000 evaluations |
 
-**安全底线测试**（最重要）：
+**The safety-floor test** (the most important one):
 
 ```typescript
-// 对 NEVER_AUTO_APPROVE 的三类操作，穷举各种自治等级与对抗性项目规则组合，
-// 断言永远不会得到 allow —— 底线在求值器里，不依赖库里有没有规则
+// For the three NEVER_AUTO_APPROVE operation classes, enumerate every autonomy level crossed with
+// adversarial project rule sets, and assert allow never comes back — the floor lives in the
+// evaluator and does not depend on whether the database holds any rules
 for (const op of NEVER_AUTO_APPROVE) {
   for (const autonomy of ALL_AUTONOMY_LEVELS) {
     for (const projectRules of ADVERSARIAL_RULE_SETS) {
@@ -542,50 +554,50 @@ for (const op of NEVER_AUTO_APPROVE) {
 }
 ```
 
-配套还要断言**拼错的取值绕不过它**：`typeData.operationType` 写成 `"delete_resrouce"` 时评估必须停下来报错，而不是当成 `code_change` 放过去。这条与上面那条是一对——少了它，上面那条只证明了"拼对时拦得住"。
+Alongside it, assert that **a misspelled value doesn't get past it either**: with `typeData.operationType` written as `"delete_resrouce"`, evaluation must stop and raise, not treat it as `code_change` and wave it through. These two tests are a pair — without the second, the first only proves "it holds when the value is spelled right."
 
 ---
 
-## 10. MVP 范围收敛
+## 10. Narrowing the MVP scope
 
-产品文档 12.2 对 Policy Engine 基础版只要求四类配置：
+Product doc 12.2 asks only four kinds of configuration of the basic Policy Engine:
 
-- 哪些任务自动执行
-- 哪些任务需要审批
-- 失败多少次后请求人工
-- 哪些环境必须审批
+- which tasks run automatically
+- which tasks need approval
+- how many failures before asking for a human
+- which environments always require approval
 
-**建议 MVP 实现**：
+**Proposed MVP:**
 
-| 做 | 不做 |
+| Do | Don't |
 | --- | --- |
-| 完整的条件 AST 与求值器（内部） | 自由条件编辑器（UI） |
-| **模板化配置界面**（选场景 → 填几个参数） | 高级表达式模式 |
-| **模拟回放**（最高优先级） | 建议推导（§5.2 可后置） |
-| 自然语言解释 | — |
-| 组织/项目继承与优先级 | 复杂的静态冲突检测 |
-| 成本护栏 | — |
+| The full condition AST and evaluator (internal) | A free-form condition editor (UI) |
+| **A templated configuration UI** (pick a scenario → fill in a few parameters) | An advanced expression mode |
+| **Simulation replay** (highest priority) | Suggestion derivation (§5.2 can wait) |
+| Natural-language explanation | — |
+| Organization/project inheritance and priority | Sophisticated static conflict detection |
+| Cost guardrails | — |
 
-**理由**：模拟比灵活性重要。给用户一个能自由组合 23 个 fact 但无法验证效果的编辑器，比给他 6 个经过验证的模板更危险。灵活性可以后加，信任丢了很难挽回。
+**Why**: simulation matters more than flexibility. An editor that lets a user freely combine 23 facts but offers no way to check the result is more dangerous than six templates that have been validated. Flexibility can be added later; trust, once lost, is hard to win back.
 
-模板示例：
+A template, for example:
 
 ```
-场景：低风险任务自动放行
-  风险等级不高于  [低 ▾]
-  必须通过        [☑ 自动测试] [☑ Agent Review] [☐ 安全扫描]
-  成本上限        [$10]
-  通过后          [☑ 通知项目负责人]
-                                              [模拟验证] [启用]
+Scenario: auto-approve low-risk tasks
+  Risk level at most  [Low ▾]
+  Must pass           [☑ Automated tests] [☑ Agent Review] [☐ Security scan]
+  Cost ceiling        [$10]
+  Once it passes      [☑ Notify the project owner]
+                                              [Simulate] [Enable]
 ```
 
 ---
 
-## 11. 待确认问题
+## 11. Open questions
 
-1. **Fact 清单必须在实现事件快照前锁定。** 遗漏的 fact 在补上之前的历史数据里不存在，模拟能力有断层。建议实现前专门评审一次这份清单。
-2. **`agentConfidence` 的可比性**：不同 Agent 运行时的置信度定义不同，直接用于规则条件可能不可靠。是否需要按 Agent 做校准映射？还是 MVP 先不把它放进 fact 清单？倾向于保留字段但在模板中不暴露。
-3. **规则数量上限**：目前设想 30 条以内。超过后首次命中语义会让规则关系难以理解。是否需要引入规则分组或决策表形式？
-4. **模拟的 fact 缺失处理**：目前是跳过样本。如果某规则引用的 fact 在 80% 样本中缺失，模拟基本无意义。是否应该在这种情况下直接拒绝展示模拟结果，而不是给一个基于 20% 样本的结论？倾向于拒绝。
-5. **Policy 与 Agent 建议的关系**：产品文档 8.7.1 提到「Agent 建议自动化的重复决策」。这个建议由谁生成——Analytics 的统计检测（确定性）还是 LLM（灵活）？倾向于统计检测，理由同 §6：治理相关的功能不引入不确定性。
-6. **进行中 Run 的规则快照**：需要确认快照粒度——是整套编译后的规则，还是只记录 policy 版本号？前者存储大但绝对可靠，后者需要保证规则版本不被物理删除。倾向于记版本号 + 规则表软删除。
+1. **The fact list has to be locked down before the event snapshot is implemented.** A fact added later doesn't exist in the history that came before it, and simulation gets a gap there. Recommend a dedicated review of this list before implementation starts.
+2. **Comparability of `agentConfidence`**: different Agent runtimes define confidence differently, so feeding it straight into a rule condition may be unreliable. Do we need a per-Agent calibration mapping? Or leave it out of the fact list for the MVP? Leaning toward keeping the field but not exposing it in the templates.
+3. **A cap on rule count**: currently imagined at 30 or fewer. Beyond that, first-match-wins makes the relationships between rules hard to hold in your head. Do we need rule groups, or a decision-table form?
+4. **Missing facts in simulation**: today the sample is skipped. If a fact a rule references is missing from 80% of samples, the simulation is close to meaningless. Should we refuse to show a result at all in that case, rather than hand over a conclusion drawn from the remaining 20%? Leaning toward refusing.
+5. **Policy and Agent suggestions**: product doc 8.7.1 mentions "the Agent suggests automating a repeated decision." Who generates that suggestion — Analytics' statistical detection (deterministic) or an LLM (flexible)? Leaning toward statistical detection, for the same reason as §6: governance features don't get to introduce nondeterminism.
+6. **The rule snapshot for an in-flight Run**: the granularity needs settling — the whole compiled rule set, or just the policy version numbers? The former is large but absolutely reliable; the latter requires guaranteeing that rule versions are never physically deleted. Leaning toward version numbers plus soft deletes on the rules table.

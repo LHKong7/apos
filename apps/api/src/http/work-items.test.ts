@@ -19,9 +19,13 @@ import {
 } from '../test/db';
 
 /**
+ * Creating work items by hand, plus human-readable numbering /
  * 手工创建工作项 + 人类可读编号。
  *
- * ★★ 在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解），
+ * ★★ Until now work items could only be **generated** (requirement → plan → approve → split),
+ *   and they carried nothing but a uuid. The first meant "jot down a bug" was impossible in
+ *   this system; the second meant no task had a name anyone could say out loud.
+ *   在此之前工作项只能被**生成**出来（需求 → 计划 → 批准 → 分解），
  *   而且只有 uuid。前者让「随手记一个 bug」在系统里做不到，
  *   后者让任何一条任务都没有能用嘴说出来的名字。
  */
@@ -131,7 +135,11 @@ describe('编号', () => {
   });
 
   /**
-   * ★★ 读-改-写在并发下会把同一个号发给两个调用者，而后果不是报错 ——
+   * ★★ Read-modify-write hands the same number to two concurrent callers, and the fallout is
+   *   not a clean error — the unique constraint fails the **second insert**, which surfaces as
+   *   "creating a task fails sometimes": a fault that only appears when two people act at once
+   *   and cannot be reproduced on demand.
+   *   读-改-写在并发下会把同一个号发给两个调用者，而后果不是报错 ——
    *   唯一约束会让**第二个插入**失败，表现成「建任务偶尔失败」，
    *   一个只在有人同时操作时出现、复现不了的故障。
    */
@@ -149,7 +157,9 @@ describe('编号', () => {
   });
 
   /**
-   * ★ 同一份计划分解出来的任务编号必须连续 —— 中间插进别人的号，
+   * ★ Tasks split out of one plan must get consecutive numbers — somebody else's number wedged
+   *   into the middle reads as if a few tasks went missing.
+   *   同一份计划分解出来的任务编号必须连续 —— 中间插进别人的号，
    *   读起来像是丢了几条。
    */
   it('★ 一次要 n 个是连号', async () => {
@@ -168,11 +178,14 @@ describe('手工建任务', () => {
   });
 
   /**
-   * ★★ 这一条是整个入口能不能加的前提。
+   * ★★ This one is the precondition for the whole entry point existing.
    *
-   *   手工建的任务如果建完就能派发，那么任何能建任务的人都可以让 Agent
-   *   去做任意事情 —— requirement.approve 与 plan.approve 两道
-   *   Human Gate 就都被绕开了，而且绕开的方式在接口清单上看不出来。
+   *   If a hand-created task were dispatchable right away, anyone who can create a task could
+   *   have an agent do anything at all — both the requirement.approve and plan.approve Human
+   *   Gates bypassed, in a way the endpoint list gives no hint of.
+   *   这一条是整个入口能不能加的前提。手工建的任务如果建完就能派发，
+   *   那么任何能建任务的人都可以让 Agent 去做任意事情 —— requirement.approve
+   *   与 plan.approve 两道 Human Gate 就都被绕开了，而且绕开的方式在接口清单上看不出来。
    */
   it('★ 不接受调用方指定状态 —— 一律停在 draft', async () => {
     const res = await create({ title: '想直接跑', status: 'ready' });
@@ -205,7 +218,10 @@ describe('手工建任务', () => {
   });
 
   /**
-   * ★ 返工重新开始（changes_requested → ready）同样落在 ready 上，
+   * ★ Restarting after rework (changes_requested → ready) also lands on ready, but the plan
+   *   behind that step was approved long ago — demanding the approval permission a second time
+   *   would drag a tech_lead into every rework, and rework is an executor's daily move.
+   *   返工重新开始（changes_requested → ready）同样落在 ready 上，
    *   但那一步的计划早就批过了 —— 再要一次批准权限，会让每次返工
    *   都要惊动 tech_lead，而返工是执行者的日常动作。
    */
@@ -230,8 +246,13 @@ describe('手工建任务', () => {
   });
 
   /**
-   * ★★ 手工建卡是唯一没有规划阶段替它标操作类型的入口。
+   * ★★ Manual creation is the one entry point with no planning stage to tag the operation type
+   *   on its behalf.
    *
+   *   Without asking, "clean up a batch of production resources" gets judged as a code change —
+   *   the "deleting resources always needs a human" safety floor never gets a turn, and nothing
+   *   at the scene shows it: the task runs as usual, and not one rule matched.
+   *   手工建卡是唯一没有规划阶段替它标操作类型的入口。
    *   不问这一句的话，「清理一批线上资源」会被当成改代码来评估 ——
    *   「删资源永远要人确认」那条安全底线根本轮不到，
    *   而现场毫无迹象：任务照常跑，规则一条都没命中。
@@ -244,7 +265,10 @@ describe('手工建任务', () => {
   });
 
   /**
-   * ★ 认不出的值直接拒收，不兜底成 code_change ——
+   * ★ An unrecognized value is rejected outright rather than defaulted to code_change —
+   *   defaulting guesses toward the **permissive** side, and not making anyone guess is this
+   *   field's entire reason for existing.
+   *   认不出的值直接拒收，不兜底成 code_change ——
    *   兜底是往**宽**的一侧猜，而这一栏的全部意义就是别让人猜。
    */
   it('★ 拼错的操作类型被拒收，不静默兜底', async () => {
@@ -261,7 +285,10 @@ describe('手工建任务', () => {
     expect(row!.typeData).not.toHaveProperty('operationType');
   });
 
-  /** ★ 审计时「它是怎么来的」要答得上：计划分解的还是人手建的 */
+  /**
+   * ★ An audit has to be able to answer "where did it come from": split out of a plan, or
+   *   created by hand / 审计时「它是怎么来的」要答得上：计划分解的还是人手建的
+   */
   it('★ 手工建的任务留下 origin 痕迹', async () => {
     const id = (await create({ title: '手建的' })).json().item.id;
     const [row] = await db.select().from(workItems).where(eq(workItems.id, id));
@@ -293,17 +320,20 @@ describe('手工建任务', () => {
 });
 
 /**
- * 接管。
+ * Takeover / 接管。
  *
- * ★★ 「接管」是一个**意图**，不是一个状态机触发器。
+ * ★★ "Take over" is an **intent**, not a state-machine trigger.
  *
+ *   It used to map one-to-one onto `human_took_over`, and that trigger is only legal out of
+ *   `executing`. So on the board, clicking Take over on a blocked or failed card returned
+ *   409 plus "the current status … does not support this operation" — a sentence that neither
+ *   explains why nor squares with the conditions under which the button itself appears
+ *   (issues #16 / #27).
+ *   「接管」是一个**意图**，不是一个状态机触发器。
  *   它此前恒等于 `human_took_over`，而那个触发器只从 executing 出发。
  *   于是看板上一张 blocked 或 failed 的卡片，「接管」按钮点下去拿到的是
  *   409 +「当前状态 … 不支持该操作」—— 一句既没说清为什么、又和按钮
  *   自己出现的条件互相矛盾的话（问题记录 #16 / #27）。
- *
- * Takeover is an intent, not a trigger: `human_took_over` is only legal from
- * `executing`, so the button on a blocked or failed card always 409'd.
  */
 describe('★ 接管：同一个按钮在不同状态下走不同的触发器', () => {
   const takeover = (id: string, userId = fx.userId) =>
@@ -324,7 +354,11 @@ describe('★ 接管：同一个按钮在不同状态下走不同的触发器', 
     expect(after!.executorType).toBe('human');
   });
 
-  /** ★ 这一条正是报出来的那个 bug：卡片写着「已阻塞」，点接管却报状态不对 */
+  /**
+   * ★ This is exactly the reported bug: the card says "Blocked", and clicking Take over answers
+   *   that the status is wrong /
+   *   这一条正是报出来的那个 bug：卡片写着「已阻塞」，点接管却报状态不对
+   */
   it('★ blocked 的任务：接管走升级路径，而不是报「状态不支持」', async () => {
     const item = await createWorkItem(db, fx, {
       status: 'blocked',
@@ -337,7 +371,8 @@ describe('★ 接管：同一个按钮在不同状态下走不同的触发器', 
     const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
     expect(after!.status).toBe('executing');
     expect(after!.executorType).toBe('human');
-    // ★ 升级路径带 clearBlocked —— 接管完还挂着阻塞标记等于没接管
+    // ★ The escalation path carries clearBlocked — finishing a takeover with the blocked flag
+    // still set is the same as not having taken over at all
     expect(after!.blockedSince).toBeNull();
   });
 
@@ -352,7 +387,11 @@ describe('★ 接管：同一个按钮在不同状态下走不同的触发器', 
   });
 
   /**
-   * ★ 真的接不了的状态仍然要拒，而且报错里要带上**状态标签**。
+   * ★ A status that genuinely cannot be taken over is still refused, and the error must carry
+   *   the **status label**. The `ready` in "the current status ready is not supported" never
+   *   appears in the UI — what the user sees is the localized label on the card, and when the
+   *   two names do not match, the explanation explains nothing.
+   *   真的接不了的状态仍然要拒，而且报错里要带上**状态标签**。
    *   「当前状态 ready 不支持」这句话里的 `ready` 界面上从没出现过 ——
    *   用户看到的是卡片上的中文标签，两个名字对不上就等于没解释。
    */

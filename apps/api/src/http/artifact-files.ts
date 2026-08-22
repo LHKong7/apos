@@ -6,47 +6,63 @@ import { artifacts, type Database } from '@apos/db';
 import { fail, notFound } from './errors';
 
 /**
- * 产物文件网关。
+ * Artifact file gateway / 产物文件网关。
  *
- * ★★ 页面此前**看不到** Agent 改出来的文件。
+ * ★★ The UI previously **could not open** a single file an agent had changed.
+ *
+ *   Local delivery recorded only an archivePath plus a change-set summary on
+ *   the artifact row, so the artifacts page could say "12 files changed" and
+ *   list every filename while opening none of them. Reading the content meant
+ *   logging into the server.
  *
  *   本地交付只在 artifacts 上记了一个 archivePath 与变更集摘要，
  *   于是产物页能显示「改了 12 个文件」和文件名，却打不开任何一个。
- *   用户要看内容只能上服务器。
  *
- * ★★ 绝不把服务器本地绝对路径交给浏览器。
+ * ★★ Never hand a server-local absolute path to the browser.
  *
- *   archivePath 是宿主机上的真实路径。直接回给前端等于把部署结构、
- *   工作区根目录一并暴露出去，而且拿到它也没法读 —— 浏览器又访问不了。
- *   所以一律走 artifactId + 相对路径，由这一层做解析与越界防护。
+ *   archivePath is a real path on the host. Returning it verbatim leaks the
+ *   deployment layout and the workspace root, and it is useless to the caller
+ *   anyway — a browser cannot read the host filesystem. Everything goes through
+ *   artifactId + a relative path, and this layer does the resolution and the
+ *   escape checks.
  *
- * ★ 只服务 `storageKey` 指向本地归档目录的那类产物。git / 对象存储那两类
- *   有自己的可点开地址（PR 链接、控制台链接），不该从这里再走一遍。
+ *   直接回给前端等于把部署结构、工作区根目录一并暴露出去，而且拿到它也没法读。
+ *
+ * ★ Only serves artifacts whose `storageKey` points at a local archive
+ *   directory. The git and object-storage kinds already have their own
+ *   clickable addresses (a PR link, a console link) and should not be routed
+ *   through here a second time.
+ *
+ *   git / 对象存储那两类有自己的可点开地址，不该从这里再走一遍。
  */
 
-/** 单文件预览上限。超过就只给下载，不塞进 JSON */
+/** Per-file preview cap. Anything larger is download-only, never inlined into JSON */
 const MAX_PREVIEW_BYTES = 512 * 1024;
-/** 目录列举上限 —— 一次归档几万个文件时别把响应撑爆 */
+/** Directory listing cap — an archive of tens of thousands of files must not blow up the response */
 const MAX_ENTRIES = 2000;
 
 export interface ArtifactFileEntry {
   path: string;
   size: number;
-  /** 目录不给 preview，前端据此决定能不能点开 */
+  /** Directories get no preview; the UI uses this to decide what is clickable */
   isDirectory: boolean;
   /**
+   * Whether this run added, modified, or deleted the file /
    * 这个文件在这次执行里是新增、修改还是删除。
    *
-   * ★★ 只列文件名不说改动类型，用户分不清「Agent 新写了这个文件」和
-   *   「Agent 改了这个文件」—— 而这两件事在 review 时的看法完全不同。
+   * ★★ A bare list of filenames cannot separate "the agent wrote this file"
+   *   from "the agent edited this file" — and a reviewer looks at those two
+   *   completely differently. 只列文件名不说改动类型，用户分不清这两件事。
    *
-   * ★ `deleted` 的文件**不在归档里**（归档只复制新增与修改的内容），
-   *   但必须列出来：一次执行删掉了什么，是变更集里最该被看见的部分。
+   * ★ `deleted` files are **not in the archive** (it only copies added and
+   *   modified content), but they still have to be listed: what a run deleted
+   *   is the part of the change set that most needs to be seen.
+   *   一次执行删掉了什么，是变更集里最该被看见的部分。
    */
   change: 'added' | 'modified' | 'deleted' | null;
 }
 
-/** 产物元数据里存下来的变更集（ingest 写的） */
+/** The change set stored on the artifact metadata (written at ingest) */
 interface StoredChangeSet {
   added?: string[];
   modified?: string[];
@@ -84,24 +100,29 @@ async function loadLocalArtifact(db: Database, artifactId: string) {
 }
 
 /**
- * realpath 一条**可能还不存在**的路径：解析到最近的存在祖先，剩下的段原样接回。
+ * Resolve symlinks in a path that **may not exist yet**: realpath the nearest
+ * existing ancestor, then re-append the missing tail /
+ * 解析到最近的存在祖先，剩下的段原样接回。
  *
- * Resolve symlinks in a path that may not exist yet: realpath the nearest
- * existing ancestor, then re-append the missing tail.
+ * ★★ This must not be written as `realpath(target).catch(() => target)`.
  *
- * ★★ 不能写成 `realpath(target).catch(() => target)`。
+ *   When target is missing, realpath throws ENOENT and the fallback is the
+ *   **unresolved** path — while the root side resolved fine. Two paths in
+ *   different coordinate systems, so relative() always starts with `..` and
+ *   "file not found" gets reported as "path escapes the archive". On macOS
+ *   both `tmpdir()` and `/tmp` lead to `/private/…`, so any archive root down
+ *   there hits it every time; on Linux `/tmp` is a real directory, so the bug
+ *   disappears when you move machines and is miserable to track down. The cost
+ *   is not just awkward wording: that message accuses someone of pointing a
+ *   symlink out of the archive, when the truth is the file is simply gone —
+ *   and the next step differs completely between the two.
  *
- *   target 不存在时 realpath 抛 ENOENT，回落到的是**没解析过**的路径，
- *   而 root 那一侧解析成功了 —— 两条不同坐标系的路径拿去 relative()
- *   必然以 `..` 开头，于是「文件不存在」被报成「路径越界」。
- *   macOS 上 `tmpdir()` 与 `/tmp` 都通往 `/private/…`，归档根只要落在那儿就必踩；
- *   Linux 上 `/tmp` 是实目录，所以这个 bug 换台机器就消失，很难追。
- *   代价不只是文案难看：那句话在说「有人拿符号链接往外指」，
- *   而真相只是文件没了 —— 两者的下一步动作完全不同。
+ *   macOS 上必踩、Linux 上必不现，所以这个 bug 换台机器就消失，很难追。
  *
- * ★ 顺带把符号链接目录下的缺失文件也判对了：`root/link/nope.txt`
- *   在旧实现里整条退回、看着还在归档内；现在 `link` 会被解析出去，
- *   越界的照样拦得住。
+ * ★ It also gets missing files under a symlinked directory right:
+ *   `root/link/nope.txt` used to be returned untouched and still looked like
+ *   it was inside the archive; now `link` is resolved away and a real escape
+ *   is still caught.
  */
 async function realpathAllowingMissing(p: string): Promise<string> {
   const missing: string[] = [];
@@ -110,7 +131,8 @@ async function realpathAllowingMissing(p: string): Promise<string> {
     const real = await realpath(current).catch(() => null);
     if (real !== null) return missing.length > 0 ? join(real, ...missing) : real;
     const parent = dirname(current);
-    // ★ 一路到文件系统根都解析不出来（盘符不存在之类）：原样返回，交给上面的字符串判定
+    // ★ Nothing resolved all the way up to the filesystem root (a missing drive letter,
+    //   say): return it as-is and let the string-level check above decide.
     if (parent === current) return p;
     missing.unshift(basename(current));
     current = parent;
@@ -118,17 +140,21 @@ async function realpathAllowingMissing(p: string): Promise<string> {
 }
 
 /**
- * 把用户给的相对路径解析成绝对路径，并挡住越界。
+ * Resolve a caller-supplied relative path to an absolute one and refuse anything
+ * that escapes the archive / 把用户给的相对路径解析成绝对路径，并挡住越界。
  *
- * ★★ 这是本文件的安全核心。
+ * ★★ This is the security core of the file.
  *
- *   `..` 与绝对路径都必须挡下来，否则 `GET /artifacts/:id/files/../../etc/passwd`
- *   就能读到归档目录以外的任何文件。用 resolve + relative 判边界，
- *   而不是字符串 startsWith —— 后者会让 `/data/archive-evil` 通过
- *   `/data/archive` 这条前缀检查（与 isMountRootAllowed 同一条纪律）。
+ *   Both `..` and absolute paths have to be refused, or
+ *   `GET /artifacts/:id/files/../../etc/passwd` reads any file outside the
+ *   archive directory. The boundary check is resolve + relative, not a string
+ *   `startsWith` — the latter lets `/data/archive-evil` pass a `/data/archive`
+ *   prefix test (the same discipline as isMountRootAllowed).
  *
- * ★ 符号链接也要挡：归档目录里的一条 symlink 指向 /etc 的话，
- *   路径判定全过而内容越界。所以最后再用 realpath 复核一次。
+ * ★ Symlinks need their own check: a symlink inside the archive pointing at
+ *   /etc passes every path test while the content sits outside, so realpath
+ *   verifies once more at the end.
+ *   路径判定全过而内容越界，所以最后再用 realpath 复核一次。
  */
 async function safeResolve(root: string, rel: string): Promise<string> {
   const target = resolve(root, rel);
@@ -156,7 +182,7 @@ async function safeResolve(root: string, rel: string): Promise<string> {
   return target;
 }
 
-/** 列出归档里的文件。相对路径，前端拿它去请求单个文件 */
+/** List the files in the archive. Paths are relative; the UI uses them to request one file */
 export async function listArtifactFiles(db: Database, artifactId: string) {
   const { row, root } = await loadLocalArtifact(db, artifactId);
 
@@ -189,22 +215,24 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
           change: changes.byPath.get(rel) ?? null,
         });
       }
-      // ★ symlink 既不列也不跟进 —— 归档里不该有，出现了也不该被当成内容
+      // ★ Symlinks are neither listed nor followed — an archive should not contain any,
+      //   and one that shows up should not be treated as content either.
     }
   }
 
   const exists = await stat(root).catch(() => null);
   if (!exists) {
     /**
-     * ★ 目录没了要如实说，而不是回一个空列表。
-     *   空列表读起来像「这次没产出」，而真相是产出被清理掉了 ——
+     * ★ Say the directory is gone rather than returning an empty list.
+     *   An empty list reads as "this run produced nothing", when the truth is
+     *   the output was reclaimed — and the next step differs completely.
      *   两者的下一步动作完全不同。
      */
     return {
       artifactId,
       projectId: row.projectId,
       available: false as const,
-      /** ★ 码给界面，句子给日志与兜底。见 error-reason.ts 的取舍 */
+      /** ★ The code is for the UI, the sentence for logs and fallback. See error-reason.ts */
       reasonCode: 'archive_gone' as const,
       reason: '归档目录已不存在（可能随工作区一起被回收了）',
       files: [],
@@ -216,11 +244,15 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
   await walk(root);
 
   /**
-   * ★★ 被删掉的文件要补进列表。
+   * ★★ Deleted files have to be appended to the listing.
    *
-   *   归档里只有新增与修改的内容（LocalPublisher 就是这么复制的），
-   *   所以走目录永远走不到它们。而「这次执行删了哪几个文件」恰恰是变更集里
-   *   最该被看见的部分 —— 漏掉它，产物页会让人以为这次只是加了东西。
+   *   The archive holds only added and modified content (that is all
+   *   LocalPublisher copies), so walking the directory can never reach them.
+   *   Yet "which files this run deleted" is exactly the part of the change set
+   *   that most needs to be seen — leave it out and the artifacts page reads
+   *   as if the run had only ever added things.
+   *
+   *   漏掉它，产物页会让人以为这次只是加了东西。
    */
   for (const path of changes.deleted) {
     if (!out.some((f) => f.path === path)) {
@@ -237,14 +269,15 @@ export async function listArtifactFiles(db: Database, artifactId: string) {
     files: out.sort((a, b) => a.path.localeCompare(b.path)),
     truncated: truncated || changes.truncated,
     /**
-     * ★ 如实说明为什么没有 before/after 对照：本地归档只存改完之后的内容，
-     *   变更前的版本没有留。给一个只有一侧的「diff」比不给更容易误导。
+     * ★ Be explicit about why there is no before/after view: the local archive
+     *   stores only the post-change content, the earlier version was never
+     *   kept. A one-sided "diff" misleads more than offering none at all.
      */
     diffAvailable: false as const,
   };
 }
 
-/** 单个文件的内容。文本给预览，二进制与超大文件只报元信息 */
+/** One file's content. Text gets a preview; binary and oversized files get metadata only */
 export async function readArtifactFile(db: Database, artifactId: string, rel: string) {
   const { row, root } = await loadLocalArtifact(db, artifactId);
   const full = await safeResolve(root, rel);
@@ -262,7 +295,7 @@ export async function readArtifactFile(db: Database, artifactId: string, rel: st
       path: rel,
       size: st.size,
       mime,
-      /** ★ 不给内容时要说清楚为什么，并指向下载 */
+      /** ★ When no content is returned, say why and point at the download */
       preview: null,
       reasonCode: binary ? ('binary' as const) : ('too_large' as const),
       reasonParams: binary ? undefined : { kb: MAX_PREVIEW_BYTES / 1024 },
@@ -282,7 +315,7 @@ export async function readArtifactFile(db: Database, artifactId: string, rel: st
   };
 }
 
-/** 下载单个文件。返回流与元信息，由路由层设响应头 */
+/** Download one file. Returns the stream plus metadata; the route layer sets the headers */
 export async function openArtifactFile(db: Database, artifactId: string, rel: string) {
   const { root } = await loadLocalArtifact(db, artifactId);
   const full = await safeResolve(root, rel);
@@ -322,7 +355,7 @@ function mimeOf(rel: string): string {
 
 function isTextual(rel: string, mime: string): boolean {
   const ext = extname(rel).toLowerCase();
-  // ★ 没有扩展名的（Makefile、Dockerfile）按文本处理 —— 它们几乎总是文本
+  // ★ Extension-less files (Makefile, Dockerfile) are treated as text — they almost always are
   if (ext === '') return true;
   return TEXT_EXT.has(ext) || mime.startsWith('text/') || mime === 'application/json';
 }

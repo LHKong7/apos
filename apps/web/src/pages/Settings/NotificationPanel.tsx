@@ -22,13 +22,15 @@ const ESCALATE_KEYS: Record<string, MessageKey> = {
 };
 
 /**
- * 通知配置（页面文档 14 §5.5 / 产品文档十一）。
+ * Notification settings (page doc 14 §5.5 / product doc 11) / 通知配置。
  *
- * ★ 通知围绕「需要行动」设计，而不是发送大量 Agent 日志。
- *   「每个任务状态变化」「每次 Agent 执行」默认关闭，而且界面上
- *   直接把原因写出来 —— 这不是保守，是算过代价的：默认全开的话，
- *   用户会在两天内屏蔽这个机器人，之后连真正需要行动的通知也收不到。
- *   那时候损失的不是这两项，是全部。
+ * ★ Notifications are designed around "something needs your action", not around
+ *   shipping a firehose of Agent logs. "Every work item status change" and
+ *   "every Agent run" are off by default, and the page states why right there.
+ *   That is not conservatism, it is arithmetic: turn everything on by default
+ *   and the user mutes the bot within two days, after which they stop receiving
+ *   the notifications that genuinely needed action too. What is lost then is not
+ *   those two toggles — it is all of them.
  */
 export function NotificationPanel({
   integration,
@@ -93,8 +95,10 @@ export function NotificationPanel({
       </div>
 
       {/**
-       * ★ 打开高频通知时当场说清代价，而不是等用户被刷屏之后自己想明白。
-       *   这条提示的目的不是阻止他，是让他知道自己在换什么。
+       * ★ State the cost at the moment a high-volume notification is switched
+       *   on, rather than leaving the user to work it out after being flooded.
+       *   The point of this hint is not to stop them; it is to let them see
+       *   what they are trading away.
        */}
       {noisyOn.length > 0 && (
         <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
@@ -135,7 +139,7 @@ export function NotificationPanel({
               })
             } />
         </Label>
-        {/* ★ 免打扰保护的是注意力，不是责任 —— 高风险决策必须能穿透 */}
+        {/* ★ Quiet hours protect attention, not accountability — a high-risk decision must still get through */}
         <Label className="flex items-center gap-1">
           <Checkbox
             disabled={!canEdit}
@@ -146,7 +150,7 @@ export function NotificationPanel({
         </Label>
       </div>
 
-      {/* 升级规则（产品文档十一）*/}
+      {/* Escalation rules (product doc 11) */}
       <div className="mt-1.5">
         <p className="text-[11px] text-slate-500">{t('notify.escalate')}</p>
         <ul className="mt-0.5 space-y-0.5">
@@ -166,11 +170,13 @@ export function NotificationPanel({
       </div>
 
       {/**
-       * ★ 通知里的「直接批准」按钮没有做（§12.3 倾向 MVP 只做深链）。
-       *   在第三方平台内直接执行批准，需要在那一侧确认「点按钮的人
-       *   真的是决策责任人」，各平台机制都不一样 ——
-       *   做不到这一点的「直接批准」，等于把不可代行的决策
-       *   变成谁点谁算，那比不做更糟。
+       * ★ There is deliberately no "approve right here" button inside a
+       *   notification (§12.3 leans toward deep links only for the MVP).
+       *   Approving from inside a third-party platform requires proving on that
+       *   side that whoever pressed the button really is the person accountable
+       *   for the decision, and every platform does that differently. An
+       *   "approve" that cannot prove it turns a non-delegable decision into
+       *   whoever-clicks-first, which is worse than not shipping it.
        */}
       <p className="mt-1.5 text-[11px] text-slate-400">
         {t('notify.linkOnlyNote')}

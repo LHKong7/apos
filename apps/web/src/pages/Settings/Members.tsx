@@ -22,21 +22,27 @@ import {
 import { WhatIsThis } from './primitives';
 
 /**
- * 项目成员与角色（docs/tech/09-security.md §2.2）。
+ * Project members and roles (docs/tech/09-security.md §2.2) / 项目成员与角色。
  *
- * ★★ 这一页是整套 RBAC 能不能落地的关键，而不是一个管理附属品。
+ * ★★ This page decides whether the whole RBAC model survives contact with
+ *   reality; it is not an administrative afterthought.
  *
- *   一套改不了的权限体系，实践中的结局永远是「所有人共用一个账号」——
- *   因为换角色比换个人麻烦。权限模型的落地程度，取决于调整它有多容易。
+ *   A permission system nobody can adjust always ends the same way in practice:
+ *   everyone shares one account, because changing a role is more trouble than
+ *   changing who is logged in. How far a permission model actually gets adopted
+ *   is a function of how easy it is to adjust.
  *
- * ★★ 人和 Agent 在同一张表里，担任同一套角色。
+ * ★★ Humans and Agents live in the same table and hold the same set of roles.
  *
- *   这是这个产品的形状：「测试」这个岗位上可能坐着一个人，
- *   也可能是 test-agent-1，还可能两者都有。分成两个页面的话，
- *   「这个项目谁在干活」就再也没有一个能一眼看全的地方了。
+ *   That is the shape of this product: the "QA" seat might hold a person, or
+ *   test-agent-1, or both. Split them onto two pages and there is no longer any
+ *   single place to answer "who is working on this project".
  *
- * ★ 角色列表来自服务端（含超管自定义的研发 / 运营 / 测试），
- *   不是前端硬编码的枚举。
+ * ★ The role list comes from the server (including the custom dev / ops / QA
+ *   roles a superadmin defined), not from an enum hardcoded in the frontend.
+ *
+ *   一套改不了的权限体系，结局永远是「所有人共用一个账号」；人和 Agent 同表
+ *   同角色是这个产品的形状；角色列表来自服务端，不是前端硬编码的枚举。
  */
 export function MembersPage() {
   const t = useT();
@@ -46,10 +52,10 @@ export function MembersPage() {
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   /**
-   * ★ `?add=agent` 直接把「加 Agent」那一格打开。
-   *   看板上「把 refactor-agent 加进项目」那个按钮跳到这里，落地后
-   *   还要用户自己去找「添加 Agent」按钮的话，这条捷径就只省了一次导航
-   *   （问题记录 #12）。
+   * ★ `?add=agent` opens the "add an Agent" panel directly. The board's "add
+   *   refactor-agent to this project" button lands here; if the user then still
+   *   had to hunt for the "Add Agent" button, the shortcut would have saved
+   *   exactly one navigation and nothing else (issue #12).
    */
   const [params] = useSearchParams();
   const [adding, setAdding] = useState<'human' | 'agent' | null>(
@@ -69,11 +75,12 @@ export function MembersPage() {
   });
 
   /**
-   * ★ 改完角色必须把权限缓存也作废。
+   * ★ Changing a role must also invalidate the permission cache.
    *
-   *   不作废的话，一个刚把自己从 tech_lead 降成 member 的人，
-   *   界面上按钮还全亮着 —— 点下去才收到 403。
-   *   权限清单和成员表是同一份事实的两个视图，必须一起失效。
+   *   Without it, someone who just demoted themselves from tech_lead to member
+   *   still sees every button lit up — and only finds out by clicking one and
+   *   getting a 403. The permission list and the member table are two views of
+   *   the same fact, so they have to expire together.
    */
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.members(projectId!) });
@@ -109,7 +116,7 @@ export function MembersPage() {
   const memberIds = new Set(data?.members.map((m) => m.actorId) ?? []);
   const canManage = perms.can('project.members.manage');
 
-  /** 人的下拉框和 Agent 的下拉框内容不同 —— 带 Human Gate 权限的角色给不了 Agent */
+  /** The human and Agent pickers differ — a role carrying Human Gate permissions cannot be given to an Agent */
   const rolesFor = (actorType: 'human' | 'agent'): AssignableRole[] =>
     (data?.assignableRoles ?? []).filter((r) => r.appliesTo.includes(actorType));
 
@@ -141,9 +148,11 @@ export function MembersPage() {
             {t('members.toRoles')}
           </Link>
           {/*
-            ★ 通向「开账号」的入口必须在这里。
-              候选人名单空着的时候，管理员在这一页找不到任何出路 ——
-              账号是组织级的，而这一页是项目级的，两者的关系不写出来就得靠猜。
+            ★ The path to "create an account" has to be right here. When the
+              candidate list comes up empty, an admin on this page has no way
+              forward — accounts are organization-level while this page is
+              project-level, and unless that relationship is spelled out they
+              have to guess it.
           */}
           <Link
             to={`/projects/${projectId}/settings/accounts`}
@@ -190,9 +199,10 @@ export function MembersPage() {
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
           <div className="mx-auto max-w-3xl space-y-3">
             {/*
-              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
-                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
-                「这跟我有关系吗」（问题记录 #42）。
+              ★ This page speaks domain vocabulary (Policy / roles / integrations
+                / members and grants) — precise to whoever wrote it, a wall to a
+                project manager. The opening line answers "does this concern me"
+                first (issue #42).
             */}
             <WhatIsThis storageKey="members" title={t('whatIs.members.title')}>
               <p>{t('whatIs.members.p1')}</p>
@@ -227,14 +237,19 @@ export function MembersPage() {
                         <span className="ml-1 text-[11px] text-slate-400">{c.sub}</span>
                       </span>
                       {/*
-                        ★★ Agent 一键加入，人必须先挑角色。
+                        ★★ An Agent joins in one click; a human must have a role
+                          picked first.
 
-                          不对称是有意的：Agent 只有 executor 这一个「干活」档
-                          （其余带 humanOnly 权限的角色它担任不了），默认值不含
-                          任何判断；而人的角色从业务负责人到只读都有，
-                          替他默认任何一档都是在替他做一次授权决定。
+                          The asymmetry is deliberate: an Agent has exactly one
+                          "does the work" tier, executor (every other role
+                          carries humanOnly permissions it cannot hold), so the
+                          default embeds no judgment. Human roles run from
+                          business owner down to read-only, and defaulting any
+                          of them would be making an authorization decision on
+                          that person's behalf.
 
-                          下拉框对 Agent 仍然留着 —— 它是**覆盖**，不是前置条件。
+                          The picker is still there for Agents — it is an
+                          **override**, not a precondition.
                       */}
                       {adding === 'agent' && (
                         <Button variant="ghost"
@@ -246,16 +261,16 @@ export function MembersPage() {
                         </Button>
                       )}
                       {/*
-                        ★ 这个下拉是「挑一个角色把人加进来」，不是在显示当前值 ——
-                          原来靠 defaultValue="" 保持在占位项上。Radix 没有
-                          defaultValue 空串这一招（空串是它的「未选中」），
-                          所以改成受控地钉在 undefined：选完就发请求，
-                          列表随之刷新，这一项本来也不该留下选中痕迹。
+                        ★ This picker chooses a role to add someone with; it never
+                          displays a current value. It used to sit on its
+                          placeholder via defaultValue="". Radix has no such
+                          trick — it reserves the empty string for "nothing
+                          selected" — so it is controlled at value={undefined}
+                          instead: picking fires the request, the list refreshes,
+                          and no selection should linger here anyway.
 
-                          This picker chooses a role to add someone with; it never
-                          displays a current value. Radix reserves the empty
-                          string, so instead of defaultValue="" it stays
-                          value={undefined} and fires on pick.
+                          这个下拉是「挑一个角色把人加进来」，不是在显示当前值；
+                          Radix 把空串留作「未选中」，所以受控地钉在 undefined。
                       */}
                       <Select
                         value={undefined}
@@ -315,9 +330,10 @@ export function MembersPage() {
             />
 
             {/*
-              ★★ Agent 与人同表同角色，但一定要**分组显示**。
-                混在一列里，「这个项目有几个真人」这个问题就答不上来了 ——
-                而那恰恰是看混合团队时第一个要问的。
+              ★★ Agents and humans share the table and the roles, but they must
+                be shown in **separate groups**. Mixed into one list, "how many
+                real people are on this project" becomes unanswerable — and that
+                is the first question anyone asks about a hybrid team.
             */}
             <MemberTable
               title={t('members.agents', { count: agentMembers.length })}
@@ -410,9 +426,10 @@ function MemberTable({
                 </div>
 
                 {/*
-                  ★ 角色旁边写它能做什么。「tech_lead」对业务负责人不构成信息，
-                    「批准计划、放宽规则」才是他要判断的东西 —— 授权的后果
-                    要在授权的那一刻可见。
+                  ★ Say next to each role what it can do. "tech_lead" carries no
+                    information for a business owner; "approves plans, relaxes
+                    rules" is what they actually have to judge — the consequence
+                    of a grant has to be visible at the moment of granting.
                 */}
                 <Select
                   value={m.role}
@@ -431,10 +448,13 @@ function MemberTable({
                   </SelectTrigger>
                   <SelectContent>
                     {/*
-                      当前角色可能已不适用于这一类担任者（角色被改窄了），仍要显示出来。
-                      ★ 多一道 `m.role &&`：原生 select 对 value="" 无所谓，
-                        Radix 会**抛错**（空串是它的「未选中」保留值）——
-                        一条角色为空的成员记录会让整页白屏，而不是少一个选项。
+                      The current role may no longer apply to this kind of holder
+                      (the role was narrowed); it still has to be shown.
+                      ★ The extra `m.role &&`: a native select shrugs at value="",
+                        but Radix **throws** (it reserves the empty string for
+                        "nothing selected") — so one member row with an empty
+                        role blanks the entire page rather than dropping one
+                        option.
                     */}
                     {m.role && !roles.some((r) => r.role === m.role) && (
                       <SelectItem value={m.role}>

@@ -1,277 +1,280 @@
-# 12 项目 Analytics
+# 12 Project Analytics
 
-## 1. 页面信息
+*[中文版本 / Chinese version](12-project-analytics.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/analytics` |
-| 层级 | 三级页面 |
-| 主要角色 | `pm` / `tech_lead` / `sponsor` |
-| 优先级 | P1（MVP 提供文档 12.2 列出的基础指标） |
-| 对应产品文档 | 8.13 Delivery Analytics、8.6.6 延期预测、12.2 MVP 基础 Analytics |
+| Route | `/projects/:projectId/analytics` |
+| Level | Third level |
+| Primary roles | `pm` / `tech_lead` / `sponsor` |
+| Priority | P1 (MVP ships the baseline metrics listed in product doc 12.2) |
+| Related product docs | 8.13 Delivery Analytics, 8.6.6 Delay Forecasting, 12.2 MVP Baseline Analytics |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-分析**交付系统**本身，而不是统计任务数量（文档 8.13 开宗明义）。
+Analyze the **delivery system itself**, not the task count — product doc 8.13 says so in its first line.
 
-要回答：
+Questions it has to answer:
 
-1. 工作流动顺畅吗？慢在哪个环节？
-2. Agent 干得怎么样？值这个钱吗？
-3. 人类介入是必要的还是冗余的？等待人类花了多少时间？
-4. 相比上个周期，我们改进了吗？
+1. Is work flowing? Where does it slow down?
+2. How are the agents doing? Are they worth what they cost?
+3. Is the human involvement necessary or redundant? How much time went into waiting on people?
+4. Did we get better than last period?
 
-**设计红线**：每个图表都必须能引出一个改进动作。看完只说"哦"的图表不放。
+**Design red line**: every chart has to lead somewhere — to an action someone can take. A chart that earns nothing but a "huh" does not ship.
 
 ---
 
-## 3. 入口与出口
+## 3. Entrances and Exits
 
-**入口**：项目内 Tab「Analytics」；项目总览的指标卡下钻；Agent Workspace「查看效能分析」；周报/摘要中的链接。
+**Entrances**: the "Analytics" tab inside a project; drilling down from a metric card on the project overview; "View performance analysis" in the Agent Workspace; links inside weekly reports and digests.
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 瓶颈环节下钻 | 该阶段的 Work Item 列表 |
-| 具体任务 | `06 Work Item 详情` |
-| Agent 指标下钻 | `08 Agent Workspace` |
-| 决策等待分析 | `10 Decision Center`（预筛） |
-| 「优化建议」的行动 | `13 Policy 配置` / 计划调整 |
-| 导出 | 周报 PDF / 数据 CSV |
+| Drill into a bottleneck stage | The Work Item list for that stage |
+| A specific task | `06 Work Item Detail` |
+| Drill into an agent metric | `08 Agent Workspace` |
+| Decision-wait analysis | `10 Decision Center` (pre-filtered) |
+| Acting on an "optimization suggestion" | `13 Policy Configuration` / plan adjustment |
+| Export | Weekly report PDF / data CSV |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 订单系统重构 / Analytics       [近 30 天 ▾] [对比上一周期 ☑]  [导出 ▾]    │
-│ [Flow] [Agent] [Human-in-the-Loop] [成本] [质量]                           │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 💡 系统发现 (3)                                                            │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 🔴 决策等待占总周期 34%（行业参考 <15%），主要集中在 DBA 审批            │ │
-│ │    近 30 天 12 次同类审批全部批准 → 建议规则化      [创建规则 →]        │ │
-│ │ 🟡 Review 阶段返工率 22%，其中 68% 因验收标准不明确  [查看案例]         │ │
-│ │ 🟢 Agent 首次成功率较上周期 +11%，主要来自上下文优化                     │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ Flow 指标                                                                  │
-│ ┌──────────────┐┌──────────────┐┌──────────────┐┌──────────────┐         │
-│ │ Lead Time     ││ Cycle Time    ││ Flow Efficiency││ Throughput   │         │
-│ │  3.2 天       ││  1.8 天       ││   42% ⚠      ││  12 /周      │         │
-│ │  ▼0.6 改善    ││  ▼0.3         ││   ▲5%        ││  ▲3          │         │
-│ └──────────────┘└──────────────┘└──────────────┘└──────────────┘         │
-│                                                                            │
-│ 周期时间分解（哪里花了时间）                                                │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ Intake      ▓▓ 0.2天  6%                                               │ │
-│ │ Planning    ▓▓▓ 0.3天  9%                                              │ │
-│ │ Execution   ▓▓▓▓▓▓▓▓ 0.9天  28%   ← 实际工作                          │ │
-│ │ 等待决策    ▓▓▓▓▓▓▓▓▓▓▓ 1.1天  34% 🔴 ← 最大瓶颈                       │ │
-│ │ Review      ▓▓▓▓▓ 0.5天  16%                                          │ │
-│ │ Release     ▓▓ 0.2天  7%                                               │ │
-│ │                                                                        │ │
-│ │ 有效工作时间 44%  ·  等待时间 56%          [下钻等待决策 →]            │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                            │
-│ 累积流图 (CFD)                          阻塞时间趋势                       │
-│ ┌─────────────────────────┐            ┌─────────────────────────┐        │
-│ │      ▁▂▃▄▅▆▇█ Done      │            │  ▃▅▂▇▄▂▁▃▂▁            │        │
-│ │    ▂▃▄▄▅▅▅▅▅ Review     │            │  峰值 08-03: 18h        │        │
-│ │  ▃▄▅▅▄▃▃▂▂▁ Execution   │            │  主因: DBA 审批等待      │        │
-│ └─────────────────────────┘            └─────────────────────────┘        │
-│ WIP 稳定，Review 列有堆积趋势           [查看阻塞明细 →]                   │
-└────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Order System Refactor / Analytics   [Last 30 days ▾] [Compare ☑]  [Export ▾] │
+│ [Flow] [Agent] [Human-in-the-Loop] [Cost] [Quality]                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 💡 System findings (3)                                                       │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ 🔴 Decision waiting is 34% of total cycle (industry ref <15%), mostly DBA│ │
+│ │    approvals. 12 of 12 approved in 30 days → rule it   [Create rule →]   │ │
+│ │ 🟡 Review rework rate 22%; 68% of it from unclear criteria [View cases]  │ │
+│ │ 🟢 Agent first-pass rate +11% vs last period, mostly from context tuning │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Flow metrics                                                                 │
+│ ┌────────────────┐┌────────────────┐┌────────────────┐┌────────────────┐     │
+│ │ Lead Time      ││ Cycle Time     ││ Flow Efficiency││ Throughput     │     │
+│ │  3.2 d         ││  1.8 d         ││   42% ⚠        ││  12 /wk        │     │
+│ │  ▼0.6 improved ││  ▼0.3          ││   ▲5%          ││  ▲3            │     │
+│ └────────────────┘└────────────────┘└────────────────┘└────────────────┘     │
+│                                                                              │
+│ Cycle time breakdown (where the time actually went)                          │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ Intake            ▓▓ 0.2d  6%                                            │ │
+│ │ Planning          ▓▓▓ 0.3d  9%                                           │ │
+│ │ Execution         ▓▓▓▓▓▓▓▓ 0.9d  28%   ← real work                       │ │
+│ │ Awaiting decision ▓▓▓▓▓▓▓▓▓▓▓ 1.1d  34% 🔴 ← biggest bottleneck          │ │
+│ │ Review            ▓▓▓▓▓ 0.5d  16%                                        │ │
+│ │ Release           ▓▓ 0.2d  7%                                            │ │
+│ │                                                                          │ │
+│ │ Working time 44%  ·  Waiting time 56%   [Drill into decision wait →]     │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│ Cumulative flow diagram (CFD)          Blocked time trend                    │
+│ ┌─────────────────────────┐            ┌─────────────────────────┐           │
+│ │      ▁▂▃▄▅▆▇█ Done      │            │  ▃▅▂▇▄▂▁▃▂▁             │           │
+│ │    ▂▃▄▄▅▅▅▅▅ Review     │            │  Peak 08-03: 18h        │           │
+│ │  ▃▄▅▅▄▃▃▂▂▁ Execution   │            │  Cause: DBA approvals   │           │
+│ └─────────────────────────┘            └─────────────────────────┘           │
+│ WIP stable, Review column building up   [View blocked details →]             │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 系统发现（页面顶部，最重要）
+### 5.1 System Findings (top of the page, the most important region)
 
-自动分析生成的结论 + 建议动作。这是把数据变成行动的桥梁。
+Conclusions produced by automated analysis, each paired with a suggested action. This is the bridge that turns data into behavior.
 
-| 发现类型 | 判据示例 | 建议动作 |
+| Finding type | Example criterion | Suggested action |
 | --- | --- | --- |
-| 决策等待瓶颈 | 决策等待 / 总周期 > 25% | 规则化重复决策 / 增加备用责任人 |
-| 返工率偏高 | Rework Rate > 15% | 查看返工案例 → 通常指向验收标准或需求质量 |
-| Agent 表现异常 | 某 Agent 成功率环比 -10% | 下钻 Agent 评估 |
-| 成本效率下降 | 每任务成本环比 +30% | 查看成本构成 |
-| WIP 堆积 | 某阶段 WIP 持续超限 | 调整 WIP 限制或增加执行能力 |
-| 改善信号 | 任一核心指标显著改善 | 正反馈，说明什么做对了 |
+| Decision-wait bottleneck | decision wait / total cycle > 25% | Turn the repeated decision into a rule / add a backup owner |
+| Rework rate too high | Rework Rate > 15% | Read the rework cases — they usually point at acceptance criteria or requirement quality |
+| Agent behaving oddly | one agent's success rate down 10% period over period | Drill into the agent evaluation |
+| Cost efficiency slipping | cost per task up 30% period over period | Open the cost breakdown |
+| WIP piling up | a stage stays over its WIP limit | Adjust the WIP limit or add execution capacity |
+| Improvement signal | any core metric improves materially | Positive feedback — name what we got right |
 
-**必须包含正面发现**——只报坏消息的分析页会被用户回避。
+**Positive findings are mandatory.** An analytics page that only ever reports bad news is a page people learn to avoid.
 
-### 5.2 Flow 指标（文档 8.13.1）
+### 5.2 Flow Metrics (product doc 8.13.1)
 
-| 指标 | 定义 | 关注方向 |
+| Metric | Definition | Direction |
 | --- | --- | --- |
-| Lead Time | 需求录入 → 交付完成 | 越短越好 |
-| Cycle Time | 开始执行 → 完成 | 越短越好 |
-| Throughput | 单位时间完成的 Work Item | 越高越好 |
-| WIP | 在制品数量 | 稳定优于高 |
-| **Flow Efficiency** | 有效工作时间 / 总周期时间 | **本产品最重要的指标** |
-| Blocked Time | 阻塞总时长 | 越少越好 |
-| Decision Waiting Time | 等待人类决策的时长 | 本产品特有，需重点关注 |
-| Rework Rate | 返工任务 / 总任务 | 越低越好 |
-| On-time Delivery Rate | 按时交付率 | 越高越好 |
+| Lead Time | Requirement filed → delivered | Lower is better |
+| Cycle Time | Execution started → done | Lower is better |
+| Throughput | Work Items completed per unit time | Higher is better |
+| WIP | Work in progress | Stable beats high |
+| **Flow Efficiency** | Working time / total cycle time | **The single most important metric in this product** |
+| Blocked Time | Total time blocked | Lower is better |
+| Decision Waiting Time | Time spent waiting on a human decision | Specific to this product; watch it closely |
+| Rework Rate | Reworked tasks / total tasks | Lower is better |
+| On-time Delivery Rate | Share delivered on schedule | Higher is better |
 
-**Flow Efficiency 为什么最重要**：传统项目管理工具能提高"任务完成数"，但本产品的核心主张是让工作**流动**起来。如果 Agent 干得飞快但 56% 的时间在等人批准，产品价值就没有兑现。这个指标直接衡量产品是否做到了承诺。
+**Why Flow Efficiency ranks first**: any traditional project management tool can push "tasks completed" up. What this product claims is different — that work should actually *flow*. If the agents are fast but 56% of the elapsed time is spent waiting for a human to click approve, the promise has not been kept. This metric measures the promise directly.
 
-### 5.3 周期时间分解
+### 5.3 Cycle Time Breakdown
 
-按阶段拆解时间去向，这是本页最有行动价值的图。
+Where the time went, stage by stage. The most actionable chart on the page.
 
-**关键设计**：把"等待决策"作为独立条目而非并入某阶段——它是本产品特有的时间损耗，必须单独可见。
+**Key design choice**: "awaiting decision" is its own line rather than being folded into whichever stage it happened in. It is the time loss unique to this product, so it has to be visible on its own.
 
-底部的「有效工作时间 44% / 等待时间 56%」是一句话总结，比任何图表都有冲击力。
+The one-line summary at the bottom — "Working time 44% / Waiting time 56%" — lands harder than any chart above it.
 
-### 5.4 Tab：Agent 指标（文档 8.13.2）
-
-```
-Agent 效能对比
-┌────────────────┬────────┬────────┬────────┬────────┬────────┬─────────┐
-│ Agent          │ 任务   │ 成功率 │ 首次   │ 接管率 │ 均成本 │ 均耗时  │
-├────────────────┼────────┼────────┼────────┼────────┼────────┼─────────┤
-│ code-agent-1   │ 25     │ 92%    │ 78%    │ 4%     │ $5.20  │ 14m     │
-│ code-agent-2   │ 18     │ 96%    │ 89%    │ 2%     │ $3.80  │ 11m ✓   │
-│ test-agent-1   │ 14     │ 71% ⚠  │ 50% ⚠  │ 18% ⚠  │ $4.10  │ 9m      │
-│ review-agent   │ 32     │ 94%    │ 91%    │ 3%     │ $3.20  │ 4m      │
-└────────────────┴────────┴────────┴────────┴────────┴────────┴─────────┘
-💡 code-agent-2 在成功率、成本、耗时上全面优于 code-agent-1
-   → 建议调整调度权重或分析 code-agent-1 的配置差异    [查看对比 →]
-
-指标趋势   Review 通过率 ▇▇▆▇█▇  Agent 利用率 ▄▅▆▅▇▆  Token 消耗 ▃▄▅▄▃▄
-失败原因分布   上下文不足 42% · 能力不匹配 24% · 工具失败 18% · 超时 16%
-```
-
-**横向对比是本 Tab 的核心价值**——单个 Agent 的绝对数字没有意义，对比才能驱动调度优化。
-
-### 5.5 Tab：Human-in-the-Loop（文档 8.13.3）
-
-本产品最独特的分析维度：
+### 5.4 Tab: Agent Metrics (product doc 8.13.2)
 
 ```
-人类介入总览
-  决策总数 34   平均决策时间 4.2h ⚠   超时 5 次   自动化决策比例 68% ▲
-  人工接管 6 次   因等待人类导致的阻塞 38h
+Agent performance, side by side
+┌────────────────┬───────┬─────────┬──────────┬──────────┬──────────┬──────────┐
+│ Agent          │ Tasks │ Success │ 1st pass │ Takeover │ Avg cost │ Avg time │
+├────────────────┼───────┼─────────┼──────────┼──────────┼──────────┼──────────┤
+│ code-agent-1   │ 25    │ 92%     │ 78%      │ 4%       │ $5.20    │ 14m      │
+│ code-agent-2   │ 18    │ 96%     │ 89%      │ 2%       │ $3.80    │ 11m ✓    │
+│ test-agent-1   │ 14    │ 71% ⚠   │ 50% ⚠    │ 18% ⚠    │ $4.10    │ 9m       │
+│ review-agent   │ 32    │ 94%     │ 91%      │ 3%       │ $3.20    │ 4m       │
+└────────────────┴───────┴─────────┴──────────┴──────────┴──────────┴──────────┘
+💡 code-agent-2 beats code-agent-1 on success rate, cost and duration alike
+   → Shift the scheduling weight, or diff the two configs   [Compare →]
 
-各阶段人类介入比例
-  Intake     ████████████ 100%  （需求确认，必需）
-  Planning   ████████ 62%        （计划批准）
-  Execution  ██ 12%              （异常介入）
-  Review     ██████ 45%          （抽样与强制审核）
-  Release    ██████████ 88%      （生产发布审批）
-
-决策响应时间分布
-  < 1h  ████████ 12 次
-  1-4h  ██████████ 15 次
-  4-8h  ████ 5 次
-  > 8h  ██ 2 次  🔴 全部为 DBA 审批
-
-重复决策 TOP 3                                     可自动化潜力
-  1. 测试环境发布审批    12 次  100% 批准         🟢 高    [创建规则]
-  2. 低风险文案变更      8 次   100% 批准         🟢 高    [创建规则]
-  3. 数据库变更审批      5 次   80% 批准          🟡 中
-
-人工接管原因分布
-  Agent 陷入循环 33% · 上下文理解错误 33% · 时间紧急 17% · 其他 17%
+Trends   Review pass rate ▇▇▆▇█▇  Agent utilization ▄▅▆▅▇▆  Token spend ▃▄▅▄▃▄
+Failure causes   Thin context 42% · Wrong capability 24% · Tool failure 18% ·
+                 Timeout 16%
 ```
 
-**「可自动化潜力」是这个 Tab 的落点**——它直接告诉用户"你可以少做哪些事"，并给出一键创建规则的入口。这是产品持续降低人类负担的飞轮。
+**Side-by-side comparison is the whole point of this tab.** One agent's absolute numbers mean nothing; only the contrast tells you what to change about scheduling.
 
-### 5.6 Tab：成本
+### 5.5 Tab: Human-in-the-Loop (product doc 8.13.3)
 
-- 成本趋势 + 预算消耗预测（按当前速率何时耗尽）
-- 按 Agent / 按任务类型 / 按阶段的成本分解
-- **单位交付成本**：每完成一个 Work Item 的平均成本，跨周期对比
-- 成本异常事件列表（单次 Run 超阈值）
-- **成本效益视角**：Agent 成本 vs 节省的人力工时估算（需要人力成本基准配置）
+The most distinctive analysis dimension in this product:
 
-### 5.7 Tab：质量
+```
+Human involvement, overall
+  Decisions 34   Avg time to decide 4.2h ⚠   Overdue 5   Automated 68% ▲
+  Manual takeovers 6   Time blocked waiting on a human 38h
 
-- 首次通过率（Review 一次通过的比例）
-- 返工率与返工原因分布
-- 自动测试通过率、覆盖率趋势
-- 各 Review Agent 的发现问题数与准确率（误报率）
-- 生产问题回溯：发布后产生的 Incident 数与关联的 Work Item
+Human involvement by stage
+  Intake     ████████████ 100%  (requirement confirmation, mandatory)
+  Planning   ████████ 62%        (plan approval)
+  Execution  ██ 12%              (exception handling)
+  Review     ██████ 45%          (sampling plus mandatory reviews)
+  Release    ██████████ 88%      (production release approval)
 
-### 5.8 时间范围与对比
+Decision response time distribution
+  < 1h  ████████ 12
+  1-4h  ██████████ 15
+  4-8h  ████ 5
+  > 8h  ██ 2  🔴 all of them DBA approvals
 
-统一控制：近 7 / 30 / 90 天 / 自定义 / 按里程碑。
+Top 3 repeated decisions                          Automation potential
+  1. Test-env release approval  12x  100% approved   🟢 High   [Create rule]
+  2. Low-risk copy change        8x  100% approved   🟢 High   [Create rule]
+  3. Database change approval    5x   80% approved   🟡 Medium
 
-**对比上一周期**默认开启——绝对值不重要，趋势才重要。所有指标显示环比变化。
+Why humans took over
+  Agent stuck in a loop 33% · Context misread 33% · Time pressure 17% · Other 17%
+```
+
+**"Automation potential" is where this tab lands.** It tells the user, in so many words, which work they can stop doing — and hands them a one-click path to a rule. This is the flywheel by which the product keeps lowering the human load.
+
+### 5.6 Tab: Cost
+
+- Cost trend plus budget burn forecast (at the current rate, when does it run out)
+- Cost broken down by agent, by task type, and by stage
+- **Cost per delivery**: average cost to complete one Work Item, compared across periods
+- List of cost anomalies (a single Run over threshold)
+- **Cost-benefit view**: agent spend against an estimate of the human hours saved (requires a configured labor cost baseline)
+
+### 5.7 Tab: Quality
+
+- First-pass rate (share that clears Review on the first try)
+- Rework rate and the distribution of rework causes
+- Automated test pass rate and coverage trend
+- Issues found per Review Agent and how accurate those findings were (false-positive rate)
+- Production traceback: incidents raised after release and the Work Items they trace to
+
+### 5.8 Time Range and Comparison
+
+One shared control: last 7 / 30 / 90 days / custom / by milestone.
+
+**Compare to previous period is on by default** — the absolute number doesn't matter, the trend does. Every metric shows its period-over-period change.
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Flows
 
-**周会准备（PM）**
-
-```
-选择"近 7 天" → 看系统发现 → 复制到周报
-→ 导出 PDF → 会上讨论决策等待瓶颈
-→ 会后 [创建规则] 把 DBA 审批规则化
-```
-
-**诊断交付变慢**
+**Prepping for the weekly meeting (PM)**
 
 ```
-Lead Time 上升 → 周期时间分解 → 等待决策 34%
-→ 下钻 → Human-in-the-Loop Tab → 决策响应时间分布
-→ 发现 > 8h 的全是 DBA 审批 → 两个方案：
-   ├ 规则化（低风险的自动批准）
-   └ 增加备用 DBA 责任人
+Pick "last 7 days" → read the system findings → paste them into the weekly report
+→ export the PDF → discuss the decision-wait bottleneck in the meeting
+→ afterward, hit [Create rule] and turn DBA approval into a rule
 ```
 
-**优化 Agent 配置**
+**Diagnosing a delivery slowdown**
 
 ```
-Agent Tab → 发现 code-agent-2 全面优于 code-agent-1
-→ [查看对比] → 差异在上下文检索策略
-→ 去 08 Agent Workspace 调整 code-agent-1 配置
-→ 下周期回来验证是否改善
+Lead Time is up → cycle time breakdown → awaiting decision is 34%
+→ drill down → Human-in-the-Loop tab → decision response distribution
+→ everything over 8h turns out to be a DBA approval → two options:
+   ├ rule it (auto-approve the low-risk cases)
+   └ add a backup DBA owner
+```
+
+**Tuning agent configuration**
+
+```
+Agent tab → code-agent-2 beats code-agent-1 across the board
+→ [Compare] → the difference is in the context retrieval strategy
+→ go to 08 Agent Workspace and adjust code-agent-1
+→ come back next period and check whether it moved
 ```
 
 ---
 
-## 7. 状态设计
+## 7. States
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 数据不足（项目 < 7 天或完成 < 10 项） | 显示「数据积累中，还需约 N 个任务可产出可靠分析」+ 展示已有的原始计数 |
-| 加载 | 指标卡骨架屏；图表分批加载 |
-| 无对比周期 | 隐藏环比，提示「首个周期，下期可对比」 |
-| 系统发现为空 | 显示「当前未发现明显异常」+ 核心指标概览 |
-| 部分数据源不可用（如未接 CI） | 该指标显示「未接入」+ 配置链接，不显示 0 |
-| 导出中 | 进度提示；大数据量异步生成后通知 |
+| Not enough data (project younger than 7 days, or fewer than 10 items done) | Show "Still gathering data — about N more tasks before the analysis is reliable," plus the raw counts we do have |
+| Loading | Skeleton metric cards; charts load in batches |
+| No comparison period | Hide the deltas, note "First period — comparison available next time" |
+| No system findings | Show "Nothing unusual right now," plus the core-metric overview |
+| A data source is unavailable (CI not connected, say) | That metric reads "Not connected" with a setup link — never a 0 |
+| Export in progress | Progress indicator; large exports are generated asynchronously and notify when ready |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requires |
 | --- | --- |
-| 查看 Flow / Agent / 质量 | 项目成员 |
-| 查看成本 | `pm` / `tech_lead` / `sponsor`（成本可能敏感） |
-| 查看 Human-in-the-Loop 的个人级数据 | `pm` 及以上；成员只能看到自己的 |
-| 导出 | `pm` 及以上 |
-| 从建议创建规则 | `tech_lead` / `pm` |
+| View Flow / Agent / Quality | Project member |
+| View cost | `pm` / `tech_lead` / `sponsor` (cost can be sensitive) |
+| View per-person Human-in-the-Loop data | `pm` or above; members see only their own |
+| Export | `pm` or above |
+| Create a rule from a suggestion | `tech_lead` / `pm` |
 
-**个人数据保护**：决策响应时间等个人绩效相关数据默认聚合展示，个人明细仅 `pm` 可见。避免本页被当作监控工具使用——那会让成员抵触整个系统。
+**Protecting personal data**: decision response time and anything else that reads as individual performance is aggregated by default; per-person detail is visible only to `pm`. The point is to keep this page from being used as a monitoring tool — that is how you turn the team against the entire system.
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Event`（全部指标的原始来源）、`WorkItem`、`AgentRun`、`Decision`、`Agent`、`Project`
+**Domain objects**: `Event` (the raw source of every metric), `WorkItem`, `AgentRun`, `Decision`, `Agent`, `Project`
 
-**接口**
+**Endpoints**
 
 ```
 GET /api/projects/{id}/analytics/flow?range=30d&compare=true
@@ -294,43 +297,43 @@ GET /api/projects/{id}/analytics/insights?range=30d
 POST /api/projects/{id}/analytics/export  { format, tabs[], range }
 ```
 
-**计算**：指标由 Event 流预聚合（按小时/天粒度）。页面查询预聚合表，不做实时全量计算。数据延迟容忍 1 小时，页面标注「数据截至 15:00」。
+**Computation**: metrics are pre-aggregated off the event stream at hourly/daily grain. The page queries the pre-aggregated tables and never recomputes over the full history at request time. An hour of lag is acceptable; the page states "Data as of 15:00".
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it tells us |
 | --- | --- |
-| `analytics_viewed{tab, range}` | 各 Tab 的真实使用分布，决定后续投入 |
-| **`insight_action_taken{type}`** | **系统发现的采纳率——本页价值的直接度量** |
-| `drill_down{from_metric}` | 哪些指标真的会被下钻（不被下钻的可以降级展示） |
-| `policy_created_from_analytics` | 分析→规则的转化 |
-| `export{format, tab}` | 汇报场景的真实需求 |
-| `comparison_toggled` | 环比对比的使用率 |
+| `analytics_viewed{tab, range}` | Which tabs actually get used — decides where the next investment goes |
+| **`insight_action_taken{type}`** | **How often a system finding is acted on — the direct measure of this page's value** |
+| `drill_down{from_metric}` | Which metrics people really drill into (the ones they don't can be demoted) |
+| `policy_created_from_analytics` | Conversion from analysis to rule |
+| `export{format, tab}` | The real shape of the reporting demand |
+| `comparison_toggled` | How much the period-over-period comparison is used |
 
-**页面成功标准**：系统发现的采纳率 > 30%；每月至少产生 1 次由 Analytics 驱动的配置调整（规则、调度、WIP）。
+**Success criteria for this page**: findings are acted on more than 30% of the time; at least one Analytics-driven configuration change (a rule, a scheduling weight, a WIP limit) every month.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 项目周期短，样本少 | 明确标注置信度低，不给出强结论 |
-| 单个异常值扭曲平均值 | 同时显示中位数；异常值单独标注可点击查看 |
-| 跨项目对比需求 | MVP 不支持；提示「跨项目分析在组织 Analytics 中」（Post-MVP） |
-| 指标定义歧义 | 每个指标旁提供 ⓘ，说明计算口径与包含/排除项 |
-| 数据回溯修正（历史事件补录） | 图表标注「数据已修正」并保留修正记录 |
-| Agent 中途更换模型 | 趋势图上标注变更点，避免误读为能力波动 |
-| 用户质疑数据准确性 | 每个指标可下钻到原始 Event 列表，做到完全可验证 |
+| Short project, small sample | Label the low confidence plainly; draw no strong conclusions |
+| A single outlier skews the average | Show the median alongside it; mark the outlier and make it clickable |
+| Someone wants cross-project comparison | Not in MVP; point at "Cross-project analysis lives in org Analytics" (post-MVP) |
+| A metric's definition is ambiguous | An ⓘ beside every metric explaining how it is computed and what is included or excluded |
+| Historical data corrected after the fact (events backfilled) | Mark the chart "Data corrected" and keep the correction record |
+| An agent switches models mid-period | Mark the change point on the trend line so it isn't misread as a swing in capability |
+| A user disputes the numbers | Every metric drills down to the raw event list — fully verifiable, end to end |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. Flow Efficiency 的"有效工作时间"如何界定？Agent 执行时间算有效，但 Agent 等待外部 API 的时间算什么？需要明确口径。
-2. 「系统发现」的规则由硬编码维护还是可配置？涉及行业基准值（如"决策等待 < 15%"）的来源与合理性。
-3. 人力成本基准（用于成本效益对比）从哪来？需要组织配置，可能敏感。MVP 是否跳过该视角？
-4. 个人绩效数据的展示边界需要与 HR/合规确认，尤其在欧盟等地区可能涉及员工监控法规。
-5. MVP 范围（文档 12.2）只要求项目进度、Lead Time、Blocked Time、Agent 成功率、人工介入次数、Agent 成本六项。本文档描述的是完整形态，需明确 MVP 实际交付哪些 Tab——建议 MVP 只做 Flow 简版 + Agent 简版 + 成本，Human-in-the-Loop 完整版放 P1（尽管它最有差异化价值，但依赖足够的决策数据量）。
+1. How is "working time" defined for Flow Efficiency? Agent execution time counts as work, but what about time an agent spends waiting on an external API? The definition has to be pinned down.
+2. Are the "system finding" rules hardcoded or configurable? This includes where the industry baselines come from (the "decision wait < 15%" figure, for instance) and whether they hold up.
+3. Where does the labor cost baseline come from, the one the cost-benefit view needs? It requires org-level configuration and may be sensitive. Should MVP skip that view entirely?
+4. The boundary on showing individual performance data needs sign-off from HR and compliance — in the EU and similar jurisdictions it can fall under employee-monitoring law.
+5. MVP scope (product doc 12.2) calls for six things only: project progress, Lead Time, Blocked Time, agent success rate, manual intervention count, and agent cost. This document describes the finished shape, so we need to decide which tabs MVP actually ships. The suggestion: a simplified Flow tab, a simplified Agent tab, and Cost, with the full Human-in-the-Loop tab at P1 — it carries the most differentiating value, but it depends on having enough decision data to say anything.

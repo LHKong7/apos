@@ -13,24 +13,25 @@ export type ErrorCode =
   | 'POLICY_DENIED'
   | 'BUDGET_EXCEEDED'
   /**
-   * 请求本身没问题，但需要用户先明确确认一次才能继续。
+   * The request is well-formed, but the user has to acknowledge something once
+   * before it can proceed / 请求本身没问题，但需要用户先明确确认一次才能继续。
    *
-   * ★★ 与 VALIDATION_FAILED 分开：后者是「你发来的东西不对」，这个是
-   *   「东西没问题，但我要你看一眼再点一次」。混用 400 的代价不在功能上——
-   *   功能照常——而在**日志与监控**里：一条正常的人机交互和一次真正的
-   *   客户端错误长得一模一样，于是 4xx 率再也不能当告警指标用。
+   * ★★ Kept apart from VALIDATION_FAILED: that one means "what you sent is
+   *   wrong", this one means "nothing is wrong, but look at this and click
+   *   again". Folding it into 400 costs nothing functionally — the feature
+   *   still works — but it wrecks **logs and monitoring**: a normal
+   *   human-in-the-loop round-trip becomes indistinguishable from a real
+   *   client error, and the 4xx rate stops working as an alerting signal.
    *
-   * Well-formed but needs an explicit acknowledgment first. Kept apart from
-   * VALIDATION_FAILED so a normal confirmation round-trip does not read as a
-   * client error in the logs.
+   *   混用 400 的代价在日志与监控里：4xx 率再也不能当告警指标用。
    */
   | 'CONFIRMATION_REQUIRED'
   | 'UNANSWERED_MUST_CONFIRM'
   | 'AGENT_UNAVAILABLE'
-  /** 运行时能力不足（降级矩阵）—— 不是故障，是这个运行时做不到 */
+  /** Runtime capability missing (degradation matrix) — not a fault, this runtime cannot do it */
   | 'UNSUPPORTED_FEATURE'
   | 'RATE_LIMITED'
-  /** 外部系统故障 —— 不是我们的 bug，也不是用户输错了 */
+  /** External system failure — neither our bug nor bad input from the user */
   | 'EXTERNAL_ERROR'
   | 'INTERNAL';
 
@@ -44,14 +45,14 @@ const STATUS: Record<ErrorCode, number> = {
   GUARD_FAILED: 409,
   POLICY_DENIED: 422,
   BUDGET_EXCEEDED: 422,
-  // 409：请求合法，与当前状态冲突，确认之后重发即可
+  // 409: a legal request that conflicts with current state; resend it after confirming
   CONFIRMATION_REQUIRED: 409,
   UNANSWERED_MUST_CONFIRM: 422,
   AGENT_UNAVAILABLE: 503,
-  // 501 而不是 4xx：请求本身没问题，是服务端这个运行时不具备该能力
+  // 501 rather than 4xx: the request is fine, this server-side runtime lacks the capability
   UNSUPPORTED_FEATURE: 501,
   RATE_LIMITED: 429,
-  // 502 而不是 500：请求走到了外部系统，是那一侧出的问题
+  // 502 rather than 500: the request reached an external system and that side failed
   EXTERNAL_ERROR: 502,
   INTERNAL: 500,
 };
@@ -61,21 +62,24 @@ export class ApiError extends Error {
     readonly code: ErrorCode,
     message: string,
     /**
-     * 自由上下文。各调用点塞各自的东西（`{ path }`、校验 issue 列表、
-     * 预算数字），前端按具体接口读。
+     * Free-form context. Each call site puts in whatever fits (`{ path }`, a
+     * list of validation issues, budget numbers) and the UI reads it per
+     * endpoint / 各调用点塞各自的东西，前端按具体接口读。
      *
-     * ★ 原因码**不**放这儿。`details.code` 早就被另一套约定占着
-     *   （`UNASSIGNED_HUMAN_TASKS`，见 Plan/index.tsx），挤进来会撞车。
+     * ★ The reason code does **not** go here. `details.code` was long since
+     *   claimed by another convention (`UNASSIGNED_HUMAN_TASKS`, see
+     *   Plan/index.tsx), so squeezing in would collide with it.
      */
     readonly details?: unknown,
     /**
-     * 界面按它取词 / The UI reads this, not `message`.
+     * The UI reads this, not `message` / 界面按它取词。
      *
-     * ★★ 可选是**过渡态**而不是设计：留空的那条报错，在英文界面上仍然
-     *   是一句中文。新增报错一律走 `fail()` 把它填上。
+     * ★★ Optional is a **transitional state**, not the design: an error that
+     *   leaves it empty still renders as a Chinese sentence in the English UI.
+     *   Every new error goes through `fail()` and fills it in.
      */
     readonly reason?: ErrorReason,
-    /** 词条里 `{name}` 的实参。用户自己写的词原样带，不翻译 */
+    /** Arguments for `{name}` in the catalog entry. User-authored words pass through untranslated */
     readonly params?: Record<string, string | number>,
   ) {
     super(message);
@@ -84,16 +88,20 @@ export class ApiError extends Error {
 }
 
 /**
- * 带原因码地抛错 / Throw with a reason code.
+ * Throw with a reason code / 带原因码地抛错。
  *
- * ★★ 参数顺序是 `code, reason, message` —— 码在前，句子在后。
+ * ★★ The argument order is `code, reason, message` — code first, sentence
+ *   last.
  *
- *   反过来（句子在前）读起来更顺，但会让「先写句子、码回头再补」
- *   成为默认路径，而回头补的那一步从来不会发生。
- *   码在前，写的人必须先回答「这是哪一类错」，那正是界面需要的东西。
+ *   The reverse (sentence first) reads more naturally, but it makes "write the
+ *   sentence now, add the code later" the default path, and the later part
+ *   never happens. With the code first, whoever writes the error has to answer
+ *   "which kind of error is this?" up front — which is exactly what the UI
+ *   needs.
  *
- * ★ `message` 仍然是一句现成的中文：日志、告警、以及认不出码的老客户端
- *   都要它。界面读码，日志读句子。
+ * ★ `message` is still a ready-made Chinese sentence: logs, alerts, and older
+ *   clients that do not recognize the code all need it. The UI reads the code,
+ *   the log reads the sentence / 界面读码，日志读句子。
  */
 export function fail(
   code: ErrorCode,
@@ -109,9 +117,11 @@ export function sendError(reply: FastifyReply, error: ApiError) {
     error: {
       code: error.code,
       /**
-       * ★ 原因码与句子**同时**给。界面优先读 reason 取词，认不出（服务端
-       *   加了新码而前端还没跟上）时回落到 message —— 回落成空白的话，
-       *   界面上少的正是那句解释「为什么不让我做」的话。
+       * ★ Send the reason code and the sentence **together**. The UI looks the
+       *   code up first and falls back to `message` when it does not recognize
+       *   it (the server added a code the front end has not caught up with) —
+       *   falling back to blank would drop precisely the sentence that
+       *   explains "why won't you let me do this".
        */
       reason: error.reason ?? null,
       params: error.params ?? null,
@@ -123,10 +133,11 @@ export function sendError(reply: FastifyReply, error: ApiError) {
 }
 
 /**
- * 「找不到」的中文兜底句 / Chinese fallback prose per entity.
+ * Chinese fallback prose per entity / 「找不到」的中文兜底句。
  *
- * ★ 只用于 `message`（日志、告警、认不出码的老客户端）。界面走
- *   `error.notFound.<entity>` 那条整句词条，不碰这张表。
+ * ★ Used only for `message` (logs, alerts, older clients that do not know the
+ *   code). The UI goes through the whole-sentence catalog entry
+ *   `error.notFound.<entity>` and never touches this table.
  */
 const NOT_FOUND_PROSE: Record<NotFoundEntity, string> = {
   project: '项目',
@@ -156,15 +167,16 @@ const NOT_FOUND_PROSE: Record<NotFoundEntity, string> = {
 };
 
 /**
- * ★★ 实参是**实体键**而不是一句中文。
+ * ★★ The argument is an **entity key**, not a Chinese sentence.
  *
- *   原来是 `notFound('项目')` → `` `${what}不存在` ``，也就是把句子拼出来。
- *   中文里名词在前、英文里 "not found" 在后 —— 拼出来的句子只在中文里成立，
- *   英文界面拿到它只能原样显示一句中文。现在整句是一条词条
- *   （`error.notFound.project`），实体名是键的一部分而不是拼进去的片段。
+ *   It used to be `notFound('项目')` → `` `${what}不存在` ``, i.e. the sentence
+ *   was assembled right here. The noun leads in Chinese and "not found" trails
+ *   in English, so an assembled sentence only holds up in Chinese — the
+ *   English UI could do nothing but render that Chinese verbatim. Now the
+ *   whole sentence is one catalog entry (`error.notFound.project`) and the
+ *   entity name is part of the key rather than a fragment glued into prose.
  *
- *   The entity is a key, not prose: the noun leads in Chinese and trails in
- *   English, so the whole sentence has to be one catalog entry per entity.
+ *   实体名是键的一部分而不是拼进去的片段。
  */
 export function notFound(entity: NotFoundEntity) {
   return fail('NOT_FOUND', 'not_found', `${NOT_FOUND_PROSE[entity]}不存在`, {
@@ -173,42 +185,49 @@ export function notFound(entity: NotFoundEntity) {
 }
 
 /**
- * Postgres 的「这个值根本不是这个类型」类错误 → 400。
+ * Postgres "this value is not that type at all" errors → 400 /
+ * Postgres 的「这个值根本不是这个类型」类错误。
  *
- * ★ 路由参数与查询串是**客户端**给的。`/work-items/not-a-uuid`、
- *   `?risk=bogus` 这类输入会一路走到 SQL，由 Postgres 报 22P02 抛出来。
- *   不认这些码的话，错误处理器只能把它当未知异常吞成 500 ——
- *   于是调用方以为服务端挂了，而告警面板上多出一批假的服务端故障。
+ * ★ Path params and query strings come from the **client**. Input such as
+ *   `/work-items/not-a-uuid` or `?risk=bogus` travels all the way into SQL and
+ *   surfaces as Postgres 22P02. Without recognizing these codes the error
+ *   handler can only swallow them as an unknown exception and answer 500 — so
+ *   the caller concludes the server is down, and the alerting dashboard grows
+ *   a batch of fake server-side failures.
  *
- *   身份那条路径当初已经被单独修过（见 routes.test.ts
- *   「格式非法的身份返回 401 而不是 500」），但那只堵了身份一个口子，
- *   路径参数和查询参数还是原样。这里统一在出口收掉。
+ *   The identity path was fixed separately once (see routes.test.ts, "a
+ *   malformed identity returns 401 rather than 500"), but that plugged the one
+ *   hole; path params and query params stayed as they were. This catches the
+ *   rest of them at the exit.
  *
- * ★ 只认「值的文本形态不合法」这一类，不认约束冲突（23xxx）——
- *   那些是业务语义问题，各自的调用点有更准确的错误码可给。
+ * ★ Only the "the textual form of the value is invalid" family is recognized,
+ *   not constraint violations (23xxx) — those are business-semantics problems,
+ *   and each call site has a more accurate code to give.
  */
 const CLIENT_INPUT_PG_CODES: Record<string, { reason: ErrorReason; zh: string }> = {
-  // uuid / 枚举 / 数字字面量解析失败，最常见的一类
+  // uuid / enum / numeric literal failed to parse — by far the most common one
   '22P02': { reason: 'request.bad_path_or_query', zh: '路径或查询参数的格式不合法' },
-  // 字符串超出字段长度
+  // String longer than the column allows
   '22001': { reason: 'request.param_too_long', zh: '参数长度超出限制' },
-  // 数值超出范围
+  // Number outside the allowed range
   '22003': { reason: 'request.number_out_of_range', zh: '数值超出允许范围' },
-  // 日期时间格式不合法
+  // Malformed date/time
   '22007': { reason: 'request.bad_timestamp', zh: '时间格式不合法' },
   '22008': { reason: 'request.timestamp_out_of_range', zh: '时间值超出范围' },
 };
 
 /**
- * 把数据库层抛出的「客户端输入不合法」翻译成 ApiError；
- * 不属于这一类的返回 null，交给调用方按未知异常处理。
+ * Translate a database-level "invalid client input" into an ApiError; anything
+ * outside that family returns null, and the caller handles it as an unknown
+ * exception / 不属于这一类的返回 null，交给调用方按未知异常处理。
  */
 export function asClientInputError(error: unknown): ApiError | null {
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code !== 'string') return null;
   const known = CLIENT_INPUT_PG_CODES[code];
   if (!known) return null;
-  // ★ 不回传 Postgres 原始 message —— 里面有表名列名，是信息泄露。
-  //   给调用方能自查的东西：错在哪一类、拿到的是什么码。
+  // ★ Never pass the raw Postgres message back — it carries table and column
+  //   names, which is an information leak. Give the caller something they can
+  //   act on instead: which family the error is in, and which code came back.
   return fail('VALIDATION_FAILED', known.reason, known.zh, { details: { pgCode: code } });
 }

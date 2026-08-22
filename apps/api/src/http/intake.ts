@@ -15,10 +15,12 @@ import { notFound } from './errors';
 import { loadProjectPolicies } from './policies';
 
 /**
- * 需求录入与计划确认的读取端（页面文档 03 / 04 §9）。
+ * Read side of requirement intake and plan confirmation (page docs 03 / 04 §9) /
+ * 需求录入与计划确认的读取端。
  *
- * 写操作复用已有的 requirement / planning service —— 那里是走真实链路的地方，
- * 这里只负责把它们的产物拼成页面要的形状。
+ * Writes reuse the existing requirement / planning services — that is where the
+ * real pipeline lives; this file only reshapes their output into what the pages
+ * need / 这里只负责把它们的产物拼成页面要的形状。
  */
 
 export async function listRequirements(db: Database, projectId: string) {
@@ -44,7 +46,7 @@ export async function listRequirements(db: Database, projectId: string) {
       priority: r.priority,
       createdAt: r.createdAt.toISOString(),
       approvedAt: r.approvedAt?.toISOString() ?? null,
-      /** 已经有计划的需求，入口应该直接指向计划页而不是需求页 */
+      /** A requirement that already has a plan should link straight to the plan page */
       latestPlanId: planByReq.get(r.id)?.id ?? null,
       latestPlanStatus: planByReq.get(r.id)?.status ?? null,
     })),
@@ -52,12 +54,14 @@ export async function listRequirements(db: Database, projectId: string) {
 }
 
 /**
- * 计划详情（页面文档 04 §4 / §5.2 / §5.3）。
+ * Plan detail (page doc 04 §4 / §5.2 / §5.3) / 计划详情。
  *
- * ★ 「批准后将自动发生」用的是计划生成时的**快照**，不是展示时重算。
- *   用户批准的是「当时那份清单」—— Policy 后来改了，
- *   追溯「他到底批准了什么」必须看快照，而不是一份现在才算出来的清单。
- *   同时给出「按当前规则重算」的结果，两者不一致时页面会明确提示。
+ * ★ "What will happen automatically after approval" reads the **snapshot**
+ *   taken when the plan was generated; it is not recomputed at render time.
+ *   What the user approved was the list as it stood then — policies change
+ *   afterward, and answering "what exactly did they approve?" has to read that
+ *   snapshot, never a list computed just now. The result under the current
+ *   rules is returned alongside it, and the page calls out any mismatch.
  */
 export async function getPlanDetail(db: Database, planId: string) {
   const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
@@ -88,22 +92,25 @@ export async function getPlanDetail(db: Database, planId: string) {
   const userRows = await db.select({ id: users.id, name: users.name }).from(users);
   const userName = new Map(userRows.map((u) => [u.id, u.name]));
 
-  /** ★ null = 没估过（不是估成 0）。界面据此显示「未估算」而不是一个数 */
+  /** ★ null = never estimated (not "estimated at 0"). The UI shows "not estimated", not a number */
   const estimatedTokens = plan.estimatedTokens;
   const budget = project.tokenBudget;
   const spent = project.tokensSpent;
 
-  // 当前规则下的边界，用来和快照对照
+  // The boundary under the current rules, to hold against the snapshot
   const policies = await loadProjectPolicies(db, project.orgId, plan.projectId);
   const current = auditPolicies(policies, project.autonomyLevel as AutonomyLevel);
 
   /**
-   * ★ 人机拆分要从「批准后将自动发生」的快照里推，不能数 work_items 的 executorType。
+   * ★ The human/agent split has to come from the "will happen automatically"
+   *   snapshot, not from counting work_items.executorType.
    *
-   *   计划批准之前任务还没被调度，executorType 全是 null ——
-   *   按它数出来永远是「🤖 0　👤 0」，而快照同时写着「4 个任务将由 Agent 自动执行」。
-   *   这个数字会出现在批准弹窗里，也就是用户让渡执行权的那一刻，
-   *   在那里给一个错的自动化比例，比不给还糟。
+   *   Nothing is scheduled before a plan is approved, so executorType is null
+   *   everywhere — counting it always yields "🤖 0　👤 0" while the snapshot
+   *   right beside it says "4 tasks will be executed automatically by agents".
+   *   That number appears in the approval dialog, the very moment the user
+   *   hands over execution authority; a wrong automation ratio there is worse
+   *   than none at all. 在那里给一个错的自动化比例，比不给还糟。
    */
   const gates = plan.humanGates as { taskTitle: string }[];
   const gatedTitles = new Set(gates.map((g) => g.taskTitle));
@@ -111,23 +118,25 @@ export async function getPlanDetail(db: Database, planId: string) {
   const agentTasks = tasks.length - humanTasks;
 
   /**
-   * ★★ 「会自动跑」是一句**可验证**的承诺，批准之前就该验。
+   * ★★ "This runs automatically" is a **checkable** promise, so check it
+   *   before approval.
    *
-   *   页面此前说「N 个任务会由 Agent 自动执行」，而那个 N 只是
-   *   「没有人工闸门的任务数」—— 它没问过一句「这个项目里有没有 Agent
-   *   接得住这些任务」。现场是：计划里 3 个任务写着自动执行，
-   *   而项目里唯一的 Agent 只接 requirement / research 两类，
-   *   feature 与 test 那两条批下去会永远停在 ready，没有任何提示。
+   *   The page used to say "N tasks will be executed automatically by agents",
+   *   where N was merely "tasks with no human gate" — it never once asked
+   *   whether any agent in this project can take them. What that looked like in
+   *   practice: 3 tasks in the plan marked automatic, while the project's only
+   *   agent accepts requirement / research work only, so the feature and test
+   *   tasks sit in `ready` forever after approval and nothing says a word.
    *
-   *   同一套判定，系统在**批准之后**是会算的 —— 总览上那句
-   *   「本项目没有 Agent 能接这个（已检查 1 个）」正是它。
-   *   只是算得太晚：用户已经在那句承诺上签过字了。
+   *   The system does run the same check **after** approval — the overview line
+   *   "no agent in this project can take this (1 checked)" is exactly it. It
+   *   just runs too late: the user has already signed off on the promise.
    *
-   *   所以这里用**同一个** resolveExecutor 把它提前到批准前。
+   *   So the **same** resolveExecutor is used here to pull the check ahead of
+   *   approval. The cost of a second implementation is not duplicated code, it
+   *   is two answers that disagree.
+   *
    *   两份实现的代价不是重复代码，是两个对不上的答案。
-   *
-   * The "runs automatically" claim is checkable before approval, and the system
-   * already computes it — just after the user has signed off on it.
    */
   const unrunnable: { id: string; title: string }[] = [];
   for (const task of tasks) {
@@ -145,18 +154,18 @@ export async function getPlanDetail(db: Database, planId: string) {
       requirementId: plan.requirementId,
       model: plan.model,
       /**
-       * ★★ null = 这次运行时没上报成本，**不是「没花钱」**。
+       * ★★ null = this runtime reported no cost, **not "it cost nothing"**.
        *
-       *   此前这里是 `Number(plan.generationCost ?? 0)`，于是不上报用量的
-       *   运行时（opencode 就是一个）跑完一次真实规划之后，页面上写着
-       *   $0.00 —— 与「这次规划确实免费」完全无法区分。
-       *   tokens 那边早就是这个约定（见 format/tokens），成本这条漏了。
-       *
-       * null means "this runtime does not report cost", not "it was free".
+       *   This used to be `Number(plan.generationCost ?? 0)`, so a runtime that
+       *   does not report usage (opencode is one) could finish a real planning
+       *   run and the page would read $0.00 — indistinguishable from "this
+       *   planning genuinely was free". The tokens side has followed this
+       *   convention for a long time (see format/tokens); cost was the one that
+       *   got missed. 与「这次规划确实免费」完全无法区分。
        */
       generationCost: plan.generationCost === null ? null : Number(plan.generationCost),
       generationMs: plan.generationMs,
-      /** 非 null = 这份计划是通用模板，不是按需求生成的。见 PlanFallback */
+      /** Non-null = this plan is a generic template, not generated from the requirement. See PlanFallback */
       fallback: (plan.generationFallback as PlanFallback | null) ?? null,
       estimatedHours: Number(plan.estimatedHours ?? 0),
       estimatedTokens,
@@ -175,18 +184,18 @@ export async function getPlanDetail(db: Database, planId: string) {
       estimatedTokens,
       budget,
       spent,
-      /** ★ 超预算要阻断批准，所以这个判断放服务端算，不让前端各算各的 */
-      /** ★ 没估算就谈不上超预算 —— 用 0 代入会得出「一定不超」的假结论 */
+      /** ★ Over budget blocks approval, so the server decides it — not each client on its own */
+      /** ★ No estimate means no over-budget verdict — substituting 0 fakes a "definitely fine" */
       overBudget: budget !== null && estimatedTokens !== null && spent + estimatedTokens > budget,
       humanGateCount: (plan.humanGates as unknown[]).length,
-      /** 没有任何合格 Agent 能接的任务 —— 批下去会停在 ready 不动 */
+      /** Tasks no qualified agent can take — once approved they sit in `ready` and never move */
       tasksWithoutAgent: unrunnable,
       highRiskTasks: tasks.filter((t) => t.riskLevel === 'high' || t.riskLevel === 'critical').length,
     },
-    /** 批准时的快照 */
+    /** The snapshot taken at approval time */
     autoActions: plan.autoActions,
     humanGates: plan.humanGates,
-    /** 按当前 Policy 重算的边界，供对照 */
+    /** The boundary recomputed under the current policies, for comparison */
     currentBoundary: {
       auto: current.summary.auto.map((o) => o.label),
       human: current.summary.human.map((o) => o.label),
@@ -205,17 +214,20 @@ export async function getPlanDetail(db: Database, planId: string) {
       executorName:
         t.executorType === 'human' && t.executorId ? (userName.get(t.executorId) ?? '未知') : null,
       /**
-       * 批准前执行主体还没绑定，只能说「这一步会不会来找人」。
-       * 写成「未分配」会被读成「漏排了」，而实际是「等调度时再挑 Agent」。
+       * Before approval no executor is bound yet, so all this can say is
+       * "will this step come and ask a human". Rendering it as "unassigned"
+       * reads as "somebody forgot to staff it", when the truth is "an agent
+       * gets picked at scheduling time".
        */
       requiresHuman: gatedTitles.has(t.title),
       ownerName: t.ownerId ? (userName.get(t.ownerId) ?? '未知') : null,
       position: t.position,
     })),
     /**
-     * 本计划基于哪些未经二次确认的假设（页面文档 04 §5，回应 03 §12.2）。
-     * 需求页里「记录假设后继续」的那些问题，到计划页要再复述一遍 ——
-     * 计划是基于它们做的，而用户当时可能只是划过去了。
+     * Which unconfirmed assumptions this plan rests on (page doc 04 §5,
+     * answering 03 §12.2). The questions the user waved past with "record the
+     * assumption and continue" on the requirement page get restated here — the
+     * plan was built on them, and the user may well have simply scrolled by.
      */
     assumptions: assumptions.map((c) => ({
       id: c.id,
@@ -233,16 +245,19 @@ function firstLine(text: string): string {
 }
 
 /**
- * 计划版本对比（页面文档 04）。
+ * Plan version comparison (page doc 04) / 计划版本对比。
  *
- * ★ 用户要批准的是 v2，脑子里记得的是 v1。不给 diff 的话他只能把
- *   三十行任务清单整个重读一遍 —— 而重读一遍的真实结果通常是不读，直接批。
- *   diff 不是便利功能，是让「批准」这个动作重新有意义的东西。
+ * ★ The user is approving v2 while remembering v1. Without a diff their only
+ *   option is to re-read all thirty lines of the task list — and what actually
+ *   happens then is that they don't read it and approve anyway. A diff is not a
+ *   convenience feature; it is what makes the act of approving mean something
+ *   again.
  *
- * ★ 两版的人机拆分都要从各自的 humanGates 快照推。
- *   批准前 work_items.executorType 全是 null，按它数出来两版都是「👤 0」，
- *   于是「这一版把三个人工确认点改成了自动」这条最该被看见的变化，
- *   在 diff 里会完全消失。
+ * ★ Both sides' human/agent split has to be derived from their own humanGates
+ *   snapshot. Before approval work_items.executorType is null everywhere, so
+ *   counting it renders both versions as "👤 0" — and the one change that most
+ *   needs to be seen ("this revision turned three human checkpoints into
+ *   automatic ones") disappears from the diff entirely.
  */
 export async function comparePlans(db: Database, planId: string, againstVersion?: number) {
   const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
@@ -269,7 +284,7 @@ export async function comparePlans(db: Database, planId: string, againstVersion?
   }));
 
   if (!previous) {
-    // 第一版没有可比对象，如实说，而不是拿一份空计划去 diff 出「全部新增」
+    // v1 has nothing to compare against: say so, rather than diffing an empty plan into "all added"
     return { versions, diff: null, against: null, feedback: plan.revisionFeedback };
   }
 
@@ -282,8 +297,9 @@ export async function comparePlans(db: Database, planId: string, againstVersion?
     versions,
     against: { id: previous.id, version: previous.version },
     /**
-     * ★ 只取上一版的。当前版本的 revisionFeedback 是「它自己后来被要求改」，
-     *   拿来当「它是怎么来的」会张冠李戴。
+     * ★ Take the previous version's feedback only. The current version's
+     *   revisionFeedback means "this version was later asked to change", so
+     *   using it as "how this version came about" pins it on the wrong revision.
      */
     feedback: previous.revisionFeedback,
     diff: diffPlans(beforeSide, afterSide),

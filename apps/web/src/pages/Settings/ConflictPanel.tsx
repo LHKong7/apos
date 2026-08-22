@@ -18,15 +18,17 @@ import {
 } from '@/components/ui/table';
 
 /**
- * 同步冲突处理（页面文档 14 §5.3 的冲突界面）。
+ * Sync conflict resolution (the conflict UI in page doc 14 §5.3) / 同步冲突处理。
  *
- * ★ 每条冲突必须摆出三样：两侧的值、时间、谁改的。
- *   少任何一样，用户就只能靠猜决定听谁的 ——
- *   而「系统改的」和「李娜手动改的」是完全不同的两种情况：
- *   前者多半该让系统赢，后者多半意味着系统漏了什么。
+ * ★ Every conflict has to show three things: both sides' values, the times, and
+ *   who changed them. Drop any one of them and the user is guessing about whom
+ *   to believe — and "the system changed it" versus "Li Na changed it by hand"
+ *   are entirely different situations: the first usually means let the system
+ *   win, the second usually means the system missed something.
  *
- * ★ 顶部的热点提示不是装饰。冲突集中在某个字段，几乎总是说明
- *   那个字段的 SoT 配反了 —— 逐条处理一百次，不如把配置改对一次。
+ * ★ The hotspot hint at the top is not decoration. Conflicts clustering on one
+ *   field almost always means that field's SoT is configured backwards — fixing
+ *   the configuration once beats resolving a hundred conflicts one at a time.
  */
 export function ConflictPanel({ projectId, canResolve }: { projectId: string; canResolve: boolean }) {
   const t = useT();
@@ -50,7 +52,7 @@ export function ConflictPanel({ projectId, canResolve }: { projectId: string; ca
         <h2 className="text-xs font-medium text-amber-900">
           {t('conflict.title', { count: q.data.conflicts.length })}
         </h2>
-        {/* §7：冲突积压 > 10 时提醒去看 SoT 配置 */}
+        {/* §7: past 10 queued conflicts, point the user at the SoT configuration */}
         {q.data.conflicts.length > 10 && (
           <span className="text-[11px] text-amber-800">
             {t('conflict.tooMany')}
@@ -119,7 +121,7 @@ function ConflictRow({
         <span className="ml-2 text-[11px] text-slate-400">{relativeTime(conflict.createdAt)}</span>
       </p>
 
-      {/* ★ 值 / 时间 / 谁改的，三样缺一不可 */}
+      {/* ★ Value / time / who changed it — all three, none optional */}
       <Table className="mt-1 text-[11px]">
         <TableBody>
           <Side label="APOS" side={conflict.apos} winner={conflict.sourceOfTruth === 'apos'} />
@@ -147,8 +149,8 @@ function ConflictRow({
               {t('conflict.preferExternal')}
             </Button>
           </div>
-          {/* ★ 记的是字段级规则，不是这一条对象 —— 用户勾它时想表达的是
-              「这个字段以后别再问我」 */}
+          {/* ★ What gets recorded is a field-level rule, not this one object — what
+              the user means by ticking it is "stop asking me about this field" */}
           <Label className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
             <Checkbox checked={applyToSimilar} onCheckedChange={setApplyToSimilar} />
             {t('conflict.applyToSimilar', { field: conflict.fieldLabel })}
@@ -182,11 +184,11 @@ function Side({
       <TableCell className={clsx('w-28 py-0.5', winner ? 'font-medium text-slate-800' : 'text-slate-700')}>
         {String(side.value ?? '—')}
       </TableCell>
-      {/* 原始 ISO 串是给机器读的；用户要比的是「谁改得更晚」 */}
+      {/* The raw ISO string is for machines; what the user compares is which side changed later */}
       <TableCell className="w-24 py-0.5 text-slate-400" title={side.changedAt || undefined}>
         {side.changedAt ? relativeTime(side.changedAt) : '—'}
       </TableCell>
-      {/* 系统改的和人手改的是完全不同的两种情况，图标要能一眼区分 */}
+      {/* A system edit and a hand edit are entirely different cases; the icon has to separate them at a glance */}
       <TableCell className="py-0.5 text-slate-500">
         {side.actorType === 'human' ? '👤' : side.actorType === 'system' ? '🔧' : '🔗'}{' '}
         {side.changedBy}

@@ -27,19 +27,23 @@ export interface FactoryOptions {
 }
 
 /**
- * Agent 行 → 适配器实例。
+ * Agent row → adapter instance / Agent 行 → 适配器实例。
  *
- * ★ 注册表按 **agentId** 键控，不是按运行时。
+ * ★ The registry is keyed by **agentId**, not by runtime kind.
  *
- *   这是「取消接入层」的直接后果，也是它的意义所在：两个 Agent 都用
- *   Claude Code，但一个 effort=max / maxTurns=120，另一个 effort=low /
- *   maxTurns=20 —— 它们必须是两个**不同的适配器实例**。按运行时键控的话，
- *   后注册的会覆盖先注册的，而症状是「我明明给评审 Agent 配了 low，
- *   账单却按 max 在走」，且完全无法从日志上看出来。
+ *   That is the direct consequence of removing the shared access layer, and
+ *   also the point of it: two Agents can both run Claude Code while one is
+ *   effort=max / maxTurns=120 and the other effort=low / maxTurns=20 — they
+ *   have to be two **different adapter instances**. Keyed by runtime, the
+ *   second registration overwrites the first, and the symptom is "I configured
+ *   the review Agent as low but the bill is running at max", with nothing in
+ *   the logs to show it.
  *
- * ★ 凭证在这里从 credentialRef 解出来直接交给实例，不落中间变量、不进日志。
- *   解不出来时**不**回退到进程环境的默认 key —— 那会让「我明明配了 key」
- *   和「它在用别人的 key」这两种情况长得一模一样。
+ * ★ The credential is resolved from credentialRef here and handed straight to
+ *   the instance: no intermediate variable, never logged. When it cannot be
+ *   resolved we do **not** fall back to the process environment's default key —
+ *   that would make "I did configure a key" and "it is using somebody else's
+ *   key" look exactly alike.
  */
 export function createAgentAdapter(
   agent: AgentRow,
@@ -49,27 +53,31 @@ export function createAgentAdapter(
   const tag = `[${agent.runtimeKind}:${agent.name}]`;
   const apiKey = resolveSecret(agent.credentialRef) ?? undefined;
 
-  // 空配置 = 全部用平台默认值。适配器侧因此永远拿到完整配置，
-  // 不用到处写 `?? 默认值` —— 那种散落的默认值迟早和 schema 对不上
+  // An empty config means every platform default applies. The adapter side
+  // therefore always receives a complete config and never needs a scattered
+  // `?? someDefault`, which drifts out of sync with the schema sooner or later
   const cfg = { ...defaultRuntimeConfig(agent.runtimeKind), ...agent.runtimeConfig };
   const str = (k: string) => (typeof cfg[k] === 'string' ? (cfg[k] as string) : undefined);
   const num = (k: string) => (typeof cfg[k] === 'number' ? (cfg[k] as number) : undefined);
   const rawList = (k: string) => (Array.isArray(cfg[k]) ? (cfg[k] as string[]) : undefined);
 
   /**
-   * ★★ passthroughEnv 里点名 APOS 自己的密钥一律剔掉。
+   * ★★ Any of APOS's own secrets named in passthroughEnv is stripped.
    *
-   *   这一栏的语义是「把 APOS 进程里已有的某个变量透传给子进程」，
-   *   它的门槛只是 `agent.update` —— 任何项目的 pm / tech_lead 都有。
-   *   不过滤的话，往这个列表里写一行 `APOS_JWT_SECRET`，
-   *   签名密钥就进了一个由填表人自己写 prompt 的子进程，
-   *   拿它可以签出任意用户的令牌。
+   *   The meaning of this field is "pass a variable the APOS process already
+   *   has through to the child process", and the bar for editing it is only
+   *   `agent.update` — which every project's pm / tech_lead holds. Without the
+   *   filter, adding one line `APOS_JWT_SECRET` to this list puts the signing
+   *   secret inside a child process whose prompt the same person writes, and
+   *   with it they can mint a token for any user.
    *
-   *   与环境变量表里的 `env:变量名` 是同一条禁令（见 security/secrets.ts），
-   *   两条路径必须都过 —— 只堵一条等于没堵。
+   *   This is the same prohibition as `env:VAR_NAME` in the environment
+   *   variable map (see security/secrets.ts); both paths have to enforce it —
+   *   closing one door only is the same as closing none.
    *
-   * ★ 剔掉要喊出来。悄悄少传一个变量的表现是「我配了却没生效」，
-   *   而这个仓库反复吃过那个亏。
+   * ★ Stripping has to be announced. Silently dropping a variable presents as
+   *   "I configured it and it did not take effect", a failure mode this repo
+   *   has been bitten by repeatedly.
    */
   const list = (k: string) => {
     const raw = rawList(k);
@@ -84,10 +92,13 @@ export function createAgentAdapter(
   };
 
   /**
-   * 环境变量表：库里存的是引用，交给适配器的必须是明文。
+   * Environment variable map: the database stores references, but the adapter
+   * has to be handed plaintext / 库里存的是引用，交给适配器的必须是明文。
    *
-   * ★ 解不开的键要**喊出来**。它们不会被下发，而症状是 Agent 报一句 401 ——
-   *   那句报错里没有任何东西指向「ANTHROPIC_AUTH_TOKEN 引用的环境变量没设置」。
+   * ★ Keys that cannot be resolved must be **announced**. They are not sent
+   *   down, and the symptom is the Agent reporting a bare 401 — nothing in that
+   *   error points at "the env var that ANTHROPIC_AUTH_TOKEN refers to is not
+   *   set".
    */
   const overrides = resolveEnvOverrides(envOverridesOf(cfg));
   if (overrides.unresolved.length > 0) {
@@ -108,9 +119,10 @@ export function createAgentAdapter(
     case 'claude_code':
       return new ClaudeCodeRuntime({
         apiKey,
-        // 没登记凭证时才允许沿用进程环境（单机部署的常见形态）
+        // Inheriting the process environment is allowed only when no credential
+        // is registered (the common shape of a single-machine deployment)
         allowInheritedCredentials: agent.credentialRef === null,
-        // 接入地址 → ANTHROPIC_BASE_URL。中转站 / 自建网关走这条
+        // Endpoint → ANTHROPIC_BASE_URL. Relays and self-hosted gateways use this
         ...(agent.endpoint ? { baseUrl: agent.endpoint } : {}),
         ...(str('credentialEnv')
           ? { credentialEnv: str('credentialEnv') as 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' }
@@ -140,18 +152,21 @@ export function createAgentAdapter(
       });
 
     /**
-     * ★★ 六个通用 headless CLI（pi / gemini_cli / aider / goose / opencode /
-     *   qwen_code）走同一条分支：差异全在 profile 那张声明式的表里，
-     *   这里只负责把 Agent 行上的配置搬过去。
+     * ★★ Six generic headless CLIs (pi / gemini_cli / aider / goose / opencode
+     *   / qwen_code) share this one branch: every difference between them lives
+     *   in the declarative profile table, and all this code does is carry the
+     *   Agent row's config across.
      *
-     *   加第七个 CLI = 加一条 profile + 加一条 spec，这个文件一个字不用改。
+     *   Adding a seventh CLI = one more profile plus one more spec, with not a
+     *   single word changed in this file.
      */
     default: {
       const profile = cliProfile(agent.runtimeKind);
       if (!profile) return null;
       return new GenericCliRuntime(profile, {
         apiKey,
-        // 没登记凭证时才允许沿用进程环境（单机部署的常见形态）
+        // Inheriting the process environment is allowed only when no credential
+        // is registered (the common shape of a single-machine deployment)
         allowInheritedCredentials: agent.credentialRef === null,
         ...(agent.endpoint ? { baseUrl: agent.endpoint } : {}),
         ...(str('model') ? { model: str('model')! } : {}),
@@ -166,14 +181,17 @@ export function createAgentAdapter(
 }
 
 /**
- * 把库里的 Agent 登记进注册表。只处理还没注册过的，可反复调用。
+ * Registers the database's Agents into the registry. Only touches ones not yet
+ * registered, so it is safe to call repeatedly / 只处理还没注册过的，可反复调用。
  *
- * ★ 为什么要能反复调用：注册表原本只在启动时建一次，于是任何在进程起来
- *   之后新增的 Agent 都是隐形的 —— 界面显示「适配器没有在当前进程注册」，
- *   任务派不出去，而这句话不会告诉你该去重启谁。
+ * ★ Why it has to be repeatable: the registry used to be built once at startup,
+ *   which made every Agent created after the process came up invisible — the UI
+ *   said "the adapter is not registered in the current process", work could not
+ *   be dispatched, and that sentence does not tell you which process to restart.
  *
- * ★ 只增不减：不注销已经消失的 Agent。正在跑的 Run 还握着那个适配器，
- *   把它摘掉等于中断一次执行，代价不对等。
+ * ★ Add-only: Agents that have disappeared are never unregistered. A Run still
+ *   in flight is holding that adapter, and pulling it out means aborting an
+ *   execution — a trade that does not pay.
  */
 export async function syncAgents(
   db: Database,
@@ -200,10 +218,13 @@ export async function syncAgents(
 }
 
 /**
- * 新建 / 改配置后立刻生效，不等下一轮同步。
+ * Takes effect immediately after a create or a config change, without waiting
+ * for the next sync round / 新建 / 改配置后立刻生效，不等下一轮同步。
  *
- * ★ 改配置时必须**替换**实例而不是跳过：老实例里还捏着旧的 effort、
- *   旧的凭证。不换掉的话，界面上改完显示为已生效，实际下一次派发仍是旧值。
+ * ★ On a config change the instance must be **replaced**, not skipped: the old
+ *   instance still holds the old effort and the old credential. Skip it and the
+ *   UI reports the change as applied while the next dispatch still runs the old
+ *   values.
  */
 export function registerAgentNow(
   registry: RuntimeRegistry,

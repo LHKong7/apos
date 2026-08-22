@@ -1,315 +1,318 @@
-# 01 系统架构
+# 01 System Architecture
 
-## 1. 架构目标
+*[中文版本 / Chinese version](01-architecture.zh.md)*
 
-从产品定位倒推出的四个必须满足的属性：
+## 1. Architecture goals
 
-| 属性 | 产品来源 | 技术含义 |
+Four properties fall out of the product positioning; all four are non-negotiable:
+
+| Property | Product source | Technical implication |
 | --- | --- | --- |
-| **可追溯** | 3.2 所有行为可追溯 | 每次状态变更写不可变事件；因果链完整 |
-| **可治理** | 8.9 Policy Engine、十 权限与安全 | Policy 在关键路径；Agent 身份独立；审计不可绕过 |
-| **持续推进** | 8.6 Flow Engine「推进状态而不只是保存状态」 | 有主动调度循环，不依赖用户操作触发 |
-| **可恢复** | 8.6.5 Flow Recovery | Agent Run 状态在库不在内存；进程重启后能接管孤儿任务 |
+| **Traceable** | 3.2 Every action is traceable | Every state change writes an immutable event; the causal chain stays complete |
+| **Governable** | 8.9 Policy Engine, §10 Permissions and security | Policy sits on the critical path; agents carry their own identity; the audit trail cannot be bypassed |
+| **Always advancing** | 8.6 Flow Engine, "advance state, don't merely store it" | An active scheduling loop drives the work; nothing waits on a user click |
+| **Recoverable** | 8.6.5 Flow Recovery | Agent Run state lives in the database, not in memory; orphaned runs get reclaimed after a process restart |
 
-第四条经常被低估：一个 Agent Run 可能运行 30 分钟，期间部署一次、进程重启一次是常态。**如果 Run 的状态活在进程内存里，产品就不可用。**
+The fourth one is routinely underestimated: an Agent Run can take 30 minutes, and a deploy or a process restart inside that window is normal, not exceptional. **If run state lives in process memory, the product is unusable.**
 
 ---
 
-## 2. 分层
+## 2. Layering
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│ 接入层  Fastify                                                │
-│  · 认证（JWT / Session）  · 授权前置检查  · 请求校验（Zod）    │
-│  · SSE 连接管理与扇出     · 限流       · 幂等键                │
-├───────────────────────────────────────────────────────────────┤
-│ 应用层  Modules                                                │
-│  每个模块导出 use case，模块间只能通过导出接口互相调用          │
-│  ❌ 禁止跨模块直接查询对方的数据表                              │
-├───────────────────────────────────────────────────────────────┤
-│ 领域层  Domain                                                 │
-│  实体、值对象、状态机定义、Policy 规则求值、不变式约束          │
-│  纯函数为主，不依赖 IO —— 这一层要能脱离数据库单测              │
-├───────────────────────────────────────────────────────────────┤
-│ 基础设施层  Infrastructure                                     │
-│  Repository（Drizzle）· 事件总线 · 队列 · LLM 客户端           │
-│  Agent 运行时适配器 · 外部系统客户端 · 对象存储                 │
-└───────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Ingress layer  Fastify                                                       │
+│  · Authentication (JWT / session)   · Pre-flight authorization checks        │
+│  · SSE connections and fan-out   · Rate limiting   · Idempotency keys        │
+│  · Request validation (Zod)                                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Application layer  Modules                                                   │
+│  Every module exports use cases; modules reach each other only through those │
+│  ❌ No module may query another module's tables directly                     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Domain layer  Domain                                                         │
+│  Entities, value objects, state machine definitions, policy rule evaluation, │
+│  invariants. Mostly pure functions, no IO — unit-testable without a database │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Infrastructure layer  Infrastructure                                         │
+│  Repositories (Drizzle) · event bus · queues · LLM clients                   │
+│  Agent runtime adapters · external system clients · object storage           │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.1 模块划分
+### 2.1 Module breakdown
 
-| 模块 | 职责 | 关键出口 |
+| Module | Responsibility | Key exports |
 | --- | --- | --- |
-| `identity` | 用户、Agent、Service 的统一身份；权限判定 | `can(actor, action, resource)` |
-| `project` | Project 生命周期、成员、自治等级 | `getProjectContext()` |
-| `requirement` | 需求录入、AI 结构化、澄清、确认 | `analyzeRequirement()` `approveRequirement()` |
-| `plan` | 计划生成、版本、任务拆解、依赖构建 | `generatePlan()` `approvePlan()` |
-| `work` | Work Item CRUD、依赖、产物 | `getWorkItem()` `updateWorkItem()` |
-| `flow` | **状态机、调度、阻塞识别、恢复** | `transition()` `schedule()` |
-| `policy` | 规则评估、模拟、继承与冲突检测 | `evaluate(context)` `simulate(draft, range)` |
-| `decision` | 决策创建、责任人解析、会签、时限与升级 | `createDecision()` `resolveDecision()` |
-| `agent` | Agent 注册、能力与权限、Run 生命周期 | `dispatchRun()` `handleRunEvent()` |
-| `integration` | 外部系统连接、同步、冲突 | `sync()` `handleWebhook()` |
-| `analytics` | 事件聚合、指标计算、洞察生成 | `getFlowMetrics()` |
-| `notification` | 通知路由、升级、去重 | `notify(event)` |
-| `event` | 事件写入、查询、归档 | `emit()` `query()` |
+| `identity` | One identity model for users, agents, and services; permission decisions | `can(actor, action, resource)` |
+| `project` | Project lifecycle, membership, autonomy level | `getProjectContext()` |
+| `requirement` | Requirement intake, AI structuring, clarification, confirmation | `analyzeRequirement()` `approveRequirement()` |
+| `plan` | Plan generation, versions, task breakdown, dependency graph | `generatePlan()` `approvePlan()` |
+| `work` | Work Item CRUD, dependencies, artifacts | `getWorkItem()` `updateWorkItem()` |
+| `flow` | **State machine, scheduling, blocker detection, recovery** | `transition()` `schedule()` |
+| `policy` | Rule evaluation, simulation, inheritance and conflict detection | `evaluate(context)` `simulate(draft, range)` |
+| `decision` | Decision creation, owner resolution, co-signing, deadlines and escalation | `createDecision()` `resolveDecision()` |
+| `agent` | Agent registration, capabilities and permissions, Run lifecycle | `dispatchRun()` `handleRunEvent()` |
+| `integration` | External system connections, sync, conflicts | `sync()` `handleWebhook()` |
+| `analytics` | Event aggregation, metric computation, insight generation | `getFlowMetrics()` |
+| `notification` | Notification routing, escalation, deduplication | `notify(event)` |
+| `event` | Event writes, queries, archival | `emit()` `query()` |
 
-**模块边界的强制手段**：每个模块一个目录，`index.ts` 是唯一出口；ESLint 规则禁止 `import` 深入其他模块内部路径。这条规则是后续拆服务能否低成本的关键。
+**How the boundaries are enforced**: one directory per module, with `index.ts` as its only door; an ESLint rule forbids any `import` that reaches into another module's internals. This rule is what decides whether pulling a service out later is cheap or expensive.
 
-### 2.2 一次状态流转的完整调用链
+### 2.2 One state transition, end to end
 
-以「Agent 完成执行 → 进入 Review」为例，展示各层协作：
+Take "agent finishes executing → work item enters review" and follow it down through every layer:
 
 ```
-Agent 运行时
+Agent runtime
   │ POST /api/agent-callback/runs/{id}/events  { type: 'completed', artifacts: [...] }
   ▼
-接入层：验证 Agent 凭证 → 校验 payload
+Ingress: verify agent credentials → validate payload
   ▼
 agent.handleRunEvent()
-  ├─ 写 run_events（原始事件，不可变）
-  ├─ 更新 agent_runs 状态
-  └─ 调用 flow.transition({
+  ├─ write run_events (raw, immutable)
+  ├─ update the agent_runs status
+  └─ call flow.transition({
         subject: workItem, trigger: 'agent_run_completed', actor: agent })
      ▼
-flow.transition()  ── 单个数据库事务 ──────────────────────
-  ├─ 加行锁 SELECT ... FOR UPDATE（防并发流转）
-  ├─ 查状态机：executing --agent_run_completed--> reviewing ?
-  ├─ 求值 guard：验收标准是否满足、依赖是否 OK
-  ├─ 调 policy.evaluate(context)
-  │    命中 #7「低风险自动批准」→ allow_and_notify
-  │    或命中 #1「生产变更」→ require_human_review
-  ├─ 若需人类：decision.createDecision()（同事务）
+flow.transition()  ── one database transaction ──────────────────
+  ├─ take a row lock: SELECT ... FOR UPDATE (guards against concurrent transitions)
+  ├─ ask the state machine: executing --agent_run_completed--> reviewing ?
+  ├─ evaluate guards: are acceptance criteria met, are dependencies satisfied
+  ├─ call policy.evaluate(context)
+  │    matches #7 "auto-approve low risk" → allow_and_notify
+  │    or matches #1 "production change" → require_human_review
+  ├─ if a human is required: decision.createDecision() (same transaction)
   ├─ UPDATE work_items SET status='reviewing'
-  ├─ INSERT events（状态变更事件，含 policy trace）
-  └─ 事务提交
+  ├─ INSERT events (the status-change event, carrying the policy trace)
+  └─ commit
      ▼
-事件总线（事务提交后发布，保证不发出未提交的状态）
-  ├─▶ SSE 扇出：project:{id}:board、work_item:{id}
-  ├─▶ notification：按规则发飞书
-  ├─▶ analytics：更新预聚合
-  └─▶ flow.schedule()：检查是否有下游任务因此解除阻塞
+Event bus (publishes after commit, so uncommitted state never escapes)
+  ├─▶ SSE fan-out: project:{id}:board, work_item:{id}
+  ├─▶ notification: route to Feishu per the rules
+  ├─▶ analytics: update the pre-aggregates
+  └─▶ flow.schedule(): check whether this unblocked anything downstream
 ```
 
-**关键点**：
+**The points that matter**:
 
-1. **状态与事件同事务写入**——否则会出现"状态变了但没有事件"的审计黑洞
-2. **事件总线在事务提交后才发布**——用 transactional outbox 或 `AFTER COMMIT` 钩子，避免订阅者读到未提交状态
-3. **Policy 评估在事务内**——它的判定结果决定了这次流转的走向，必须与状态变更原子
+1. **State and event are written in the same transaction** — otherwise you get audit black holes: the status changed and nothing recorded why
+2. **The event bus publishes only after the commit** — through a transactional outbox or an `AFTER COMMIT` hook, so no subscriber ever sees state that then rolls back
+3. **Policy evaluation happens inside the transaction** — its verdict decides where this transition goes, so it has to be atomic with the state change
 
 ---
 
-## 3. 进程与部署拓扑
+## 3. Process and deployment topology
 
-### 3.1 进程角色
+### 3.1 Process roles
 
 ```
-┌──────────────────────┐   ┌──────────────────────┐
-│  api (N 实例)         │   │  worker (M 实例)      │
-│  · HTTP + SSE        │   │  · Run Supervisor    │
-│  · 同步业务逻辑        │   │  · Flow Scheduler    │
-│  · 无长任务           │   │  · Blocker Detector  │
-│                      │   │  · Integration Sync  │
-│  水平扩展依据：        │   │  · Analytics Agg.    │
-│  在线用户数与 SSE 连接 │   │  · Notification      │
-└──────────────────────┘   └──────────────────────┘
-         同一份代码，靠 PROCESS_ROLE 环境变量决定启动哪些组件
+┌─────────────────────────────────┐   ┌───────────────────────┐
+│  api (N instances)              │   │  worker (M instances) │
+│  · HTTP + SSE                   │   │  · Run Supervisor     │
+│  · Synchronous business logic   │   │  · Flow Scheduler     │
+│  · No long-running work         │   │  · Blocker Detector   │
+│                                 │   │  · Integration Sync   │
+│  Scale out on:                  │   │  · Analytics Agg.     │
+│  live users and SSE connections │   │  · Notification       │
+└─────────────────────────────────┘   └───────────────────────┘
+         One codebase; PROCESS_ROLE decides which components start
 ```
 
-**为什么分开**：API 进程要快速响应且可随时重启；worker 承载长任务与定时循环，重启需要优雅接管。混在一起会让部署时正在跑的调度循环被打断。
+**Why they are separate**: the API process has to answer fast and tolerate a restart at any moment; the worker carries long tasks and periodic loops and needs to hand off gracefully when it restarts. Fold them together and every deploy cuts a scheduling loop off mid-stride.
 
-### 3.2 Worker 清单
+### 3.2 Worker inventory
 
-| Worker | 触发方式 | 职责 | 幂等要求 |
+| Worker | Trigger | Responsibility | Idempotency |
 | --- | --- | --- | --- |
-| `run-supervisor` | 每 10s 轮询 + 事件触发 | 监控执行中的 Run：超时判定、心跳丢失检测、**孤儿 Run 接管** | 必须 |
-| `flow-scheduler` | 每 5s + 事件触发 | 找出 `ready` 且依赖满足的 Work Item，检查 WIP 与 Policy，派发 | 必须 |
-| `blocker-detector` | 每 60s | 按 8.6.4 的九类规则扫描阻塞 | 天然幂等 |
-| `decision-escalator` | 每 60s | 决策时限提醒与三级升级（产品文档十一） | 需去重 |
-| `integration-sync` | 定时 + webhook | 外部系统双向同步与冲突检测 | 必须 |
-| `analytics-aggregator` | 每 5min | 事件流 → 小时/天粒度预聚合 | 必须 |
-| `notification-dispatcher` | 队列消费 | 通知路由、渠道适配、去重、免打扰 | 必须 |
-| `event-archiver` | 每日 | 热数据超期 → 对象存储 | 必须 |
+| `run-supervisor` | poll every 10s + event-driven | Watch running Runs: timeout detection, missed heartbeats, **orphan reclamation** | Required |
+| `flow-scheduler` | every 5s + event-driven | Find `ready` Work Items whose dependencies are satisfied, check WIP and Policy, dispatch | Required |
+| `blocker-detector` | every 60s | Scan for blockers using the nine categories from 8.6.4 | Naturally idempotent |
+| `decision-escalator` | every 60s | Decision deadline reminders and three-tier escalation (product doc §11) | Needs dedup |
+| `integration-sync` | scheduled + webhook | Two-way sync with external systems, conflict detection | Required |
+| `analytics-aggregator` | every 5 min | Event stream → hourly and daily pre-aggregates | Required |
+| `notification-dispatcher` | queue consumer | Notification routing, channel adapters, dedup, do-not-disturb | Required |
+| `event-archiver` | daily | Aged-out hot data → object storage | Required |
 
-### 3.3 孤儿 Run 接管（可恢复性的核心）
+### 3.3 Orphan Run reclamation (the heart of recoverability)
 
 ```
-Agent Run 的状态机（持久化在 agent_runs 表）
+The Agent Run state machine (persisted in agent_runs)
   queued → dispatching → running → (completed | failed | timeout | terminated)
 
-run-supervisor 每 10s 执行：
+run-supervisor, every 10s:
 
-  1. 找出 status='running' 且 last_heartbeat_at < now() - 90s 的 Run
-     → 这些是失联的 Run
+  1. Find Runs where status='running' and last_heartbeat_at < now() - 90s
+     → these are the Runs that have gone silent
 
-  2. 对每个失联 Run，按其 runtime 类型探测真实状态：
-     ├─ 运行时支持状态查询（MCP / HTTP）→ 主动查询
-     │   ├─ 仍在运行 → 更新心跳，继续
-     │   └─ 已结束 → 拉取最终结果，补齐事件
-     └─ 不支持查询 → 按 Policy 判定：标记 failed(reason='heartbeat_lost')
-                      → 触发 Flow Recovery（重试 / 换 Agent / 转人工）
+  2. For each silent Run, probe its real state according to its runtime type:
+     ├─ runtime supports status queries (MCP / HTTP) → ask it directly
+     │   ├─ still running → refresh the heartbeat, carry on
+     │   └─ already finished → pull the final result, backfill the events
+     └─ no query support → decide by Policy: mark failed(reason='heartbeat_lost')
+                            → trigger Flow Recovery (retry / switch agent / hand to a human)
 
-  3. 找出 status='dispatching' 超过 60s 的 Run
-     → 派发过程中进程崩溃 → 重新派发（用 idempotency_key 防重复执行）
+  3. Find Runs stuck in status='dispatching' for more than 60s
+     → the process died mid-dispatch → dispatch again (idempotency_key prevents double execution)
 ```
 
-`dispatching` 这个中间态是必要的：没有它就无法区分"还没派发"和"派发了但不知道结果"，后者重试会导致 Agent 重复执行同一任务。
+The `dispatching` intermediate state earns its keep: without it there is no way to tell "not dispatched yet" from "dispatched, outcome unknown", and retrying the second case makes the agent run the same task twice.
 
 ---
 
-## 4. 数据流
+## 4. Data flow
 
-### 4.1 三条主要数据流
+### 4.1 The three main flows
 
 ```
-① 需求 → 计划 → 任务（人机协作，同步为主）
-   用户输入 ─▶ requirement.analyze（LLM 流式）─▶ SSE 回传结构化字段
-            ─▶ 人类确认 ─▶ plan.generate（LLM，1–3min，异步任务）
-            ─▶ 人类批准 ─▶ work items 落库 + 依赖图构建
+① Requirement → plan → tasks (human–agent collaboration, mostly synchronous)
+   user input ─▶ requirement.analyze (LLM streaming) ─▶ structured fields back over SSE
+             ─▶ human confirms ─▶ plan.generate (LLM, 1–3 min, async job)
+             ─▶ human approves ─▶ work items persisted + dependency graph built
 
-② 执行（事件驱动，异步）
-   flow-scheduler ─▶ agent.dispatchRun ─▶ Agent 运行时
-                                          │ 事件流（SSE/webhook）
+② Execution (event-driven, asynchronous)
+   flow-scheduler ─▶ agent.dispatchRun ─▶ Agent runtime
+                                          │ event stream (SSE/webhook)
    run_events ◀──────────────────────────┘
       │
-      ├─▶ 实时转发到浏览器（SSE）
-      ├─▶ 里程碑事件 ─▶ flow.transition ─▶ 状态变更 ─▶ events
-      └─▶ 成本累加 ─▶ 预算检查 ─▶ 可能触发 Policy
+      ├─▶ forwarded live to the browser (SSE)
+      ├─▶ milestone events ─▶ flow.transition ─▶ status change ─▶ events
+      └─▶ cost accrual ─▶ budget check ─▶ may trigger Policy
 
-③ 外部同步（双向，最易出错）
+③ External sync (bidirectional, and the easiest thing to get wrong)
    GitHub webhook ─▶ integration.handleWebhook
-                  ─▶ 映射到 Work Item ─▶ flow.transition（PR merged → done）
-   Work Item 变更 ─▶ 出站队列 ─▶ Jira API（按 Source of Truth 决定是否推送）
+                  ─▶ map onto a Work Item ─▶ flow.transition (PR merged → done)
+   Work Item change ─▶ outbound queue ─▶ Jira API (pushed or not, per source of truth)
 ```
 
-### 4.2 事件的双重身份
+### 4.2 Two things both called "events"
 
-系统里有两类"事件"，**不要混淆**：
+There are two kinds of "event" in this system, and **they must not be conflated**:
 
 | | `run_events` | `events` |
 | --- | --- | --- |
-| 含义 | Agent 执行过程的细粒度日志 | 领域事件（业务事实） |
-| 量级 | 单 Run 可达数千条 | 单 Work Item 数十条 |
-| 消费者 | Run 详情页时间线 | 审计、Analytics、Flow、通知 |
-| 保留 | 30 天热 + 归档 | 长期（审计要求） |
-| 写入者 | Agent 适配器 | Flow Engine（唯一） |
+| Meaning | Fine-grained log of an agent's execution | Domain events (business facts) |
+| Volume | Thousands for a single Run | Dozens for a single Work Item |
+| Consumers | The Run detail timeline | Audit, Analytics, Flow, notifications |
+| Retention | 30 days hot + archive | Long term (audit requirement) |
+| Writer | Agent adapters | Flow Engine (sole writer) |
 
-**关系**：`run_events` 中的少数关键事件（产物提交、执行完成、失败）会被提升为领域 `events`。这个提升规则在 [06 Agent Protocol](06-agent-protocol.md) §5 定义。
+**How they relate**: a handful of key `run_events` — artifact submitted, execution completed, failure — get promoted to domain `events`. The promotion rule is defined in [06 Agent Protocol](06-agent-protocol.md) §5.
 
-区分它们的价值：Analytics 与审计只需扫描量级小得多的 `events` 表，而不必在数百万条工具调用日志里做聚合。
+Keeping them apart pays off directly: Analytics and audit only ever scan the far smaller `events` table, instead of aggregating across millions of tool-call log lines.
 
-### 4.3 SSE 扇出
+### 4.3 SSE fan-out
 
 ```
-worker/api 发布事件
+worker/api publishes an event
      │
      ▼ Redis Pub/Sub  channel: project:{id}
 ┌────┴────┬─────────┐
 ▼         ▼         ▼
-api-1    api-2    api-3      每个实例持有部分浏览器连接
-  │        │        │
-  ▼        ▼        ▼
-浏览器    浏览器    浏览器
+api-1     api-2     api-3      each instance holds some of the browser connections
+  │         │         │
+  ▼         ▼         ▼
+browser   browser   browser
 ```
 
-**频道设计**（与页面文档一致）：
+**Channel design** (matching the page docs):
 
-| 频道 | 订阅者 | 内容 |
+| Channel | Subscribers | Contents |
 | --- | --- | --- |
-| `project:{id}:board` | 看板、总览 | Work Item 状态与进度 |
-| `work_item:{id}` | Work Item 详情 | 该任务的全部事件 |
-| `run:{id}` | Run 详情 | 执行流事件（高频） |
-| `agent:{id}` | Agent Workspace | 队列与状态 |
-| `user:{id}:decisions` | 决策中心、全局角标 | 决策创建/解决/升级 |
+| `project:{id}:board` | Board, overview | Work Item status and progress |
+| `work_item:{id}` | Work Item detail | Every event for that task |
+| `run:{id}` | Run detail | The execution stream (high frequency) |
+| `agent:{id}` | Agent Workspace | Queue and status |
+| `user:{id}:decisions` | Decision center, global badge | Decision created / resolved / escalated |
 
-**背压处理**：`run:{id}` 频道事件密集（工具调用可能每秒多条）。做法：
-- 服务端按 200ms 窗口合并同类事件
-- 客户端断开时立即取消订阅
-- 单连接积压超过 1000 条时降级为「仅推送里程碑事件 + 提示刷新」
+**Backpressure**: the `run:{id}` channel is dense — tool calls can fire several times a second. The handling:
+- the server coalesces same-type events over a 200 ms window
+- the client unsubscribes the moment it disconnects
+- once a single connection backs up past 1000 events, it degrades to "milestone events only, plus a prompt to refresh"
 
-**断线续传**：SSE 的 `Last-Event-ID` 头携带序号，重连时补发缺失事件。事件序号由数据库序列保证单调，见 [07 API](07-api-design.md) §5。
+**Resuming after a disconnect**: SSE's `Last-Event-ID` header carries the sequence number, and a reconnect replays whatever was missed. Sequence numbers are monotonic by database sequence — see [07 API](07-api-design.md) §5.
 
 ---
 
-## 5. 演进路径与拆分点
+## 5. Evolution path and split points
 
-模块化单体不是终点。以下是预设的拆分点与触发条件：
+The modular monolith is not the destination. These are the split points we have designed for in advance, and what would trigger each:
 
-| 拆分候选 | 触发条件 | 拆分难度 |
+| Split candidate | Trigger | Difficulty |
 | --- | --- | --- |
-| **Agent Orchestrator** | Agent 数量 > 50 或 Run 并发 > 200；需要独立扩缩容 | 低（模块边界清晰，通信已是异步） |
-| **Analytics** | 聚合任务影响主库性能 | 低（只读 + 独立聚合库） |
-| **Knowledge / 语义检索** | 引入向量检索与 RAG 时 | 低——**且这是引入 Python 服务最自然的位置** |
-| **Integration** | 集成方数量增长、限流与重试逻辑复杂化 | 中（与 Flow 有双向调用） |
-| **Flow + Policy** | 几乎不应拆——两者与领域数据耦合最深 | 高 |
+| **Agent Orchestrator** | More than 50 agents, or more than 200 concurrent Runs; needs to scale on its own | Low (clean module boundary, communication is already asynchronous) |
+| **Analytics** | Aggregation jobs start hurting the primary database | Low (read-only + its own aggregation store) |
+| **Knowledge / semantic search** | When vector search and RAG arrive | Low — **and this is the most natural place to introduce a Python service** |
+| **Integration** | More integrations, and rate-limit and retry logic gets complicated | Medium (calls into Flow in both directions) |
+| **Flow + Policy** | Should almost never be split — these two are coupled most deeply to domain data | High |
 
-**Knowledge 服务的位置**：如果团队后续要用 Python 做语义检索、决策相似度匹配（页面文档 11 §5.7）、复杂分析，把它做成独立服务，通过内部 HTTP + 共享 PG 只读副本接入。这条路径让「Node 主控制面 + Python 数据侧」的混合架构成为可能，而不需要一开始就做这个决定。
+**Where a Knowledge service would sit**: if the team later wants Python for semantic search, decision similarity matching (page doc 11 §5.7), or heavier analysis, build it as a standalone service reached over internal HTTP with a read-only PG replica. That path keeps the "Node control plane + Python data side" hybrid on the table without having to commit to it on day one.
 
 ---
 
-## 6. 关键技术风险
+## 6. Key technical risks
 
-| 风险 | 影响 | 缓解 |
+| Risk | Impact | Mitigation |
 | --- | --- | --- |
-| **Agent 运行时行为不一致** | 协议能力参差（有的不支持中途注入约束、有的不上报成本），导致产品功能在不同 Agent 上表现不同 | [06](06-agent-protocol.md) 定义能力协商 + 显式降级；页面明确告知用户缺失能力 |
-| **Policy 模拟不准** | 用户依据模拟结果放开自动化，实际行为不符 → 信任崩塌 | 事件必须携带评估上下文快照（[03](03-event-model.md) §4）；模拟结果标注置信度 |
-| **长 Run 的进程重启** | 任务丢失、重复执行 | 状态全部持久化；`dispatching` 中间态 + 幂等键；孤儿接管（§3.3） |
-| **双向同步循环** | 无限同步风暴 | 同步产生的变更打 `origin` 标记，同步器跳过自身来源；见 [02](02-domain-model.md) `sync_mappings` |
-| **事件表膨胀** | 查询变慢 | 按月分区 + 热冷分离（[03](03-event-model.md) §6） |
-| **LLM 调用成本失控** | 项目预算超支 | 成本在 Run 级实时累加 + Policy 硬阈值中断（[05](05-policy-engine.md) §7） |
-| **并发状态流转** | 同一 Work Item 被 Agent 回调与人类操作同时改 | 行锁 + 版本号乐观锁；状态机拒绝非法流转（[04](04-flow-engine.md) §5） |
+| **Agent runtimes behave inconsistently** | Protocol support is uneven (some can't take constraints injected mid-run, some don't report cost), so the same product feature behaves differently depending on the agent | [06](06-agent-protocol.md) defines capability negotiation plus explicit degradation; the UI tells the user exactly which capabilities are missing |
+| **Policy simulation is inaccurate** | A user loosens automation based on the simulation, real behavior differs → trust collapses | Events must carry a snapshot of the evaluation context ([03](03-event-model.md) §4); simulation results are labeled with a confidence level |
+| **Process restart during a long Run** | Lost tasks, duplicate execution | All state persisted; the `dispatching` intermediate state + idempotency keys; orphan reclamation (§3.3) |
+| **Bidirectional sync loops** | An endless sync storm | Changes produced by a sync carry an `origin` tag and the syncer skips its own; see `sync_mappings` in [02](02-domain-model.md) |
+| **Event table bloat** | Queries slow down | Monthly partitions + hot/cold separation ([03](03-event-model.md) §6) |
+| **Runaway LLM cost** | The project blows its budget | Cost accrues per Run in real time + a hard Policy threshold cuts it off ([05](05-policy-engine.md) §7) |
+| **Concurrent state transitions** | An agent callback and a human action change the same Work Item at once | Row lock + optimistic version number; the state machine rejects illegal transitions ([04](04-flow-engine.md) §5) |
 
 ---
 
-## 7. 非功能指标
+## 7. Non-functional targets
 
-| 指标 | 目标 | 说明 |
+| Metric | Target | Notes |
 | --- | --- | --- |
-| API P99 延迟 | < 300ms | 不含 LLM 调用的端点 |
-| Policy 评估 P99 | < 10ms | 在状态流转关键路径上 |
-| 看板首屏 | < 1.5s | 200 个 Work Item 规模 |
-| SSE 事件端到端延迟 | < 500ms | Agent 事件产生到浏览器渲染 |
-| Flow 调度延迟 | < 10s | 依赖满足到任务派发 |
-| 单实例 SSE 连接数 | 2000 | 超出则扩容 api 实例 |
-| 事件写入吞吐 | 500 events/s | MVP 规模，见 [03](03-event-model.md) §6 容量估算 |
-| 可用性 | 99.5% | MVP 目标；Agent 运行时不可用不计入 |
+| API P99 latency | < 300 ms | Endpoints that don't call an LLM |
+| Policy evaluation P99 | < 10 ms | It sits on the state-transition critical path |
+| Board first paint | < 1.5 s | At a scale of 200 Work Items |
+| SSE end-to-end event latency | < 500 ms | From agent event to browser render |
+| Flow scheduling latency | < 10 s | From dependency satisfied to task dispatched |
+| SSE connections per instance | 2000 | Past that, add api instances |
+| Event write throughput | 500 events/s | MVP scale; capacity estimate in [03](03-event-model.md) §6 |
+| Availability | 99.5% | MVP target; agent runtime outages don't count against it |
 
-**关于可用性的说明**：本系统的特殊性在于，它挂掉时正在运行的 Agent Run 不会停止（它们在外部运行时里）。因此恢复的关键不是「快速重启」而是「重启后正确接管」——§3.3 的孤儿接管机制比高可用部署更重要。
+**A note on availability**: what makes this system unusual is that when it goes down, the Agent Runs already in flight do not stop — they are running inside external runtimes. So recovery hinges not on "restart quickly" but on "reclaim correctly after the restart" — the orphan reclamation in §3.3 matters more here than a high-availability deployment does.
 
 ---
 
-## 8. 目录结构
+## 8. Directory structure
 
 ```
 apps/
-  api/                    Fastify 应用（api + worker 共用）
+  api/                    Fastify app (shared by api and worker)
     src/
-      routes/             HTTP 路由（薄，只做校验与调用）
-      sse/                SSE 连接管理与扇出
-      workers/            各 worker 的入口与循环
-      main.ts             按 PROCESS_ROLE 启动
+      routes/             HTTP routes (thin: validate and delegate, nothing else)
+      sse/                SSE connection management and fan-out
+      workers/            entry point and loop for each worker
+      main.ts             starts components according to PROCESS_ROLE
   web/                    React SPA
     src/
-      pages/              对应 14 个页面文档
-      features/           按领域组织的组件与 hooks
-      lib/                api client、SSE client、query 配置
+      pages/              one per page doc (14 of them)
+      features/           components and hooks grouped by domain
+      lib/                api client, SSE client, query configuration
 packages/
-  domain/                 领域层（纯逻辑，零 IO 依赖）
+  domain/                 domain layer (pure logic, zero IO dependencies)
     src/
-      work-item/          实体 + 状态机定义
-      policy/             条件 AST 与求值器
-      flow/               转移规则表
-      decision/           责任人解析规则
-  db/                     Drizzle schema + 迁移 + Repository
-  contracts/              ★ 前后端共享：Zod schema + 推导的 TS 类型
+      work-item/          entities + state machine definition
+      policy/             condition AST and evaluator
+      flow/               transition rule table
+      decision/           owner resolution rules
+  db/                     Drizzle schema + migrations + repositories
+  contracts/              ★ shared front and back: Zod schemas + inferred TS types
     src/
-      api/                请求/响应 schema
-      events/             领域事件与 Run 事件的判别联合
-      agent-protocol/     Agent Protocol 类型定义
-  integrations/           GitHub / Jira / 飞书 / Slack 适配器
-  agent-runtimes/         Claude Code / MCP / HTTP 适配器
-docs/                     本文档目录
+      api/                request/response schemas
+      events/             discriminated unions for domain events and run events
+      agent-protocol/     Agent Protocol type definitions
+  integrations/           GitHub / Jira / Feishu / Slack adapters
+  agent-runtimes/         Claude Code / MCP / HTTP adapters
+docs/                     this documentation tree
 ```
 
-**`packages/contracts` 是选择 TypeScript 的最大收益点**：前端 `import { WorkItem, PolicyCondition } from '@apos/contracts'` 拿到的就是后端校验用的同一份定义。这个包应当零运行时依赖（只有 Zod），保证前端打包体积可控。
+**`packages/contracts` is the single biggest payoff of choosing TypeScript**: when the frontend writes `import { WorkItem, PolicyCondition } from '@apos/contracts'`, what it gets is the very same definition the backend validates against. This package should carry zero runtime dependencies beyond Zod, which keeps the frontend bundle size under control.

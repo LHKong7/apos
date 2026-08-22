@@ -22,16 +22,21 @@ export interface RecoveryOutcome {
 }
 
 /**
- * recovery-worker —— 执行 `decideRecovery` 判定出来的动作。
+ * recovery-worker — carries out the action that `decideRecovery` settled on.
  *
- * 判定与执行分开是刻意的：判定是纯函数（好测、可回放），执行有副作用
- * （会再花一次钱、会改代码）。中间隔着 `agent_runs.recovery*` 四个字段，
- * 于是「决定了但还没做」这个状态扛得住进程重启。
+ * Splitting the decision from the execution is deliberate: the decision is a pure function (easy
+ * to test, replayable), while the execution has side effects (it spends money again, it changes
+ * code). The four `agent_runs.recovery*` columns sit between them, so the state "decided but not
+ * yet done" survives a process restart.
  *
- * ★ 每个动作只执行一次。`recoveryAppliedAt` 在**动作开始前**就写上，
- *   不是完成后 —— 重试本身可能失败，而失败的重试不该被重试第二遍。
- *   宁可漏一次自动恢复（人还能手动点），也不能重复派发
- *   （两个 Agent 同时改同一份代码）。
+ * ★ Each action runs exactly once. `recoveryAppliedAt` is written **before** the action starts,
+ *   not after it completes — a retry can itself fail, and a failed retry must not be retried a
+ *   second time. Better to miss one automatic recovery (a person can still trigger it by hand)
+ *   than to dispatch twice and end up with two Agents editing the same code.
+ *
+ * 判定与执行分开：判定是纯函数、执行有副作用，中间隔着 `agent_runs.recovery*` 四个字段，
+ * 于是「决定了但还没做」扛得住进程重启。★ appliedAt 在动作开始前就写 —— 宁可漏一次
+ * 自动恢复，也不能重复派发。
  */
 export async function runRecoveryRound(
   db: Database,
@@ -47,13 +52,16 @@ export async function runRecoveryRound(
       and(
         inArray(agentRuns.status, ['failed', 'timeout']),
         /**
-         * ★ 恢复策略全部围绕工作项展开（改派、转人工、升级为决策），
-         *   规划 Run 没有工作项，一条都不适用。此前是靠下面那句
-         *   `if (!item) continue` 意外挡住的 —— 现在写明白。
+         * ★ Every recovery action revolves around a work item (reassign, hand to a human,
+         *   escalate into a decision). A planning Run has no work item, so not one of them
+         *   applies. This used to be blocked by accident, through the `if (!item) continue`
+         *   further down — now it is stated outright.
+         *
+         *   规划 Run 没有工作项，恢复动作一条都不适用；此前靠下面那句意外挡住。
          */
         eq(agentRuns.kind, 'execution'),
         isNull(agentRuns.recoveryAppliedAt),
-        // 退避未到点的先放着
+        // Leave the ones whose backoff has not elapsed yet
         or(isNull(agentRuns.recoveryNotBefore), lte(agentRuns.recoveryNotBefore, now)),
       ),
     )
@@ -64,7 +72,9 @@ export async function runRecoveryRound(
   for (const run of pending) {
     if (!run.recoveryAction) continue;
 
-    // ★ 抢占：先把 appliedAt 写上，条件里带 isNull 保证并发下只有一个 worker 拿到
+    // ★ Claim it: write appliedAt first — the isNull in the WHERE guarantees that exactly one
+    //   worker wins the row under concurrency
+    //   抢占：先写 appliedAt，isNull 条件保证并发下只有一个 worker 拿到
     const claimed = await db
       .update(agentRuns)
       .set({ recoveryAppliedAt: now })
@@ -72,14 +82,18 @@ export async function runRecoveryRound(
       .returning({ id: agentRuns.id });
     if (claimed.length === 0) continue;
 
-    // ★ 上面已按 kind='execution' 过滤，workItemId 必然非空
+    // ★ Filtered by kind='execution' above, so workItemId is necessarily non-null
+    //   上面已按 kind='execution' 过滤，workItemId 必然非空
     if (!run.workItemId) continue;
     const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
     if (!item) continue;
 
     /**
-     * ★ 任务已经离开 failed 了就别再动它 —— 人可能已经手动接管、
-     *   重试过或者直接关掉了。自动恢复插进去只会打断人的处置。
+     * ★ If the work item has already left `failed`, leave it alone — someone may have taken it
+     *   over by hand, retried it, or simply closed it. Automatic recovery barging in at that
+     *   point only cuts across what that person is doing.
+     *
+     *   任务已经离开 failed 就别再动它：自动恢复插进去只会打断人的处置。
      */
     if (item.status !== 'failed') {
       outcomes.push({
@@ -138,9 +152,11 @@ async function applyOne(
       if (!moved.ok) return record(false, `无法回到 ready：${JSON.stringify(moved)}`);
 
       /**
-       * ★ retry_with_context 不需要在这里手动拼上下文 ——
-       *   buildRunContext 本来就会把历次失败的 errorMessage + selfReport
-       *   作为 must_read 带上。这里补的是「为什么重试」这条元信息。
+       * ★ retry_with_context does not need context stitched together by hand here —
+       *   buildRunContext already carries every past failure's errorMessage + selfReport as
+       *   must_read. What is added below is the one thing it lacks: why this retry is happening.
+       *
+       *   历次失败的详情 buildRunContext 已经带上了，这里补的是「为什么重试」这条元信息。
        */
       const result = await dispatchRun(
         db,
@@ -236,11 +252,13 @@ async function applyOne(
 }
 
 /**
- * 需要人拍板的那几类：建一条 Decision。
+ * For the actions that need a human verdict: create a Decision / 需要人拍板的那几类建一条决策。
  *
- * ★ 不建 Decision 的话，这些动作等于什么都没发生 —— 任务停在 failed，
- *   而「为什么不自动重试」这个答案只存在于一条事件 payload 里，
- *   没有任何人会去看。
+ * ★ Without a Decision these actions amount to nothing having happened — the work item sits in
+ *   `failed`, and the answer to "why is it not retrying?" exists only inside an event payload
+ *   that nobody is ever going to read.
+ *
+ *   不建 Decision 等于什么都没发生：任务停在 failed，理由埋在没人会看的事件 payload 里。
  */
 async function escalate(
   db: Database,
@@ -282,9 +300,12 @@ async function escalate(
       whyHuman: spec.whyHuman,
       consequence: '不处理则该任务停留在失败状态，其下游任务无法开始',
       /**
-       * ★ 结构化副本。带上**恢复动作**（`action`）而不是那句中文 ——
-       *   界面据此挑一句本地化的说法，认不出来时再回落到 `whyHuman`。
-       *   带中文过去只是把同一个问题挪个位置。
+       * ★ Structured copy. It carries the **recovery action** (`action`) rather than the Chinese
+       *   sentence — the UI picks a localized wording from that code and only falls back to
+       *   `whyHuman` when it doesn't recognize the code. Passing the Chinese sentence along
+       *   would just relocate the same problem.
+       *
+       *   带的是恢复动作码而不是那句中文：界面据此挑本地化说法，认不出来才回落 whyHuman。
        */
       reasonDetail: {
         whyHuman: {

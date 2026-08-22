@@ -13,21 +13,28 @@ import { loadProjectGrants, resolveAgentAccess } from './access';
 type WorkItemRow = typeof workItems.$inferSelect;
 
 /**
- * 执行主体匹配。
+ * Resolve which executor should take a work item / 执行主体匹配。
  *
- * ★ 抽出来的理由不是「代码复用」，是**口径统一**：调度器选 Agent 和
- *   失败恢复找替补，如果各算一套，会出现「恢复策略说有替补可换，
- *   调度器却认为没有」这种自相矛盾的状态，而且极难复现。
+ * ★ This lives in one place for **one verdict**, not for code reuse: the scheduler picks an
+ *   Agent and failure recovery looks for a stand-in. Two implementations produce contradictory
+ *   states — "recovery says a replacement is available, the scheduler says there is none" —
+ *   and those are brutally hard to reproduce.
  *
- * ★★ 候选来自**本项目成员**，不是整个组织。
+ *   抽出来的理由不是「代码复用」，是**口径统一**：调度器选 Agent 和失败恢复找替补，
+ *   各算一套就会互相打架，而且极难复现。
  *
- *   此前这里是 `eq(agents.orgId, item.orgId)` —— 组织里任何一个 Agent
- *   都可能被派到任何一个项目上。项目是权限与上下文的边界：人类那边
- *   一直靠 project_members 守着，Agent 这边漏了整整一层。
+ * ★★ Candidates come from **this project's members**, not from the whole organization.
  *
- *   仍然把**非本项目**的 Agent 一并取出来交给 domain 判，而不是在 SQL 里
- *   过滤掉：候选面板要能显示「它不在这个项目里」这条拒绝理由，
- *   否则用户看到的是一个莫名其妙的空列表。
+ *   This used to be `eq(agents.orgId, item.orgId)` — any Agent in the org could be dispatched
+ *   onto any project. A project is the boundary for both permissions and context: humans have
+ *   always been gated by project_members, and the Agent side was missing that layer entirely.
+ *
+ *   Agents **outside** the project are still fetched and handed to domain rather than filtered
+ *   out in SQL: the candidate panel has to be able to show "it is not in this project" as the
+ *   rejection reason, otherwise the user is left staring at an inexplicably empty list.
+ *
+ *   候选来自本项目成员，不是整个组织。非本项目的 Agent 仍然一并取出来交给 domain 判，
+ *   而不是在 SQL 里过滤掉 —— 否则用户看到的是一个没有任何理由的空列表。
  */
 export async function resolveExecutor(
   db: Database,
@@ -52,12 +59,16 @@ export async function resolveExecutor(
   const members = new Set(memberRows.map((m) => m.actorId));
 
   /**
-   * ★★ 候选筛选必须和派发用**同一份**生效范围。
+   * ★★ Candidate filtering must use the **same** effective scopes that dispatch uses.
    *
-   *   项目级仓库对项目内 Agent 默认只读（effectiveResourceScopes）。这里若还
-   *   按 agents.resourceScopes 原样判，会出现「调度器说没有候选，而真派下去
-   *   其实能跑」—— 候选面板给出的拒绝理由是「资源范围里没有 X」，
-   *   把人指向去给每个 Agent 配一遍授权，而那件事平台已经替他做了。
+   *   A project-level repository is read-only-by-default for every Agent in that project
+   *   (effectiveResourceScopes). Judging by the raw agents.resourceScopes here instead produces
+   *   "the scheduler says there is no candidate, yet dispatching by hand actually runs" — and
+   *   the panel's rejection reason ("X is not in the resource scopes") sends the user off to
+   *   grant that access on every single Agent, something the platform already did for them.
+   *
+   *   候选筛选必须和派发用同一份生效范围：项目级仓库对项目内 Agent 默认只读，
+   *   按原始 resourceScopes 判会把人指向一件平台已经替他做完的事。
    */
   const projectRepos = await db
     .select({ ref: repositories.ref })
@@ -79,11 +90,16 @@ export async function resolveExecutor(
   const loadMap = new Map(loads.map((l) => [l.agentId, l.n]));
 
   /**
-   * ★ 今日用量按**自然日**统计，与 tokenLimitDaily 的语义对齐。
-   *   用滚动 24 小时的话，「今天的额度」会在半夜之后仍然被昨天的消耗占着。
+   * ★ Today's usage is counted per **calendar day**, matching what tokenLimitDaily means.
+   *   With a rolling 24-hour window, "today's budget" would still be occupied by yesterday's
+   *   spend well past midnight.
    *
-   * ★ 四类 token 必须一起加。少一类就是少算，而少算只会让额度显得没用完，
-   *   于是本该被拦下的派发照常发出去 —— 闸门失效的方向永远是「放行」。
+   * ★ All four token counters have to be added together. Dropping one under-counts, and
+   *   under-counting only ever makes the budget look unspent, so a dispatch that should have
+   *   been held back goes out anyway — this gate always fails in the "allow" direction.
+   *
+   *   今日用量按自然日算，与 tokenLimitDaily 对齐；四类 token 必须一起加，
+   *   少算一类的后果方向永远是放行。
    */
   const spent = await db
     .select({
@@ -94,21 +110,28 @@ export async function resolveExecutor(
       ),
     })
     .from(agentRuns)
-    // ★ 按 createdAt 不按 startedAt：后者可空（排队中的 Run 还没开始），
-    //   用它会把已经排上队、马上要花钱的那些漏出统计
+    // ★ Filter on createdAt, not startedAt: the latter is nullable (a queued Run has not begun),
+    //   so it would drop Runs already in line and about to spend out of the tally
+    //   按 createdAt 不按 startedAt：后者可空，用它会漏掉已排队、马上要花钱的 Run
     .where(gte(agentRuns.createdAt, sql`date_trunc('day', now())`))
     .groupBy(agentRuns.agentId);
   const spentMap = new Map(spent.map((s) => [s.agentId, Number(s.total ?? 0)]));
 
   /**
-   * ★★ 候选的权限一律走求值器，与派发用**同一个**函数。
+   * ★★ Candidate permissions always go through the resolver — the **same** function dispatch
+   *   calls.
    *
-   *   此前这里直接读 agents 表上的 allowedTools / resourceScopes，而派发
-   *   另算一遍。两条路径的分歧只在某些输入上出现，症状是「调度器说没有
-   *   候选，手动派下去其实能跑」—— 极难复现，因为要先猜到是哪条判定不同。
+   *   This used to read allowedTools / resourceScopes straight off the agents table while
+   *   dispatch computed its own answer. The two paths only diverge on certain inputs, and the
+   *   symptom is "the scheduler says there is no candidate, yet dispatching by hand works" —
+   *   nearly impossible to reproduce, because you first have to guess which check disagrees.
    *
-   *   授权也从组织级变成了项目级：同一个 Agent 在 A 项目能推分支、在 B
-   *   项目只能改工作区，只有在这里按项目求值才看得出来。
+   *   Authorization also moved from org level to project level: the same Agent may push
+   *   branches in project A and only touch the workspace in project B, and that is visible
+   *   only if it is evaluated per project right here.
+   *
+   *   两份实现的代价不是重复代码，是两个对不上的答案；授权本身也是项目级的，
+   *   同一个 Agent 在两个项目里可以是两套。
    */
   const grants = await loadProjectGrants(
     db,
@@ -156,9 +179,11 @@ export async function resolveExecutor(
       status: a.status,
       inProject: members.has(a.id),
       /**
-       * ★ 没有 registry 就不判这一条（当成已注册）。恢复策略与部分测试
-       *   拿不到进程里的注册表，在那里把所有 Agent 判成「没注册」，
-       *   会让「有没有替补」这个问题永远答否。
+       * ★ With no registry, skip this check and treat the Agent as registered. Recovery and
+       *   some tests have no access to the in-process registry; judging every Agent
+       *   "unregistered" there would make "is there a stand-in?" answer no, forever.
+       *
+       *   没有注册表时当成已注册 —— 否则恢复策略永远找不到替补。
        */
       registered: opts.registry ? opts.registry.has(a.id) : true,
       resourceRefs: access.runtimePermissions.resourceScopes
@@ -188,13 +213,17 @@ export async function resolveExecutor(
 }
 
 /**
- * 从工作项元数据里读出执行方式。
+ * Read the execution mode out of a work item's metadata / 从工作项元数据里读出执行方式。
  *
- * ★★ 兼容旧数据：`requiresHuman: true` 等价于 `executionMode: 'human'`。
+ * ★★ Backward compatible with old rows: `requiresHuman: true` means `executionMode: 'human'`.
  *
- *   这一栏是从 requiresHuman 拆出来的（另一半是 approvalGate）。历史工作项
- *   的 typeData 里只有 requiresHuman，读不到就当没要求会把「这活只能人干」
- *   静默降级成「谁都行」—— 而那正是这次拆分要避免的那类沉默变更。
+ *   This field was split out of requiresHuman (the other half became approvalGate). Historical
+ *   work items carry only requiresHuman in typeData, and defaulting to "no requirement" when the
+ *   new field is absent would silently downgrade "only a human may do this" into "anyone may" —
+ *   exactly the class of silent change the split was meant to rule out.
+ *
+ *   历史数据里只有 requiresHuman，读不到就当没要求，等于把「只能人干」静默降级成
+ *   「谁都行」。
  */
 export function executionModeOf(meta: Record<string, unknown>): ExecutionMode {
   const parsed = ExecutionMode.safeParse(meta['executionMode']);
@@ -202,7 +231,7 @@ export function executionModeOf(meta: Record<string, unknown>): ExecutionMode {
   return meta['requiresHuman'] === true ? 'human' : 'auto';
 }
 
-/** 除当前 Agent 外还有没有能接手的。返回最合适的那个的 id */
+/** Whether anyone other than the current Agent can take over; returns the best fit's id */
 export async function findAlternativeAgent(
   db: Database,
   item: WorkItemRow,

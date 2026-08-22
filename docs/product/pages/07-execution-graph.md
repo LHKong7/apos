@@ -1,261 +1,265 @@
-# 07 Execution Graph 执行图
+# 07 Execution Graph
 
-## 1. 页面信息
+*[中文版本 / Chinese version](07-execution-graph.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/graph`<br>`?focus=:itemId` 锚定节点 |
-| 层级 | 三级页面 |
-| 主要角色 | `pm` / `tech_lead`（主要）；`member`（查看自己所在链路） |
-| 优先级 | P1（MVP 提供只读版本，编辑能力可后置） |
-| 对应产品文档 | 8.3.3 执行图生成、8.6.2 依赖管理、8.6.6 延期预测 |
+| Route | `/projects/:projectId/graph`<br>`?focus=:itemId` anchors on a node |
+| Level | Third-level page |
+| Primary roles | `pm` / `tech_lead` (main audience); `member` (looks at the chain they are on) |
+| Priority | P1 (MVP ships a read-only version; editing can come later) |
+| Product docs | 8.3.3 Execution graph generation, 8.6.2 Dependency management, 8.6.6 Delay forecasting |
 
 ---
 
-## 2. 页面目标
+## 2. Goal
 
-看板回答"每张卡片在哪一列"，执行图回答**"这些卡片之间是什么关系，哪条链决定了项目什么时候结束"**。
+The board answers "which column is each card in." The execution graph answers **"how are these cards related, and which chain decides when the project finishes."**
 
-要回答：
+It has to answer:
 
-1. 关键路径是哪条？还剩多久？
-2. 阻塞点卡住了下游多少工作？
-3. 哪些工作其实可以并行但被串行安排了？
-4. 人类审批节点插在哪里？它们是不是瓶颈？
+1. Which path is the critical one? How much of it is left?
+2. How much downstream work is a given blocker holding up?
+3. What is running in series that could just as well run in parallel?
+4. Where do the human approval gates sit, and are they the bottleneck?
 
-**这是项目负责人诊断"为什么慢"的主要工具。**
+**This is the project lead's primary tool for diagnosing "why is this slow."**
 
 ---
 
-## 3. 入口与出口
+## 3. Ways In and Out
 
-**入口**：项目内 Tab「执行图」；看板视图切换器；项目总览的延期风险卡片；计划确认页的依赖图视图；Work Item 详情「在执行图中查看」。
+**In**: the "Execution graph" tab inside a project; the board's view switcher; the delay-risk card on the project overview; the dependency-graph view on the plan approval page; "View in execution graph" on a work item detail.
 
-**出口**：
+**Out**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 点击节点 | `06 Work Item 详情`（侧栏，不离开图） |
-| 双击节点 | 展开子图（若该节点有子任务） |
-| 点击审批节点 | `11 决策详情` |
-| 点击 Agent 节点上的运行标记 | `09 Agent Run 详情` |
-| 「回到看板」 | `05 Autonomous Board`（保持筛选一致） |
+| Click a node | `06 Work Item Detail` (side drawer — you stay in the graph) |
+| Double-click a node | Expands the subgraph (if the node has subtasks) |
+| Click an approval node | `11 Decision Detail` |
+| Click the run badge on an agent node | `09 Agent Run Detail` |
+| "Back to board" | `05 Autonomous Board` (filters carried over unchanged) |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 订单系统重构 / 执行图    [布局:分层 ▾] [🔍 ─────●─── ] [适应窗口] [导出]  │
-│ 高亮: [✓关键路径] [✓阻塞链] [ 我的任务] [ 高风险]      筛选:[全部阶段 ▾]  │
-├────────────────────────────────────────────────────────────────────────────┤
-│  关键路径 4.5 天 · 剩余 2.8 天 · ⚠ 延期风险 68%（主因：决策等待 8h12m）    │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│   ┌──────────┐                                                             │
-│   │✓ 慢查询   │                                                             │
-│   │  日志分析 │                                                             │
-│   │ 🤖 4h     │                                                             │
-│   └────┬─────┘                                                             │
-│        │                                                                    │
-│   ┌────▼─────┐      ┌──────────┐                                           │
-│   │✓ 设计搜索 ├─────▶│🤖 实现多  │                                           │
-│   │  API 接口 │      │  条件查询 │──┐                                        │
-│   │ 🤖 3h     │      │  API      │  │                                        │
-│   └──────────┘      │ ▓▓▓▓▓░65%│  │      ┌──────────┐                      │
-│                     └──────────┘  ├─────▶│⏸ 集成测试 │                      │
-│   ┌══════════┐      ┌──────────┐  │      │ 🤖 待开始 │                      │
-│   ║⛔ 数据库  ║      │⏸ 查询结果│  │      └────┬─────┘                      │
-│   ║  索引变更 ║─────▶│  缓存     │──┘           │                            │
-│   ║ 👤王强    ║      │ 🤖 待开始 │              │                            │
-│   ║ 阻塞8h12m ║      └──────────┘         ┌────▼─────┐    ┌──────────┐      │
-│   ╚═══╦══════╝                            │◇ 多 Agent│    │◆ 生产发布 │      │
-│       ║                                   │  交叉审核 │───▶│  审批     │      │
-│   ┌═══▼══════┐                            └──────────┘    │ 👤 张伟   │      │
-│   ║◆ DBA 审批 ║  ⏰ 超时 2h                                 └────┬─────┘      │
-│   ║ 👤 王强   ║  [催办] [改派]                                   │            │
-│   ╚══════════╝                                            ┌─────▼────┐      │
-│                                                           │🚀 灰度发布│      │
-│   ═══ 关键路径   ─── 普通依赖   ┄┄ 数据依赖                └──────────┘      │
-│   ◆ 审批节点  ◇ 验证节点  ⏸ 等待  🤖 Agent  👤 人类                        │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 💡 图中发现的问题 (3)                                                       │
-│ · ⛔「数据库索引变更」阻塞 8h12m，下游 5 个任务等待，占关键路径 62%          │
-│   → 建议：催办 DBA / 改派备用审批人 / 拆分为可先行部分        [查看建议]     │
-│ · ⚡「查询结果缓存」与「实现多条件查询 API」无真实依赖，可并行  [调整依赖]   │
-│ · 👤 关键路径上有 2 个人类审批节点，历史平均等待 5.2h         [调整 Policy] │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ Order Refactor / Graph  [Layout: Layered ▾] [🔍 ──●──] [Fit] [Export]                  │
+│ Show: [✓Critical] [✓Blocked] [ My tasks] [ High risk] Filter:[All phases ▾]            │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Critical path 4.5d · 2.8d left · ⚠ 68% delay risk (main cause: decision wait 8h12m)   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                        │
+│   ┌──────────────┐                                                                     │
+│   │✓ Slow query  │                                                                     │
+│   │  log analysis│                                                                     │
+│   │ 🤖 4h        │                                                                     │
+│   └──────┬───────┘                                                                     │
+│          │                                                                             │
+│   ┌──────▼───────┐    ┌──────────────┐                                                 │
+│   │✓ Search API  │    │🤖 Implement  │                                                 │
+│   │  design      ├───▶│  query API   │──┐                                              │
+│   │ 🤖 3h        │    │▓▓▓▓▓░ 65%    │  │                                              │
+│   └──────────────┘    └──────────────┘  │   ┌──────────────┐                           │
+│                                         ├──▶│⏸ Integration│                           │
+│   ┌══════════════┐    ┌──────────────┐  │   │  tests       │                           │
+│   ║⛔ DB index   ║    │⏸ Query      │  │   │🤖 not started│                           │
+│   ║  change      ║───▶│  result cache│──┘   └──────┬───────┘                           │
+│   ║ 👤 Wang Qiang║    │🤖 not started│             │                                   │
+│   ║ blocked 8h12m║    └──────────────┘             │                                   │
+│   ╚═══╦══════════╝                          ┌──────▼───────┐      ┌──────────────┐     │
+│       ║                                     │◇ Multi-agent │      │◆ Prod release│     │
+│   ┌═══▼══════════┐                          │  cross-review├─────▶│  approval    │     │
+│   ║◆ DBA approval║  ⏰ Overdue 2h           └──────────────┘      │ 👤 Zhang Wei │     │
+│   ║ 👤 Wang Qiang║  [Nudge] [Reassign]                            └──────┬───────┘     │
+│   ╚══════════════╝                                                       │             │
+│                                                                   ┌──────▼───────┐     │
+│                                                                   │🚀 Canary     │     │
+│                                                                   │  release     │     │
+│  ═══ Critical path   ─── Dependency   ┄┄ Data dependency          └──────────────┘     │
+│  ◆ Approval  ◇ Verification  ⏸ Waiting  🤖 Agent  👤 Human                            │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ 💡 Findings in this graph (3)                                                          │
+│ · ⛔ "DB index change" blocked 8h12m — 5 downstream tasks wait, 62% of critical path   │
+│   → Fix: nudge DBA / reassign to backup / split off ready part            [See options]│
+│ · ⚡ "Query result cache" has no real dependency on "Multi-filter API"      [Edit deps]│
+│ · 👤 2 human approval gates on the critical path; avg wait 5.2h           [Tune Policy]│
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 节点（文档 8.3.3）
+### 5.1 Nodes (product doc 8.3.3)
 
-七种节点类型，形状与颜色都要区分（不能只靠颜色，考虑色觉障碍）：
+Seven node types, distinguished by shape *and* color — never by color alone, since some readers cannot tell the colors apart:
 
-| 类型 | 形状 | 图标 | 说明 |
+| Type | Shape | Icon | Notes |
 | --- | --- | --- | --- |
-| 人类任务 | 圆角矩形 | 👤 | 执行者为人类 |
-| Agent 任务 | 矩形 | 🤖 | 执行者为 Agent |
-| 审批节点 | 菱形（双线边框） | ◆ | Human Gate |
-| 自动化节点 | 矩形（虚线边框） | ⚙ | CI / 部署等自动步骤 |
-| 等待节点 | 圆形 | ⏸ | 等待外部条件 |
-| 验证节点 | 六边形 | ◇ | 测试 / Review |
-| 发布节点 | 矩形（粗边框） | 🚀 | Release |
+| Human task | Rounded rectangle | 👤 | Executed by a person |
+| Agent task | Rectangle | 🤖 | Executed by an agent |
+| Approval node | Diamond (double border) | ◆ | Human gate |
+| Automation node | Rectangle (dashed border) | ⚙ | CI, deploy, and other automatic steps |
+| Waiting node | Circle | ⏸ | Waiting on an external condition |
+| Verification node | Hexagon | ◇ | Test / review |
+| Release node | Rectangle (heavy border) | 🚀 | Release |
 
-**节点内容**（随缩放级别变化）：
+**What a node shows** (varies with zoom level):
 
-- 缩小：只有图标 + 状态色
-- 中等：图标 + 标题（截断）+ 状态
-- 放大：+ 执行者、工期、进度条、成本
+- Zoomed out: icon plus status color, nothing else
+- Medium: icon + title (truncated) + status
+- Zoomed in: adds executor, duration, progress bar, cost
 
-**节点状态色**：完成绿、执行中蓝（呼吸）、阻塞橙、失败红、等待灰、待审批橙（脉冲一次）。
+**Status colors**: done green, executing blue (breathing), blocked orange, failed red, waiting gray, awaiting approval orange (pulses once).
 
-### 5.2 边（文档 8.3.3）
+### 5.2 Edges (product doc 8.3.3)
 
-| 类型 | 样式 |
+| Type | Style |
 | --- | --- |
-| 前置依赖（Finish-to-Start） | 实线箭头 |
-| 数据依赖 | 虚线箭头 + 数据图标 |
-| 审批依赖 | 双线箭头 |
-| 触发关系 | 实线 + 闪电图标 |
-| 重试关系 | 曲线自环 |
-| 回退关系 | 反向红色虚线 |
+| Prerequisite (finish-to-start) | Solid arrow |
+| Data dependency | Dashed arrow + data icon |
+| Approval dependency | Double-line arrow |
+| Trigger relation | Solid line + lightning icon |
+| Retry relation | Curved self-loop |
+| Rollback relation | Reversed red dashed line |
 
-**关键路径**：路径上的节点与边用加粗双线渲染，与其他边形成明显对比。
+**The critical path**: nodes and edges along it are drawn with heavy double lines, so they stand out sharply against everything else.
 
-### 5.3 关键路径信息条
+### 5.3 Critical Path Bar
 
-顶部一行显示：关键路径总时长、剩余时长、延期风险概率、**主要原因**。
+A single line at the top: total critical-path duration, time remaining, delay-risk probability, and **the main cause**.
 
-「主因：决策等待 8h12m」这句归因是本页价值的浓缩——它直接告诉负责人该去解决什么。
+That attribution — "main cause: decision wait 8h12m" — is this page's value condensed into one clause. It tells the lead directly what to go fix.
 
-点击可展开完整的关键路径任务序列（列表形式），每项显示计划 vs 实际耗时。
+Click it to expand the full critical-path sequence as a list, each entry showing planned vs. actual elapsed time.
 
-### 5.4 高亮模式
+### 5.4 Highlight Modes
 
-多选开关，叠加显示：
+Multi-select toggles that stack:
 
-| 模式 | 效果 |
+| Mode | Effect |
 | --- | --- |
-| 关键路径 | 路径加粗，非路径节点降低不透明度到 40% |
-| 阻塞链 | 阻塞节点及其所有下游节点标红边框，显示"影响 N 个任务" |
-| 我的任务 | 我负责或需我决策的节点高亮 |
-| 高风险 | 高风险及以上节点加红角标 |
-| Agent 分布 | 按 Agent 给节点着不同色（诊断某 Agent 负载集中） |
+| Critical path | The path thickens; everything off it drops to 40% opacity |
+| Blocked chain | The blocked node and every node downstream of it get a red border, labeled "affects N tasks" |
+| My tasks | Highlights nodes I own or that need a decision from me |
+| High risk | Adds a red corner badge to nodes at high risk and above |
+| Agent distribution | Colors nodes by agent (useful for spotting one agent carrying everything) |
 
-### 5.5 布局
+### 5.5 Layouts
 
-| 布局 | 适用 |
+| Layout | Good for |
 | --- | --- |
-| 分层（默认） | 按依赖深度从左到右，最直观 |
-| 时间轴 | 横轴为真实时间，节点按计划时间放置，能看出并行度与空档 |
-| 阶段泳道 | 按六阶段分泳道，与看板概念对齐 |
-| 执行者泳道 | 按 Agent / 人分泳道，看谁是瓶颈 |
+| Layered (default) | Left to right by dependency depth — the most immediately readable |
+| Timeline | The horizontal axis is real time and nodes sit at their planned times, so parallelism and idle gaps become visible |
+| Phase swimlanes | One lane per phase, matching the board's six phases |
+| Executor swimlanes | One lane per agent or person — shows who the bottleneck is |
 
-布局切换有过渡动画（节点平滑移动），帮助用户保持心智映射。
+Switching layouts animates the transition (nodes glide to their new positions), which keeps the user's mental map intact.
 
-### 5.6 交互
+### 5.6 Interaction
 
-| 操作 | 行为 |
+| Action | Behavior |
 | --- | --- |
-| 悬停节点 | 显示 tooltip：完整标题、执行者、状态、耗时、成本、阻塞原因 |
-| 悬停节点（高亮模式） | 该节点的所有上下游路径高亮，其余淡出——**这是理解依赖最有效的交互** |
-| 单击 | 侧栏打开 Work Item 详情 |
-| 双击 | 展开/收起子图 |
-| 右键 | 快捷菜单：改派、调整依赖、拆分、催办、在看板中定位 |
-| 框选 | 多选节点 → 批量操作 |
-| 滚轮 / 手势 | 缩放；`适应窗口` 一键重置 |
-| 拖拽画布 | 平移 |
+| Hover a node | Tooltip: full title, executor, status, elapsed, cost, reason it's blocked |
+| Hover a node (highlight mode) | Every upstream and downstream path through that node lights up and the rest fades — **this is the single most effective way to understand a dependency graph** |
+| Single click | Opens the work item detail in the side drawer |
+| Double click | Expands / collapses the subgraph |
+| Right click | Context menu: reassign, edit dependencies, split, nudge, locate on the board |
+| Marquee select | Multi-select nodes → batch actions |
+| Scroll / gesture | Zoom; `Fit` resets in one click |
+| Drag the canvas | Pan |
 
-### 5.7 编辑依赖（P1）
+### 5.7 Editing Dependencies (P1)
 
-MVP 只读。P1 支持：
+Read-only in MVP. P1 adds:
 
-- 拖拽节点边缘连线创建依赖
-- 点击边删除依赖
-- 任何改动实时重算关键路径与工期，并在顶部显示 `工期 4.5天 → 3.8天 ↓`
-- 改动需 [应用变更] 确认，生成新的 Plan 版本走 `04 计划确认` 流程（不能绕过计划批准）
+- Drag from a node's edge to another node to create a dependency
+- Click an edge to delete the dependency
+- Any change recomputes the critical path and duration live, and the header shows `Duration 4.5d → 3.8d ↓`
+- Changes require [Apply changes] to confirm; that produces a new plan version which goes through `04 Plan Approval` (there is no way around plan approval)
 
-### 5.8 图中发现的问题
+### 5.8 Findings in This Graph
 
-系统自动分析图结构给出的诊断，这是本页的"智能"所在：
+Diagnostics the system derives automatically from the graph structure. This is where the page earns the word "smart":
 
-| 诊断类型 | 判据 | 建议 |
+| Diagnostic | Trigger | Suggestion |
 | --- | --- | --- |
-| 阻塞影响放大 | 阻塞节点下游任务数 ≥ 3 | 催办 / 改派 / 拆分 |
-| 伪串行 | 两任务无数据依赖但被串行安排 | 调整为并行 |
-| 审批瓶颈 | 关键路径上人类节点历史等待 > 阈值 | 调整 Policy 或增加备用审批人 |
-| 单点依赖 | 某节点被 ≥ 5 个节点依赖 | 提前排期或拆分 |
-| Agent 过载 | 某 Agent 承担关键路径 ≥ 60% | 分散或增加并发 |
-| 依赖成环 | 检测到环 | 必须处理，阻断执行 |
+| Blocker amplification | A blocked node has ≥ 3 downstream tasks | Nudge / reassign / split |
+| False serialization | Two tasks with no data dependency scheduled in series | Run them in parallel |
+| Approval bottleneck | A human node on the critical path whose historical wait exceeds the threshold | Adjust the policy, or add a backup approver |
+| Single point of dependency | A node that ≥ 5 other nodes depend on | Schedule it earlier, or split it |
+| Agent overload | One agent carries ≥ 60% of the critical path | Spread the work out, or raise concurrency |
+| Dependency cycle | A cycle is detected | Must be resolved; execution is blocked until it is |
 
-每条诊断带一个可执行动作，**不做只诊断不给方案的提示**。
-
----
-
-## 6. 核心交互流程
-
-**诊断延期原因**
-
-```
-项目总览显示"延期风险 68%" → 点击进入执行图
-→ 顶部条显示"主因：决策等待 8h12m"
-→ 开启"阻塞链"高亮 → 看到 DBA 审批阻塞了下游 5 个任务
-→ 右键审批节点 → [催办] / [改派给备用 DBA]
-```
-
-**优化并行度**
-
-```
-切换"时间轴"布局 → 发现大量空档
-→ 看诊断区提示"查询结果缓存 可与 实现 API 并行"
-→ [调整依赖] → 删除该依赖边 → 工期 4.5 → 3.8 天
-→ [应用变更] → 走计划确认流程
-```
-
-**理解某任务的影响面**
-
-```
-悬停节点 → 上下游链路高亮
-→ 一眼看出"如果这个任务延期，会影响哪些下游"
-```
+Every diagnostic carries an executable action. **We do not ship a diagnosis with no remedy attached.**
 
 ---
 
-## 7. 状态设计
+## 6. Core Flows
 
-| 状态 | 处理 |
+**Diagnosing a delay**
+
+```
+Project overview shows "68% delay risk" → click through to the execution graph
+→ header reads "main cause: decision wait 8h12m"
+→ turn on "Blocked chain" → the DBA approval is holding up 5 downstream tasks
+→ right-click the approval node → [Nudge] / [Reassign to backup DBA]
+```
+
+**Improving parallelism**
+
+```
+Switch to the "Timeline" layout → lots of idle gaps show up
+→ the findings panel says "Query result cache can run alongside Implement API"
+→ [Edit deps] → delete that edge → duration 4.5d → 3.8d
+→ [Apply changes] → goes through plan approval
+```
+
+**Understanding a task's blast radius**
+
+```
+Hover a node → its upstream and downstream chains light up
+→ "if this one slips, here is exactly what slips with it"
+```
+
+---
+
+## 7. States
+
+| State | Handling |
 | --- | --- |
-| 加载 | 骨架图（灰色节点占位），布局计算完成后淡入 |
-| 计划未批准 | 显示计划草稿的图（只读，水印"草稿"）+ [去批准] |
-| 节点 < 5 | 图价值不大，提示「任务较少，看板可能更合适」+ 快捷跳转 |
-| 节点 > 200 | 默认折叠到二级，提供「只看关键路径」快捷模式；提示可能有性能影响 |
-| 依赖成环 | 环路节点全部标红并用红色环形边连接，顶部红条阻断提示 + [让 Agent 修复][手动断开] |
-| 实时更新 | 节点状态色变化 + 完成节点的边"通电"动画（沿边流动一次） |
-| 布局计算超时 | 降级为简单分层布局并提示 |
+| Loading | Skeleton graph (gray placeholder nodes); fades in once layout is computed |
+| Plan not yet approved | Shows the draft plan's graph (read-only, watermarked "Draft") + [Go approve] |
+| Fewer than 5 nodes | The graph adds little here: "Not many tasks yet — the board may serve you better" + a shortcut to it |
+| More than 200 nodes | Collapsed to two levels by default, with a "Critical path only" shortcut mode; warns that performance may suffer |
+| Dependency cycle | Every node in the cycle turns red, joined by red loop edges; a red banner blocks execution + [Let an agent fix it] [Break it manually] |
+| Live updates | Status colors change, and completing a node sends a "current" animation once along its outgoing edges |
+| Layout computation times out | Falls back to a plain layered layout and says so |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看 | 项目成员 / `viewer` |
-| 编辑依赖（P1） | `pm` / `tech_lead`，且需走计划变更批准 |
-| 右键快捷操作 | 与对应操作的权限一致（改派需 `pm` 等） |
-| 导出图片 / JSON | 项目成员 |
+| View | Project member / `viewer` |
+| Edit dependencies (P1) | `pm` / `tech_lead`, and the change goes through plan-change approval |
+| Right-click shortcuts | Same permission as the underlying action (reassigning needs `pm`, and so on) |
+| Export image / JSON | Project member |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Plan`（依赖图与关键路径）、`WorkItem`、`Decision`（审批节点）、`AgentRun`（节点运行态）
+**Domain objects**: `Plan` (dependency graph and critical path), `WorkItem`, `Decision` (approval nodes), `AgentRun` (a node's run state)
 
-**接口**
+**Endpoints**
 
 ```
 GET /api/projects/{id}/graph?layout=layered&depth=2
@@ -266,50 +270,50 @@ GET /api/projects/{id}/graph?layout=layered&depth=2
         metrics: { total_days, remaining_days, delay_risk, primary_cause },
         diagnostics: [{ type, severity, message, affected_nodes[], actions[] }] }
 
-POST /api/projects/{id}/graph/simulate      依赖调整的影响预演（不落库）
+POST /api/projects/{id}/graph/simulate      preview the impact of a dependency change (nothing persisted)
      ← { changes: [{ op: 'remove_edge', from, to }] }
      → { new_duration, new_critical_path, conflicts[] }
 
-POST /api/projects/{id}/graph/apply         生成新 Plan 版本 → 走 04 批准
+POST /api/projects/{id}/graph/apply         produces a new plan version → goes through 04 approval
 ```
 
-**渲染**：MVP 用现成图布局库（dagre / elkjs）+ Canvas 或 SVG 渲染。节点 > 100 时改用 Canvas。布局在服务端预计算并缓存，前端只做增量更新。
+**Rendering**: MVP uses an off-the-shelf graph layout library (dagre / elkjs) with Canvas or SVG rendering. Above 100 nodes, switch to Canvas. Layout is precomputed and cached server-side; the front end only applies incremental updates.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it tells us |
 | --- | --- |
-| `graph_viewed{entry_from}` | 从哪进来的——判断本页是诊断工具还是浏览工具 |
-| `diagnostic_action_taken{type}` | **诊断建议的采纳率——本页智能是否有用的直接证据** |
-| `highlight_mode_used{mode}` | 各高亮模式的价值 |
-| `layout_switched{to}` | 布局偏好 |
-| `node_hover_depth` | 用户是否使用上下游高亮理解依赖 |
-| `dependency_edited`（P1） | 人类修正 AI 依赖判断的频率 |
+| `graph_viewed{entry_from}` | Where people arrive from — is this a diagnostic tool or a browsing tool? |
+| `diagnostic_action_taken{type}` | **Adoption rate of the suggestions — direct evidence of whether the page's intelligence is worth anything** |
+| `highlight_mode_used{mode}` | Which highlight modes are actually useful |
+| `layout_switched{to}` | Layout preferences |
+| `node_hover_depth` | Whether people use upstream/downstream highlighting to understand dependencies |
+| `dependency_edited` (P1) | How often humans correct the AI's dependency judgments |
 
-**页面成功标准**：诊断建议采纳率 > 40%；从项目总览延期风险进入本页的用户，70% 会产生一次操作。
+**Success criteria**: suggestion adoption rate > 40%; of users who arrive from the overview's delay-risk card, 70% take an action.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 图过于稀疏（几乎无依赖） | 提示"任务间依赖较少，可考虑增加并行"——这其实是好事 |
-| 图过于密集（边 > 3×节点） | 默认隐藏非关键边，提供「显示全部依赖」开关 |
-| 子图层级 > 3 | 只展开当前关注节点的子图，其余保持折叠 |
-| 节点位置在实时更新中跳动 | 布局稳定性优先：新增节点插入而不重排整图；重排需用户主动触发 |
-| 同时有多条关键路径 | 全部标注，顶部说明「存在 2 条等长关键路径」 |
-| 计划变更导致图结构大改 | 提供 [查看与上一版的差异] 模式 |
-| 导出 | 支持 PNG（含图例）与 JSON（供外部工具分析）；PNG 用于周报 |
+| Graph is very sparse (almost no dependencies) | "Few dependencies between tasks — consider adding parallelism." This is actually good news |
+| Graph is very dense (edges > 3× nodes) | Hide non-critical edges by default, with a "Show all dependencies" toggle |
+| Subgraph nesting deeper than 3 | Expand only the subgraph of the node currently in focus; keep the rest collapsed |
+| Nodes jump around during live updates | Layout stability wins: new nodes are inserted rather than triggering a full re-layout; re-layout only happens when the user asks for it |
+| Multiple critical paths at once | Mark all of them, with a note at the top: "2 critical paths of equal length" |
+| A plan change reshapes the graph substantially | Offer a [Diff against the previous version] mode |
+| Export | PNG (legend included) and JSON (for outside analysis tools); PNG is what goes into the weekly report |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. MVP 是否需要编辑依赖能力？倾向于只读——依赖调整应该通过"要求 Agent 重新规划"来做，更符合产品理念。但用户可能觉得不够直接。
-2. 大图（> 200 节点）的性能方案需要技术验证，是否需要服务端渲染或分片加载？
-3. 诊断规则由谁维护？硬编码规则 vs 让 Project Agent 生成诊断？后者更灵活但成本高、不稳定。倾向于 MVP 硬编码 6 条规则。
-4. 时间轴布局中，未开始的任务用计划时间，已完成的用实际时间，进行中的怎么放？需要设计。
-5. 是否需要"历史回放"（拖时间轴看图在过去某时刻的状态）？对复盘很有价值，但成本高，建议 Post-MVP。
+1. Does MVP need dependency editing at all? We lean read-only — adjusting dependencies ought to happen by *asking the agent to replan*, which fits the product's premise better. But users may find that too indirect.
+2. Performance for large graphs (> 200 nodes) needs technical validation. Do we need server-side rendering or chunked loading?
+3. Who maintains the diagnostic rules? Hard-coded rules vs. having the Project Agent generate diagnoses? The latter is more flexible but costly and unstable. We lean toward six hard-coded rules for MVP.
+4. In the timeline layout, not-started tasks use planned times and finished ones use actual times — where do in-progress tasks go? Needs design.
+5. Do we need "history replay" (scrub the timeline to see the graph as it stood at some past moment)? Very valuable for retrospectives, but expensive; suggest post-MVP.

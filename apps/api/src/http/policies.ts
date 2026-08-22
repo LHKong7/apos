@@ -49,21 +49,25 @@ import {
 import { fail, notFound } from './errors';
 
 /**
- * Policy 配置（页面文档 13 §9）。
+ * Policy configuration (page doc 13 §9). / Policy 配置（页面文档 13 §9）。
  *
- * ★ 这一页管的是「Agent 能自己做什么」。所有写操作都受两条硬约束：
- *   1. 项目规则只能收紧组织规则，永远不能放宽（产品文档 十·权限与安全）；
- *   2. Agent 不能修改 Policy —— 这些端点只认人类身份（登录签发的 JWT），
- *      Agent 回调用的是 run-scoped token，走不到这里。
- *      如果 Agent 能改自己的约束，整个治理体系就失效了。
+ * ★ What this page governs is "what an Agent may do on its own". Every write here is
+ *   bound by two hard constraints:
+ *   1. A project rule may only tighten an org rule, never loosen it (product doc,
+ *      chapter 10, Permissions and Security);
+ *   2. An Agent cannot modify a Policy — these endpoints accept human identity only (the
+ *      JWT issued at login), while an Agent callback carries a run-scoped token and never
+ *      reaches this far. If an Agent could edit its own constraints, the entire governance
+ *      system would be void.
  */
 
 /**
- * 目前接入的数据源。
+ * The data sources actually wired up today.
  *
- * ★ 硬编码不是偷懒 —— 它是一份「我们诚实地知道自己没有什么」的清单。
- *   CI 与安全扫描都还没接，条件里写了 testsResult 的规则永远匹配不上；
- *   体检会据此明确告诉用户「这条规则不会命中」，而不是让它安静地失效。
+ * ★ Hardcoding this is not laziness — it is an honest inventory of what we do *not* have.
+ *   CI and security scanning are not connected yet, so a rule whose condition mentions
+ *   testsResult can never match; the audit uses this list to tell the user outright "this
+ *   rule will never fire" instead of letting it fail silently.
  */
 const WIRED_FACTS: FactKey[] = ['agentReview'];
 
@@ -77,11 +81,11 @@ export async function getPolicies(db: Database, projectId: string) {
 
   const serialize = (p: Policy) => ({
     ...p,
-    /** 用模板拼接，不用大模型 —— 解释与实际执行逻辑必须严格一致（§5.6） */
+    /** Built from templates, not an LLM — the explanation must match execution exactly (§5.6) */
     explanation: explainPolicy(p.condition, p.action),
     hits30d: hitMap.get(p.id)?.hits30d ?? 0,
     avgWaitSeconds: hitMap.get(p.id)?.avgWaitSeconds ?? null,
-    /** 组织级规则在项目内只读（目前没有创建入口，将来有） */
+    /** Org-level rules are read-only inside a project (no creation entry yet; there will be) */
     editable: p.projectId !== null,
   });
 
@@ -91,12 +95,12 @@ export async function getPolicies(db: Database, projectId: string) {
     projectPolicies: rows.filter((p) => p.projectId !== null).map(serialize),
     summary: audit.summary,
     issues: audit.issues,
-    /** 页面要如实说明哪些数据源没接 */
+    /** The page has to state honestly which data sources are not wired up */
     wiredFacts: WIRED_FACTS,
   };
 }
 
-// ── 写操作 ────────────────────────────────────────────────────────────────
+// ── Writes ────────────────────────────────────────────────────────────────
 
 export interface PolicyDraft {
   name: string;
@@ -108,16 +112,19 @@ export interface PolicyDraft {
 }
 
 /**
- * 保存规则（新建或修改）。
+ * Save a rule (create or update).
  *
- * ★ 这里与页面文档 §9 的接口设计有一处刻意的偏离：文档要求放宽类变更
- *   携带 `simulation_id`。但那个 id 是客户端给的 —— 伪造一个字符串就能绕过，
- *   而这道闸恰恰是本页最重要的安全阀（§10「放宽类规则变更 100% 经过模拟验证」）。
+ * ★ This deliberately deviates from the API design in page doc §9: the doc asks a
+ *   loosening change to carry a `simulation_id`. But that id comes from the client — a
+ *   made-up string gets around it, and this gate happens to be the single most important
+ *   safety valve on this page (§10, "100% of loosening rule changes go through
+ *   simulation").
  *
- *   改成服务端在保存时**自己跑一遍模拟**：判定为放宽且模拟发现了与人类判断
- *   不一致的历史案例时，返回 422 并把这些案例带回去，
- *   客户端必须显式 `acknowledgeMismatches` 才能继续。
- *   这样「必须看过模拟结果」是结构上成立的，不依赖客户端诚实。
+ *   So instead the server **runs the simulation itself** at save time: when the change is
+ *   judged to be a loosening and the simulation turns up historical cases where the human
+ *   decided differently, it answers 422 and hands those cases back; the client must pass
+ *   `acknowledgeMismatches` explicitly to continue. That makes "you must have seen the
+ *   simulation" structurally true rather than dependent on the client being honest.
  */
 export async function savePolicy(
   db: Database,
@@ -128,11 +135,13 @@ export async function savePolicy(
     policyId?: string;
     acknowledgeMismatches?: boolean;
     /**
-     * 权限判定回调（09-security §2.3 的不对称设计）。
+     * Authorization callback (the asymmetric design of 09-security §2.3).
      *
-     * ★ 收紧与放宽是两档权限，而「这次改动算哪一档」要把新旧规则
-     *   各跑一遍才知道 —— 路由层只能挡住连收紧都不够格的人。
-     *   所以判定必须在这里、在方向算出来之后，用回调把结论问回去。
+     * ★ Tightening and loosening are two different permissions, and which one this change
+     *   counts as is only known after running the old and new rule sets against each
+     *   other — the route layer can only stop someone not even entitled to tighten. So the
+     *   check has to happen here, after the direction is computed, by asking back through
+     *   this callback.
      */
     assertCan?: (permission: 'policy.tighten' | 'policy.loosen') => void;
   } = {},
@@ -167,15 +176,17 @@ export async function savePolicy(
   let simulation: SimulationResult | null = null;
 
   /**
-   * ★★ 权限判定要在跑模拟**之前**。
+   * ★★ Authorization has to happen **before** the simulation runs.
    *
-   *   模拟要扫 90 天的历史评估记录，是这条路径上最贵的一步。
-   *   放在权限之后判，等于让一个没资格放宽规则的人也能把它跑一遍 ——
-   *   既白烧数据库，又把「哪些历史任务会被自动放行」这份信息
-   *   送给了不该看到它的人。判定顺序在这里不只是效率问题。
+   *   The simulation scans 90 days of historical evaluation records and is the most
+   *   expensive step on this path. Checking permission after it would let someone with no
+   *   right to loosen a rule run it anyway — burning database time for nothing, and
+   *   handing "which historical tasks would have been auto-approved" to a person who
+   *   should not see it. The order here is not merely an efficiency matter.
    *
-   *   方向的判据与审计口径保持一致（见下方 direction 的说明）：
-   *   一条会自动放行的规则，即使场景网格没变松，也按放宽处理。
+   *   The direction test matches the audit's (see the note on `direction` below): a rule
+   *   that auto-approves counts as a loosening even when the scenario grid did not get
+   *   any looser.
    */
   if (opts.assertCan) {
     const willAutoApprove = isAutoApprove(candidate.action) && candidate.enabled;
@@ -183,16 +194,19 @@ export async function savePolicy(
   }
 
   /**
-   * ★ 只要这条规则会自动放行，就跑一遍模拟 —— 判据不是「场景网格有没有变松」。
+   * ★ Run the simulation whenever this rule auto-approves — the test is *not* "did the
+   *   scenario grid get looser".
    *
-   *   两者不等价，而且差别是会出事的那种：一条
-   *   「中低风险部署自动放行」的规则，在网格上可能一个场景都没放宽
-   *   （那些场景本来就被别的规则或默认策略放行了），
-   *   但它照样会自动批准历史上 10 个被人驳回过的任务。
-   *   按网格判，这条规则会一路绿灯保存下去，而这一页最重要的安全阀
-   *   （§10「放宽类规则变更 100% 经过模拟验证」）就形同虚设。
+   *   The two are not equivalent, and the gap is the kind that causes incidents: a rule
+   *   like "auto-approve low- and medium-risk deploys" may loosen not a single cell of
+   *   the grid (those scenarios were already passed by another rule or by the default
+   *   policy), and yet it will auto-approve 10 tasks that humans rejected historically.
+   *   Judged by the grid, such a rule sails through save, and the most important safety
+   *   valve on this page (§10, "100% of loosening rule changes go through simulation")
+   *   becomes decorative.
    *
-   *   代价是每次保存放行类规则都多一次历史查询。这个代价该付。
+   *   The cost is one extra historical query every time an auto-approving rule is saved.
+   *   That cost is worth paying.
    */
   if (isAutoApprove(candidate.action) && candidate.enabled) {
     simulation = await runSimulation(db, projectId, candidate, '90d');
@@ -207,9 +221,10 @@ export async function savePolicy(
   }
 
   /**
-   * ★ 审计里的方向要按「这条规则做什么」记，不能只按场景网格有没有变松。
-   *   一条自动放行的规则在网格上可能一个场景都没放宽（那些场景本来就是自动的），
-   *   记成「收紧」就是在审计记录里撒谎 —— 而审计恰恰是事后唯一能查的东西。
+   * ★ The direction recorded in the audit follows *what the rule does*, not merely whether
+   *   the scenario grid got looser. An auto-approving rule may loosen no cell at all
+   *   (those scenarios were already automatic), and recording it as "tighten" is a lie in
+   *   the audit trail — which is the one thing anybody can go back and check afterward.
    */
   const direction = loosened > 0 || (isAutoApprove(candidate.action) && candidate.enabled)
     ? 'loosen'
@@ -246,7 +261,7 @@ export async function savePolicy(
       });
     }
 
-    // ★ Policy 变更是高敏感操作，必须完整审计（产品文档 10.5）
+    // ★ Policy changes are highly sensitive and must be fully audited (product doc 10.5)
     const [row] = await tx.select().from(policies).where(eq(policies.id, candidate.id));
     await tx.insert(policyVersions).values({
       policyId: candidate.id,
@@ -261,46 +276,48 @@ export async function savePolicy(
 }
 
 /**
- * 操作开关矩阵 —— 一行一个操作类型，右边一个开关（页面文档 13，本轮新增）。
+ * The operation switch matrix — one row per operation type, one switch on the right
+ * (page doc 13).
  *
- * ★★ 这是这一页的主入口，理由是概念上少了一层翻译。
+ * ★★ This is the main entry point of the page, because it removes a layer of translation.
  *
- *   用户脑子里想的是「部署这件事，Agent 能不能自己干」。旧的路径要求他先把
- *   这句话翻译成「一条条件为 operationType == deploy、动作为 allow 的规则」，
- *   再回过头去摘要里确认自己翻译对了没有。看得见的那一行（摘要）
- *   和改得动的那一行（规则）不是同一行 —— 这个断层是这一页最大的成本。
- *   开关把两者合成一行：看得见的就是改得动的。
+ *   What a user thinks is "deploying — can the Agent do that on its own?". The old path
+ *   made them first translate that into "a rule whose condition is operationType ==
+ *   deploy and whose action is allow", then go back to the summary to check whether they
+ *   translated it right. The row they could see (the summary) and the row they could
+ *   change (the rule) were not the same row — that gap was the largest cost on this page.
+ *   The switch fuses them into one row: what you see is what you change.
  *
- * ★★ 一次切换 = **一条规则**，不是一次合并。
+ * ★★ One toggle = **one rule**, not a merge.
  *
- *   诱人的做法是把已有规则一起改掉，好让这一行「干净地」变成用户要的状态。
- *   不这么做：用户手写的规则是他表达过的意图，一次点击不该把它悄悄改写。
- *   开关只在**最前面**加一条（或改它自己上次加的那条），已有规则一条不动。
- *   于是「删掉这条规则即还原」永远成立，而这是一键操作能被信任的前提。
+ *   The tempting move is to rewrite existing rules too, so the row lands "cleanly" in the
+ *   state the user asked for. We do not: a hand-written rule is intent the user already
+ *   expressed, and a single click should not quietly rewrite it. The switch only adds one
+ *   rule at the **front** (or edits the one it added last time) and leaves every existing
+ *   rule untouched. So "delete that rule to undo" always holds — which is the precondition
+ *   for a one-click action being trustworthy.
  *
- * ★★ 但也因此，切换**可能不生效** —— 已有规则或安全底线仍然可能拦在前面。
- *   所以这里保存完必须重新体检一遍，把「这一行现在真的是什么状态」如实返回。
- *   报「已保存」而不报结果，正是这一页最该避免的那种谎：
- *   用户以为放开了，实际没有。
+ * ★★ And precisely because of that, a toggle **may not take effect** — an existing rule or
+ *   the safety floor can still win. So the outcome is re-audited after saving and what
+ *   this row's state truly is now is reported honestly. Answering "saved" without
+ *   reporting the outcome is exactly the kind of lie this page must avoid: the user
+ *   believes they opened something up when they did not.
  *
- * The switch matrix: one row per operation type, one switch per row. A switch
- * adds exactly one rule at the front of the project band (or edits the one it
- * added last time) and never rewrites hand-authored rules, so "delete that rule
- * to undo" always holds. Because of that a switch can fail to take effect — an
- * existing rule or the safety floor may still win — so the outcome is
- * re-audited after saving and reported truthfully rather than as "saved".
+ *   一次切换只加一条规则、不改用户手写的规则，所以「删掉这条规则即还原」永远成立；
+ *   也因此切换可能不生效，保存后必须重新体检并如实返回结果。
  */
 export interface OperationSwitchInput {
   operationType: OperationType;
   verdict: 'auto' | 'human';
-  /** 只想管住某一个环境时给它；不给 = 所有环境（条件里不写 environment） */
+  /** Set it to govern one environment only; omitted = all environments (no environment in the condition) */
   environment?: Environment | typeof ANY_ENVIRONMENT;
-  /** verdict = human 时谁来确认 */
+  /** Who confirms, when verdict = human */
   approver?: string;
   dueInHours?: number;
   /**
-   * 规则名。由界面按用户当下的语言拼好送上来 —— 名字是**落库的数据**，
-   * 服务端拼一句中文的话，英文界面上会永久看到一条中文规则名。
+   * The rule name, composed by the UI in the user's current language. The name is **data
+   * that gets stored**: if the server composed a Chinese sentence, an English UI would
+   * show a Chinese rule name forever.
    */
   name?: string;
 }
@@ -321,7 +338,7 @@ export async function setOperationSwitch(
   const templateId =
     input.verdict === 'auto' ? AUTO_APPROVE_FOR_OPERATION : REQUIRE_HUMAN_FOR_OPERATION;
   const template = templateById(templateId);
-  /* c8 ignore next —— 模板 id 是常量，取不到只可能是模板表被改坏了 */
+  /* c8 ignore next — the template id is a constant; a miss can only mean a broken template table */
   if (!template) throw notFound('template');
 
   const built = template.build({
@@ -341,8 +358,9 @@ export async function setOperationSwitch(
       name: input.name?.trim() || defaultSwitchName(input.verdict, label),
       description: '',
       /**
-       * ★ 复用它自己上次那条的优先级，不重新分配 —— 重排会让「这次点击
-       *   顺带改变了另外几条规则的先后」，而用户以为自己只翻了一个开关。
+       * ★ Reuse the priority of the rule it wrote last time rather than allocating a new
+       *   one — reordering would mean "this click also changed the ordering of several
+       *   other rules" while the user believes they only flipped one switch.
        */
       priority: current?.priority ?? OPERATION_SWITCH_PRIORITY,
       condition: built.condition,
@@ -359,9 +377,10 @@ export async function setOperationSwitch(
   );
 
   /**
-   * ★ 保存完再体检一遍。
-   *   这一步不是锦上添花：切换的结果取决于整套规则怎么排，而那个答案
-   *   只有把规则集重新跑一遍才知道。省掉它，界面就只能说「已保存」。
+   * ★ Re-audit after saving.
+   *   This is not a nicety: the result of a toggle depends on how the whole rule set is
+   *   ordered, and that answer is only known by running the set again. Skip it and the UI
+   *   can say nothing but "saved".
    */
   const after = await loadProjectPolicies(db, project.orgId, projectId);
   const { summary } = auditPolicies(after, project.autonomyLevel as AutonomyLevel);
@@ -369,7 +388,8 @@ export async function setOperationSwitch(
   const applied = outcome?.verdict === input.verdict;
 
   /**
-   * 没生效时，是谁挡在前面 —— 只报「没生效」等于把排查工作原样退回给用户。
+   * When it did not take effect, which rule is standing in front — reporting only "did not
+   * take effect" hands the whole investigation back to the user.
    */
   const shadowedBy = applied
     ? []
@@ -385,11 +405,12 @@ export async function setOperationSwitch(
     applied,
     shadowedBy,
     /**
-     * ★ 没生效的两种成因要分开报。
-     *   「被另一条规则挡住」用户改得动（去看那条规则）；
-     *   「安全底线不许」用户改不动，任何配置都放行不了删资源 / 改权限 / 付款。
-     *   混成一句「没生效」的话，前者他找不到该看哪儿，
-     *   后者他会一直试下去 —— 两种都是白花时间。
+     * ★ The two causes of "did not take effect" must be reported separately.
+     *   "Shadowed by another rule" is something the user can fix (go look at that rule);
+     *   "the safety floor forbids it" is not — no configuration will ever auto-approve
+     *   deleting resources, changing permissions, or making payments. Collapsed into one
+     *   "did not take effect", the first user cannot tell where to look and the second
+     *   keeps trying forever — both waste time.
      */
     blockedBy: applied
       ? null
@@ -402,7 +423,7 @@ export async function setOperationSwitch(
   };
 }
 
-/** 关掉开关 = 删掉它建的那条规则，这一行回到「其余规则说了算」 */
+/** Turning the switch off = deleting the rule it created; the row falls back to the other rules */
 export async function clearOperationSwitch(
   db: Database,
   projectId: string,
@@ -414,16 +435,17 @@ export async function clearOperationSwitch(
   const current = findOperationSwitch(existing, operationType);
   if (!current) throw notFound('policy');
 
-  // 删除同样要过「不能放宽组织规则」和「还有没处理完的决策」两道闸
+  // Deleting passes the same two gates: "cannot loosen an org rule" and "unresolved decisions"
   return deletePolicy(db, projectId, current.id, actorId);
 }
 
 /**
- * 这一行的开关规则是哪一条。
+ * Which rule is this row's switch.
  *
- * ★ 只认**项目级**规则：组织规则在项目里改不动，把它当成这一行的开关
- *   会让用户点了以后收到一句「组织级规则不可修改」——
- *   而他看到的分明是一个可点的开关。
+ * ★ Only **project-level** rules count: an org rule cannot be edited from inside a
+ *   project, so treating one as this row's switch means the user clicks and gets back
+ *   "org-level rules cannot be modified" — while what they saw was plainly a clickable
+ *   switch.
  */
 function findOperationSwitch(policies: Policy[], operationType: OperationType): Policy | undefined {
   return policies.find(
@@ -442,21 +464,23 @@ function findOutcome(
   );
 }
 
-/** 界面没送名字时的兜底。中文，与其它服务端兜底文案一致 */
+/** Fallback for when the UI sends no name. Chinese, matching the other server-side fallbacks */
 function defaultSwitchName(verdict: 'auto' | 'human', label: string): string {
   return verdict === 'auto' ? `${label}：自动执行` : `${label}：需人确认`;
 }
 
 /**
- * 手写项目规则的下一个优先级。
+ * The next priority for a hand-written project rule.
  *
- * ★★ 优先级是这一页最贵的一个概念：它要求用户同时理解「越小越先」、
- *   「命中即停」、和「组织规则占了前面那一段」三件事，才能填对一个数字。
- *   而绝大多数人填完之后从不回来改它 —— 这个输入框换来的是一次困惑，
- *   不是一次配置。所以它从编辑界面消失，由服务端往后追加。
+ * ★★ Priority is the most expensive concept on this page: to fill in one number correctly
+ *   a user has to hold three things at once — "smaller goes first", "first match wins",
+ *   and "org rules occupy the front band". And almost nobody ever comes back to change
+ *   what they typed — that input box buys one moment of confusion, not one act of
+ *   configuration. So it disappeared from the editor and the server appends instead.
  *
- * ★ 从 AUTHORED_PRIORITY_MIN 起，把 100 那一格留给开关矩阵：
- *   开关是用户刚刚做出的表态，该排在半年前写的规则前面。
+ * ★ Numbering starts at AUTHORED_PRIORITY_MIN, leaving the 100 slot to the switch matrix:
+ *   a switch is a statement the user just made, and it belongs ahead of a rule they wrote
+ *   six months ago.
  */
 export function nextAuthoredPriority(existing: Policy[]): number {
   const used = existing
@@ -480,7 +504,7 @@ export async function togglePolicy(
   if (!target) throw notFound('policy');
   assertEditable(target);
 
-  // 停用一条收紧类规则等于放宽，同样要过模拟这道闸
+  // Disabling a tightening rule is a loosening, so it goes through the simulation gate too
   const next = existing.map((p) => (p.id === policyId ? { ...p, enabled } : p));
   const level = project.autonomyLevel as AutonomyLevel;
   assertNotLooseningOrgRules(existing, next, level);
@@ -528,14 +552,15 @@ export async function getPolicyHistory(db: Database, policyId: string) {
   };
 }
 
-// ── 模拟与场景测试 ────────────────────────────────────────────────────────
+// ── Simulation & scenarios ────────────────────────────────────────────────
 
 /**
- * 历史回放（§5.7 —— 本页最重要的功能）。
+ * Historical replay (§5.7 — the most important feature on this page).
  *
- * 数据来源是 `policy.evaluated` 事件上的 `contextSnapshot`。
- * 这正是「每次策略评估都必须带 23 项事实快照」这条铁律存在的理由：
- * 缺了它，模拟功能就是无米之炊，用户也就永远不敢放开自动化。
+ * The data comes from the `contextSnapshot` carried on `policy.evaluated` events. That is
+ * exactly why the iron rule "every policy evaluation must carry a 23-fact snapshot"
+ * exists: without it there is nothing to replay, and a user who cannot replay will never
+ * dare open up automation.
  */
 export async function runSimulation(
   db: Database,
@@ -575,7 +600,8 @@ export async function runSimulation(
       .where(inArray(workItems.id, itemIds))).map((i) => [i.id, i.title]),
   );
 
-  // 当时人类怎么判的 —— 同一个任务上最接近那次评估的已解决决策
+  // What the human decided at the time — the resolved decision on the same task closest to
+  // that evaluation
   const decisionRows = await db
     .select()
     .from(decisions)
@@ -606,12 +632,12 @@ export async function runSimulation(
 }
 
 /**
- * 手动构造场景测试（§5.7）。
+ * Hand-built scenario testing (§5.7).
  *
- * ★ 返回完整的匹配过程，而不只是结论。
- *   「我明明配了自动批准，为什么还找我」是这一页最常被问的问题，
- *   答案永远是「被某条更高优先级的规则先拦下了」——
- *   把优先级链条画出来，用户自己就看懂了。
+ * ★ Returns the full matching process, not only the verdict.
+ *   "I configured auto-approval, so why is it still asking me?" is the question this page
+ *   gets asked most, and the answer is always "a higher-priority rule caught it first" —
+ *   draw the priority chain and the user works it out for themselves.
  */
 export async function evaluateScenario(
   db: Database,
@@ -627,7 +653,7 @@ export async function evaluateScenario(
   const verdict = evaluate(ctx, compiled);
   const byId = new Map(rows.map((p) => [p.id, p]));
 
-  // 命中之后的规则根本没被评估过，如实标出来
+  // Rules after the match were never evaluated at all; mark them as such
   const matchedIndex = verdict.trace.findIndex((t) => t.matched);
   const evaluatedIds = new Set(
     verdict.trace.slice(0, matchedIndex === -1 ? undefined : matchedIndex + 1).map((t) => t.policyId),
@@ -667,7 +693,7 @@ export async function autonomyPreview(db: Database, projectId: string, to: Auton
   return previewAutonomy(rows, project.autonomyLevel as AutonomyLevel, to);
 }
 
-// ── 内部 ─────────────────────────────────────────────────────────────────
+// ── Internals ────────────────────────────────────────────────────────────
 
 async function loadProject(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
@@ -707,10 +733,11 @@ export async function loadProjectPolicies(
 }
 
 /**
- * 近 30 天命中次数 + 规则存在了多久。
+ * Hits in the last 30 days, plus how long each rule has existed.
  *
- * `policies.hitCount30d` 那一列没有任何地方在维护，读它只会得到 0。
- * 直接从事件流数出来的才是真的 —— 而且事件流本来就是唯一不会被覆盖的历史。
+ * Nothing maintains the `policies.hitCount30d` column, so reading it only ever yields 0.
+ * Counting straight from the event stream is the only truthful answer — and the event
+ * stream is the one history that never gets overwritten anyway.
  */
 async function loadHits(db: Database, projectId: string, all: Policy[]) {
   const now = Date.now();
@@ -740,7 +767,8 @@ async function loadHits(db: Database, projectId: string, all: Policy[]) {
     ).map((r) => [r.id, r.createdAt.getTime()]),
   );
 
-  // 覆盖全部规则，不只是被命中过的 —— 零命中检测要的正是没出现在计数里的那些
+  // Cover every rule, not just the ones that were hit — zero-hit detection is looking for
+  // exactly the rules that never showed up in the counts
   return all.map((p) => ({
     policyId: p.id,
     hits30d: counts.get(p.id) ?? 0,
@@ -761,12 +789,13 @@ function assertEditable(policy: Policy): void {
 }
 
 /**
- * ★ 只能收紧不能放宽，是整套治理体系的硬约束。
+ * ★ "Tighten only, never loosen" is a hard constraint of the whole governance system.
  *
- *   判据不是比较两条规则的动作严格程度 —— 那会漏掉「用一条更高优先级的
- *   宽松规则把组织规则挡在后面」这种绕法。这里比的是**结果**：
- *   逐个场景跑一遍，看有没有哪个原本被组织规则拦下的场景变成了自动放行。
- *   绕不过去，因为最终生效的就是这个结果。
+ *   The test is not a comparison of how strict two rules' actions are — that misses the
+ *   dodge of "put a looser, higher-priority rule in front of the org rule". What is
+ *   compared here is the **outcome**: run every scenario and see whether any scenario the
+ *   org rule used to stop now auto-approves. That cannot be worked around, because the
+ *   outcome is precisely what ends up in effect.
  */
 function assertNotLooseningOrgRules(before: Policy[], after: Policy[], level: AutonomyLevel): void {
   const orgOnly = compile(before.filter((p) => p.projectId === null));
@@ -774,18 +803,18 @@ function assertNotLooseningOrgRules(before: Policy[], after: Policy[], level: Au
 
   for (const scenario of buildScenarios(level)) {
     const org = evaluate(scenario.context, orgOnly);
-    // 组织规则没管这个场景，项目怎么配都行
+    // The org rules say nothing about this scenario, so the project may configure it freely
     if (org.matchedPolicyId === null || isAutoApprove(org.action)) continue;
 
     const next = evaluate(scenario.context, nextAll);
     if (!isAutoApprove(next.action)) continue;
 
     /**
-     * ★ 有名字和没名字是两条词条，不是一条带空槽的。
-     *   `matchedPolicyName` 类型上可空（没有规则命中时为 null）。塞一个空串
-     *   进去会得到「组织规则「」要求…」——  一句读起来像 bug 的话。
-     *   两种语言里「某条组织规则」都不是在原句上挖个洞就能得到的，
-     *   所以它必须是独立的一句。
+     * ★ Named and unnamed are two separate messages, not one message with an empty slot.
+     *   `matchedPolicyName` is nullable by type (null when no rule matched). Substituting
+     *   an empty string yields 'the org rule "" requires…' — a sentence that reads like a
+     *   bug. In neither language can "some org rule" be produced by punching a hole in the
+     *   named sentence, so it has to be a sentence of its own.
      */
     throw org.matchedPolicyName
       ? fail(
@@ -808,7 +837,7 @@ function assertNotLooseningOrgRules(before: Policy[], after: Policy[], level: Au
   }
 }
 
-/** 变更后有多少个场景从「需要人」变成了「自动」 */
+/** How many scenarios went from "needs a human" to "automatic" after the change */
 function loosenedScenarios(before: Policy[], after: Policy[], level: AutonomyLevel): number {
   const b = compile(before);
   const a = compile(after);
@@ -822,7 +851,10 @@ function loosenedScenarios(before: Policy[], after: Policy[], level: AutonomyLev
   return count;
 }
 
-/** 用中文标签，不用枚举原值 —— 这句话是给项目负责人看的，不是给工程师看的 */
+/**
+ * Uses the Chinese labels rather than raw enum values — this line is read by the project
+ * lead, not by an engineer.
+ */
 function describe(ctx: PolicyContext): string {
   const risk: Record<string, string> = { low: '低', medium: '中', high: '高', critical: '极高' };
   return [
@@ -844,7 +876,7 @@ export async function deletePolicy(
   if (!target) throw notFound('policy');
   assertEditable(target);
 
-  // 删除等于放宽，同样要过组织规则那道闸
+  // A deletion is a loosening, so it passes the org-rule gate too
   assertNotLooseningOrgRules(
     rows,
     rows.filter((p) => p.id !== policyId),
@@ -867,19 +899,17 @@ export async function deletePolicy(
 
   await db.transaction(async (tx) => {
     /**
-     * ★★ 删除本身也要留一条审计。
+     * ★★ The deletion itself gets an audit entry.
      *
-     *   删掉一条规则是这一页上后果最大的动作 —— 它把一道闸整个拿掉。
-     *   只删不记的话，事后查「这里以前是不是有条规则拦着」的唯一线索，
-     *   是这条规则最后一次**修改**的记录，而那条记录看起来完全正常。
-     *   一次删除在历史上于是长得和「什么都没发生」一样。
+     *   Deleting a rule is the highest-consequence action on this page — it takes a whole
+     *   gate away. Delete without recording and the only later clue to "was there once a
+     *   rule stopping this?" is that rule's last **edit** record, which looks perfectly
+     *   normal. A deletion would then look, in the history, exactly like nothing happened.
      *
-     * ★ `after: null` 就是「它没了」。变更历史因此能一路读到尽头，
-     *   而不是在最后一次修改处突然断掉。
+     * ★ `after: null` is how "it is gone" is written. The change history can therefore be
+     *   read all the way to its end instead of breaking off at the last edit.
      *
-     * The deletion itself is audited. Removing a rule takes a whole gate away,
-     * and an unrecorded removal leaves the rule's last *edit* as the final
-     * entry — a history that reads exactly like nothing happened.
+     *   删除本身也要留审计：只删不记的话，历史上一次删除长得和什么都没发生一样。
      */
     const [row] = await tx.select().from(policies).where(eq(policies.id, policyId));
     await tx.delete(policies).where(eq(policies.id, policyId));
@@ -898,16 +928,19 @@ export async function deletePolicy(
 export { isNull };
 
 /**
- * 一条规则的命中明细（页面文档 13）。
+ * The hit detail for one rule (page doc 13).
  *
- * ★ 「近 30 天命中 47 次」是个死数字。看不到是哪 47 次的规则，
- *   等于一条无法审计的规则 —— 而无法审计的规则没人敢改，
- *   最后要么一直留着（哪怕它已经错了），要么被整条删掉。
+ * ★ "47 hits in the last 30 days" is a dead number. A rule whose 47 hits cannot be
+ *   inspected is a rule that cannot be audited — and nobody dares touch a rule they
+ *   cannot audit, so it either stays forever (even once it is wrong) or gets deleted
+ *   outright.
  *
- * ★ 这一页真正要回答的不是「命中了几次」，是**「拦对了没有」**：
- *   规则要求人确认、而人每次都批准 → 这条规则在浪费所有人的时间，可以放开；
- *   人经常驳回 → 它拦对了，别动。这个判断只有把每次命中的**后续结果**
- *   摆出来才做得了，所以决策结局是这一页的主列，不是附注。
+ * ★ What this page really answers is not "how often did it fire" but **"did it stop the
+ *   right things"**: the rule demands human confirmation and the human approves every
+ *   time → it is wasting everyone's time and can be relaxed; the human rejects often → it
+ *   is catching the right things, leave it alone. That judgment is only possible with the
+ *   **outcome** of every hit laid out, which is why the decision result is a primary
+ *   column here rather than a footnote.
  */
 export async function getPolicyHits(db: Database, projectId: string, policyId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
@@ -942,11 +975,12 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
   const itemById = new Map(items.map((i) => [i.id, i]));
 
   /**
-   * 这条规则触发的决策及其结局。
+   * The decisions this rule triggered, and how they ended.
    *
-   * ★ 规则 id 现在一律是 UUID，`decisions.triggered_by_policy` 直接对得上。
-   *   （硬编码基线用的是 `baseline-xxx` 这种可读 id，写不进外键列，
-   *   曾经只能靠 work item 回连 —— 那条兜底随基线一起删掉了。）
+   * ★ Rule ids are all UUIDs now, so `decisions.triggered_by_policy` matches directly.
+   *   (The hardcoded baselines used readable ids like `baseline-xxx`, which cannot go into
+   *   a foreign-key column, so the join once had to go back through the work item — that
+   *   fallback was removed along with the baselines.)
    */
   const decisionRows = itemIds.length > 0
     ? await db.select().from(decisions).where(inArray(decisions.workItemId, itemIds))
@@ -967,7 +1001,7 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
     const payload = r.payload as { action?: { type?: string } };
     const snapshot = r.contextSnapshot as PolicyContext | null;
     const item = itemById.get(r.subjectId);
-    // 同一任务多次命中时取时间上最接近的那个决策
+    // When one task was hit several times, take the decision closest in time
     const candidates = decisionByItem.get(r.subjectId) ?? [];
     const decision = nearestDecision(candidates, r.occurredAt.getTime());
 
@@ -978,7 +1012,7 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
       actionLabel: actionLabel(payload.action?.type ?? '未知'),
       workItemId: r.subjectId,
       workItemTitle: item?.title ?? '（已删除）',
-      /** 触发时的关键上下文 —— 不给这几项，用户看不出为什么这次会命中 */
+      /** The context at trigger time — without these, the user cannot see why this hit matched */
       context: snapshot
         ? {
             operationType: snapshot.operationType,
@@ -1002,11 +1036,12 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
   });
 
   /**
-   * ★ 自动放行的那些任务，事后被人手动改过没有。
+   * ★ Were the auto-approved tasks changed by hand afterward.
    *
-   *   放行类规则不产生决策，用「批准率」判断它对不对是无从谈起的。
-   *   它唯一能被证伪的地方是：它放过去的事，后来有没有被人纠正。
-   *   有，就说明放得太松 —— 这是唯一一条能说明放行规则错了的证据。
+   *   A pass-through rule produces no decisions, so judging it by "approval rate" is
+   *   meaningless. The only place it can be falsified is whether the things it let through
+   *   were later corrected by a human. If they were, it is letting too much through — and
+   *   that is the only evidence there is that a pass-through rule is wrong.
    */
   const overrideRows = itemIds.length > 0
     ? await db
@@ -1043,24 +1078,26 @@ export async function getPolicyHits(db: Database, projectId: string, policyId: s
     stats: {
       hits: hits.length,
       /**
-       * ★ 按**动作枚举**分组，不按中文标签分组。
-       *   用标签当分组键有两处坏处：界面拿到的是中文（英文界面上照样是中文），
-       *   而且标签改一个字，历史统计就会分裂成两组。
+       * ★ Grouped by the **action enum**, not by the Chinese label.
+       *   Using the label as a grouping key hurts twice: the UI receives Chinese (still
+       *   Chinese on an English UI), and changing a single character of a label splits the
+       *   historical statistics into two groups.
        */
       byAction: countBy(hits.map((h) => h.action)),
       decisionsCreated: hits.filter((h) => h.decision).length,
       resolved: resolved.length,
       approved,
-      /** ★ 这一页的结论就靠它：全批 = 规则在浪费时间；常驳 = 拦对了 */
+      /** ★ The page's verdict rests on this: all approved = wasted time; often rejected = it works */
       approvalRate: resolved.length === 0 ? null : Math.round((approved / resolved.length) * 100) / 100,
       avgWaitMinutes:
         waits.length === 0 ? null : Math.round(waits.reduce((a, b) => a + b, 0) / waits.length),
     },
     /**
-     * ★ 给结论，不只给数字。「23 次全批准了」和「23 次里驳了 9 次」
-     *   指向完全相反的动作，让用户自己从百分比推一遍是多余的一步。
+     * ★ Give a verdict, not just numbers. "23 of 23 approved" and "9 of 23 rejected" point
+     *   to opposite actions, and making the user re-derive that from a percentage is a
+     *   step nobody needs.
      */
-    /** 放行的任务里事后被人工改过的数量 —— 放行类规则唯一的证伪证据 */
+    /** How many passed tasks were later changed by hand — a pass-through rule's only falsifier */
     overriddenAfterPass: hits.filter((h) => !h.decision && overridden.has(h.workItemId)).length,
     verdict: verdictOf({
       hits: hits.length,
@@ -1091,7 +1128,7 @@ function nearestDecision<T extends { createdAt: Date }>(list: T[], at: number): 
       best = d;
     }
   }
-  // 相隔超过一小时的多半不是同一次判定引发的，宁可不认
+  // More than an hour apart is probably not the same judgment; better to claim no match
   return bestGap <= 3600_000 ? best : undefined;
 }
 
@@ -1103,16 +1140,19 @@ function countBy(values: string[]): { label: string; count: number }[] {
     .sort((a, b) => b.count - a.count);
 }
 
-/** 命中样本太少时不下结论 —— 三次里三次都批，说明不了任何事 */
+/** No verdict when the sample is too small — three approvals out of three prove nothing */
 const MIN_SAMPLE = 5;
 
 /**
- * ★ 拦人的规则和放行的规则要用完全不同的标准评价。
+ * ★ Gating rules and pass-through rules have to be judged by completely different
+ *   standards.
  *
- *   拦人的看批准率：全批 = 在问答案已知的问题；常驳 = 拦对了。
- *   放行的根本不产生决策，套「批准率」是无从谈起的 ——
- *   它唯一能被证伪的地方是：放过去的事后来有没有被人纠正。
- *   用同一套话术评价两类规则，说出来的必然有一半是废话。
+ *   A gating rule is read through its approval rate: all approved = it is asking a
+ *   question whose answer is already known; often rejected = it is catching the right
+ *   things. A pass-through rule produces no decisions at all, so "approval rate" says
+ *   nothing about it — the only place it can be falsified is whether what it let through
+ *   was later corrected by a human. Judging both kinds with one vocabulary guarantees
+ *   that half of what gets said is noise.
  */
 function verdictOf(input: {
   hits: number;
@@ -1127,7 +1167,7 @@ function verdictOf(input: {
     return '近 30 天没有命中。规则可能写错了条件，或者它防的那类操作确实没发生过';
   }
 
-  // 放行类：没有产生过任何决策
+  // Pass-through: it never produced a decision
   if (gating === 0) {
     if (overriddenAfterPass === 0) {
       return `自动放行 ${hits} 次，放行的任务事后没有一次被人工纠正 —— 这条规则在按预期省掉人工确认`;

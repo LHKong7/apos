@@ -31,14 +31,14 @@ export interface DispatchInput {
   workItemId: string;
   agentId: string;
   correlationId: string;
-  /** 重试时补充的上下文 */
+  /** Extra context supplied on a retry */
   additionalContext?: { title: string; content: string }[];
-  /** 调用方自带的幂等键；不传时按 (workItemId, attempt) 生成 */
+  /** Caller-supplied idempotency key; derived from (workItemId, attempt) when omitted */
   idempotencyKey?: string;
 }
 
 export interface DispatchDeps {
-  /** 不传则退化为「不供给工作区」，仅用于不涉及代码仓库的测试 */
+  /** Omitting it degrades to "no workspace provisioning"; only for tests that touch no repository */
   workspaces?: WorkspaceService;
 }
 
@@ -51,12 +51,15 @@ export type DispatchResult =
     };
 
 /**
- * 派发一次 Agent 执行。
+ * Dispatches one Agent execution / 派发一次 Agent 执行。
  *
- * 三个关键点：
- * 1. idempotencyKey 防重复派发 —— 网络重试导致 Agent 重复改代码是真实风险
- * 2. dispatching 中间态 —— 区分「还没派发」与「派发了但不知道结果」
- * 3. 权限与工具集在派发时快照，Run 期间的配置变更不影响正在跑的执行
+ * Three things matter here:
+ * 1. idempotencyKey prevents double dispatch — a network retry making the Agent
+ *    edit the same code twice is a real risk, not a theoretical one
+ * 2. The intermediate `dispatching` state separates "not dispatched yet" from
+ *    "dispatched but the outcome is unknown"
+ * 3. Permissions and the tool set are snapshotted at dispatch time, so a config
+ *    change during the Run does not affect an execution already in flight
  */
 export async function dispatchRun(
   db: Database,
@@ -73,8 +76,9 @@ export async function dispatchRun(
   }
 
   /**
-   * ★ 注册表按 agentId 键控：每个 Agent 有自己的运行时实例，
-   *   因为它们各带一套 CLI 参数（effort / maxTurns / 沙箱档位…）。
+   * ★ The registry is keyed by agentId: every Agent gets its own runtime
+   *   instance, because each carries its own CLI parameters (effort / maxTurns
+   *   / sandbox tier, …).
    */
   if (!registry.has(agent.id)) {
     return {
@@ -90,10 +94,12 @@ export async function dispatchRun(
     .where(eq(agentRuns.workItemId, item.id));
 
   /**
-   * ★ 核心不变式：一个 Work Item 同时只能有一个活跃 Run。
+   * ★ The core invariant: one Work Item may have at most one active Run.
    *
-   * 没有这条保护，调度器重入或回调重复投递会让两个 Agent 同时改同一份代码。
-   * 这比基于 idempotencyKey 的去重更可靠 —— 后者依赖调用方生成正确的 key。
+   * Without this guard, scheduler reentrancy or a redelivered callback puts two
+   * Agents into the same code at the same time. It is more reliable than
+   * deduplicating on idempotencyKey, which depends on the caller generating the
+   * right key.
    */
   const active = priorRuns.find((r) =>
     (ACTIVE_RUN_STATUSES as readonly string[]).includes(r.status),
@@ -106,11 +112,14 @@ export async function dispatchRun(
   const idempotencyKey = input.idempotencyKey ?? `${item.id}:${attempt}`;
 
   /**
-   * 本项目**项目级**登记且启用的仓库 —— 它们对项目内的 Agent 默认只读。
+   * Repositories registered at **project** level and active — Agents in this
+   * project can read them by default / 它们对项目内的 Agent 默认只读。
    *
-   * ★ 只取 projectId 命中的，org 级（projectId 为空）的不在内：
-   *   org 级仓库对全组织可见，默认给出去就成了「A 项目的 Agent 自动能读
-   *   B 项目的代码」。跨项目的授权必须是个决定。
+   * ★ Only rows matching this projectId; org-level rows (projectId is null) are
+   *   excluded. An org-level repository is visible to the whole organization,
+   *   so handing it over by default would mean "an Agent in project A can
+   *   automatically read project B's code". Granting across projects has to be
+   *   a decision someone makes.
    */
   const projectRepos = await db
     .select({ ref: repositories.ref })
@@ -124,14 +133,18 @@ export async function dispatchRun(
     );
 
   /**
-   * ★★ 权限在**这一处**求值，而不是在 acquire() 或适配器里。
+   * ★★ Permissions are evaluated in **this one place**, not inside acquire() or
+   *   the adapter.
    *
-   *   求值结果既落库当审计凭证，又原样传给工作区供给与运行时 ——
-   *   在这里算一次，三边必然一致。分头算的话，「Agent 当时实际能做什么」
-   *   与「审计记录里写着它能做什么」会分叉，而这正是快照存在的意义。
+   *   The result is both persisted as the audit record and passed verbatim to
+   *   workspace provisioning and to the runtime — computed once here, all three
+   *   necessarily agree. Computed separately, "what the Agent could actually do
+   *   at the time" and "what the audit record says it could do" diverge, which
+   *   defeats the entire purpose of taking a snapshot.
    *
-   * ★★ 走的是与调度器匹配**同一个**函数（resolveAgentAccess）。
-   *   两条路径各算一套的后果见 modules/agent/matching.ts 里那段。
+   * ★★ It goes through the **same** function the scheduler's matching uses
+   *   (resolveAgentAccess). What two separate implementations cost is written
+   *   up in modules/agent/matching.ts.
    */
   const access = await resolveAgentAccess(db, agent, {
     orgId: item.orgId,
@@ -139,7 +152,7 @@ export async function dispatchRun(
     repoRefs: projectRepos.map((r) => r.ref),
   });
 
-  /** 下发给运行时与工作区的那一份 —— 协议这一层仍然是工具名 */
+  /** The copy sent to the runtime and the workspace — at the protocol layer these are still tool names */
   const permissionSnapshot: AgentPermissions = {
     allowedTools: access.runtimePermissions.allowedTools,
     deniedTools: access.runtimePermissions.deniedTools,
@@ -147,14 +160,18 @@ export async function dispatchRun(
   };
 
   /**
-   * 落库的那一份（v2）。
+   * The copy written to the database (v2) / 落库的那一份。
    *
-   * ★★ 比下发的那份多了语义能力、档案与出处。半年后翻审计的人问的是
-   *   「它当时被授权做什么」，而工具名回答不了 —— 同一串 `['Read','Edit']`
-   *   在适配器改版前后不是一回事。
+   * ★★ It carries more than the dispatched copy: semantic capabilities, the
+   *   profile, and the provenance. Six months later the person reading the
+   *   audit trail is asking "what was it authorized to do at the time", and
+   *   tool names cannot answer that — the same `['Read','Edit']` means
+   *   different things before and after an adapter revision.
    *
-   * ★ 历史快照（v1，没有 version 字段）**原样保留**，不迁移、不补写：
-   *   它们是当时那次执行的凭证，改写等于伪造证据。读取侧靠 version 分辨。
+   * ★ Historical snapshots (v1, with no version field) are kept **exactly as
+   *   they are**: never migrated, never backfilled. They are the record of that
+   *   execution, and rewriting one is forging evidence. Readers tell them apart
+   *   by the version field.
    */
   const storedSnapshot: AgentPermissionSnapshot = {
     version: 2,
@@ -171,15 +188,16 @@ export async function dispatchRun(
 
   const context = await buildRunContext(db, item, input.additionalContext);
 
-  /** ★ 产出语言是项目属性 —— 调度器派发时没有请求，读不到 X-Locale */
+  /** ★ Output language is a project property — a scheduler dispatch has no request, so there is no X-Locale to read */
   const [project] = await db
     .select({ outputLocale: projects.outputLocale })
     .from(projects)
     .where(eq(projects.id, item.projectId));
   const outputLocale = project?.outputLocale ?? 'en';
 
-  // 派发给某个 Agent 就意味着它是执行主体 —— 让 dispatchRun 自洽，
-  // 无论是调度器调用还是手动「用这个 Agent 重试」都行为一致
+  // Dispatching to an Agent is what makes it the executor — keeping dispatchRun
+  // self-consistent, so a scheduler call and a manual "retry with this Agent"
+  // behave identically
   if (item.executorType !== 'agent' || item.executorId !== agent.id) {
     await db
       .update(workItems)
@@ -225,7 +243,7 @@ export async function dispatchRun(
     correlationId: input.correlationId,
   });
 
-  // 状态流转：ready → executing。被 Guard 或 Policy 拦下时不真正派发。
+  // Transition: ready → executing. When a Guard or Policy blocks it, nothing is actually dispatched.
   const moved = await transition(db, {
     workItemId: item.id,
     trigger: 'run_dispatched',
@@ -241,7 +259,7 @@ export async function dispatchRun(
     return { ok: false, code: 'TRANSITION_REJECTED', detail: moved };
   }
 
-  // Policy 可能把任务改道到 awaiting_decision —— 那就不该真的启动 Agent
+  // Policy may reroute the item to awaiting_decision — in which case the Agent must not actually start
   if (moved.to !== 'executing') {
     await db
       .update(agentRuns)
@@ -251,12 +269,15 @@ export async function dispatchRun(
   }
 
   /**
-   * ★ 工作区在派发**之前**准备好，由平台统一供给。
+   * ★ The workspace is prepared **before** dispatch, provisioned by the
+   *   platform in one place.
    *
-   *   放在这里而不是适配器里，是因为「clone 到哪、开哪个分支、跑完推不推」
-   *   对所有运行时都一样；更重要的是失败要在这一步就被拦住 ——
-   *   让 Agent 在一个空目录里开工，它会信心十足地报告
-   *   「未找到相关代码，已创建新实现」，这种失败比报错难查十倍。
+   *   It lives here rather than in the adapter because "where to clone, which
+   *   branch to open, whether to push afterward" is the same for every runtime;
+   *   and more importantly because failure has to be caught at this step. Let
+   *   an Agent start work in an empty directory and it will confidently report
+   *   "no relevant code found, created a new implementation" — a failure ten
+   *   times harder to trace than an error.
    */
   const acquired = deps.workspaces
     ? await deps.workspaces.acquire({
@@ -271,17 +292,16 @@ export async function dispatchRun(
 
   if (!acquired.ok) {
     /**
-     * ★★ 只写错误分类，**不要**在这里把 status 改成 failed。
+     * ★★ Record the error class only; do **not** set status to failed here.
      *
-     *   ingestRunEvent 开头有一道「终态之后到达的事件一律忽略」的闸门。
-     *   先把 Run 标成 failed，下面那条 run_ended 就会被这道闸门吞掉 ——
-     *   于是 endedAt 不写、run_events 没有、agent_run.failed 不发、
-     *   工作项也不流转，看上去调用了收尾其实什么都没发生。
-     *   状态与 endedAt 由 run_ended 自己落（applyRunPatch），
-     *   这里只留 decideRecovery 需要的 errorClass。
-     *
-     * Setting `failed` here would trip ingest's terminal-state guard and
-     * silently discard the run_ended below; let the event settle the run.
+     *   ingestRunEvent opens with a gate that ignores every event arriving after
+     *   a terminal state. Mark the Run failed first and the run_ended below is
+     *   swallowed by that gate — endedAt is never written, no run_events row
+     *   appears, agent_run.failed is never emitted, and the work item never
+     *   transitions: it looks like the teardown ran while in fact nothing
+     *   happened. Status and endedAt are settled by run_ended itself
+     *   (applyRunPatch); all that is left here is the errorClass decideRecovery
+     *   needs.
      */
     await db
       .update(agentRuns)
@@ -306,16 +326,14 @@ export async function dispatchRun(
   }
 
   /**
-   * 派发前告诉 Agent 哪些情形会把这次工作拦下转人工。
+   * Tells the Agent, before dispatch, which situations will stop this work and
+   * hand it to a human / 派发前告诉 Agent 哪些情形会把这次工作拦下转人工。
    *
-   * ★ 复用刚才那次流转算出来的 contextSnapshot，不重新构建 ——
-   *   它就是 buildPolicyContext() 的产物，而且与写进 policy.evaluated
-   *   事件的那一份是同一个对象。另起一份的话，两边会在
-   *   fact 增删时悄悄漂移，而漂移的表现是「警告说会拦，实际没拦」。
-   *
-   * Reuses the context snapshot the transition just computed rather than
-   * rebuilding it: it is the same object written into the policy.evaluated
-   * event, so the warning and the actual gate can never drift apart.
+   * ★ Reuses the contextSnapshot the transition just computed rather than
+   *   rebuilding it. It is the output of buildPolicyContext() and the very same
+   *   object written into the policy.evaluated event. Build a second one and
+   *   the two drift silently as facts are added or removed — and the way that
+   *   drift presents is "the warning said it would be gated, and it was not".
    */
   const policyGates = selectPolicyGates(
     await db.transaction((tx) => loadPolicies(tx, item.orgId, item.projectId)),
@@ -334,7 +352,7 @@ export async function dispatchRun(
       skills: agent.skills,
     },
     workspace: acquired.workspace,
-    /** ★ 语言是项目属性 —— 调度器派发时没有请求也没有「当前用户」 */
+    /** ★ Language is a project property — a scheduler dispatch has no request and no "current user" */
     outputLocale: outputLocale === 'zh' ? 'zh' : 'en',
     goal: {
       title: item.title,
@@ -359,7 +377,7 @@ export async function dispatchRun(
 
   const ack = await adapter.dispatch(task);
   if (!ack.accepted) {
-    // ★ 同上：status 交给 run_ended 落，先写 status 会被 ingest 的终态闸门吞掉
+    // ★ As above: run_ended settles the status; writing it first gets swallowed by ingest's terminal-state gate
     await db
       .update(agentRuns)
       .set({
@@ -369,24 +387,27 @@ export async function dispatchRun(
       .where(eq(agentRuns.id, runId));
 
     /**
-     * ★★ 运行时拒收也必须走 run_ended，和上面「工作区没准备好」那条一样。
+     * ★★ A runtime refusing the task also has to go through run_ended, exactly
+     *   like the "workspace unavailable" branch above.
      *
-     *   此前这里只把 Run 标成 failed 就 return 了。代价是工作项停在
-     *   `executing` 上永远出不来：上面那次 ready → executing 的流转没人回滚，
-     *   run_events 一条没有，`agent_run.failed` 领域事件也不存在。
-     *   而 run-supervisor 只认 dispatching / running 两个状态，
-     *   failed 的 Run 不在它的视野里 —— 于是没有任何循环能再碰到这个工作项，
-     *   看板却还按 `status = 'executing'` 数出「1 个 Agent 在跑」。
+     *   This used to just mark the Run failed and return. The cost was that the
+     *   work item stayed pinned at `executing` forever: nobody rolled back the
+     *   ready → executing transition made above, not one run_events row was
+     *   written, and the `agent_run.failed` domain event never existed. And
+     *   run-supervisor only looks at the dispatching / running states, so a
+     *   failed Run is outside its field of view — no loop could ever touch that
+     *   work item again, while the board still counted "1 Agent running" from
+     *   `status = 'executing'`.
      *
-     *   ingestRunEvent 一步把该做的全做了：写 run_events、置 endedAt、
-     *   发 agent_run.failed、按 agent_run_failed 流转出 executing、
-     *   并让 decideRecovery 决定重试还是转人工。
+     *   ingestRunEvent does all of it in one step: writes run_events, sets
+     *   endedAt, emits agent_run.failed, transitions out of executing on
+     *   agent_run_failed, and lets decideRecovery choose between a retry and
+     *   handing it to a human.
      *
-     *   ★ 这里要把 deps 传下去（上面那条不用）：工作区**已经**取到了，
-     *     不释放就会把工作树留在盘上，而 Run 已经结束、没人再来收。
-     *
-     *   Mirrors the workspace-unavailable branch above. Without this the item
-     *   stays pinned at `executing` with no event and no loop able to reach it.
+     *   ★ deps has to be passed down here (the branch above does not need it):
+     *     the workspace **has** already been acquired, and not releasing it
+     *     leaves the work tree on disk with the Run over and nobody left to
+     *     collect it.
      */
     await ingestRunEvent(
       db,
@@ -421,7 +442,7 @@ export async function dispatchRun(
   return { ok: true, runId, attempt, reused: false };
 }
 
-/** 构建 Agent 上下文。外部来源的内容标记 trusted=false，防提示注入。 */
+/** Builds the Agent's context. Content from external sources is marked trusted=false to guard against prompt injection. */
 async function buildRunContext(
   db: Database,
   item: typeof workItems.$inferSelect,
@@ -430,11 +451,14 @@ async function buildRunContext(
   const ctx: TaskDispatch['context'] = [];
 
   /**
-   * 项目工程约定 —— prompt 三层里的第三层。
+   * Project engineering conventions — the third of the prompt's three layers /
+   * 项目工程约定，prompt 三层里的第三层。
    *
-   * ★ 走 context 而不是 Agent 的 system prompt：编码规范是**项目**属性，
-   *   对该项目里所有 Agent 一视同仁。挂在 Agent 上意味着换个 Agent
-   *   就得重填一遍，还会诱导用户往里写治理规则、把 Policy 架空。
+   * ★ Carried in context rather than in the Agent's system prompt: coding
+   *   standards are a **project** property and apply identically to every Agent
+   *   in that project. Hanging them off the Agent means refilling them for each
+   *   new Agent, and it also tempts users to write governance rules in there,
+   *   which hollows out Policy.
    */
   const conventions = await db
     .select()
@@ -443,7 +467,7 @@ async function buildRunContext(
       and(
         eq(projectConventions.projectId, item.projectId),
         eq(projectConventions.enabled, true),
-        // 空 appliesTo = 全部任务类型适用
+        // An empty appliesTo means it applies to every work item type
         or(
           sql`cardinality(${projectConventions.appliesTo}) = 0`,
           sql`${item.type} = ANY(${projectConventions.appliesTo})`,
@@ -477,7 +501,7 @@ async function buildRunContext(
         priority: 'must_read',
         trusted: true,
       });
-      // 原始输入可能来自外部系统，按不可信处理
+      // The raw input may come from an external system, so treat it as untrusted
       ctx.push({
         kind: 'requirement',
         ref: `${req.id}:raw`,
@@ -489,7 +513,7 @@ async function buildRunContext(
     }
   }
 
-  // 上一次失败的 Run：把失败原因带上，这是「补充上下文重试」的核心
+  // The previous failed Run: carrying its failure reason forward is the whole point of "retry with more context"
   const failed = await db
     .select({
       id: agentRuns.id,

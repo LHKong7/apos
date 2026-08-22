@@ -8,13 +8,14 @@ import type {
 } from './provider';
 
 /**
- * 确定性 provider —— 让整条链路在没有 API key 时也能跑通与测试。
+ * The deterministic provider — it keeps the whole chain runnable and testable with
+ * no API key / 确定性 provider。
  *
- * 它不是「假装成 LLM」，而是用规则从原文里抽取能抽取的部分，
- * 抽不出来的诚实地列为澄清问题。这保证了：
- * - 测试稳定可重复
- * - 本地开发不烧钱
- * - LLM 不可用时系统降级而非瘫痪
+ * It does not "pretend to be an LLM". It pulls out of the raw text whatever rules can
+ * pull out, and honestly files the rest as clarification questions. That buys:
+ * - tests that are stable and repeatable
+ * - local development that costs nothing
+ * - degradation rather than paralysis when the LLM is unavailable
  */
 export class StubPlanningProvider implements PlanningProvider {
   readonly name = 'stub';
@@ -26,7 +27,8 @@ export class StubPlanningProvider implements PlanningProvider {
     const mentions = (kw: RegExp) => kw.test(raw);
     const clarifications: Clarification[] = [];
 
-    // 提到了时间要求但没说清是哪个环境 —— 真实需求里最常见的歧义
+    // Mentions shipping but never says which environment — the most common ambiguity
+    // in real requirements
     if (mentions(/上线|发布|deploy|release/i)) {
       clarifications.push({
         question: '「上线」指生产环境全量，还是先灰度？',
@@ -108,8 +110,8 @@ export class StubPlanningProvider implements PlanningProvider {
       nonFunctional: mentions(/性能|慢|优化/) ? ['P95 响应时间需满足约定目标'] : [],
       successMetrics: [],
       constraints: [],
-      // ★ 这条 risk 同时是 generatePlan 判断是否需要数据库任务的信号，
-      //   保证结构化与计划两步用的是同一个判断依据
+      // ★ This risk doubles as the signal generatePlan uses to decide whether a
+      //   database task is needed, so structuring and planning judge on the same basis
       risks: likelyDbWork ? ['可能涉及生产数据库索引或结构变更，需评估回滚方案'] : [],
       acceptanceCriteria,
       clarifications,
@@ -208,7 +210,7 @@ export class StubPlanningProvider implements PlanningProvider {
         requiredSkills: [],
         requiredCapabilities: [],
         requiredTools: [],
-        // 生产发布默认由人执行（产品文档 8.8.6）
+        // Production releases default to being executed by a human (product doc 8.8.6)
         requiresHuman: true,
         operationType: 'deploy',
         environment: 'production',
@@ -241,14 +243,20 @@ export class StubPlanningProvider implements PlanningProvider {
     }
 
     /**
-     * ★ 按「要求修改」的意见调整。放在基础清单拼完之后 ——
-     *   它会拆任务、改 ref，先跑的话后面按 ref 找任务的地方就都落空了
-     *   （第一版就是这么炸的：拆完 test 之后 involvesDb 分支再去 find('test')）。
+     * ★ Apply the revision feedback. It runs after the base list is fully assembled —
+     *   it splits tasks and rewrites refs, so running it earlier makes every later
+     *   lookup-by-ref miss (that is exactly how the first version blew up: after the
+     *   test task was split, the involvesDb branch went looking for find('test')).
      *
-     *   这是关键词匹配，不是理解 —— 它替的是一个会读懂意见的模型。
-     *   之所以非做不可：不响应意见的规划器会让「要求修改」变成假按钮，
-     *   用户提了意见拿回一模一样的 v2，而整条重新规划的链路
-     *   （含版本对比）也就永远测不到「计划真的变了」这条路径。
+     *   This is keyword matching, not comprehension — it stands in for a model that
+     *   would actually read the feedback. It has to exist because a planner that
+     *   ignores feedback turns "request changes" into a fake button: the user
+     *   comments and gets back an identical v2, and the whole replanning path
+     *   (version comparison included) never gets to exercise "the plan really did
+     *   change".
+     *
+     * ★ 按「要求修改」的意见调整，必须放在基础清单拼完之后 —— 它会拆任务、改 ref。
+     *   这是关键词匹配而不是理解：不响应意见的规划器会让「要求修改」变成假按钮。
      */
     applyRevision(tasks, feedback);
 
@@ -271,17 +279,19 @@ export class StubPlanningProvider implements PlanningProvider {
 }
 
 /**
- * 把用户意见落到任务清单上。
+ * Fold the user's feedback into the task list / 把用户意见落到任务清单上。
  *
- * ★ 真实实现是把 feedback 拼进 prompt 让模型重新规划。这里是关键词匹配，
- *   覆盖三类最常见的意见：拆得太粗、某步不要自动做、工时估少了。
- *   刻意不做更多 —— 一个假装能理解任意自然语言的 stub，
- *   会让人误以为这条链路已经智能了。
+ * ★ The real implementation splices the feedback into the prompt and lets the model
+ *   replan. This is keyword matching covering the three most common comments: too
+ *   coarse a breakdown, don't automate that step, the hour estimates are too low.
+ *   Deliberately nothing more — a stub that pretends to understand arbitrary natural
+ *   language misleads people into thinking this chain is already intelligent.
  */
 function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
   if (!feedback) return;
 
-  // 「不要自动做 / 要人确认」→ 把提到的那一步改成需要人（收紧）
+  // "don't automate it / a human should confirm" → mark the named step human-required
+  // (tightening)
   if (/不要自动|别自动|人工|人来|需要确认|要确认/.test(feedback)) {
     for (const t of tasks) {
       if (mentions(feedback, t)) t.requiresHuman = true;
@@ -289,11 +299,16 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
   }
 
   /**
-   * ★ 「不用每次都问我 / 自动做就行」→ 去掉人工确认（放宽）。
+   * ★ "stop asking me every time / just do it automatically" → drop the human
+   *   confirmation (loosening).
    *
-   *   这是真实用户会提的意见，也正是版本对比里那条醒目警告存在的理由。
-   *   stub 只会收紧不会放宽的话，「这一版放宽了自动化边界」那条路径
-   *   就永远只活在单元测试里 —— 而它恰恰是最不能出错的一条。
+   *   Real users write this, and it is precisely why version comparison carries that
+   *   prominent warning. If the stub could only tighten and never loosen, the "this
+   *   version widened the automation boundary" path would live nowhere but in unit
+   *   tests — and it is the single path that can least afford to be wrong.
+   *
+   * ★ 「不用每次都问我 / 自动做就行」→ 去掉人工确认（放宽）。stub 只会收紧不会
+   *   放宽的话，「这一版放宽了自动化边界」那条路径就永远只活在单元测试里。
    */
   if (/不用问|不用确认|不用每次|自动做|自动执行|别拦/.test(feedback)) {
     for (const t of tasks) {
@@ -301,7 +316,7 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
     }
   }
 
-  // 「拆得太粗 / 再拆细」→ 把测试任务拆成两条
+  // "too coarse / break it down further" → split the test task into two
   if (/太粗|拆细|拆分|再拆/.test(feedback)) {
     const idx = tasks.findIndex((t) => t.ref === 'test');
     if (idx > -1) {
@@ -324,14 +339,14 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
         estimatedTokens: test.estimatedTokens === null ? null : Math.round(test.estimatedTokens / 2),
         dependsOn: [{ ref: 'test-unit', type: 'finish_to_start' }],
       });
-      // 原本依赖 test 的任务改依赖拆出来的最后一条
+      // Tasks that depended on test now depend on the last of the pieces it split into
       for (const t of tasks) {
         for (const d of t.dependsOn) if (d.ref === 'test') d.ref = 'test-integration';
       }
     }
   }
 
-  // 「工时估少了 / 太乐观」→ 整体上浮 30%
+  // "the hours are underestimated / too optimistic" → inflate everything by 30%
   if (/估少|太乐观|时间不够|工时不够/.test(feedback)) {
     for (const t of tasks) {
       t.estimatedHours = Math.round(t.estimatedHours * 1.3 * 10) / 10;
@@ -339,7 +354,7 @@ function applyRevision(tasks: PlanTaskDraft[], feedback?: string) {
   }
 }
 
-/** 意见里提到了这一步吗 —— 标题命中，或按类型指代（「发布」→ release 任务） */
+/** Does the feedback refer to this step — by title match, or by type ("release" → release tasks) */
 function mentions(feedback: string, task: PlanTaskDraft): boolean {
   if (feedback.includes(task.title)) return true;
   if (/发布|上线|部署/.test(feedback) && task.type === 'release') return true;

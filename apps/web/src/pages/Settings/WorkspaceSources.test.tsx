@@ -17,17 +17,21 @@ import { DeliveryTargetPicker } from './StorageTargets';
 import { WorkspaceSourcesPage } from './WorkspaceSources';
 
 /**
- * 工作区来源 —— 代码仓库与存储目标合并成的一页。
+ * Workspace sources — the page that merges repositories and storage targets /
+ * 工作区来源。
  *
- * ★★ 这一组盯三件事：
+ * ★★ This group watches three things:
  *
- *   1. 三类来源在**同一张列表**里。仓库此前是 Agent 配置的第三个标签页，
- *      存储目标是导航里另一格 —— 用户要在两个地方回答同一个问题。
- *      分组渲染出来又是两个板块，所以断言它们混排在一起。
- *   2. 合并过程中那些「★」纪律一条都没丢：挂载白名单要显示、
- *      交货目标只列可写的。搬代码时最容易丢的恰恰是这些没人一眼看出缺失的行为。
- *   3. 项目级仓库的默认只读要在页面上说出来 —— 不说的话，
- *      「我什么都没配，它怎么读到了」是个查不出来的问题。
+ *   1. All three source kinds live in **one list**. Repositories used to be the third
+ *      tab of Agent config and storage targets a separate nav slot, so users answered
+ *      one question in two places. Rendering them grouped is just two blocks again,
+ *      so the assertion is that they are interleaved.
+ *   2. None of the "★" disciplines were lost in the merge: the mount allowlist must be
+ *      shown, and only writable delivery targets may be listed. Behaviors nobody
+ *      notices the absence of are exactly the ones that get dropped when code moves.
+ *   3. The default read access on a project-level repository must be stated on the
+ *      page — left unsaid, "I configured nothing, how did it read that" is
+ *      unanswerable.
  */
 
 function target(over: Partial<StorageTargetRow> = {}): StorageTargetRow {
@@ -109,7 +113,7 @@ function repoResponse(over: Partial<RepositoriesResponse> = {}): RepositoriesRes
   };
 }
 
-/** 两个查询都要 mock —— 页面在两个都到齐之前显示骨架屏 */
+/** Both queries need mocking — the page shows a skeleton until both have arrived */
 function mockBoth(
   store: Partial<StorageTargetsResponse> = {},
   repos: Partial<RepositoriesResponse> = {},
@@ -131,7 +135,7 @@ function wrapper(children: ReactNode) {
   );
 }
 
-/** ★ 钉住中文：下面按具体文案定位，而默认语言是英文 */
+/** ★ Pin the locale to Chinese: the assertions below match exact copy, and the default is English */
 beforeEach(() => {
   useLocaleStore.setState({ locale: 'zh' });
   useAuthStore.setState({ token: 't', userId: 'u-1', user: null, resolving: false });
@@ -139,8 +143,9 @@ beforeEach(() => {
 
 describe('工作区来源是一页一张列表', () => {
   /**
-   * ★★ 这条是整次合并的核心断言：仓库与存储目标在同一张列表里。
-   *   拆成两个板块渲染的话它照样能过 —— 所以下一条盯的是排序。
+   * ★★ The core assertion of the whole merge: repositories and storage targets share
+   *   one list. It would still pass if they were rendered as two separate blocks —
+   *   which is why the next test watches the ordering.
    */
   it('代码仓库与存储目标出现在同一页上', async () => {
     mockBoth();
@@ -155,8 +160,9 @@ describe('工作区来源是一页一张列表', () => {
   });
 
   /**
-   * ★★ 按 ref 混排，不按类型分组 —— 分组就是把「两个板块」换了个地方重演。
-   *   a-bucket / m-repo / z-bucket 交错排列时，只有真的混排才排得出来。
+   * ★★ Interleaved by ref, not grouped by kind — grouping just re-stages "two blocks"
+   *   somewhere else. With a-bucket / m-repo / z-bucket alternating, only a genuine
+   *   interleave can produce that order.
    */
   it('两类按标识混排，而不是分成两段', async () => {
     mockBoth(
@@ -187,8 +193,8 @@ describe('工作区来源是一页一张列表', () => {
   });
 
   /**
-   * ★ 合并之后「授权在哪配」少了一个显而易见的答案 ——
-   *   所以这一页必须指回 Agent 配置。
+   * ★ After the merge, "where do I grant access" lost its obvious answer — so this
+   *   page has to point back at Agent config.
    */
   it('指出授权仍然在 Agent 配置里配，并给出链接', async () => {
     mockBoth();
@@ -203,8 +209,9 @@ describe('工作区来源是一页一张列表', () => {
   });
 
   /**
-   * ★★ 项目级仓库对项目内 Agent 默认只读（domain 的 effectiveResourceScopes）。
-   *   这条默认不写在页面上的话，「我什么都没配，它怎么读到了」查不出来。
+   * ★★ A project-level repository is read-only by default for agents in that project
+   *   (domain's effectiveResourceScopes). If that default is not written on the page,
+   *   "I configured nothing, how did it read that" cannot be traced.
    */
   it('说明项目级仓库默认只读，而写权限仍要显式授', async () => {
     mockBoth();
@@ -216,9 +223,10 @@ describe('工作区来源是一页一张列表', () => {
   });
 
   /**
-   * ★★ 挂载白名单是**部署环境**的变量（APOS_LOCAL_MOUNT_ROOTS），管理员
-   *   在界面上改不动也看不到，而一条 local 登记过不过闸完全由它决定。
-   *   搬运时丢掉这一段的话，被闸掉的登记看起来和正常的一模一样。
+   * ★★ The mount allowlist is a **deployment environment** variable
+   *   (APOS_LOCAL_MOUNT_ROOTS) that an admin can neither see nor change from the UI,
+   *   yet it alone decides whether a local registration passes the gate. Lose this
+   *   block while moving code and a gated registration looks exactly like a good one.
    */
   it('显示部署方允许挂载的目录白名单', async () => {
     mockBoth({ localMountRoots: ['/srv/data', '/mnt/shared'] });
@@ -229,7 +237,7 @@ describe('工作区来源是一页一张列表', () => {
     expect(screen.getByText('/mnt/shared')).toBeInTheDocument();
   });
 
-  /** ★ 没设白名单是**更**该说出来的那一档，不是「没什么可说」 */
+  /** ★ An unset allowlist is the case that needs saying **more**, not the case with nothing to say */
   it('没设白名单时给出警告而不是沉默', async () => {
     mockBoth({ localMountRoots: [], localMountRestricted: false });
 
@@ -238,7 +246,7 @@ describe('工作区来源是一页一张列表', () => {
     expect(await screen.findByText(/没有配置 APOS_LOCAL_MOUNT_ROOTS/)).toBeInTheDocument();
   });
 
-  /** ★ git 环境问题要在这一页说清楚，而不是等第一次派发才炸 */
+  /** ★ git environment problems are stated on this page, not blown up on first dispatch */
   it('git 不可用时当场说出来', async () => {
     mockBoth({}, { gitAvailable: false, gitProblem: '没找到 git 可执行文件' });
 
@@ -256,9 +264,9 @@ describe('工作区来源是一页一张列表', () => {
   });
 
   /**
-   * ★★ 一个查询塌了就整页报错，不显示半张列表 ——
-   *   半张列表看起来就是「另一类一个都没登记」，而那正是用户
-   *   接下来会去重复登记一遍的理由。
+   * ★★ If one query fails the whole page errors out instead of rendering half a list —
+   *   half a list reads as "nothing of the other kind is registered", which is exactly
+   *   what sends the user off to register a duplicate.
    */
   it('仓库查询失败时整页报错，不显示半张列表', async () => {
     vi.spyOn(api, 'storageTargets').mockResolvedValue(storeResponse());
@@ -267,17 +275,19 @@ describe('工作区来源是一页一张列表', () => {
     render(wrapper(<WorkspaceSourcesPage />));
 
     expect(await screen.findByText('加载失败')).toBeInTheDocument();
-    // ★ 关键在这一条：另一个查询成功了，但它的结果一条都不该露出来
+    // ★ This is the crux: the other query succeeded, yet not one of its rows may show
     expect(screen.queryByText('训练集')).toBeNull();
   });
 });
 
 /**
- * 交货目标选择器 —— 仓库表单与存储目标表单共用。
+ * The delivery-target picker — shared by the repository form and the storage-target
+ * form / 交货目标选择器。
  *
- * ★★ 只列**可写**的。只读的目标在收尾时会被原样跳过，摆在这里可选
- *   就是在邀请用户配一个不会生效的值 —— 而那种失败（任务成功、
- *   产物页有记录、目标里什么都没有）极难自己想到。
+ * ★★ Only **writable** targets are listed. A read-only target is silently skipped at
+ *   delivery time, so offering it here invites the user to configure a value that will
+ *   never take effect — and that failure mode (task succeeded, the artifacts page has
+ *   a record, the target holds nothing) is extremely hard to reason your way to.
  */
 describe('交货目标选择器', () => {
   const pick = (targets: StorageTargetRow[], selfId?: string) =>
@@ -294,9 +304,10 @@ describe('交货目标选择器', () => {
     );
 
   /**
-   * ★ 这三条都要先点开下拉：Radix 的选项在打开之前不在 DOM 里，
-   *   而它们断言的恰恰是「候选里有什么、没有什么」。
-   *   不点开的话 queryByRole('option') 一律为 null —— 后两条会**假绿**。
+   * ★ All three tests must open the dropdown first: Radix keeps its options out of the
+   *   DOM until it opens, and what these assert is precisely which candidates are and
+   *   are not offered. Without opening it, queryByRole('option') is always null — so
+   *   the last two would pass **falsely**.
    */
   it('只读的目标不出现在候选里', async () => {
     const user = userEvent.setup();
@@ -311,19 +322,20 @@ describe('交货目标选择器', () => {
     expect(screen.queryByRole('option', { name: /readonly-one/ })).toBeNull();
   });
 
-  /** ★ 停用的目标同理：选上去也不会生效 */
+  /** ★ Same for a disabled target: picking it would not take effect either */
   it('非 active 的目标不出现在候选里', async () => {
     const user = userEvent.setup();
     pick([target({ id: 'p', ref: 'paused-one', status: 'paused' })]);
 
     await user.click(screen.getByRole('combobox'));
 
-    // 默认项一定在，说明下拉确实开着 —— 否则下一条断言是假绿
+    // The default item is always present, proving the dropdown really opened —
+    // otherwise the next assertion would pass falsely
     expect(await screen.findByRole('option', { name: /写回自己/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /paused-one/ })).toBeNull();
   });
 
-  /** ★ 编辑一个存储目标自身时，它不能当自己的交货目标 */
+  /** ★ While editing a storage target, it cannot be its own delivery target */
   it('编辑自身时把自己从候选里去掉', async () => {
     const user = userEvent.setup();
     pick([target({ id: 'self', ref: 'me' }), target({ id: 'other', ref: 'other-one' })], 'self');
@@ -334,7 +346,7 @@ describe('交货目标选择器', () => {
     expect(screen.queryByRole('option', { name: /^me/ })).toBeNull();
   });
 
-  /** ★ 一个可写目标都没有时说出来，而不是给一个只有默认项的下拉框 */
+  /** ★ Say so when there is no writable target at all, instead of a dropdown holding only the default */
   it('没有可写目标时给出提示', () => {
     pick([target({ writable: false })]);
 

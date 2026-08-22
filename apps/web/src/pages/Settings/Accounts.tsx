@@ -18,22 +18,27 @@ import {
 } from '@/components/ui/select';
 
 /**
- * 账号管理（09-security §2.2「org_admin：身份管理」）。
+ * Account management (09-security §2.2, "org_admin: identity management") /
+ * 账号管理。
  *
- * ★★ 这是把人放进**本组织**的唯一入口。账号本身还有另外两个来源
- *   （.env 自举的第一个超管、自助注册），但那两条路都进不到别人的组织里 ——
- *   自助注册开的是一个空的新组织。组织边界就是多租户边界，
- *   「谁能进这个组织」必须只由这一页决定。
+ * ★★ This is the only way a person gets into **this organization**. Accounts
+ *   have two other origins (the first superadmin bootstrapped from .env, and
+ *   self-signup), but neither of those can reach into someone else's
+ *   organization — self-signup creates a brand-new empty one. The organization
+ *   boundary is the multi-tenant boundary, so "who may enter this org" has to
+ *   be decided on this page and nowhere else.
  *
- * ★ 建号时必须当场设一个初始口令，并且建完就把它显示出来让管理员转交。
- *   做成「系统发邮件」的话，这个实例没有邮件通道，结果是账号建好了
- *   但没人知道口令 —— 一个建完就没法用的功能。
+ * ★ Creating an account requires setting an initial password on the spot, and
+ *   the password is shown once afterward for the admin to hand over. Doing it
+ *   as "the system sends an email" fails here: this deployment has no mail
+ *   channel, so the account would exist with nobody knowing its password — a
+ *   feature that is unusable the moment it finishes.
  */
 export function AccountsPage() {
   const t = useT();
   const qc = useQueryClient();
   const { projectId } = useParams<{ projectId: string }>();
-  /** 与「成员与角色」共用同一个 key —— 那边加完人也要让这份名单跟着变 */
+  /** Shares its key with Members & Roles — adding someone there must refresh this list too */
   const directory = useQuery({ queryKey: ['orgDirectory'], queryFn: () => api.orgUsers() });
 
   const [open, setOpen] = useState(false);
@@ -101,9 +106,10 @@ export function AccountsPage() {
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
           <div className="mx-auto max-w-3xl space-y-3">
             {/*
-              ★ 初始口令只在这一次显示。库里存的是 scrypt 散列，
-                这一刻之后谁也读不出来 —— 所以要说清楚「现在就转交」，
-                否则管理员关掉页面就只能重开一个号。
+              ★ The initial password is shown this once. What the database holds
+                is a scrypt hash, so after this moment nobody can read it back —
+                hence the explicit "hand it over now", or the admin closes the
+                page and has to create the account all over again.
             */}
             {created && (
               <section className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2">

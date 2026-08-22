@@ -38,6 +38,22 @@ import {
 import { fail, notFound } from './errors';
 
 /**
+ * Agent profiles — create N agents, each carrying its own headless CLI kind and its own
+ * personalized configuration.
+ *
+ * ★ There is no separate "runtime connection" layer. An agent *is* "one CLI + one set of
+ *   its parameters + one credential + one set of capabilities" — a complete, usable
+ *   execution subject. Adding an agent is therefore filling in one form, instead of first
+ *   creating a connection somewhere else and coming back to attach it.
+ *
+ * ★ The price is that the same key gets referenced once per agent. The mitigations are
+ *   written into the UI guidance: with the `env:VAR_NAME` form, N agents point at the same
+ *   variable name, so rotation still touches exactly one place; and `credentialUsage`
+ *   aggregates "who is using this credential".
+ *
+ * ★ Credentials never appear in any response — only a hint does. See
+ *   modules/security/secrets.ts.
+ *
  * Agent 档案 —— 建 N 个 Agent，每个自带 headless CLI 类型与它的个性化配置。
  *
  * ★ 没有单独的「运行时接入」层。一个 Agent 就是
@@ -51,9 +67,16 @@ import { fail, notFound } from './errors';
  * ★ 凭证从不出现在任何响应里，只回 hint。见 modules/security/secrets.ts。
  */
 
-// ── 平台侧的配置目录 ──────────────────────────────────────────────────
+// ── Platform configuration catalog ────────────────────────────────────
 
 /**
+ * What each CLI kind can be configured with, defined once by the platform.
+ *
+ * ★ The UI no longer renders one input box per entry — runtime configuration is a single
+ *   JSON text area, and this table sits next to it as the manual (which keys exist, what
+ *   ranges they take, what the defaults are, whether a key affects cost or safety). A JSON
+ *   box carries no labels, so without this table users are left guessing key names.
+ *
  * 每种 CLI 能配什么，由平台统一定义。
  *
  * ★ 界面不再按它逐项渲染输入框 —— 运行时配置是一个 JSON 文本框，这张表
@@ -61,6 +84,13 @@ import { fail, notFound } from './errors';
  *   JSON 框里没有标签，没有这张表用户就只能猜键名。
  */
 /**
+ * Capability catalog — the UI renders the ceiling checkboxes from it and shows the
+ * **consequence** of each entry.
+ *
+ * ★ The frontend deliberately keeps no second copy: a copy means the platform can add a
+ *   capability that never shows up in the UI, and "there is no such row in the UI" reads
+ *   to a user as "this feature does not exist".
+ *
  * 能力目录 —— 界面照着它渲染上限勾选，并显示每一条的**后果**。
  *
  * ★ 前端不再抄一份：抄一份的代价是平台加了一条能力而界面上没有，
@@ -75,7 +105,7 @@ export function listCapabilityCatalog() {
       consequence: CAPABILITY_SPECS[key].consequence,
       consequenceEn: CAPABILITY_SPECS[key].consequenceEn,
       risk: CAPABILITY_SPECS[key].risk,
-      /** 平台底线：勾不上，也存不进去 */
+      /** Platform floor: cannot be checked in the UI, and cannot be stored either */
       neverAutoGrant: CAPABILITY_SPECS[key].neverAutoGrant === true,
     })),
   };
@@ -85,6 +115,13 @@ export function listRuntimeCatalog() {
   return {
     kinds: RUNTIME_KIND_SPECS,
     /**
+     * ★ Whether inline secrets are stored **encrypted**.
+     *
+     *   Note this is not "can they be stored at all": with no master key configured they
+     *   still save fine, just in plaintext. The UI uses this to warn, not to disable the
+     *   input — a safety measure that locks ordinary configuration out of the product only
+     *   buys you users who route around this page.
+     *
      * ★ 内联的敏感值是不是**密文**入库。
      *
      *   注意它不是「能不能存」：没配主密钥照样存得下，只是明文进库。
@@ -105,9 +142,16 @@ export const AgentInput = z.object({
   type: z.string().min(1),
   description: z.string().nullable().optional(),
 
-  /** headless CLI 类型 */
+  /** Headless CLI kind */
   runtimeKind: z.string().min(1, '必须选择运行时类型'),
   /**
+   * Configuration for that CLI — a free-form JSON document.
+   *
+   * ★ Keys the platform knows are validated against RUNTIME_KIND_SPECS; every other key is
+   *   accepted and stored verbatim (the caller gets an `unknownConfigKeys` list back).
+   *   Runtimes ship faster than this platform does, so rejecting unrecognized keys would
+   *   make every runtime upgrade wait on a platform release.
+   *
    * 该 CLI 的配置，一份自定义 JSON。
    *
    * ★ 平台认识的键按 RUNTIME_KIND_SPECS 校验，其余键原样收下、原样入库
@@ -116,7 +160,7 @@ export const AgentInput = z.object({
    */
   runtimeConfig: z.record(z.unknown()).optional(),
   endpoint: z.string().url('接入地址必须是合法 URL').nullable().optional(),
-  /** 明文凭证或 `env:变量名`。不传 = 不改动；null = 清除 */
+  /** Plaintext credential or `env:VAR_NAME`. Omitted = unchanged; null = cleared */
   credential: z.string().nullable().optional(),
 
   model: z.string().nullable().optional(),
@@ -124,6 +168,16 @@ export const AgentInput = z.object({
   applicableTypes: z.array(WorkItemType).default([]),
 
   /**
+   * ★★ The **capability ceiling** the organization sets for this agent.
+   *
+   *   This layer answers "how far can this agent ever be authorized", not "what can it do
+   *   right now" — the latter is a project-level matter (project_agent_permissions), and
+   *   the same agent can carry two different answers in two projects.
+   *
+   * ★ `null` / omitted = no ceiling (fall back to the platform baseline), which is **not**
+   *   the same as "grant nothing". The two mean opposite things: an empty array leaves this
+   *   agent unable to do any work in any project.
+   *
    * ★★ 组织给这个 Agent 定的**能力上限**。
    *
    *   这一层回答的是「这个 Agent 最多能被授权到什么程度」，
@@ -134,7 +188,7 @@ export const AgentInput = z.object({
    *   两者含义相反：空数组会让这个 Agent 在所有项目里都干不了活。
    */
   capabilityCeiling: z.array(AgentCapability).nullable().optional(),
-  /** 组织级硬拒绝：任何项目授予都压不过它 */
+  /** Organization-level hard denial: no project grant can override it */
   deniedCapabilities: z.array(AgentCapability).default([]),
 
   maxConcurrency: z.number().int().positive().max(50).default(3),
@@ -142,7 +196,7 @@ export const AgentInput = z.object({
   tokenLimitPerRun: z.number().int().positive().nullable().optional(),
   tokenLimitDaily: z.number().int().positive().nullable().optional(),
 
-  /** ★ 不可为空：出问题时的问责链条不能断 */
+  /** ★ Never nullable: the accountability chain must not break when something goes wrong */
   ownerId: z.string().uuid('必须指定负责人'),
 });
 export type AgentInput = z.infer<typeof AgentInput>;
@@ -200,11 +254,12 @@ export async function createAgent(
     })
     .returning();
 
-  // ★ 立刻注册，不等下一轮同步 —— 否则新建的 Agent 在 15 秒内是隐形的，
-  //   用户会以为「建了但没用」，而界面只会说「适配器没有在当前进程注册」
+  // ★ Register immediately instead of waiting for the next sync round — otherwise a
+  //   freshly created agent is invisible for 15 seconds, the user reads that as "I created
+  //   it and it does nothing", and all the UI says is "no adapter registered in this process"
   registerAgentNow(registry, row!);
 
-  // 建档本身就是一次权限授予，同样要留痕
+  // Creating the profile is itself a permission grant, so it leaves an audit trail too
   await db.insert(agentPermissionChanges).values({
     agentId: row!.id,
     changedBy: actorUserId,
@@ -218,6 +273,20 @@ export async function createAgent(
 }
 
 /**
+ * Load one agent by id, **and** require that it belongs to the caller's organization.
+ *
+ * ★★ `/api/v1/admin/…` matches neither of rbac's two scope patterns (PROJECT_SCOPED_URL /
+ *   RESOURCE_SCOPED_URL), so the gate can decide "is the caller entitled **within their own
+ *   organization**" but not "whose agent is this" — and `ownsAgent` only compares ownerId,
+ *   which likewise ignores the organization.
+ *
+ *   An agent carries a credential reference and resource scopes, so editing one across the
+ *   tenant boundary means editing somebody else's execution subject: swapping allowedTools
+ *   or pointing resourceScopes at your own repository leaves no anomaly on their side at
+ *   all. That makes this narrowing even more important than the repository one.
+ *
+ * ★ Out-of-tenant access returns 404, not 403 — a 403 confirms that this id exists.
+ *
  * 按 id 取一个 Agent，**并且**要求它属于调用者的组织。
  *
  * ★★ `/api/v1/admin/…` 不在 rbac 的两条作用域正则里
@@ -248,6 +317,12 @@ export async function updateAgent(
   input: Partial<AgentInput> & { reason?: string },
   actorUserId: string,
   /**
+   * Callback that asserts the permission implied by the change's direction (09-security §2.3).
+   *
+   * ★ Widening needs tech_lead, narrowing only needs the owner — and the direction is only
+   *   known after comparing the old and new permissions, so the route layer can only stop
+   *   people who are not entitled to edit the profile at all. Same treatment as savePolicy.
+   *
    * 权限方向判定回调（09-security §2.3）。
    *
    * ★ 扩大要 tech_lead、收紧只要 owner —— 而方向要把新旧权限比过才知道，
@@ -274,6 +349,10 @@ export async function updateAgent(
   const permissionsChanged = JSON.stringify(before) !== JSON.stringify(merged);
 
   /**
+   * ★ Widening permissions requires a reason; narrowing does not. The default explanation
+   *   for narrowing ("let's be more careful") is almost always right, while the default
+   *   explanation for widening ("they probably needed it") is almost never good enough.
+   *
    * ★ 放宽权限必须填原因。收紧不强制 ——
    *   收紧的默认解释（「收着点」）几乎总是对的，
    *   而放宽的默认解释（「大概是需要吧」）几乎总是不够。
@@ -289,6 +368,16 @@ export async function updateAgent(
   }
 
   /**
+   * ★ Switching the CLI kind means re-validating the configuration: parameters from the old
+   *   kind are usually invalid under the new one, and carrying them over verbatim shows a
+   *   healthy-looking configuration in the UI while dispatch hands the CLI a pile of flags
+   *   it does not recognize.
+   *
+   * ★ When the kind changes we also pass no previous config to `prepareConfig`: the whole
+   *   configuration starts over, so a `secret://saved` placeholder has no old value behind
+   *   it and must fail loudly here — rather than silently picking up a same-named value out
+   *   of the *previous* CLI's environment-variable table.
+   *
    * ★ 换了 CLI 类型就要重新校验配置：旧 kind 的参数在新 kind 下多半不合法，
    *   原样带过去的话，界面显示配置完好，实际派发时 CLI 收到一堆它不认识的参数。
    *
@@ -340,6 +429,10 @@ export async function updateAgent(
     .returning();
 
   /**
+   * ★ The registry instance must be **replaced**, never left alone. The old instance still
+   *   holds the old effort and the old credential — skip this and the UI reports the edit as
+   *   applied while the next dispatch still runs on the previous values.
+   *
    * ★ 必须**替换**注册表里的实例，不能跳过。
    *   老实例里还捏着旧的 effort、旧的凭证 —— 不换掉的话，
    *   界面上改完显示为已生效，而下一次派发仍然是旧值。
@@ -365,7 +458,8 @@ export async function updateAgent(
 }
 
 export async function deleteAgent(db: Database, orgId: string, agentId: string) {
-  // 只为「存在且属于本组织」这道检查而调用 —— 不存在或越界都在这里 404
+  // Called purely for the "exists and belongs to this organization" check — both a missing
+  // id and a cross-tenant one turn into a 404 right here
   await loadOwnedAgent(db, orgId, agentId);
 
   const [active] = await db
@@ -383,7 +477,21 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
   }
 
   /**
-   * ★★ 这几项清点的是**指向 agents.id 的每一条外键**，不是「大概哪些地方用得上」。
+   * ★★ What follows counts **every foreign key pointing at agents.id**, not "the places
+   *   that probably matter".
+   *
+   *   A missed one does not degrade gracefully into a missed check: it becomes a raw 23503,
+   *   a code that is not in CLIENT_INPUT_PG_CODES, so clicking "delete agent" gets the user
+   *   an "internal server error" with nothing naming what actually blocked the delete. This
+   *   bug shipped twice — project role bindings and planning runs both point at agents.id,
+   *   while this function only counted work items and requirements.
+   *
+   *   ★ Historical runs are counted **straight from agent_runs**, never inferred from "some
+   *     work item names it as executor": planning runs have no work item at all
+   *     (work_item_id is nullable), and reassigning a finished work item to another executor
+   *     hides its runs from that proxy — in both cases the agent_runs rows are still there.
+   *
+   *   ★★ 这几项清点的是**指向 agents.id 的每一条外键**，不是「大概哪些地方用得上」。
    *
    *   漏掉一条的表现不是漏检，而是 23503 —— 那个码不在 CLIENT_INPUT_PG_CODES
    *   里，用户点「删除 Agent」得到的是一句「服务器内部错误」，看不出真正拦住
@@ -393,12 +501,6 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
    *   ★ 历史 Run 要**直接数 agent_runs**，不能拿「工作项的执行者是它」当代理指标：
    *     规划 Run 根本没有工作项（work_item_id 可空），而执行完的工作项换个执行者
    *     就再也数不到那些 Run —— 两种情况下 agent_runs 里的行都还在。
-   *
-   *   Every foreign key pointing at agents.id must be counted here. A missed one
-   *   does not degrade gracefully: it becomes a raw 23503, which surfaces to the
-   *   user as "internal server error" with nothing naming what blocked the delete.
-   *   Historical runs are counted from agent_runs itself rather than inferred from
-   *   work_items.executor_id, because planning runs have no work item at all.
    */
   const [runs] = await db
     .select({ n: count() })
@@ -411,14 +513,18 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(and(eq(workItems.executorType, 'agent'), eq(workItems.executorId, agentId)));
 
   /**
+   * ★★ An agent named as some requirement's PRD author is likewise retired, not deleted.
+   *
+   *   Retiring beats nulling the reference out: clearing it silently undoes a choice
+   *   somebody made, and the next time they open that requirement all they see is
+   *   "unassigned", with no trace that anything happened. Once retired, the requirement page
+   *   says plainly that the agent is retired and the next analysis run will fail.
+   *
    * ★★ 被某条需求指定为 PRD 编写者的 Agent 同样只停用不删除。
    *
    *   停用而不是把引用清空：清空等于替用户撤销了他做过的指定，
    *   而他下一次进那条需求只会看到「未指定」，没有任何迹象说明发生过什么。
    *   停用之后需求页会明说「当前是 retired，下一次分析会失败」。
-   *
-   *   An agent named as some requirement's PRD author is retired, not deleted:
-   *   nulling the column out would silently undo a choice a person made.
    */
   const [authoring] = await db
     .select({ n: count() })
@@ -426,16 +532,18 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(eq(requirements.authorAgentId, agentId));
 
   /**
+   * ★★ Project role bindings also retire rather than delete, but for a different reason
+   *   than the one above: a binding is **current configuration**, not history. Dropping it
+   *   on the user's behalf breaks the next planning run on "no planner assigned", with
+   *   nothing on the scene showing who emptied that slot. Retiring is a state the binding
+   *   table was designed to fall back from (the fallback priority exists exactly for it), so
+   *   once the user reads the reason they can rebind and then come back and delete.
+   *
    * ★★ 项目角色绑定同样只停用不删除，理由和上面那条不一样：
    *   绑定是**当前配置**而不是历史，替用户把它删掉，下一次规划会在
    *   「planner 没人」上失败，而现场没有任何迹象说明那一格是被谁清掉的。
    *   停用是绑定表设计时就预留的状态（备选优先级正是为它准备的），
    *   用户看到 reason 之后可以去改绑，再回来删。
-   *
-   *   A project-role binding is current configuration, not history: silently
-   *   dropping it would break the project's planning with no trace of who
-   *   emptied that slot. Retiring is the state the binding table was designed
-   *   to fall back from.
    */
   const [bound] = await db
     .select({ n: count() })
@@ -443,6 +551,10 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     .where(eq(projectAgentBindings.agentId, agentId));
 
   /**
+   * ★ An agent with execution history is retired, never deleted. Delete it and the "who did
+   *   this" on those runs and artifacts points at an id that no longer exists — the audit
+   *   chain breaks exactly at the moment somebody needs it most.
+   *
    * ★ 有历史执行记录的 Agent 只停用不删除。
    *   删掉的话，那些 Run 与产物的「谁做的」会指向一个不存在的 id ——
    *   审计链断在这里，而这正是最需要它的时候。
@@ -464,6 +576,11 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
       .set({
         status: 'retired',
         /**
+         * ★ Store **which specific** references held it back, not a generic "retired
+         *   (history preserved)". This column is the only explanation shown on the agent
+         *   list and detail pages; write a generic sentence and a user coming back days
+         *   later sees a retired agent with no way to learn what blocked the delete.
+         *
          * ★ 存下**具体**是被什么牵连，而不是一句「已停用（保留历史记录）」。
          *   这一列在 Agent 列表与详情页上是唯一的解释；写成通用句子的话，
          *   用户过几天回来看到一个停用的 Agent，无从知道当初拦住删除的是什么。
@@ -473,6 +590,12 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
       })
       .where(eq(agents.id, agentId));
     /**
+     * ★ Spell out **every** blocker, not just the first one. Each kind implies a different
+     *   next step: with execution history the user does nothing, when a requirement names
+     *   the agent as its author they usually want to switch that requirement to another
+     *   agent, and with a role binding they must rebind first. Report only one and the user
+     *   fixes it, clicks delete again, and gets a second reason they never saw before.
+     *
      * ★ 把牵连**逐条**说清，而不是只报第一条。每一种的下一步不一样：
      *   有历史执行记录时用户什么都不用做，被需求指定为编写者时他多半想去
      *   那条需求上换一个，还有绑定时则必须去改绑 —— 只报一条的话，用户改完
@@ -491,6 +614,18 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
     await db.delete(agents).where(eq(agents.id, agentId));
   } catch (err) {
     /**
+     * ★★ Safety net for the day somebody adds another table pointing at agents.id and
+     *   forgets to count it above.
+     *
+     *   Without this layer that omission surfaces as "click delete → internal server
+     *   error" — a sentence that explains neither what happened nor what to do next. Here
+     *   it lands on the same path as every other blocker: retire, and say it is still
+     *   referenced.
+     *
+     *   The constraint name is not returned: it is table and column names, i.e. information
+     *   disclosure (see errors.ts). To find out which table it was, read this exception in
+     *   the server log.
+     *
      * ★★ 兜底：将来有人新加一张指向 agents.id 的表，而忘了在上面清点。
      *
      *   没有这一层的话，那次遗漏的表现是「点删除 → 服务器内部错误」——
@@ -499,9 +634,6 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
      *
      *   不回传约束名：那是表名列名，属于信息泄露（见 errors.ts）。要定位
      *   到具体是哪张表，看服务端日志里这条异常。
-     *
-     *   Safety net for a foreign key added later and not counted above: fall
-     *   back to the same retire path instead of surfacing a bare 500.
      */
     if ((err as { code?: string }).code !== '23503') throw err;
     console.warn(
@@ -524,6 +656,13 @@ export async function deleteAgent(db: Database, orgId: string, agentId: string) 
 }
 
 /**
+ * Capability probe.
+ *
+ * ★ "No adapter registered", "registered but unreachable" and "reachable but missing
+ *   capabilities" are three different things, and the page has to show them separately.
+ *   Collapse them into one "unavailable" and the user cannot tell whether to install a
+ *   dependency, swap a key, or pick a different agent for the high-risk task.
+ *
  * 能力探测。
  *
  * ★ 「适配器没注册」「注册了但连不上」「连上了但缺能力」是三件不同的事，
@@ -559,6 +698,10 @@ export async function listAgentsAdmin(db: Database, registry: RuntimeRegistry, o
   return {
     agents: await Promise.all(rows.map((r) => describeAgent(db, registry, r))),
     /**
+     * ★ "Who is using this credential". Once the connection layer was removed, that question
+     *   lost its natural home — aggregating by credentialRef puts it back, so before rotating
+     *   a key you can see at a glance how many agents it touches.
+     *
      * ★ 「这把凭证被谁在用」。取消接入层之后，这个问题失去了天然的答案位置 ——
      *   靠 credentialRef 聚合把它补回来，轮换前能一眼看到要动几个 Agent。
      */
@@ -567,7 +710,10 @@ export async function listAgentsAdmin(db: Database, registry: RuntimeRegistry, o
   };
 }
 
-/** 按凭证引用聚合。env: 形态的多个 Agent 会归到同一条，轮换只需改那个变量 */
+/**
+ * Aggregate by credential reference. Agents sharing an `env:` reference collapse into one
+ * row, since rotating them means editing that single environment variable.
+ */
 function usageByCredential(rows: AgentRow[]) {
   const byRef = new Map<string, { hint: string | null; kind: string; agents: string[] }>();
 
@@ -585,7 +731,7 @@ function usageByCredential(rows: AgentRow[]) {
 
   return [...byRef.values()].map((e) => ({
     ...e,
-    /** env 形态轮换只需改环境变量；内联密文要逐个 Agent 重录 */
+    /** `env:` rotates in one place; inline secrets have to be re-entered agent by agent */
     rotationCost: e.kind === 'env' ? 'one_place' : `${e.agents.length}_places`,
   }));
 }
@@ -597,7 +743,7 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
   let capability: ReturnType<typeof buildCapability> | null = null;
   let reachable = false;
   let problem: string | null = null;
-  /** ★ 与 problem 配对的码。界面读码，日志读句子 */
+  /** ★ The code paired with `problem`. The UI reads the code, logs read the sentence */
   let problemCode: 'probe_failed' | 'no_adapter' | null = null;
 
   if (registry.has(row.id)) {
@@ -624,9 +770,16 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
 
     runtimeKind: row.runtimeKind,
     runtimeKindLabel: spec?.label ?? row.runtimeKind,
-    /** ★ 环境变量表里的加密值只回占位符，与凭证同一条纪律 */
+    /**
+     * ★ Encrypted values in the env table come back as a placeholder only — same discipline
+     *   as the credential column
+     */
     runtimeConfig: maskRuntimeConfig(row.runtimeConfig),
     /**
+     * ★ References in the env table that resolve to nothing. Same class of problem as
+     *   credentialProblem: the configuration looks healthy, it blows up at dispatch time,
+     *   and the error never points at "that environment variable is not set".
+     *
      * ★ 环境变量表里那些取不到值的引用。
      *   和 credentialProblem 是同一类问题：配置看着完好，派发时才炸，
      *   而报错不会指向「那个环境变量没设置」。
@@ -636,12 +789,12 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     problemParams: problemCode === 'no_adapter' ? { kind: row.runtimeKind } : undefined,
     endpoint: row.endpoint,
 
-    /** ★ 只回 hint 与可用性判断，永不回原值 */
+    /** ★ Only the hint and a usability verdict — never the raw value */
     credentialHint: row.credentialHint,
     credentialUsable: cred.usable,
     credentialKind: cred.kind,
     credentialProblem: cred.problem,
-    /** ★ 与上面那句中文配对的码，界面据此取词 */
+    /** ★ The code paired with the Chinese sentence above; the UI looks up its message by it */
     credentialProblemCode: cred.problemCode,
     credentialProblemParams: cred.problemParams,
 
@@ -654,6 +807,11 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     skills: row.skills,
     applicableTypes: row.applicableTypes,
     /**
+     * ★ The organization-level record returns the **ceiling** only, never "what it can do".
+     *   That is a project-level question, and the same agent can have two different answers
+     *   in two projects — putting a single number on this page means publishing an answer
+     *   that is wrong in every concrete project.
+     *
      * ★ 组织级记录只回**上限**，不回「它能做什么」。
      *   后者是项目级的问题，同一个 Agent 在两个项目里可以是两套答案 ——
      *   在这一页给一个数字，等于给一个在任何具体项目里都不准的答案。
@@ -683,7 +841,7 @@ function buildCapability(manifest: Parameters<typeof checkCompatibility>[0]) {
   };
 }
 
-// ── 校验 ──────────────────────────────────────────────────────────────
+// ── Validation ────────────────────────────────────────────────────────
 
 function assertKind(kind: string) {
   if (!isKnownRuntimeKind(kind)) {
@@ -698,10 +856,13 @@ function assertKind(kind: string) {
 }
 
 /**
+ * Validate a runtime configuration and replace sensitive values in the env table with
+ * references.
+ *
  * 校验运行时配置，并把环境变量表里的敏感值换成引用。
  *
- * @param previous 库里已有的那份配置，用于兑现 `secret://saved` 占位符。
- *   新建时传 null。
+ * @param previous The configuration already stored, used to redeem `secret://saved`
+ *   placeholders. Pass null when creating.
  */
 function prepareConfig(
   kind: string,
@@ -711,6 +872,10 @@ function prepareConfig(
   const result = validateRuntimeConfig(kind, input);
   if (!result.ok) {
     /**
+     * ★ Reject at save time rather than letting it through. Letting it through looks like a
+     *   successful dispatch followed by a parameter error the CLI prints at startup and
+     *   nobody reads — while the UI keeps showing this agent as correctly configured.
+     *
      * ★ 在保存这一刻拒掉，而不是放行。
      *   放行的表现是派发成功、CLI 启动时报一句没人看的参数错误，
      *   而界面上这个 Agent 显示为配置完好。
@@ -723,7 +888,7 @@ function prepareConfig(
     );
   }
 
-  // 该运行时没有环境变量表这一项（如 mock）时不要凭空塞一个 env 键进去
+  // When the runtime has no env table at all (mock, for instance), do not invent an `env` key
   if (!('env' in result.config)) return { config: result.config, unknownKeys: result.unknownKeys };
 
   try {
@@ -745,13 +910,20 @@ function prepareConfig(
   }
 }
 
-/** 回显用：环境变量表里的加密值换成占位符，永不回显原文 */
+/** For read-back: encrypted values in the env table become placeholders, never plaintext */
 function maskRuntimeConfig(config: Record<string, unknown>): Record<string, unknown> {
   if (!('env' in config)) return config;
   return { ...config, env: maskEnvOverrides(envOverridesOf(config)) };
 }
 
 /**
+ * Whether the env table already supplies a credential.
+ *
+ * ★ This is only a coarse screen for "don't let someone save an agent that obviously cannot
+ *   run": we do not know which variable name each CLI reads, so we go by "is there a key
+ *   shaped like a secret". The real decision lives in the adapter's dispatch — it knows what
+ *   it reads, and it is the only place that can actually stop the run.
+ *
  * 环境变量表里是不是已经给了凭证。
  *
  * ★ 只是「别让人存下一个明显跑不起来的 Agent」的粗筛：这里不知道每种 CLI
@@ -788,6 +960,17 @@ export interface AgentCeilingRecord {
 }
 
 /**
+ * Sanity check on the capability ceiling.
+ *
+ * ★ The same capability appearing in both the ceiling and the hard denial list is two
+ *   contradictory statements in one configuration. Say nothing and the UI shows that
+ *   capability as granted while it can never actually be obtained — and the investigation
+ *   runs all the way from project grants down to the runtime before anyone notices.
+ *
+ * ★ The empty-array/null distinction has to hold here too: an empty array means "grant
+ *   nothing", which leaves this agent unable to do work in any project. That deserves to be
+ *   said at save time.
+ *
  * 能力上限自检。
  *
  * ★ 同一条能力既在上限里又在硬拒绝里，是配置层面自相矛盾的两句话。
@@ -826,6 +1009,18 @@ function ceilingOf(row: AgentRow): AgentCeilingRecord {
 }
 
 /**
+ * Direction of a ceiling change: any side getting wider counts as a grant.
+ *
+ * ★★ The verdict comes from the same source as project-level grants (domain's
+ *   capabilityChangeImpact). This one direction decides three things at once: whether a
+ *   reason is required, how the change is recorded in the audit trail, and which permission
+ *   tier is needed (the asymmetric design in §2.3). Three call sites with three separate
+ *   verdicts guarantees that one of them eventually disagrees with the other two.
+ *
+ * ★ `null` (no ceiling) expands to **every capability** for the comparison: going from "no
+ *   ceiling" to a concrete list is a narrowing, and the reverse is a widening. Compare it as
+ *   an empty array instead and the direction comes out exactly backwards.
+ *
  * 上限改动的方向：只要有任何一面变宽就算 grant。
  *
  * ★★ 判据与项目级授权同源（domain 的 capabilityChangeImpact）——

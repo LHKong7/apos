@@ -1,10 +1,13 @@
 import type { Stage, WorkItemStatus } from '@apos/contracts';
 
 /**
- * Analytics 的输入与输出类型。
+ * Input and output types for Analytics / Analytics 的输入与输出类型。
  *
- * 输入一律是「已经从库里读出来的行」，不含任何 Drizzle / SQL 概念 ——
- * 指标计算是纯函数，能脱库测试。见 12 项目 Analytics §9。
+ * Every input is a row that has already been read out of the database; nothing here carries a
+ * Drizzle or SQL concept. Metric computation is a pure function and can be tested without a
+ * database. See 12 Project Analytics §9.
+ *
+ * 输入一律是「已经从库里读出来的行」，指标计算是纯函数，能脱库测试。
  */
 
 export const ANALYTICS_RANGES = ['7d', '30d', '90d'] as const;
@@ -15,13 +18,14 @@ export const RANGE_DAYS: Record<AnalyticsRange, number> = { '7d': 7, '30d': 30, 
 export const ANALYTICS_TABS = ['flow', 'agent', 'hitl', 'cost', 'quality', 'benefit'] as const;
 export type AnalyticsTab = (typeof ANALYTICS_TABS)[number];
 
-/** 时间统一用毫秒时间戳，避免 Date 在纯函数里带时区歧义 */
+/** Times are millisecond timestamps throughout, so Date never smuggles a time zone into a pure
+ *  function / 避免 Date 在纯函数里带时区歧义 */
 export interface Window {
   from: number;
   to: number;
 }
 
-// ── 输入行 ────────────────────────────────────────────────────────────────
+// ── Input rows / 输入行 ───────────────────────────────────────────────────
 
 export interface StatusChange {
   itemId: string;
@@ -39,24 +43,32 @@ export interface ItemRow {
   createdAt: number;
   actualStart: number | null;
   actualEnd: number | null;
-  /** null 表示计划里没排期 —— 按时交付率要显示「未接入」而不是 0 */
+  /** null means the plan carries no due date — on-time delivery shows "not wired up", never 0
+   *  计划里没排期时显示「未接入」而不是 0 */
   plannedEnd: number | null;
   actualTokens: number;
   /**
-   * 「被阻塞」的标记位。与 `blocked` 状态是两回事：
-   * 一张 ready 的卡片也可以挂着阻塞标记（在等外部依赖），看板正是按它显示「⛔ N 项阻塞」。
-   * 阻塞时长要把两者都算上，否则 Analytics 说 0h、看板说 1 项，用户不知道该信谁。
+   * The "is blocked" marker. This is a different thing from the `blocked` status: a card sitting
+   * in `ready` can also carry the marker (waiting on an external dependency), and the board's
+   * "⛔ N blocked" count reads exactly this field. Blocked hours must count both, or Analytics
+   * reports 0h while the board reports 1 item and the user has no idea which to believe.
+   *
+   * 阻塞标记与 blocked 状态是两回事，时长要把两者都算上，否则两个界面互相打架。
    */
   blockedSince: number | null;
   ownerId: string | null;
   executorType: string | null;
   executorId: string | null;
   /**
-   * CI 回流的质量信号（typeData.qualityGate）。
+   * Quality signals flowing back from CI (typeData.qualityGate).
    *
-   * ★ 这个字段一直存在、Policy 引擎一直在读，但从来没有东西写过它 ——
-   *   这就是「质量 Tab 算不出来」的真实原因：不是算法难，是没有数据源。
-   *   接上代码仓库之后由 GitHub check-runs 回填。
+   * ★ This field has always existed and the Policy engine has always read it, but nothing ever
+   *   wrote it — that is the real reason the Quality tab could not be computed: not a hard
+   *   algorithm, just no data source. Once a code repository is connected, GitHub check-runs
+   *   backfill it.
+   *
+   *   字段一直在、Policy 一直读，但从来没有东西写过它 —— 质量 Tab 算不出来是缺数据源，
+   *   不是算法难。
    */
   qualityGate?: {
     testsPassed?: boolean;
@@ -73,21 +85,20 @@ export interface RunRow {
   attempt: number;
   status: string;
   /**
-   * 记账单位：四类 token 相加。所有上限、预算、成本指标都读这一个。
-   *
    * The unit of account: the four token classes summed. Every limit, budget,
    * and cost metric reads this one field.
+   *
+   * 记账单位：四类 token 相加。所有上限、预算、成本指标都读这一个。
    */
   tokens: number;
   /**
-   * 运行时结算的美元值，**只有 ROI 会用**。
+   * The runtime's settled USD figure, used **only by ROI**.
    *
-   * ★ ROI 要拿 Agent 开销和人力成本相减，而人力成本只有货币这一种单位 ——
-   *   token 减小时数是没有意义的。除这一处之外，任何判定都不该读它。
+   * ★ ROI subtracts agent spend from labor cost, and labor has no denomination other than
+   *   money — tokens minus hours is not a quantity. Nothing else may read this field.
    *
-   * The runtime's settled USD figure, used **only by ROI**: ROI subtracts
-   * agent spend from labor cost, and labor has no denomination other than
-   * money — tokens minus hours is not a quantity. Nothing else may read it.
+   * 运行时结算的美元值，只有 ROI 会用：人力成本只有货币这一种单位，
+   * token 减小时数没有意义。除这一处之外任何判定都不该读它。
    */
   costUsd: number;
   startedAt: number | null;
@@ -111,7 +122,8 @@ export interface DecisionRow {
   resolvedAt: number | null;
   dueAt: number | null;
   workItemId: string | null;
-  /** 决策发生时任务所处的阶段，用于「各阶段人类介入比例」 */
+  /** The stage the work item was in when the decision arose; feeds "human involvement by stage"
+   *  用于「各阶段人类介入比例」 */
   stage: Stage | null;
 }
 
@@ -123,11 +135,15 @@ export interface AgentRow {
 }
 
 /**
- * 人类手动覆盖系统判断（看板上拖卡片 → 强制填原因的那一次）。
+ * A human manually overriding the system's judgment — dragging a card on the board and being
+ * forced to type a reason.
  *
- * 产品文档里的「人工接管」指从运行中的 Agent 手里抢过控制权，
- * 对应事件 `work_item.taken_over` 目前还没有实现。
- * 手动覆盖是现在真实存在、真实被记录的那件事，指标就按它算，
+ * "Taking over" in the product docs means wresting control away from a running Agent; its event
+ * `work_item.taken_over` is not implemented yet. Manual override is the thing that actually
+ * happens and is actually recorded today, so the metric is computed from it rather than faked
+ * from a field that would always be 0.
+ *
+ * 手动覆盖是现在真实存在、真实被记录的那件事；「人工接管」还没实现，
  * 不拿一个永远是 0 的字段冒充。
  */
 export interface OverrideRow {
@@ -137,7 +153,7 @@ export interface OverrideRow {
   reason: string | null;
 }
 
-/** policy.evaluated 事件。自动化率 = 自动放行 / 全部评估。 */
+/** policy.evaluated events. Automation rate = auto-allowed / all evaluations. */
 export interface PolicyEvalRow {
   at: number;
   action: string;
@@ -153,24 +169,26 @@ export interface AnalyticsInput {
   agents: AgentRow[];
   overrides: OverrideRow[];
   policyEvals: PolicyEvalRow[];
-  /** 项目 token 预算，用于燃尽预测；null = 没设预算 */
+  /** Project token budget, used for burn-down projection; null = no budget set */
   tokenBudget: number | null;
   tokensSpentTotal: number;
 }
 
-// ── 输出 ─────────────────────────────────────────────────────────────────
+// ── Output / 输出 ────────────────────────────────────────────────────────
 
 /**
- * ★ 中位数与均值一起给。
- *   页面文档 §11：「单个异常值扭曲平均值 → 同时显示中位数」。
- *   一个跑了三天的任务能把 12 个任务的平均前置时间抬高一倍，
- *   只显示均值就是在误导。
+ * ★ Median and mean are reported together.
+ *   Page doc §11: "a single outlier distorts the average, so show the median alongside it".
+ *   One task that ran for three days can double the average lead time across twelve tasks;
+ *   showing only the mean is misleading.
+ *
+ *   中位数与均值一起给：单个异常值能把平均前置时间抬高一倍，只显示均值就是在误导。
  */
 export interface Stat {
   median: number;
   mean: number;
   count: number;
-  /** 最大值及其来源，供「异常值单独标注可点击查看」 */
+  /** The maximum and where it came from, so an outlier can be labeled and clicked through */
   maxValue: number;
   maxItemId: string | null;
 }
@@ -198,7 +216,8 @@ export interface BucketShare {
   bucket: TimeBucket;
   hours: number;
   percent: number;
-  /** 这段时间里有没有人/Agent 在推进 —— 分解图的两类着色依据 */
+  /** Whether anyone (human or Agent) was pushing this forward — the breakdown chart colors by it
+   *  分解图的两类着色依据 */
   kind: 'active' | 'waiting';
 }
 
@@ -214,7 +233,7 @@ export interface FlowMetrics {
   throughputPerWeek: number;
   completed: number;
   wipNow: number;
-  /** null = 窗口内没有任何可计量的时间，指标不成立 */
+  /** null = no measurable time inside the window, so the metric does not hold */
   flowEfficiency: number | null;
   activeHours: number;
   waitingHours: number;
@@ -222,7 +241,7 @@ export interface FlowMetrics {
   decisionWaitHours: number;
   reworkRate: number | null;
   reworkedItems: number;
-  /** null = 计划里没有排期字段，显示「未接入」而不是 0（页面文档 §7） */
+  /** null = the plan has no due-date field; show "not wired up" rather than 0 (page doc §7) */
   onTimeRate: number | null;
   breakdown: BucketShare[];
   wipTrend: Point[];
@@ -235,27 +254,25 @@ export interface AgentPerf {
   model: string | null;
   runs: number;
   successRate: number;
-  /** 第一次尝试就成功的比例 —— 重试掩盖的问题只有这个指标能看见 */
+  /** Share that succeeded on the first attempt — the only metric that sees what retries hide
+   *  重试掩盖的问题只有这个指标能看见 */
   firstTrySuccessRate: number;
   overrideRate: number;
   avgTokens: number;
   totalTokens: number;
-  /** 分钟；null = 没有一次跑完带时间戳的 Run */
+  /** Minutes; null = not a single completed Run carried both timestamps */
   avgMinutes: number | null;
 
   /**
-   * Token 用量明细。
+   * Token usage breakdown.
    *
-   * ★ 总量升为一级指标了 —— 它现在就是记账单位，不再是「诊断量」。
-   *   但明细必须一起给：四类 token 的真实单价差到 50 倍，
-   *   一个 cacheRead 占九成的总量和一个 output 占九成的总量，
-   *   数字一样、账单差一个数量级。只报总量会把这件事藏起来。
+   * ★ The breakdown ships alongside the total, which is now a first-class metric — the unit of
+   *   account rather than a diagnostic. The four classes differ by up to 50× in real unit price,
+   *   so two runs with the same total — one dominated by cacheRead, one by output — differ by an
+   *   order of magnitude on the bill. Reporting only the total would hide exactly that.
    *
-   * The breakdown ships alongside the total, which is now the unit of
-   * account rather than a diagnostic. The four classes differ by up to 50×
-   * in real unit price, so two runs with the same total — one dominated by
-   * cacheRead, one by output — differ by an order of magnitude on the bill.
-   * Reporting only the total would hide exactly that.
+   * 总量已升为一级指标，但明细必须一起给：四类 token 单价差到 50 倍，
+   * 总量相同的两次 Run 账单可以差一个数量级。
    */
   tokens: {
     input: number;
@@ -265,13 +282,18 @@ export interface AgentPerf {
     total: number;
   };
   /**
-   * 缓存命中率 = cacheRead / (input + cacheRead)。
-   * 偏低说明每次派发都在重传大块上下文，是可以工程优化的。
+   * Cache hit rate = cacheRead / (input + cacheRead).
+   * A low value means every dispatch is re-sending large blocks of context, which is a solvable
+   * engineering problem.
+   *
+   * 命中率偏低说明每次派发都在重传大块上下文，是可以工程优化的。
    */
   cacheHitRate: number | null;
   /**
-   * 每**成功**任务的 token。单看 avgTokens 会奖励「快速失败」的 Agent ——
-   * 它每次都便宜，只是从来没做成过。
+   * Tokens per **successful** task. Looking at avgTokens alone rewards the Agent that fails
+   * fast — cheap every time, but it never actually finished anything.
+   *
+   * 单看 avgTokens 会奖励「快速失败」的 Agent：每次都便宜，只是从来没做成过。
    */
   tokensPerSuccess: number | null;
 }
@@ -279,7 +301,7 @@ export interface AgentPerf {
 export interface AgentMetrics {
   agents: AgentPerf[];
   failureReasons: { reason: string; label: string; count: number; percent: number }[];
-  /** 全面优于另一个 Agent 的对子，直接给出调度建议 */
+  /** A pair where one Agent beats another across the board — a direct scheduling recommendation */
   dominance: { betterId: string; betterName: string; worseId: string; worseName: string } | null;
 }
 
@@ -287,7 +309,8 @@ export interface RepeatedDecision {
   type: string;
   label: string;
   count: number;
-  /** 结果一致的比例（全批准 = 1）—— 规则化的前提 */
+  /** Share of consistent outcomes (all approved = 1) — the precondition for turning it into a
+   *  rule / 规则化的前提 */
   consistency: number;
   approvedCount: number;
   potential: 'high' | 'medium' | 'low';
@@ -299,7 +322,7 @@ export interface HitlMetrics {
   resolved: number;
   resolutionTime: Stat;
   overdue: number;
-  /** 自动放行 / (自动放行 + 转人工)。null = 窗口内没有流转 */
+  /** auto-allowed / (auto-allowed + escalated to a human). null = nothing moved in the window */
   automationRate: number | null;
   autoPassed: number;
   policyEvaluations: number;
@@ -307,28 +330,30 @@ export interface HitlMetrics {
   blockedByHumanHours: number;
   byStage: { stage: Stage; decisions: number; items: number; percent: number }[];
   responseBuckets: {
-    /** 档位名（`< 1h` 这种），本来就与语言无关 */
+    /** Bucket name (`< 1h` and the like) — language-neutral to begin with */
     label: string;
     count: number;
-    /** 最慢那一档里若只有一类决策，这里是它的**类型码**，界面据此取词 */
+    /** If the slowest bucket holds only one kind of decision, this is its **type code**; the UI
+     *  looks up its wording from that */
     slowestType: string | null;
-    /** 同上的中文说法 —— 日志与兜底用，界面不该画它 */
+    /** The same thing as a Chinese sentence — for logs and as a fallback; the UI must not render
+     *  it / 界面读码，日志读句子 */
     slowest: string | null;
   }[];
   repeated: RepeatedDecision[];
   overrideReasons: { category: string; label: string; count: number; percent: number }[];
 }
 
-/** 全部字段的单位都是 token / Every field here is denominated in tokens */
+/** Every field here is denominated in tokens / 全部字段的单位都是 token */
 export interface CostMetrics {
   total: number;
-  /** 每完成一个 Work Item 的平均 token；null = 窗口内没有完成项 */
+  /** Average tokens per completed Work Item; null = nothing completed inside the window */
   perDelivered: number | null;
   delivered: number;
   trend: Point[];
   byAgent: { id: string; label: string; tokens: number; percent: number }[];
   byType: { id: string; label: string; tokens: number; percent: number }[];
-  /** 单次 Run 超过阈值的异常，阈值随样本走 */
+  /** Single Runs past the threshold; the threshold tracks the sample */
   anomalies: {
     runId: string;
     workItemId: string;
@@ -339,17 +364,16 @@ export interface CostMetrics {
   }[];
   budget: number | null;
   budgetSpent: number;
-  /** 按当前速率预计耗尽的天数；null = 无预算或速率为 0 */
+  /** Days until exhaustion at the current burn rate; null = no budget, or a rate of 0 */
   budgetRunwayDays: number | null;
   /**
-   * 无法计量的 Run 数（运行时不上报 token）。
+   * Runs that cannot be measured, because their runtime does not report tokens.
    *
-   * ★ 单独报出来，不并进 total。并进去等于用 0 冒充「不知道」，
-   *   而 0 会被当成「真的没花」—— 这正是界面上「未接入」而不是「0」的同一条理由。
+   * ★ Counted separately and never folded into `total`: folding them in would pass 0 off as
+   *   "unknown", and 0 reads as "genuinely free". This is the same reason the UI shows
+   *   "not wired up" instead of "0".
    *
-   * Runs whose runtime does not report tokens are counted separately and
-   * never folded into `total`: folding them in would pass 0 off as "unknown",
-   * and 0 reads as "genuinely free".
+   * 单独报出来不并进 total：并进去等于用 0 冒充「不知道」，而 0 会被当成「真的没花」。
    */
   unmeasuredRuns: number;
 }
@@ -368,16 +392,20 @@ export type InsightType = (typeof INSIGHT_TYPES)[number];
 export interface InsightAction {
   kind: 'create_policy' | 'view_items' | 'view_agent' | 'view_decisions' | 'view_cost' | 'view_tab';
   /**
-   * 按钮上写什么 / Which button copy to use.
+   * Which button copy to use / 按钮上写什么。
    *
-   * ★ 不能只靠 `kind`：同一个 `create_policy` 在两处的说法不同 ——
-   *   一处是「把『部署审批』规则化」（带着那类决策的名字），
-   *   一处是「创建规则」。一个码一句话，所以码比 kind 细。
+   * ★ `kind` alone is not enough: the same `create_policy` reads differently in two places —
+   *   one says "turn 'deploy approval' into a rule" (carrying the decision type's name), the
+   *   other simply says "create a rule". One code, one sentence, so the code is finer than kind.
+   *
+   *   一个码一句话，所以码比 kind 细。
    */
   code: string;
-  /** 词条里 `{name}` 的实参。用户/数据里的名字原样带，不翻译 */
+  /** Arguments for `{name}` in the message. Names from users or data are passed through verbatim,
+   *  never translated / 用户写的名字不翻译 */
   params?: Record<string, string | number>;
-  /** 中文兜底 —— 界面认不出码时用它，同时也是日志里能读的那一份 */
+  /** Chinese fallback — used when the UI does not recognize the code, and the readable copy in
+   *  logs / 界面认不出码时用它 */
   label: string;
   tab?: AnalyticsTab;
   ref?: string;
@@ -386,32 +414,35 @@ export interface InsightAction {
 export interface Insight {
   type: InsightType;
   /**
-   * 这条发现说的是哪一句 / Which sentence this insight is.
+   * Which sentence this insight is / 这条发现说的是哪一句。
    *
-   * ★★ 比 `type` 细。`improvement` 一个 type 底下有五句完全不同的话
-   *   （流动效率、前置时间、单位用量、自动化率、绝对值够好），
-   *   界面按 type 取词只能取到其中一句。
+   * ★★ Finer than `type`. The single `improvement` type covers five completely different
+   *   sentences (flow efficiency, lead time, usage per delivery, automation rate, "the absolute
+   *   number is already good enough"); a UI keying off `type` could only ever pick one of them.
    *
-   *   `type` 仍然留着：它决定图标、排序与「同类发现」的归并，
-   *   那些是按**类别**而不是按句子来的。
+   *   `type` stays: it drives the icon, the ordering, and the grouping of "insights of the same
+   *   kind", all of which go by **category** rather than by sentence.
+   *
+   *   码比 type 细：一个 type 底下可以有五句完全不同的话，而 type 决定图标、排序与归并。
    */
   code: string;
   severity: 'critical' | 'warning' | 'good';
-  /** 中文兜底。界面读码，日志读句子 */
+  /** Chinese fallback. The UI reads codes, logs read sentences / 界面读码，日志读句子 */
   message: string;
-  /** 判据本身 —— 让用户能反驳，而不是只能相信。同样是兜底 */
+  /** The evidence itself — so a user can argue with it instead of merely believing it. Also a
+   *  fallback sentence / 让用户能反驳，而不是只能相信 */
   evidence: string;
   /**
-   * `message` 与 `evidence` 里的数字 / The numbers those two sentences carry.
+   * The numbers those two sentences carry / `message` 与 `evidence` 里的数字。
    *
-   * ★ 百分比、时长、token 数都已经格式化成语言中立的形态
-   *   （`34%`、`22h`、`1.2M`），可以直接插进任一语言的句子。
+   * ★ Percentages, durations, and token counts are already formatted into language-neutral
+   *   shapes (`34%`, `22h`, `1.2M`), so they drop straight into a sentence in either language.
    */
   params: Record<string, string | number>;
   actions: InsightAction[];
 }
 
-/** 环比：只对能比的指标给，比不了就是 null */
+/** Period-over-period change: given only for metrics that can be compared; null otherwise */
 export interface Deltas {
   leadTime: number | null;
   cycleTime: number | null;
@@ -425,7 +456,8 @@ export interface Deltas {
 export interface Analytics {
   range: AnalyticsRange;
   window: Window;
-  /** 样本够不够。不够时页面不给强结论（页面文档 §7 / §11） */
+  /** Whether the sample is large enough. When it is not, the page draws no strong conclusion
+   *  (page doc §7 / §11) */
   confidence: { level: 'low' | 'ok'; completed: number; needed: number; days: number };
   insights: Insight[];
   flow: FlowMetrics;

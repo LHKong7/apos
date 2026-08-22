@@ -1,209 +1,228 @@
-# 09 身份、权限与安全
+# 09 Identity, Authorization, and Security
 
-对应产品文档第十章。
+*[中文版本 / Chinese version](09-security.zh.md)*
 
-**本文档的核心命题**：这个系统里有一类新的行为主体——它们能读代码、改数据库、发消息、部署服务，但它们不是人，不会被 HR 流程约束，也不会因为"觉得不对劲"而停下来。整个安全模型是围绕这个事实设计的。
+Corresponds to chapter 10 of the product documentation.
+
+**The central claim of this document**: this system contains a new class of actor — one that can read code, modify databases, send messages, and deploy services, but that is not a person, is not bound by HR process, and will never stop because something "felt off." The whole security model is designed around that fact.
 
 ---
 
-## 1. 身份模型
+## 1. Identity model
 
-产品文档 10.1 定义四类身份，实现上加一类 `system`：
+Product doc 10.1 defines four kinds of identity; the implementation adds a fifth, `system`:
 
 ```typescript
 type ActorType = 'human' | 'agent' | 'service' | 'external' | 'system';
 ```
 
-| 类型 | 谁 | 凭证 | 特点 |
+| Type | Who | Credential | Character |
 | --- | --- | --- | --- |
-| `human` | 用户 | SSO / 密码 + MFA | 有法律责任能力 |
-| `agent` | Agent 实例 | 独立签发的 Agent Token | **权限独立配置，绝不继承人类** |
-| `service` | 内部服务账号 | mTLS / 服务令牌 | 用于系统间调用 |
-| `external` | 外部集成 | OAuth token / webhook 签名 | 权限受集成 scope 限制 |
-| `system` | 系统自身 | 无 | Flow Engine 的自动流转、定时任务 |
+| `human` | A user | SSO / password + MFA | Can be held legally responsible |
+| `agent` | An Agent instance | Independently issued Agent Token | **Permissions configured independently; never inherited from a human** |
+| `service` | Internal service account | mTLS / service token | For system-to-system calls |
+| `external` | External integration | OAuth token / webhook signature | Bounded by the integration's scope |
+| `system` | The system itself | None | Flow Engine auto-transitions, scheduled jobs |
 
-**关键设计：`system` 与 `agent` 分开。** Flow Engine 按状态机自动推进状态时，操作者是 `system` 而非某个 Agent。这让审计能区分"规则驱动的自动行为"与"AI 决策的自动行为"——前者是确定性的、可预测的，后者不是。这个区分在事故复盘时非常重要。
+**Key design: `system` and `agent` are separate.** When the Flow Engine advances state automatically per the state machine, the actor is `system`, not some Agent. That lets the audit trail distinguish *automatic behavior driven by rules* from *automatic behavior driven by an AI decision* — the first is deterministic and predictable, the second is not. The distinction matters enormously during an incident review.
 
-### 1.0 人类凭证与账号来源
+### 1.0 Human credentials and where accounts come from
 
-人类身份走**邮箱 + 口令 → JWT**：`POST /api/v1/auth/login` 换一张令牌，
-之后每个请求带 `Authorization: Bearer <token>`。实现在
-`apps/api/src/modules/auth/`。
+Human identity is **email + password → JWT**: `POST /api/v1/auth/login` exchanges
+them for a token, and every request afterward carries
+`Authorization: Bearer <token>`. Implemented in `apps/api/src/modules/auth/`.
 
-> **在此之前身份是一个 `X-User-Id` 头**——没有任何凭证，写上谁的 uuid 就是谁。
-> 下面整套四层判定都建立在它之上，因此也全都是摆设。更麻烦的是，
-> 这件事从接口清单上完全看不出来：每条路由都在认真地判角色、判成员关系，
-> 只是那个"谁"是调用方自己填的。
+> **Before this, identity was an `X-User-Id` header** — no credential at all; whoever's
+> uuid you typed is who you were. The entire four-layer decision below sits on top of it,
+> so all of it was decoration too. Worse, none of this was visible from the route listing:
+> every route was diligently checking roles and membership — it is only that the "who"
+> was filled in by the caller.
 
-| 环节 | 做法 | 为什么 |
+| Aspect | What we do | Why |
 | --- | --- | --- |
-| 口令存储 | scrypt，参数与盐一起写进 `scrypt$N$r$p$salt$hash` | 散列参数迟早要调。写死在代码里的话，调参那天全库口令一次性作废——没人知道旧的那批用的什么参数 |
-| 口令比对 | `timingSafeEqual` | 字符串 `===` 在第一个不同字节短路，耗时差异足以把散列逐位试出来 |
-| 登录失败 | 账号不存在 / 没有口令 / 口令错误**回同一句话，且耗时相同** | 区分开来的每一种都是「哪个邮箱是真账号」的枚举探针，而那是撞库的第一步 |
-| 令牌算法 | HS256，`verify` 只认字面量 `HS256` | `alg: none` 是 JWT 最经典的绕过方式，根因永远是「库愿意接受另一种 alg」 |
-| 令牌有效期 | 默认 12 小时，无状态 | 不做撤销（要引会话表或黑名单）。代价是改口令、停用账号都要等它自然过期，所以 TTL 不能长 |
-| SSE 的令牌 | query 参数 `access_token` | EventSource 带不了自定义头（同一页的 Last-Event-ID 也是因此走 query）。代价是令牌进 access log，靠短 TTL 缓解 |
+| Password storage | scrypt, with the parameters and salt written alongside the hash as `scrypt$N$r$p$salt$hash` | Hash parameters have to be retuned eventually. Hard-code them and the day you retune, every password in the database is invalidated at once — nobody knows which parameters the old batch used |
+| Password comparison | `timingSafeEqual` | String `===` short-circuits at the first differing byte, and the timing difference is enough to recover the hash byte by byte |
+| Failed login | Account does not exist / has no password / wrong password all return **the same message, in the same time** | Each distinction you make is an enumeration probe for "which email is a real account", and that is step one of credential stuffing |
+| Token algorithm | HS256; `verify` accepts the literal `HS256` and nothing else | `alg: none` is the classic JWT bypass, and the root cause is always "the library was willing to accept a different alg" |
+| Token lifetime | 12 hours by default, stateless | No revocation (that would need a session table or a blocklist). The cost is that a password change or a disabled account has to wait for natural expiry, so the TTL cannot be long |
+| Token for SSE | `access_token` query parameter | EventSource cannot carry custom headers (Last-Event-ID on the same page goes through the query string for the same reason). The cost is the token landing in access logs, mitigated by the short TTL |
 
-**账号只有三个来源，没有第四个：**
+**Accounts have exactly three origins, and there is no fourth:**
 
-1. **超级管理员**——来自 `.env`（`APOS_SUPERADMIN_EMAIL` / `_PASSWORD`），
-   启动时幂等自举（`modules/auth/bootstrap.ts`）。
-   `.env` 里那个口令是**初始**口令，只在建号那一次用——每次启动都按 `.env`
-   重置的话，它就成了一个改不掉的后门。
-2. **组织管理员开的号**——`POST /api/v1/admin/users`，权限
-   `organization.members.manage`。
+1. **The superadmin** — from `.env` (`APOS_SUPERADMIN_EMAIL` / `_PASSWORD`),
+   bootstrapped idempotently at startup (`modules/auth/bootstrap.ts`).
+   The password in `.env` is the **initial** password, used only when the account
+   is created — reset it from `.env` on every boot and it becomes a backdoor
+   nobody can close.
+2. **An account opened by an org admin** — `POST /api/v1/admin/users`, permission
+   `organization.members.manage`.
 
-   > ★ 建号与加入组织在**同一个事务**里。分开的话，第二步失败会留下一个
-   > 「存在但不属于任何组织」的账号：他能登录，但登录后每个请求都是 401
-   > （`resolveCurrentOrg`），而管理员那边看到的是「加成员时说没有这个邮箱」——
-   > 他其实建成了。
-3. **自助注册**——`POST /api/v1/auth/register`，无需身份，
-   由 `APOS_ALLOW_SIGNUP` 控制，**默认开启**。
+   > ★ Creating the account and joining it to the organization happen in **one
+   > transaction**. Split them and a failure in step two leaves an account that
+   > "exists but belongs to no organization": it can log in, but every request
+   > afterward is a 401 (`resolveCurrentOrg`), while the admin sees "no user with
+   > that email" when adding the member — an account they did in fact create.
+3. **Self-service signup** — `POST /api/v1/auth/register`, no identity required,
+   gated by `APOS_ALLOW_SIGNUP`, **on by default**.
 
-#### 自助注册为什么不破坏多租户边界
+#### Why self-service signup does not break the multi-tenant boundary
 
-组织边界就是多租户边界（§2.1.2）。这里要防的是**自助进入已有组织**——
-那等于任何人都可以把自己放进别人的边界里。
+The organization boundary *is* the multi-tenant boundary (§2.1.2). What has to be
+prevented here is **self-service entry into an existing organization** — that would
+let anyone put themselves inside someone else's boundary.
 
-注册干的不是那件事：**每次注册都新开一个空组织**，注册者是**那个组织**的
-`org_admin`。谁也进不到别人的边界里。要进别人的组织，仍然只有一条路——
-被那个组织的管理员加进去。这条线由 `auth.test.ts`「★ 新注册的人看不到别人的
-组织与项目」守着。
+Signup does not do that: **every signup opens a new, empty organization**, and the
+registrant is `org_admin` of **that** organization. Nobody lands inside anyone else's
+boundary. Getting into someone else's organization still has exactly one path —
+being added by an admin of that organization. The line is guarded by `auth.test.ts`,
+"★ a newly registered user cannot see other people's organizations and projects".
 
-> **这个系统里没有跨租户的全局超管。** `users` 表上没有任何全局角色列，
-> 一切权限都来自 `organization_members` / `project_members`。启动时那个
-> 「超级管理员」之所以叫超管，只是因为他是第一个人、并且自动拥有了一个
-> 属于自己的组织——他同样看不到别人的组织。所以注册与 bootstrap 做的是
-> 同一件事，只是触发方式从 `.env` 变成了表单。
+> **There is no cross-tenant global superadmin in this system.** The `users` table
+> carries no global role column at all; every permission comes from
+> `organization_members` / `project_members`. The "superadmin" created at startup is
+> called that only because they are the first person and automatically own an
+> organization of their own — they cannot see other people's organizations either. So
+> signup and bootstrap do the same thing; only the trigger changes, from `.env` to
+> a form.
 
-三件必须记住的取舍：
+Three trade-offs worth remembering:
 
-| 取舍 | 为什么 |
+| Trade-off | Why |
 | --- | --- |
-| 建号与建组织在**同一个事务**里 | 分开的话第二步失败会留下「能登录但不属于任何组织」的账号：他之后每个请求都是 401，而注册页显示的是「注册失败」，于是他换个邮箱再注册一次 |
-| 注册**明说**邮箱被占用 | 登录接口刻意不区分「邮箱不存在」和「口令错」（那是枚举探针），注册做不到同样的克制——不告诉用户邮箱被占用，他就没有任何办法完成注册。这是这类接口固有的取舍，缓解手段是限流 |
-| 先算口令散列再查库 | 反过来的话，「邮箱是否存在」会在昂贵的 scrypt 之前返回，响应耗时本身就把它泄漏了 |
+| Creating the account and creating the organization happen in **one transaction** | Split them and a failure in step two leaves an account that can log in but belongs to no organization: every later request is a 401, while the signup page said "signup failed", so they try again with a different email |
+| Signup **says outright** that the email is taken | The login endpoint deliberately refuses to distinguish "no such email" from "wrong password" (that is an enumeration probe); signup cannot afford the same restraint — without being told the email is taken, the user has no way to finish signing up at all. That is inherent to this kind of endpoint; the mitigation is rate limiting |
+| Hash the password before querying the database | The other way around, "does this email exist" returns before the expensive scrypt, and the response time leaks it by itself |
 
-#### 总开关 `APOS_ALLOW_SIGNUP`
+#### The master switch `APOS_ALLOW_SIGNUP`
 
-默认**开着**——不配这个变量的实例可以自助注册。绝大多数部署（自己用、演示、
-小团队）要的就是「装上就能注册」；要关掉它的那类部署本来就在写部署配置。
+Default **on** — an instance that never sets the variable allows signup. The vast
+majority of deployments (personal use, demos, small teams) want "install it and you
+can register"; the deployments that want it off are already writing deployment config.
 
-> ★ **认不出来的取值一律按「关闭」处理**，并在启动日志里说明原因。
-> 这是安全开关，两种失败方式代价差得很远：写成 `flase` 却当成开，是运维
-> 明明想关、结果一直开着且毫无迹象；写成 `ture` 却当成关，表现是「注册按钮
-> 不见了」，有人会当场报上来。宁可错在关上。
-> 可用取值：`1/true/yes/on/enabled` 与 `0/false/no/off/disabled`。
+> ★ **Any value we cannot recognize is treated as "off"**, with the reason stated in
+> the startup log. This is a security switch, and the two failure modes cost wildly
+> different amounts: write `flase` and read it as on, and ops meant to close it while
+> it stayed open with no sign whatsoever; write `ture` and read it as off, and the
+> symptom is "the signup button is gone", which somebody reports on the spot. Better
+> to err closed.
+> Accepted values: `1/true/yes/on/enabled` and `0/false/no/off/disabled`.
 
-关掉时 `POST /auth/register` 回 **403**（不是 404）——这条路存在，只是这个
-实例把它关了；回 404 会让排查的人去怀疑版本、路由、反向代理，而真正的原因
-是一行环境变量。
+With it off, `POST /auth/register` returns **403** (not 404) — the route exists, this
+instance just turned it off; a 404 sends whoever is debugging off to suspect the
+version, the routing, or the reverse proxy, when the real cause is one line of
+environment variable.
 
-前端靠 `GET /api/v1/auth/config`（无需身份，只回 `{ allowSignup }`）决定
-要不要显示「注册」页签。**不能烤进构建**：同一份前端产物会被不同实例托管
-（`http/web-app.ts` 把它挂在 API 进程里），烤进去的话，一个开着注册、
-一个关着的两套部署就得出两份产物。
+The frontend calls `GET /api/v1/auth/config` (no identity required, returns only
+`{ allowSignup }`) to decide whether to show the "Sign up" tab. **It cannot be baked
+into the build**: the same frontend bundle is served by different instances
+(`http/web-app.ts` mounts it inside the API process), and baking it in would mean two
+separate builds for two deployments, one with signup open and one with it closed.
 
-**限流（`modules/auth/throttle.ts`）**：注册是未鉴权的，每次调用跑一遍 scrypt
-并写四张表，没有闸的话几十个并发就能把 CPU 打满——一个写错的脚本就够了。
-按 IP、10 分钟 10 次。
+**Rate limiting (`modules/auth/throttle.ts`)**: signup is unauthenticated, and every
+call runs a scrypt and writes four tables; with no gate, a few dozen concurrent
+requests peg the CPU — one badly written script is enough. Ten per IP per ten minutes.
 
-> ⚠ 那是**进程内**的粗闸，多副本部署时真实上限是它乘以副本数。它挡的是
-> 「一个客户端猛打」，不是有组织的分布式滥用——那一层该在入口
-> （nginx / 云 WAF）做。写在代码里是因为「服务本身至少不能一戳就倒」，
-> 不是因为它够用。
+> ⚠ That is a coarse **in-process** gate; on a multi-replica deployment the real
+> ceiling is that number times the replica count. It stops "one client hammering us",
+> not organized distributed abuse — that layer belongs at the edge (nginx / cloud
+> WAF). It lives in the code because "the service itself must not fall over at the
+> first poke", not because it is sufficient.
 
 
-### 1.1 Agent 凭证
+### 1.1 Agent credentials
 
 ```typescript
 interface AgentToken {
   sub: string;              // agent id
   actorType: 'agent';
   orgId: string;
-  projectIds: string[];     // 该 Agent 参与的项目
-  scopes: string[];         // 能力范围
-  runId?: string;           // ★ Run 级令牌：仅对该次执行有效
-  exp: number;              // Run 级令牌短期（Run 超时时间 + 缓冲）
+  projectIds: string[];     // the projects this Agent takes part in
+  scopes: string[];         // capability scope
+  runId?: string;           // ★ Run-scoped token: valid only for that one execution
+  exp: number;              // Run-scoped tokens are short-lived (Run timeout + buffer)
 }
 ```
 
-**两级令牌**：
+**Two tiers of token**:
 
-| 令牌 | 用途 | 有效期 |
+| Token | Used for | Lifetime |
 | --- | --- | --- |
-| Agent 长期令牌 | 注册、能力查询、健康检查 | 90 天，可轮换 |
-| Run 级令牌 | 单次执行的回调、产物上传 | Run 超时时间 + 5 分钟 |
+| Agent long-lived token | Registration, capability queries, health checks | 90 days, rotatable |
+| Run-scoped token | Callbacks and artifact uploads for a single execution | Run timeout + 5 minutes |
 
-Run 级令牌随任务派发下发（[06 Agent Protocol](06-agent-protocol.md) §4）。Run 结束立即失效。这样即使令牌泄漏，影响也限于单次执行。
+Run-scoped tokens are issued along with the task dispatch ([06 Agent Protocol](06-agent-protocol.md) §4). They die the moment the Run ends, so even a leaked token is limited to a single execution.
 
-### 1.2 绝对禁止的实现
+### 1.2 Implementations that are absolutely forbidden
 
 ```typescript
-// ❌ 绝对不允许：Agent 借用人类身份
+// ❌ Never allowed: an Agent borrowing a human identity
 async function dispatchRun(item: WorkItem, agent: Agent) {
-  const token = await getUserToken(item.ownerId);   // 严重错误
+  const token = await getUserToken(item.ownerId);   // serious mistake
   return runtime.dispatch({ ...task, credentials: token });
 }
 ```
 
-产品文档 10.3 明确要求 Agent 权限独立配置。借用人类 token 会导致：审计日志显示是人做的、权限范围等于那个人的全部权限、无法单独收紧 Agent 权限。
+Product doc 10.3 explicitly requires Agent permissions to be configured independently. Borrowing a human token means the audit log shows a person did it, the permission scope equals that person's entire set of permissions, and Agent permissions can never be tightened on their own.
 
-**代码层强制**：`getUserToken` 这类函数不导出给 agent 模块；CI 加静态检查规则禁止 agent 模块引用人类凭证相关的符号。
+**Enforced at the code level**: functions like `getUserToken` are not exported to the agent module, and CI carries a static check forbidding the agent module from referencing symbols related to human credentials.
 
 ---
 
-## 2. 授权模型
+## 2. Authorization model
 
-### 2.1 四层判定
+### 2.1 Four layers of decision
 
 ```
-请求 → ① 组织角色 → ② 项目角色 → ③ 资源级 Policy → ④ 数据权限(ABAC)
-                                                      ↓
-                                              任一层拒绝即拒绝
+Request → ① Org role → ② Project role → ③ Resource-level Policy → ④ Data permissions (ABAC)
+                                                                      ↓
+                                                        a deny at any layer is a deny
 ```
 
-| 层 | 判定内容 | 示例 |
+| Layer | What it decides | Example |
 | --- | --- | --- |
-| ① 组织角色 | 组织内的基础能力 | `org_admin` 可管理 Policy |
-| ② 项目角色 | 项目内的操作权限 | `tech_lead` 可批准计划 |
-| ③ 资源级 Policy | 高风险操作的额外治理 | 生产发布需 DBA 审批 |
-| ④ 数据权限 | 属性级的数据可见性 | 只能看到自己团队的成本数据 |
+| ① Org role | Baseline capabilities within the organization | `org_admin` can manage Policies |
+| ② Project role | Operational permissions inside a project | `tech_lead` can approve plans |
+| ③ Resource-level Policy | Extra governance for high-risk operations | Production releases need DBA approval |
+| ④ Data permissions | Attribute-level data visibility | You can only see your own team's cost data |
 
-**③ 与 ①② 的区别**：①② 回答"你有没有资格做"，③ 回答"这件事该不该自动做"。一个 `tech_lead` 有资格批准计划（②通过），但如果计划涉及生产 DDL，Policy 仍要求 DBA 签字（③）。
+**How ③ differs from ①②**: ①② answer "are you qualified to do this"; ③ answers "should this be done automatically". A `tech_lead` is qualified to approve a plan (② passes), but if the plan involves production DDL, Policy still demands a DBA's signature (③).
 
-### 2.1.1 ①② 层的实现位置
+### 2.1.1 Where layers ①② are implemented
 
-①② 在 `apps/api/src/http/routes.ts` 的**同一个 `preHandler` 钩子**里统一落地
-（判定逻辑在 `apps/api/src/http/rbac.ts`，规则本身在 `packages/domain/src/rbac/`），
-不在各个 handler 里分别写：
+①② both land in **one `preHandler` hook** in `apps/api/src/http/routes.ts`
+(the decision logic in `apps/api/src/http/rbac.ts`, the rules themselves in
+`packages/domain/src/rbac/`), not scattered across individual handlers:
 
 ```
-preHandler → 解析身份（Authorization: Bearer 里的 JWT，§1.0）
-           → ② 成员关系闸门（非成员 404）
-           → ① 权限矩阵（角色不够 403）
+preHandler → resolve identity (the JWT in Authorization: Bearer, §1.0)
+           → ② membership gate (non-member → 404)
+           → ① permission matrix (insufficient role → 403)
 ```
 
-**② 项目成员**按 URL 形状拦截：
+**② project membership** is intercepted by URL shape:
 
-| 形状 | 判定 |
+| Shape | Decision |
 | --- | --- |
-| `/api/v1/projects/{id}/...` | 按 URL 里的项目 id 查成员关系 |
-| `/api/v1/{work-items,runs,decisions,plans,requirements,clarifications,policies,integrations,sync-conflicts}/{id}/...` | 先由资源 id 反查所属项目，再查成员关系 |
-| 列表类（`/projects`、`/decision-inbox`、`/agents`） | 查询本身按成员关系 / 组织收窄 |
+| `/api/v1/projects/{id}/...` | Look up membership by the project id in the URL |
+| `/api/v1/{work-items,runs,decisions,plans,requirements,clarifications,policies,integrations,sync-conflicts}/{id}/...` | Resolve the owning project from the resource id first, then look up membership |
+| List endpoints (`/projects`, `/decision-inbox`, `/agents`) | The query itself is narrowed by membership / organization |
 
-**为什么是钩子而不是每个 handler 各写一行**：这类漏洞的成因就是「漏了一处」。
-钩子按 URL 形状统一拦截，以后新增的项目路由默认是关着的。
-**新增资源路由时必须在 `projectOfResource` 里登记**——没登记就等于那条路由不设防。
+**Why a hook rather than one line in every handler**: this class of hole exists
+precisely because someone missed a spot. The hook intercepts uniformly by URL shape,
+so project routes added later are closed by default.
+**A new resource route must be registered in `projectOfResource`** — an unregistered
+route is an undefended one.
 
-**非成员返回 404 而不是 403**：403 等于确认「这个项目存在」，
-会把项目 id 变成可枚举的探针。文案用「不存在**或**没有权限」，
-既不确认存在性，又能让被分享链接的人知道该去切换身份。
+**Non-members get a 404, not a 403**: a 403 confirms "this project exists",
+which turns project ids into an enumerable probe. The message says "does not exist
+**or** you do not have access", which neither confirms existence nor leaves someone
+who was sent a link wondering whether to switch identities.
 
-**同组织的 `org_admin` 即使不是成员也放行**（§2.2「全部权限」），
-但**跨组织不行**——管理员的「全部」以组织为界，越界就是多租户隔离失效。
+**An `org_admin` in the same organization passes even without membership**
+(§2.2, "all permissions"), but **not across organizations** — an admin's "all" stops
+at the organization boundary, and crossing it is multi-tenant isolation failing.
 
-**① 权限矩阵**由每条路由**自己声明**（`config.auth`）：
+**The ① permission matrix** is declared by **each route itself** (`config.auth`):
 
 ```ts
 app.post(
@@ -213,208 +232,246 @@ app.post(
 );
 ```
 
-这里不能照搬②层「按 URL 形状拦截」的办法：
-「批准计划要 `tech_lead`」推不出 URL 形状，只能一条条写。
+The ②-layer trick of "intercept by URL shape" does not carry over here:
+"approving a plan requires `tech_lead`" cannot be derived from a URL shape, so it has
+to be written out route by route.
 
-于是改用另一个保证：**写路由漏声明，服务起不来**。
-`guardRouteCoverage` 在注册路由时清点，任何 `POST/PUT/PATCH/DELETE`
-既没声明 `config.auth.permission`、也不在豁免清单里，`buildApp` 直接抛错。
+So a different guarantee takes its place: **a write route that forgets to declare,
+does not start**. `guardRouteCoverage` counts them as routes register, and any
+`POST/PUT/PATCH/DELETE` that neither declares `config.auth.permission` nor sits in the
+exemption list makes `buildApp` throw outright.
 
-声明贴着路由而不是集中成一张表，是因为集中表挡得住「忘了加」（启动即失败），
-挡不住**「加错了」**：把隔壁那条路由的权限抄过来，在一千行外的表里
-和在 handler 旁边，是两种可读性。
+The declaration sits next to the route rather than in one central table because a
+central table stops "forgot to add it" (startup failure) but not **"added the wrong
+one"**: copying the neighboring route's permission reads very differently in a table a
+thousand lines away than it does next to the handler.
 
-**但作用域不跟着挪**。②层的项目 / 资源作用域仍然从 URL 形状推断 ——
-URL 形状**忘不掉**，而声明可以忘，且读路由没有启动检查兜底。
-把作用域也改成声明式，等于把一条不依赖人记性的防线换成依赖人记性的。
+**But scope does not move with it.** The ②-layer project / resource scope is still
+inferred from URL shape — a URL shape **cannot be forgotten**, a declaration can, and
+read routes have no startup check to fall back on. Making scope declarative too would
+trade a defense that does not depend on anyone's memory for one that does.
 
-路由 → 权限的全景对照表保留在 `rbac.test.ts` 里，作为**断言**而不是
-运行时的第二个真相：它钉住每一条的取值，改动某条路由的权限时
-必须连它一起改 —— 那本来就该是一次明确的决定。
-豁免必须写明理由（目前七条：健康探针、Agent 回调、开发用 webhook sink、
-建组织、登录、自助注册、改自己的口令），理由会出现在错误信息里。
+The full route → permission cross-reference stays in `rbac.test.ts` as an **assertion**
+rather than a second runtime source of truth: it pins down every value, so changing a
+route's permission means changing it there too — which should have been an explicit
+decision anyway.
+Exemptions must state a reason (currently seven: health probe, Agent callback,
+development webhook sink, creating an organization, login, self-service signup, and
+changing your own password), and the reason shows up in the error message.
 
-> 登录（`POST /api/v1/auth/login`）在豁免清单里是必然的：它**就是**身份的来源，
-> 要求「先登录才能登录」不成立。改口令（`/auth/password`）的作用域是
-> 调用者自己，与组织角色无关，当前口令在 handler 里验。
+> Login (`POST /api/v1/auth/login`) being exempt is unavoidable: it **is** the source
+> of identity, and "log in before you can log in" does not work. Password change
+> (`/auth/password`) is scoped to the callers themselves, has nothing to do with org role,
+> and verifies the current password inside the handler.
 
-跨项目的批量接口（`/decisions/batch-approve`）用 `deferred('理由')` 标记：
-一次提交的十条决策可能属于十个项目，URL 上一个都看不出来，
-只能在 handler 里按每条各自的归属逐条判。这是唯一合法的例外形态，
-且同样要求写出理由。
+Cross-project batch endpoints (`/decisions/batch-approve`) are marked with
+`deferred('reason')`: the ten decisions in one submission may belong to ten different
+projects, none of which is visible in the URL, so each has to be judged individually
+inside the handler by its own owner. This is the only legitimate form of exception,
+and it too requires a written reason.
 
-**判定规则本身在 `packages/domain/src/rbac/`，前后端共用**：
-前端用 `GET /api/v1/projects/{id}/permissions` 一次拿全权限与拒绝理由，
-据此灰按钮并显示「该找谁」。灰按钮不是权限——服务端仍然独立判一遍。
+**The decision rules themselves live in `packages/domain/src/rbac/`, shared by
+frontend and backend**: the frontend fetches the whole permission set plus denial
+reasons in one call to `GET /api/v1/projects/{id}/permissions`, and uses it to gray
+out buttons and show "who to ask". A grayed-out button is not a permission — the
+server still decides independently.
 
-#### 2.1.2 「当前是哪个组织」
+#### 2.1.2 "Which organization am I in right now"
 
-账号与组织是**多对多**（`organization_members`，见 02-domain-model §2.1），
-所以四层判定的第①层需要先知道「这次请求属于哪个组织」。答案由 `X-Org-Id`
-头显式带上，解析在 `rbac.ts` 的 `resolveCurrentOrg`：
+Accounts and organizations are **many-to-many** (`organization_members`, see
+02-domain-model §2.1), so layer ① of the four-layer decision first needs to know
+"which organization does this request belong to". The answer is carried explicitly in
+the `X-Org-Id` header, resolved by `resolveCurrentOrg` in `rbac.ts`:
 
-| 情况 | 行为 | 理由 |
+| Case | Behavior | Why |
 | --- | --- | --- |
-| 没带头 | 回落到确定的缺省（按加入时间第一个），并把 `currentOrgId` 回给调用方 | 报错的表现是整个站点白屏；前端猜缺省值会导致「显示 A、数据来自 B」 |
-| 带了但不是成员 | **404**，不是 403 | 403 等于确认这个组织存在，把 id 变成可枚举的探针 |
-| 一个组织都不属于 | 401 并说明要先建/加入一个组织 | 这时任何操作都没有作用域 |
+| Header absent | Fall back to a deterministic default (the first by join time) and return `currentOrgId` to the caller | Erroring out shows up as a blank site; letting the frontend guess the default produces "displaying A, data from B" |
+| Present but not a member | **404**, not 403 | A 403 confirms the organization exists, turning the id into an enumerable probe |
+| Belongs to no organization at all | 401, explaining that an organization must be created or joined first | At that point no operation has any scope |
 
-★★ URL 里带组织 id 的写路由必须校验它就是**当前**组织
-（`assertCurrentOrg`）。权限判定拿的是当前组织的 orgRole，handler 如果照着
-URL 去改另一个组织，那次判定就白判了——在自己是管理员的 A 组织里发一个指向
-B 组织的请求，就能拿 A 的管理员身份去改 B。这是最典型的一类越权。
+★★ A write route that carries an organization id in the URL must verify that it is
+the **current** organization (`assertCurrentOrg`). The permission decision uses the
+orgRole of the current organization, so if the handler then goes and modifies a
+different organization named in the URL, that decision was worthless — from
+organization A where you are an admin, you send a request pointed at organization B
+and act on B with A's admin rights. This is the most classic form of privilege
+escalation there is.
 
-★ `POST /api/v1/organizations`（建组织）在豁免清单里：这一刻还不存在
-「在哪个组织里」，第①层没有输入。它的门槛只有「是不是一个登录账号」。
+★ `POST /api/v1/organizations` (create an organization) is exempt: at that moment
+"which organization" does not yet exist, so layer ① has no input. Its only bar is
+"are you a logged-in account".
 
-### 2.2 角色定义
+### 2.2 Role definitions
 
-**角色是数据，不是枚举。** 下面这几个是每个组织建立时预置的**内置角色**，
-组织可以在它们之外自定义（研发、运营、测试、安全、数据…），见 §2.2.1。
+**Roles are data, not an enum.** The ones below are the **built-in roles** seeded when
+each organization is created; organizations may define their own alongside them
+(engineering, operations, QA, security, data…), see §2.2.1.
 
-| 角色 | 层级 | 关键权限 | 谁能担任 |
+| Role | Level | Key permissions | Who can hold it |
 | --- | --- | --- | --- |
-| `org_admin` | 组织 | 全部；身份管理、定义角色、组织级 Policy、模型接入、审计查看 | 人 |
-| `sponsor` | 项目 | 需求确认、预算超限审批、业务验收、结项 | 人 |
-| `tech_lead` | 项目 | 计划批准、架构决策、Agent 权限调整、Policy 配置、强制放行 | 人 |
-| `pm` | 项目 | 项目设置、收紧 Policy、调度调整、成员管理 | 人 |
-| `member` | 项目 | 执行任务、接管 Agent、处理决策、重试 | 人 |
-| `executor` | 项目 | **只执行任务，不参与任何决策与审批** | 人 / **Agent** |
-| `agent_owner` | 资源 | 所属 Agent 的配置（跨项目） | 人 |
-| `viewer` | 项目 | 只读 | 人 / Agent |
+| `org_admin` | Organization | Everything; identity management, defining roles, org-level Policies, model access, audit viewing | Human |
+| `sponsor` | Project | Requirement sign-off, budget-overrun approval, business acceptance, project closure | Human |
+| `tech_lead` | Project | Plan approval, architecture decisions, Agent permission changes, Policy configuration, force-pass | Human |
+| `pm` | Project | Project settings, tightening Policies, scheduling adjustments, member management | Human |
+| `member` | Project | Executing tasks, taking over from Agents, handling decisions, retrying | Human |
+| `executor` | Project | **Executes tasks only; takes no part in any decision or approval** | Human / **Agent** |
+| `agent_owner` | Resource | Configuration of the Agents they own (across projects) | Human |
+| `viewer` | Project | Read-only | Human / Agent |
 
-内置角色的权限集合由**权限目录反推**（`packages/domain/src/rbac/roles.ts` 的
-`BUILTIN_ROLE_PERMISSIONS`），不手写第二份 —— 手写反向表意味着改矩阵时要记得同步，
-而漏同步的表现是「矩阵里写着 pm 能做，实际 pm 做不了」，没有任何报错。
-服务启动时把库里的内置角色对齐到当前代码（`syncBuiltinRoles`），
-库里那几行退化成一份缓存。
+The permission set of a built-in role is **derived backward from the permission
+catalog** (`BUILTIN_ROLE_PERMISSIONS` in `packages/domain/src/rbac/roles.ts`); there is
+no hand-written second copy — a hand-written reverse table means remembering to sync it
+whenever the matrix changes, and a missed sync shows up as "the matrix says pm can do
+it, but pm can't", with no error anywhere.
+At startup the built-in roles in the database are aligned to the current code
+(`syncBuiltinRoles`), which reduces those rows to a cache.
 
-内置角色**不可修改也不可删除** —— 它们就是 §2.3 的权限矩阵本身。
-每个组织都能改的话，「tech_lead 能批准计划」这句话在文档、审计、支持里
-就失去了共同语义。要不一样，就自定义一个新角色。
+Built-in roles **cannot be modified or deleted** — they *are* the permission matrix of
+§2.3. If every organization could change them, "a tech_lead can approve plans" would
+lose its shared meaning in documentation, in audits, and in support. If you want
+something different, define a new role.
 
-#### 2.2.1 自定义角色
+#### 2.2.1 Custom roles
 
-`org_admin` 可以定义组织自己的角色（`/api/v1/admin/roles`，
-实现在 `apps/api/src/http/roles.ts`）。一个角色 = 一个名字 + 一组权限 +
-**谁能担任**。三条限制，每一条都堵一条提权路径：
+An `org_admin` can define the organization's own roles (`/api/v1/admin/roles`,
+implemented in `apps/api/src/http/roles.ts`). A role = a name + a set of permissions +
+**who can hold it**. Three restrictions, each plugging one escalation path:
 
-| 限制 | 堵掉的路径 |
+| Restriction | Path it plugs |
 | --- | --- |
-| 不认识的权限名当场拒 | 「我明明给了他权限」的幽灵故障 —— 那条权限永远不生效 |
-| **组织级权限不能下放** | 造一个「能创建角色的角色」发出去，拿到的人再造一个更宽的，一步走到组织管理员 |
-| **`humanOnly` 权限不能进 Agent 角色** | 自定义一个叫「研发」的角色，把「改 Policy」塞进去，再指派给 Agent（§7.2 的绕法） |
+| An unrecognized permission name is rejected on the spot | The phantom failure of "but I did give them that permission" — where the permission never takes effect at all |
+| **Org-level permissions cannot be delegated downward** | Mint a role that can create roles and hand it out; the recipient mints a broader one, and one step later you have an org admin |
+| **`humanOnly` permissions cannot go into an Agent role** | Define a role called "engineering", stuff "modify Policy" into it, and assign it to an Agent (the workaround around §7.2) |
 
-#### 2.2.2 角色由人担任还是由 Agent 担任
+#### 2.2.2 Whether a role is held by a human or by an Agent
 
-这是本产品的基本形状：「测试」这个岗位上可能坐着一个人，也可能是
-`test-agent-1`，还可能两者都有。所以 `project_members` 里人与 Agent 同表，
-担任**同一套角色**，走同一个指派接口（`PUT /projects/{id}/members/{memberId}`
-带 `actorType`）。
+This is the basic shape of the product: the "QA" seat may be occupied by a person, or
+by `test-agent-1`, or by both. So humans and Agents live in the same
+`project_members` table, hold **the same set of roles**, and go through the same
+assignment endpoint (`PUT /projects/{id}/members/{memberId}` with `actorType`).
 
-但 Agent 能担任的角色有硬边界：**带 `humanOnly` 权限的角色永远给不了 Agent**。
-这些权限是「人类始终掌握目标、风险与最终决策权」这句话的全部落点：
+But the roles an Agent may hold have a hard boundary: **a role carrying `humanOnly`
+permissions can never be given to an Agent**. Those permissions are where the sentence
+"humans always hold the goals, the risk, and the final decision" actually lands:
 
-- `requirement.approve` —— 产品的第一个 Human Gate
-- `plan.approve` —— 批准计划 = 批准一批自动化行为
-- `decision.act` —— 决策**就是**被升级给人的那些事；Agent 拿到它，Human Gate 会变成自问自答的环
-- `policy.*` / `agent.permissions.*` / 成员与角色管理 —— §7.2
+- `requirement.approve` — the product's first Human Gate
+- `plan.approve` — approving a plan = approving a batch of automated behavior
+- `decision.act` — decisions **are** the things that were escalated to a human; give an Agent this and the Human Gate becomes a loop asking and answering itself
+- `policy.*` / `agent.permissions.*` / member and role management — §7.2
 
-`appliesTo` 由这条规则算出下限（`assignableBy`），管理员可以在范围内再收窄
-（「研发我们只给人」），但放不宽。指派时还会再判一次 ——
-「把决策塞进研发角色」和「把研发角色指派给 Agent」是两次独立操作，
-任何一次都可能是最后一步。
+`appliesTo` derives its floor from this rule (`assignableBy`); an admin may narrow it
+further within that range ("we only give engineering to humans") but cannot widen it.
+The check runs again at assignment time — "put decisions into the engineering role" and
+"assign the engineering role to an Agent" are two independent operations, and either
+one could be the last step.
 
-★ Agent 担任角色**不等于** Agent 继承人类权限（§1.2）。角色管的是
-「能调哪些产品操作」，Agent 的工具与资源权限（§3.1 的 allowedTools /
-deniedTools / resourceScopes）另在 Agent 档案里独立配置，两者不互相推导。
+★ An Agent holding a role is **not** an Agent inheriting human permissions (§1.2). A
+role governs "which product operations you may invoke"; an Agent's tool and resource
+permissions (the allowedTools / deniedTools / resourceScopes of §3.1) are configured
+separately in the Agent profile, and neither is derived from the other.
 
-### 2.3 权限矩阵（关键操作）
+### 2.3 Permission matrix (key operations)
 
-| 操作 | 要求 | 附加要求 |
+| Operation | Requires | Additional requirement |
 | --- | --- | --- |
-| 批准需求 | `sponsor` / `pm` | — |
-| 批准计划 | `tech_lead` | 高风险项目需 + `sponsor` 双签 |
-| 修改自治等级 | `tech_lead` / `pm` | 二次确认 + 审计 |
-| **扩大 Agent 权限** | `tech_lead` | 审计 + 影响预演 |
-| 收紧 Agent 权限 | `agent_owner` | — |
-| 授予生产环境权限 | `org_admin` | 审计 + 双人确认 |
-| **放宽 Policy** | `tech_lead` | **必须携带模拟结果** |
-| 收紧 Policy | `pm` | — |
-| 强制放行验收标准 | `tech_lead` | 必填原因 + 审计 |
-| 建任务（手工） | `work_item.create`（执行角色） | 一律落成 `draft`，不可派发 |
-| **放行手工任务去执行** | `tech_lead`（`plan.approve`） | 见下 |
-| 建组织 | 任何登录账号 | 创建者成为该组织的 `org_admin` |
-| **开账号** | `org_admin`（`organization.members.manage`） | 审计（`user.created`）；账号进入系统的唯一入口，见 §1.0 |
-| 改组织信息 / 成员归属 | `org_admin` | 审计 |
-| 处理决策 | 该决策的责任人 | **不可代行**，见 §2.4 |
-| 终止 Agent Run | `tech_lead` / `pm` / `agent_owner` | — |
-| 查看 Run 详细模式 | `tech_lead` / `agent_owner` | 可能含敏感上下文 |
-| 导出审计日志 | `org_admin` | 导出行为本身记审计 |
+| Approve a requirement | `sponsor` / `pm` | — |
+| Approve a plan | `tech_lead` | High-risk projects also need a `sponsor` co-signature |
+| Change the autonomy level | `tech_lead` / `pm` | Second confirmation + audit |
+| **Broaden Agent permissions** | `tech_lead` | Audit + impact simulation |
+| Narrow Agent permissions | `agent_owner` | — |
+| Grant production-environment access | `org_admin` | Audit + two-person confirmation |
+| **Loosen a Policy** | `tech_lead` | **Must carry simulation results** |
+| Tighten a Policy | `pm` | — |
+| Force-pass acceptance criteria | `tech_lead` | Mandatory reason + audit |
+| Create a task (manually) | `work_item.create` (execution roles) | Always lands as `draft`, cannot be dispatched |
+| **Release a manual task for execution** | `tech_lead` (`plan.approve`) | See below |
+| Create an organization | Any logged-in account | The creator becomes `org_admin` of that organization |
+| **Open an account** | `org_admin` (`organization.members.manage`) | Audited (`user.created`); the only way an account enters the system, see §1.0 |
+| Change organization info / membership | `org_admin` | Audit |
+| Act on a decision | The decision's assignee | **Cannot be done on someone's behalf**, see §2.4 |
+| Terminate an Agent Run | `tech_lead` / `pm` / `agent_owner` | — |
+| View a Run in detailed mode | `tech_lead` / `agent_owner` | May contain sensitive context |
+| Export the audit log | `org_admin` | The export itself is audited |
 
-**不对称设计**：收紧权限比放宽权限要求低。收紧总是安全的，放宽需要更高门槛与额外证据（模拟结果、影响预演）。
+**Asymmetric by design**: narrowing permissions requires less than broadening them. Narrowing is always safe; broadening needs a higher bar and extra evidence (simulation results, impact previews).
 
-★★ **手工建的任务不绕过 Human Gate。**
+★★ **Manually created tasks do not bypass the Human Gate.**
 
-工作项原本只能由「需求 → 计划 → 批准 → 分解」生成，两道 Human Gate
-（`requirement.approve` / `plan.approve`）都在那条链上。补上手工创建入口之后，
-如果建完就能派发，那么任何能建任务的人都可以让 Agent 去做任意事情——
-两道门就都被绕开了，而且绕开的方式在接口清单上完全看不出来。
+Work items could originally only come from "requirement → plan → approval →
+decomposition", and both Human Gates (`requirement.approve` / `plan.approve`) sit on
+that chain. Once a manual creation endpoint exists, if a task could be dispatched the
+moment it is created, then anyone who can create a task can make an Agent do anything —
+both gates are bypassed, and the bypass is completely invisible from the route listing.
 
-所以手工建的任务一律停在 `draft`（接口**不接受**调用方指定状态），
-`draft → ready` 这一步要 `plan.approve`。门禁的粒度从「批一份计划」变成
-「批一个任务」，而不是没有门禁。
+So a manually created task always stops at `draft` (the endpoint **does not accept** a
+caller-specified status), and the `draft → ready` step requires `plan.approve`. The
+granularity of the gate changes from "approve a plan" to "approve a task"; it does not
+disappear.
 
-★ 这条判定在 handler 里（`routes.ts` 的状态路由）而不是路由表：路由表看不到
-任务**当前**的状态，而 `changes_requested → ready`（返工重新开始）同样落在
-ready 上，那一步的计划早就批过了，再要一次批准权限会让每次返工都惊动
-tech_lead，而返工是执行者的日常动作。
+★ This check lives in the handler (the status route in `routes.ts`) rather than in the
+route table: the route table cannot see the task's **current** status, and
+`changes_requested → ready` (rework restarting) also lands on ready — the plan for that
+step was approved long ago, and requiring approval again would drag a tech_lead into
+every rework, when rework is an executor's everyday move.
 
-#### 2.3.1 「这次改动算收紧还是放宽」怎么判
+#### 2.3.1 How we decide whether a change tightens or loosens
 
-不对称设计只有在能**可靠区分**两个方向时才成立。判据在
-`packages/domain/src/rbac/change-direction.ts`，两条都是**看结果不看写法**：
+The asymmetric design only holds if the two directions can be **told apart reliably**.
+The criteria live in `packages/domain/src/rbac/change-direction.ts`, and both look at
+**outcomes, not at how the change was written**:
 
-- **Policy**：把新旧规则集各在场景网格上跑一遍。只要存在一个场景从
-  「要人确认」变成「自动放行」，整次改动就算放宽。
-  比较两条规则谁更严会漏掉「插一条更高优先级的宽松规则把严格规则挡在后面」——
-  规则本身没被改动，生效的却已经是新的那条。
-- **Agent 权限**：白名单变长、`deniedTools` **变短**、资源 scope 升级，
-  三者任一即为扩大。黑名单那条最容易判反：从里面拿掉一项是撤掉一条硬约束，
-  按「列表变短 = 收紧」的直觉会判成收紧，于是 owner 就能自己把
-  「绝对不能合并代码」这条撤了。
+- **Policy**: run the old and new rule sets across a grid of scenarios. If even one
+  scenario moves from "needs a human" to "auto-approved", the whole change counts as
+  loosening.
+  Comparing two rules to see which is stricter misses "insert a higher-priority
+  permissive rule that shadows the strict one" — the strict rule was never touched, yet
+  the one that now takes effect is the new one.
+- **Agent permissions**: the allowlist getting longer, `deniedTools` getting
+  **shorter**, or a resource scope being upgraded — any of the three is a broadening.
+  The denylist is the one most easily judged backward: removing an entry retracts a hard
+  constraint, and the intuition "shorter list = tighter" scores it as tightening, which
+  lets an owner retract "must never merge code" all on their own.
 
-判定发生在路由层之后、副作用之前。路由表只挡掉「连收紧都不够格」的人；
-方向算出来之后再判一次（`savePolicy` / `updateAgent` 的 `assertCan` 回调）。
-**顺序不能反**：Policy 的模拟要扫 90 天历史评估，
-放在权限判定之前等于让没资格放宽的人白跑一遍，
-还把「哪些历史任务会被自动放行」送给了不该看到它的人。
+The determination happens after the routing layer and before any side effect. The route
+table only turns away people who do not even qualify to tighten; once the direction is
+computed, it is checked again (the `assertCan` callbacks of `savePolicy` /
+`updateAgent`).
+**The order cannot be reversed**: a Policy simulation scans 90 days of historical
+evaluations, and running it before the permission check means someone unqualified to
+loosen gets to burn the whole computation, and gets handed "which historical tasks
+would have been auto-approved" — which they were not supposed to see.
 
-#### 2.3.2 角色怎么改
+#### 2.3.2 How roles get changed
 
-- 定义角色：`/api/v1/admin/roles`（`org_admin`），见 §2.2.1
-- 指派角色：`/api/v1/projects/{id}/members/{memberId}`（带 `project.members.manage` 的角色）
-- 组织身份：`PATCH /api/v1/admin/users/{id}/org-role`（`org_admin`）
+- Define a role: `/api/v1/admin/roles` (`org_admin`), see §2.2.1
+- Assign a role: `/api/v1/projects/{id}/members/{memberId}` (a role holding `project.members.manage`)
+- Org identity: `PATCH /api/v1/admin/users/{id}/org-role` (`org_admin`)
 
-全部记审计（§6.3）。一套改不了的权限体系，实践中的结局是
-「所有人共用一个账号」—— 因为换角色比换个人麻烦。三条防自伤的约束：
+All of it is audited (§6.3). A permission system nobody can change ends, in practice,
+with "everyone shares one account" — because changing roles is more trouble than
+changing people. Three constraints against self-inflicted lockout:
 
-- 项目里至少留一个**带 `project.members.manage` 的人**，否则这个项目的权限
-  只有组织管理员能修。★ 判据是权限不是角色名 —— 角色可自定义之后，
-  「负责人」可能叫「运营主管」，按名字判会让这条保护静默失效；
-- 组织里至少留一个 `org_admin`，否则再没有人能管身份、定义角色、看审计；
-- 有人（或 Agent）正在担任的角色删不掉，也不能把 `appliesTo` 改窄到
-  把他们排除在外 —— 否则会留下一批权限说不清算不算数的成员。
+- Every project keeps at least one **person holding `project.members.manage`**;
+  otherwise only an org admin can fix that project's permissions. ★ The criterion is the
+  permission, not the role name — once roles can be customized, the "lead" may be called
+  "operations manager", and checking by name makes this protection fail silently;
+- Every organization keeps at least one `org_admin`; otherwise nobody is left who can
+  manage identities, define roles, or read the audit log;
+- A role currently held by someone (person or Agent) cannot be deleted, and its
+  `appliesTo` cannot be narrowed to exclude them — otherwise you are left with a batch of
+  members whose permissions nobody can say still count.
 
-角色取值由**外键**保证（`project_members(org_id, role) → roles(org_id, key)`，
-迁移 `0011_custom_roles`）。外键比 CHECK 强的地方不在写入侧而在删除侧：
-它让「正在被人担任的角色」删不掉，而「角色被删了、成员权限静默归零」
-正是最难查的那种故障。`users.org_role` 仍是 CHECK（组织角色不可自定义）。
+Role values are guaranteed by a **foreign key**
+(`project_members(org_id, role) → roles(org_id, key)`, migration `0011_custom_roles`).
+Where a foreign key beats a CHECK is not the write side but the delete side: it makes a
+role that people currently hold undeletable, and "the role was deleted and member
+permissions silently went to zero" is exactly the hardest kind of failure to diagnose.
+`users.org_role` is still a CHECK (org roles are not customizable).
 
-### 2.4 决策责任不可代行
+### 2.4 Decision responsibility cannot be exercised by proxy
 
 ```typescript
-// ❌ 即使是 org_admin 也不能直接批准他人的决策
+// ❌ Not even an org_admin may approve someone else's decision directly
 async function approveDecision(decisionId: string, actor: Actor) {
   const decision = await getDecision(decisionId);
 
@@ -429,99 +486,99 @@ async function approveDecision(decisionId: string, actor: Actor) {
 }
 ```
 
-产品文档 10.5 要求审计能回答"谁批准了关键决策"。如果管理员能代任何人批准，这个问题就没有可靠答案。**改派是可以的，代行是不行的**——改派本身也记审计。
+Product doc 10.5 requires the audit trail to answer "who approved this critical decision". If an admin could approve on anyone's behalf, that question has no reliable answer. **Reassignment is allowed; acting by proxy is not** — and reassignment is itself audited.
 
 ---
 
-## 3. Agent 权限
+## 3. Agent permissions
 
-产品文档 10.3 的示例：
+The example from product doc 10.3:
 
 ```
 Review Agent
-允许：读取代码、读取 PR、创建 Review Comment
-禁止：合并代码、修改生产配置
+Allowed:   read code, read PRs, create review comments
+Forbidden: merge code, modify production configuration
 ```
 
-### 3.0 语义能力（授权的说法）
+### 3.0 Semantic capabilities (the vocabulary of authorization)
 
-**用户配置的是能力，不是工具名。** 这一层在 `packages/contracts` 定义清单（`AGENT_CAPABILITIES`），在 `packages/domain/src/capabilities/` 定义解释、档案与求值。
+**What users configure is capabilities, not tool names.** The catalog is defined in `packages/contracts` (`AGENT_CAPABILITIES`); the explanations, profiles, and evaluation live in `packages/domain/src/capabilities/`.
 
-在它出现之前，「这个 Agent 能干什么」只能用运行时的工具名表达（`Read` / `Edit` / `Bash`），代价有三条，最后一条是致命的：
+Before this layer existed, "what can this Agent do" could only be expressed in a runtime's tool names (`Read` / `Edit` / `Bash`), at three costs, the last of which is fatal:
 
-1. 用户被迫先懂某个 CLI。「要让它能跑测试」的正确答案是 `Bash(npm test:*)`，而这件事没有任何地方写着。
-2. 换运行时等于重配一遍 —— `Edit` 在 Codex 那边根本不存在。
-3. **`repo:write` 一个词同时表示三件风险差两个数量级的事**：在隔离工作区里改文件、把分支推到远端、把改动合进主干。授权界面上它们长得一模一样，于是「让 Agent 能改代码」顺手把「让 Agent 能合并代码」也授了出去。
+1. The user is forced to learn some CLI first. The correct answer to "let it run tests" is `Bash(npm test:*)`, and that is written down exactly nowhere.
+2. Switching runtimes means reconfiguring everything — `Edit` does not exist on the Codex side at all.
+3. **One word, `repo:write`, meant three things whose risk differs by two orders of magnitude**: editing files inside an isolated workspace, pushing a branch to a remote, and merging changes into the trunk. On the authorization screen they looked identical, so "let the Agent edit code" quietly granted "let the Agent merge code" as well.
 
-能力目录把第三条拆开：
+The capability catalog splits the third apart:
 
 ```
-workspace.write     在隔离工作区里改文件，改动不会自己离开工作区
-repository.push     把分支推到远端仓库
-pull_request.merge  合进目标分支 —— 这一步之后没有任何人工复核
+workspace.write     edit files in an isolated workspace; changes do not leave it on their own
+repository.push     push a branch to the remote repository
+pull_request.merge  merge into the target branch — nothing after this step is reviewed by a human
 ```
 
-翻译成某个运行时的工具名是**适配器**的事（`CapabilityTranslator`）。适配器可以做不到，但不可以不说：翻译不出来的部分必须作为 `CapabilityDegradation` 返回并显示在界面上。一个「看起来限制住了、运行时其实不限制」的授权界面，比一个难用的授权界面糟得多。
+Translating those into a particular runtime's tool names is the **adapter's** job (`CapabilityTranslator`). An adapter is allowed to fall short, but not to stay quiet about it: whatever it cannot translate must come back as a `CapabilityDegradation` and be shown in the UI. An authorization screen that looks restrictive while the runtime is not actually restricted is far worse than an awkward one.
 
-### 3.0.1 能力档案：没配置 ≠ 没权限
+### 3.0.1 Capability profiles: no configuration ≠ no permissions
 
 ```
 No explicit configuration does not mean "no permissions".
 It means "use the safe, useful default profile".
 ```
 
-刚建出来的 Agent 权限为空数组（「什么都不能干」）的系统里，**真正的默认值是用户从别处抄来的那份配置**。所以进项目没指定档案时落到 `standard_executor`：能在隔离工作区里改代码、跑测试、交产物；不能推送、合并、部署、读凭证、改治理。判据是「后果出不出得了工作区」。
+In a system where a freshly created Agent has an empty permission array ("can do nothing at all"), **the real default is whichever configuration the user copied from somewhere else**. So an Agent joining a project with no profile specified falls to `standard_executor`: it can edit code, run tests, and deliver artifacts inside an isolated workspace; it cannot push, merge, deploy, read credentials, or touch governance. The criterion is "can the consequences leave the workspace".
 
-内置档案见 `packages/domain/src/capabilities/profiles.ts`。要更多能力必须是一次明确的、要写理由的决定。
+The built-in profiles are in `packages/domain/src/capabilities/profiles.ts`. Anything more has to be an explicit decision with a written reason.
 
-**档案带版本，且展开结果落库**（`project_agent_permissions.allowed_capabilities`）。只存 `profileKey` 指针的话，平台哪天给 `standard_executor` 加一条能力，所有在跑的 Agent 会在没有任何人做过决定的情况下一起变宽 —— 这正是 §7 权限累积最典型的发生方式。档案出新版只在界面上提示，不自动升级。
+**Profiles are versioned, and the expanded result is persisted** (`project_agent_permissions.allowed_capabilities`). Store only the `profileKey` pointer and the day the platform adds a capability to `standard_executor`, every running Agent widens at once without anyone having made a decision — which is the single most typical way the permission creep of §7 happens. A new profile version is surfaced in the UI only; it never upgrades anything automatically.
 
-### 3.0.2 项目级授权
+### 3.0.2 Project-level authorization
 
-权限挂在 `project_agent_permissions(project_id, agent_id)` 上，不是挂在 `agents` 上。
+Permissions hang off `project_agent_permissions(project_id, agent_id)`, not off `agents`.
 
-旧模型把 `allowedTools` / `resourceScopes` 挂在 Agent 自身，于是给某个项目放宽一次，全组织的项目跟着放宽；绕开它的唯一办法是同一份配置建两个 Agent —— 而那两个的凭证、预算、统计从此各算各的，「这把 key 被谁在用」也再答不上来。
+The old model hung `allowedTools` / `resourceScopes` on the Agent itself, so loosening things once for one project loosened them for every project in the organization; the only way around it was to create two Agents from the same configuration — and from then on those two have separate credentials, separate budgets, and separate statistics, and "who is using this key" no longer has an answer.
 
-数据库用一条**复合外键**保证「有权限记录的 Agent 一定是本项目成员」。放在应用层的话，先删成员再删权限之间有一个窗口，而那个窗口里的 Agent 拿着一份没人管的授权。
+The database uses a **composite foreign key** to guarantee that an Agent with a permission record is a member of that project. Do it in the application layer instead and there is a window between deleting the membership and deleting the permissions — and in that window the Agent holds an authorization nobody owns.
 
-求值（`resolveEffectiveAgentAccess`）：
+Evaluation (`resolveEffectiveAgentAccess`):
 
 ```
-平台安全基线
-  ∩ 组织给这个 Agent 的能力上限（agents.capability_ceiling）
-  ∩ 项目里的能力授予（project_agent_permissions）
-  ∩ 运行时真正做得到的
-  + 项目资源范围
-  = 不可变的 Run 权限快照
+platform security baseline
+  ∩ the organization's capability ceiling for this Agent (agents.capability_ceiling)
+  ∩ the capabilities granted inside the project (project_agent_permissions)
+  ∩ what the runtime can actually do
+  + project resource scopes
+  = an immutable Run permission snapshot
 ```
 
-任一层的**显式拒绝永远压过允许**。能力上限那一层是多项目隔离的另一半：项目管理员能在自己项目里选档案，但选不出组织没打算给这个 Agent 的能力 —— 没有它，谁能建项目谁就能给任意 Agent 任意权限。
+**An explicit deny at any layer always beats an allow.** The ceiling layer is the other half of multi-project isolation: a project admin can pick a profile inside their own project, but cannot pick capabilities the organization never intended this Agent to have — without it, anyone who can create a project can give any Agent any permission.
 
-**一份求值器，四处调用**：调度器选候选、派发前冻结快照、界面显示生效权限、保存前的影响预览。分成两份实现的代价不是重复代码，是两个对不上的答案 —— 而它们只在分歧的那些输入上出现，正是没有人在看的地方。
+**One evaluator, four call sites**: the scheduler choosing candidates, the snapshot frozen before dispatch, the UI showing effective permissions, and the impact preview before saving. The cost of two implementations is not duplicated code, it is two answers that disagree — and they only diverge on the inputs where they disagree, which is exactly where nobody is looking.
 
-### 3.0.3 组织级记录只保留「上限」
+### 3.0.3 The org-level record keeps only the "ceiling"
 
-Agent 这一层现在只回答「这个 Agent **最多**能被授权到什么程度」：
+The Agent layer now answers only "how far can this Agent **at most** be authorized":
 
-| 留在 `agents` 上 | 移到 `project_agent_permissions` |
+| Stays on `agents` | Moved to `project_agent_permissions` |
 | --- | --- |
-| 运行时配置与凭证、负责人 | 实际生效的能力 |
-| `capability_ceiling`（NULL = 不设上限） | 资源范围 |
-| `denied_capabilities`（组织级硬拒绝） | 选中的能力档案 |
-| 模型、预算、并发、超时 | |
+| Runtime configuration and credentials, owner | The capabilities actually in effect |
+| `capability_ceiling` (NULL = no ceiling) | Resource scopes |
+| `denied_capabilities` (org-level hard deny) | The selected capability profile |
+| Model, budget, concurrency, timeout | |
 
-`allowed_tools` / `denied_tools` / `resource_scopes` 三列**已退役**：不再写入、不再读取。列留着不删，理由有两条，都不是「以防万一」——它们是迁移前那份配置的唯一记录（0031 的回填正是从这里反推的，删掉就再也无法核对推得对不对），而删列是不可回滚的 DDL。
+The three columns `allowed_tools` / `denied_tools` / `resource_scopes` are **retired**: no longer written, no longer read. The columns stay rather than being dropped, for two reasons, neither of them "just in case" — they are the only record of the pre-migration configuration (0031's backfill was derived from them, and dropping them would make it permanently impossible to check whether the derivation was right), and dropping a column is a DDL you cannot roll back.
 
-> **NULL 与空数组含义相反。** `capability_ceiling` 为 NULL 是「不设上限」，空数组是「一条都不给」——后者会让这个 Agent 在所有项目里都干不了活。这个区别在类型上是显式的（`AgentCapability[] | null`），保存时也会被拦（给空清单直接报错，并说明「不设上限」该怎么写）。
+> **NULL and an empty array mean opposite things.** A NULL `capability_ceiling` means "no ceiling"; an empty array means "grant nothing" — the latter would leave this Agent unable to work in any project. The distinction is explicit in the type (`AgentCapability[] | null`) and is caught on save (an empty list is rejected outright, with an explanation of how to write "no ceiling").
 
-### 3.1 三个维度（运行时层）
+### 3.1 Three dimensions (the runtime layer)
 
-能力翻译之后落到的仍然是这三个维度，它们是**下发给运行时**的协议形态，不再是用户配置的形态：
+Capability translation still lands on these three dimensions; they are the **protocol shape handed to the runtime**, no longer the shape the user configures:
 
 ```typescript
 interface AgentPermissions {
-  allowedTools: string[];       // 白名单
-  deniedTools: string[];        // ★ 黑名单，优先级高于白名单
+  allowedTools: string[];       // allowlist
+  deniedTools: string[];        // ★ denylist, takes precedence over the allowlist
   resourceScopes: Array<{
     kind: 'repo' | 'env' | 'database' | 'external_service' | 'dataset';
     ref: string;                // 'order-service' | 'production'
@@ -530,26 +587,26 @@ interface AgentPermissions {
 }
 ```
 
-**黑名单优先**：`deniedTools` 中的工具无论如何都不可用，不能被模板、继承或批量配置覆盖。用于表达"这个 Agent 绝对不能合并代码"这类硬约束。
+**Denylist wins**: a tool in `deniedTools` is unavailable no matter what, and cannot be overridden by a template, by inheritance, or by bulk configuration. It exists to express hard constraints like "this Agent must never merge code".
 
-**默认拒绝**：未在 `resourceScopes` 中列出的资源默认 `none`。不允许通配符授权（`repo: *`）——每个仓库要显式列出。
+**Deny by default**: any resource not listed in `resourceScopes` is `none`. Wildcard grants (`repo: *`) are not allowed — every repository has to be listed explicitly.
 
-**资源范围跟着能力收窄**：只读档案配上一条 `access:'write'` 的仓库范围是自相矛盾的两句话，而运行时只看得到后者。求值时让能力那一侧说了算。
+**Resource scopes narrow along with capabilities**: a read-only profile plus a repository scope of `access:'write'` is two statements contradicting each other, and the runtime only sees the second. At evaluation time the capability side wins.
 
-### 3.2 双重执行点
+### 3.2 Two enforcement points
 
 ```
-① 派发时：权限清单随任务下发给运行时（06 文档 §4）
-   → 运行时据此过滤工具
-② 回调时：APOS 对破坏性操作二次校验
-   → 防运行时实现有 bug 或被绕过
+① At dispatch: the permission list goes to the runtime with the task (doc 06 §4)
+   → the runtime filters tools against it
+② At callback: APOS re-checks destructive operations
+   → in case the runtime implementation has a bug or was bypassed
 ```
 
 ```typescript
-// 二次校验：即使运行时放行了，APOS 也要拦
+// Second check: even if the runtime allowed it, APOS still blocks
 async function validateToolCall(runId: string, tool: string, params: unknown) {
   const run = await getRun(runId);
-  const perms = run.permissionSnapshot;          // ★ 用派发时的快照，不是当前配置
+  const perms = run.permissionSnapshot;          // ★ the snapshot taken at dispatch, not the current config
 
   if (perms.deniedTools.includes(tool)) {
     await emitSecurityEvent('agent.permission_violation', { runId, tool });
@@ -567,15 +624,15 @@ async function validateToolCall(runId: string, tool: string, params: unknown) {
 }
 ```
 
-**用权限快照而非当前配置**：Run 派发后权限可能被修改。执行中的 Run 应当使用启动时的权限——中途变更会导致行为不一致，且难以审计。收紧权限对执行中的 Run 不立即生效（页面文档 08 §11 已说明）。
+**Use the permission snapshot, not the current configuration**: permissions may change after a Run is dispatched. A Run in flight should use the permissions it started with — mid-flight changes produce inconsistent behavior and are hard to audit. Tightening permissions does not take immediate effect on a Run already executing (page doc 08 §11 states this).
 
-**快照有两代，且永不迁移**。v1 只有上面那三个运行时字段；v2（`AgentPermissionSnapshot`）另外记下语义能力、档案键与版本、以及每条能力的出处。半年后翻审计的人问的是「它当时**被授权做什么**」，而工具名回答不了 —— 同一串 `['Read','Edit']` 在适配器改版前后不是一回事。历史快照原样保留：它们是当时那次执行的凭证，改写等于伪造证据。读取侧靠 `version` 分辨（缺省即 v1）。
+**Snapshots come in two generations, and are never migrated.** v1 has only the three runtime fields above; v2 (`AgentPermissionSnapshot`) additionally records the semantic capabilities, the profile key and version, and where each capability came from. Six months later, the person reading the audit trail is asking "what was it **authorized to do** at the time", and tool names cannot answer that — the same `['Read','Edit']` does not mean the same thing before and after an adapter revision. Historical snapshots are kept exactly as they were: they are the credentials of that particular execution, and rewriting them is fabricating evidence. The read side tells them apart by `version` (absent means v1).
 
-**权限违规是安全事件**：`agent.permission_violation` 触发高优先级告警给 `org_admin` 与 `agent_owner`。连续违规自动暂停该 Agent。
+**A permission violation is a security event**: `agent.permission_violation` raises a high-priority alert to `org_admin` and `agent_owner`. Repeated violations automatically suspend the Agent.
 
-### 3.3 权限变更预演
+### 3.3 Previewing a permission change
 
-页面文档 08 §5.5 要求 [模拟影响]：
+Page doc 08 §5.5 requires a [Simulate impact] action:
 
 ```typescript
 async function simulatePermissionChange(agentId: string, changes: PermissionChanges) {
@@ -588,247 +645,271 @@ async function simulatePermissionChange(agentId: string, changes: PermissionChan
 }
 ```
 
-输出如："此变更将使 3 个 Policy 的判定结果改变，2 个正在排队的任务将转为需要审批"。
+Output looks like: "this change will alter the outcome of 3 Policies; 2 queued tasks will now require approval."
 
-**预览与保存必须共用同一个判定。** 两边各算一套的话，「保存前告诉你会发生什么」这个承诺就失效了，而它失效的方式最难发现：预览说「不会有变化」，保存之后权限变了，两条记录都各自自洽。项目级授权那条路径上，preview 与 save 的差别仅仅是「写不写库」。
+**Preview and save must share the same decision logic.** Compute them separately and the promise "we tell you what will happen before you save" stops holding — and it fails in the hardest way to notice: the preview says "nothing will change", the save changes permissions, and both records are internally consistent. On the project-level authorization path, the only difference between preview and save is whether it writes to the database.
 
-### 3.4 受治理的变更：固定顺序
+### 3.4 Governed mutations: a fixed order
 
-`apps/api/src/http/governed-mutation.ts` 把这条流水线固定下来：
+`apps/api/src/http/governed-mutation.ts` pins this pipeline down:
 
 ```
-读当前状态 → 判方向 → 授权 → 校验原因/模拟/双签 → 事务 → 审计
+read current state → determine direction → authorize → validate reason / simulation / co-signature → transaction → audit
 ```
 
-顺序不能换，这才是这个函数存在的理由（而不是代码复用）：
+The order cannot be rearranged; that — not code reuse — is why this function exists:
 
-- **先判方向再授权**。不知道方向就不知道该判哪一条权限，于是各处实现只能挑一条，通常挑宽的那条（`agent.permissions.restrict`）—— §2.3 的不对称设计当场作废，一个只能收紧的人也能放宽。
-- **原因/模拟/双签在事务之前**。放进事务里意味着一次本该被拒的放宽已经写进去过，靠回滚兜底。
-- **审计在事务之后**。事务内发布会把一条随后被回滚的变更推给浏览器（与事件总线同一条约定）。
+- **Direction before authorization**. Without knowing the direction you do not know which permission to check, so each implementation has to pick one, and usually picks the broader one (`agent.permissions.restrict`) — at which point the asymmetric design of §2.3 is void, and someone who may only tighten can also loosen.
+- **Reason / simulation / co-signature before the transaction**. Putting them inside the transaction means a loosening that should have been refused was already written, with rollback as the safety net.
+- **Audit after the transaction**. Publishing inside the transaction pushes a change to the browser that is then rolled back (the same rule as the event bus).
 
-`PermissionSpec.governance` 在此之前是**描述性**的：目录里写着「这条要填原因」，而真正的判定散落在各 handler 里，写没写全靠自觉。现在目录说要，就一定要。
+`PermissionSpec.governance` used to be **descriptive**: the catalog said "this one needs a reason", while the actual enforcement was scattered across handlers and depended on everyone's diligence. Now, if the catalog says it is required, it is required.
 
 ---
 
-## 4. 高风险操作
+## 4. High-risk operations
 
-产品文档 10.4 列出九类需要额外治理的操作：
+Product doc 10.4 lists nine classes of operation that need extra governance:
 
-| 操作 | 默认治理 | 组织级规则可否放宽 |
+| Operation | Default governance | Can org-level rules loosen it |
 | --- | --- | --- |
-| 修改生产数据 | 需 DBA 审批 | 否 |
-| 删除资源 | 需多人会签 | 否 |
-| 修改权限 | 需 `org_admin` | 否 |
-| 访问敏感数据 | 需数据 owner 审批 + 脱敏 | 否 |
-| 对外发送信息 | 需人工确认 | 有条件（如仅限内部通知渠道） |
-| 执行付款 | 需多人会签 + `sponsor` | 否 |
-| 发布生产环境 | 需发布负责人审批 | 有条件（成熟流程可自动化，产品文档 8.8.6） |
-| 修改安全策略 | 需 `org_admin` + 审计 | 否 |
-| 使用高成本资源 | 需 `tech_lead` 审批 | 是（可设阈值） |
+| Modify production data | DBA approval | No |
+| Delete a resource | Multi-person co-signature | No |
+| Modify permissions | `org_admin` | No |
+| Access sensitive data | Data owner approval + redaction | No |
+| Send information externally | Human confirmation | Conditionally (e.g. internal notification channels only) |
+| Execute a payment | Multi-person co-signature + `sponsor` | No |
+| Release to production | Release owner approval | Conditionally (a mature process may be automated, product doc 8.8.6) |
+| Modify security policy | `org_admin` + audit | No |
+| Use high-cost resources | `tech_lead` approval | Yes (a threshold can be set) |
 
-### 4.1 底线在哪儿
+### 4.1 Where the floor is
 
-这九类里，**三类硬编码在求值器里**（`NEVER_AUTO_APPROVE`，[05 Policy Engine](05-policy-engine.md) §3.2）：
+Of those nine, **three are hard-coded into the evaluator** (`NEVER_AUTO_APPROVE`, [05 Policy Engine](05-policy-engine.md) §3.2):
 
-删除资源 · 修改权限 · 执行付款
+deleting a resource · modifying permissions · executing a payment
 
-无论自治等级、无论项目规则怎么写，它们永远不会得到 `allow`。硬编码不是偷懒——一条能被配置绕过的底线不是底线。
+Whatever the autonomy level, whatever the project rules say, they never get an `allow`. Hard-coding is not laziness — a floor that configuration can get around is not a floor.
 
-**其余六类由用户自己配规则管住**。平台不替他配：一条都没配时，Policy 页的体检会把"这类操作现在走的是自治等级默认"如实说出来（`coverage_gap`），零规则的新项目还会先看到一份引导向导。
+**The other six are governed by rules the user writes.** The platform does not write them for the user: when none exist, the Policy page's health check states plainly that "this class of operation currently falls through to the autonomy-level default" (`coverage_gap`), and a new project with zero rules is shown a setup wizard first.
 
-> **这一段曾经是十条硬编码的组织级基线 Policy**（`BASELINE_POLICIES`，优先级 1–20），无论库里有没有规则都参与求值、不可删也不可放宽。删掉的理由不是它们管得不对，是它们让"这个项目现在到底按什么规则跑"这个问题在界面上答不出来：用户看得见的规则列表和实际生效的规则不是同一份。而一份读不到全貌的治理配置，比配置得少更危险——它给的是虚假的安全感。现在**生效规则 = 库里用户录入的那些**，真正不能商量的那三类改由求值器直接兜住。
+> **This section used to be ten hard-coded org-level baseline Policies** (`BASELINE_POLICIES`, priorities 1–20), which took part in every evaluation whether or not the database held any rules, and could be neither deleted nor loosened. They were removed not because they governed the wrong things, but because they made "what rules is this project actually running under" unanswerable from the UI: the rule list the user could see and the rules actually in effect were not the same list. And a governance configuration you cannot read in full is more dangerous than a thin one — what it gives you is false confidence. Now **the rules in effect = the ones the user entered into the database**, and the three that are genuinely not negotiable are caught by the evaluator directly.
 
-**测试保证**（[05](05-policy-engine.md) §9）：穷举各种自治等级与对抗性项目规则组合，断言那三类操作永远不会得到 `allow`；再断言**拼错的取值同样绕不过它**——`operationType` 写成 `"delete_resrouce"` 时评估会停下来报错，而不是当成"改代码"放过去。两条都是 CI 中的阻断性测试。
+**Test guarantees** ([05](05-policy-engine.md) §9): enumerate every autonomy level against adversarial project rules and assert that those three operations never get an `allow`; then assert that **a misspelled value cannot slip past either** — an `operationType` of `"delete_resrouce"` stops evaluation with an error rather than sailing through as "code change". Both are blocking tests in CI.
 
 ---
 
-## 5. 数据安全
+## 5. Data security
 
-### 5.1 数据分级
+### 5.1 Data classification
 
 ```typescript
 type DataSensitivity = 'public' | 'internal' | 'confidential' | 'restricted';
 ```
 
-| 级别 | 示例 | Agent 可访问 |
+| Level | Example | Agent access |
 | --- | --- | --- |
-| `public` | 公开文档 | ✅ |
-| `internal` | 内部代码、需求 | ✅（需项目范围内） |
-| `confidential` | 客户数据、财务 | 需显式授权 + 脱敏 |
-| `restricted` | PII、密钥、支付信息 | ❌ 默认禁止 |
+| `public` | Public documentation | ✅ |
+| `internal` | Internal code, requirements | ✅ (within project scope) |
+| `confidential` | Customer data, finance | Explicit grant + redaction |
+| `restricted` | PII, keys, payment information | ❌ denied by default |
 
-### 5.2 上下文脱敏
+### 5.2 Context redaction
 
-Agent 上下文是最容易泄漏敏感数据的地方——它把各处的信息聚合起来送给外部运行时。
+Agent context is the easiest place to leak sensitive data — it aggregates information from everywhere and ships it to an external runtime.
 
 ```typescript
 async function buildAgentContext(item: WorkItem, agent: Agent): Promise<ContextItem[]> {
   const raw = await gatherContext(item);
 
   return raw
-    .filter(c => canAgentAccess(agent, c.sensitivity))    // 过滤
+    .filter(c => canAgentAccess(agent, c.sensitivity))    // filter
     .map(c => ({
       ...c,
-      content: redactSensitive(c.content, {                // 脱敏
-        patterns: SENSITIVE_PATTERNS,   // 手机号、身份证、密钥、token
+      content: redactSensitive(c.content, {                // redact
+        patterns: SENSITIVE_PATTERNS,   // phone numbers, national ID numbers, keys, tokens
         onRedact: (kind) => recordRedaction(item.id, kind),
       }),
     }));
 }
 ```
 
-页面文档 09 §11 要求界面标注「已脱敏，共 3 处」——脱敏要可见，否则排障时会困惑于"为什么 Agent 说找不到这个值"。
+Page doc 09 §11 requires the UI to label it 「已脱敏，共 3 处」 ("redacted in 3 places") — redaction has to be visible, or debugging turns into confusion over "why does the Agent say it cannot find this value".
 
-**查看原文**：仅 `org_admin` 可申请，查看行为记审计。
+**Viewing the original**: only an `org_admin` may request it, and the viewing itself is audited.
 
-### 5.3 密钥管理
+### 5.3 Secret management
 
-| 类型 | 存储 | 访问 |
+| Type | Storage | Access |
 | --- | --- | --- |
-| 集成 OAuth token | KMS 信封加密 | 仅 integration 模块，按需解密 |
-| Agent 运行时凭证 | 同上 | 仅 agent 模块 |
-| LLM API Key | 环境变量 / Secret Manager | 仅服务端 |
-| Run 级令牌 | 不持久化（JWT 自包含） | — |
+| Integration OAuth token | KMS envelope encryption | integration module only, decrypted on demand |
+| Agent runtime credentials | Same | agent module only |
+| LLM API key | Environment variable / secret manager | Server-side only |
+| Run-scoped token | Not persisted (self-contained JWT) | — |
 
-**永不回显**：API 返回时只给后四位（`****1234`）。数据库中的加密字段不进日志、不进事件 payload。
+**Never echoed back**: API responses give only the last four characters (`****1234`). Encrypted database fields never reach the logs or an event payload.
 
-### 5.4 代码仓库凭证（GitHub / GitLab / …）
+### 5.4 Code repository credentials (GitHub / GitLab / …)
 
-登记在「Agent 配置 → 代码仓库」（`/api/v1/admin/repositories`，需 `repository.manage`）。
-凭证三种形态（`modules/security/secrets.ts`）：
+Registered under "Agent configuration → Code repositories"
+(`/api/v1/admin/repositories`, requires `repository.manage`).
+Credentials take three forms (`modules/security/secrets.ts`):
 
-- `env:GITHUB_TOKEN` —— 库里只存变量名，明文只在进程环境。**生产首选**
-- 直接粘贴 + 配了 `APOS_SECRET_KEY` —— AES-256-GCM 加密入库，钥匙在库外
-- 直接粘贴 + 没配 `APOS_SECRET_KEY` —— 明文入库（`secret://plain/…`），本机开发与演示环境
+- `env:GITHUB_TOKEN` — the database holds only the variable name; the plaintext lives only in the process environment. **Preferred in production**
+- Pasted directly, with `APOS_SECRET_KEY` configured — AES-256-GCM encrypted at rest, the key living outside the database
+- Pasted directly, without `APOS_SECRET_KEY` — stored in plaintext (`secret://plain/…`), for local development and demo environments
 
-★ 主密钥决定的是**存成什么样**，不是**能不能存**。此前没配主密钥时接口直接
-拒绝一切粘贴进来的值；但 Agent 的运行时配置是一份用户自己写的 JSON，
-键名带 `TOKEN` / `KEY` / `AUTH` 的值都会走同一条判定 —— 于是「配一下中转站」
-变成了「先去改部署的环境变量再重启」。一个把常规配置挡在门外的安全措施，
-换来的是用户绕开这一页。现在改为永远存得下，并在配置页上如实标注当前是哪一种
-（`encryptsInlineSecrets`）。三种形态都带 `secret://` 前缀，因此
-「接口永不回显」那条纪律对它们一视同仁。
+★ The master key determines **how a secret is stored**, not **whether it can be stored**.
+Previously, with no master key configured, the endpoint refused every pasted value
+outright; but an Agent's runtime configuration is a JSON blob the user writes themselves,
+and any value whose key name contains `TOKEN` / `KEY` / `AUTH` went through the same
+check — so "configure a proxy endpoint" turned into "go change the deployment's
+environment variables and restart first". A security measure that locks ordinary
+configuration out buys you users who route around the page. It now always stores the
+value, and states plainly on the configuration page which of the three forms is in use
+(`encryptsInlineSecrets`). All three forms carry the `secret://` prefix, so the "never
+echo it back" discipline applies to them uniformly.
 
-Token 需要的权限就是 clone / fetch / push
-（GitHub fine-grained PAT 给 Contents: Read and write 即可）——
-平台不调 GitHub / GitLab 的 API。
+The permissions a token needs are exactly clone / fetch / push
+(a GitHub fine-grained PAT with Contents: Read and write is enough) —
+the platform does not call GitHub's or GitLab's APIs.
 
-#### 5.4.1 凭证用户名占位
+#### 5.4.1 The credential username placeholder
 
-HTTPS token 走 Basic 认证，用户名那一段各家要求不同：
+HTTPS tokens go through Basic auth, and each vendor wants something different in the username field:
 
-| 服务 | 用户名占位 |
+| Service | Username placeholder |
 | --- | --- |
 | GitHub / GHE | `x-access-token` |
-| GitLab（含自建） | `oauth2` |
+| GitLab (including self-hosted) | `oauth2` |
 | Bitbucket | `x-token-auth` |
 
-留空时按域名推断（`resolveAuthUsername`）：公有云域名与**首段标签是服务商名**
-的自建实例（`gitlab.acme.com`）都认得出来；`git.acme.com` 认不出来
-—— 底下可能是 Gitea、Gogs、GitLab、Bitbucket Server，猜错就是 401，
-所以如实回落到默认值并在配置页上打警告，让人手填。
+Left blank, it is inferred from the domain (`resolveAuthUsername`): public cloud
+domains and self-hosted instances **whose first label is the vendor name**
+(`gitlab.acme.com`) are both recognized; `git.acme.com` is not — underneath it could be
+Gitea, Gogs, GitLab, or Bitbucket Server, and a wrong guess is a 401, so it falls back
+honestly to the default, flags a warning on the configuration page, and lets a human
+fill it in.
 
-★ 这一项填错的表现是 401，而 401 的报错里没有任何东西指向它。
-所以配置页会把**即将使用的占位值以及它的来源**（手填 / 按域名推断 / 兜底）
-直接显示出来，探测失败时也会连同占位值一起说。
+★ Getting this field wrong shows up as a 401, and nothing in a 401 points at it.
+So the configuration page displays **the placeholder value about to be used, and where
+it came from** (typed in / inferred from the domain / fallback) directly, and a failed
+probe reports the placeholder along with the failure.
 
-#### 5.4.2 SSH 私钥（`ssh://` 与 `git@` 形态）
+#### 5.4.2 SSH private keys (`ssh://` and `git@` forms)
 
-同一个凭证字段，ssh 地址填的是**私钥全文**，两种形态共用
-`env:` / 加密内联那套存储。登记时就会验形态（`inspectPrivateKey`）。
+Same credential field: for an ssh address you paste the **full private key**, and both
+forms share the same `env:` / encrypted-inline storage. The form is validated at
+registration time (`inspectPrivateKey`).
 
-**★★ 私钥不落盘，走 ssh-agent。**
+**★★ The private key never touches disk; it goes through ssh-agent.**
 
-OpenSSH 的 `ssh -i` 只接受文件路径，所以「写个临时 key 文件」是最容易
-想到的做法，但在这个平台上它不成立：容器里同时跑着别的 Run 的 Agent，
-它们是**同一个 OS 用户**的进程，只要 key 在磁盘上，任何一个 Agent 的
-Bash 工具都能 `cat` 到它 ——「跑之前写、跑完删」挡不住这一点，因为并发的
-Run 里总有别人的 Agent 正在跑。这和 §5.4 已有的两条纪律是同一条：
-token 不拼进 remote URL（`.git/config` 就在 Agent 的工作目录里），
-不用 credential helper（要落盘）。私钥比 token 更值钱，标准不该更低。
+OpenSSH's `ssh -i` only accepts a file path, so "write a temporary key file" is the
+first thing anyone thinks of — but it does not hold up on this platform: the container
+is simultaneously running Agents from other Runs, as processes of the **same OS user**,
+so as long as the key is on disk, any Agent's Bash tool can `cat` it. "Write it before
+the run, delete it after" does not help, because with concurrent Runs there is always
+somebody else's Agent running. This is the same discipline as the two rules already in
+§5.4: no token spliced into the remote URL (`.git/config` sits right there in the
+Agent's working directory), and no credential helper (it writes to disk). A private key
+is worth more than a token; the standard should not be lower.
 
-所以：key 从 stdin 喂给 `ssh-add -`，只活在 agent 进程的内存里；
-`SSH_AUTH_SOCK` 只进 **git 子进程**的环境（Agent 的运行时环境另外构造，
-拿不到）；socket 在 0700 的临时目录里；agent 的生命周期严格包在
-`withSshAgent` 里，`finally` 里 kill + 删目录。
+So: the key is fed to `ssh-add -` from stdin and lives only in the agent process's
+memory; `SSH_AUTH_SOCK` goes only into the environment of the **git subprocess** (the
+Agent's runtime environment is built separately and never gets it); the socket sits in
+a 0700 temporary directory; and the agent's lifetime is strictly wrapped by
+`withSshAgent`, with a `finally` that kills it and removes the directory.
 
-**★★ 不支持带密码短语的私钥，且在保存那一刻就拒。**
+**★★ Passphrase-protected private keys are not supported, and are rejected at save time.**
 
-无人值守场景没法输入密码，所以它注定用不了。放进库的话失败会推迟到
-第一次派发，而且**不是报错**——是 `ssh-add` 挂在那里等密码，表现成
-「任务一直在执行中」。运行时另外用 `SSH_ASKPASS_REQUIRE=never` 兜底，
-保证任何漏网的情况也是当场失败而不是挂住。
+An unattended run has no way to type a passphrase, so such a key is doomed never to
+work. Let it into the database and the failure is deferred to the first dispatch —
+and it is **not an error**: `ssh-add` sits there waiting for the passphrase, which
+presents as "the task has been executing forever". The runtime additionally sets
+`SSH_ASKPASS_REQUIRE=never` as a backstop, so that anything that slips through fails
+immediately instead of hanging.
 
-**★★ 主机公钥 TOFU 之后固定。**
+**★★ Host keys are pinned after TOFU.**
 
-`repositories.ssh_known_hosts` 存主机公钥（明文——它本来就是要公开比对
-的那一份）。为空时首次连接用 `accept-new`，**连上之后立刻把学到的公钥
-写回库**，此后转 `StrictHostKeyChecking=yes`。
+`repositories.ssh_known_hosts` stores the host public key (in plaintext — it is the
+copy meant to be compared publicly in the first place). When it is empty, the first
+connection uses `accept-new` and **writes the learned key straight back to the database
+as soon as the connection succeeds**, switching to `StrictHostKeyChecking=yes`
+thereafter.
 
-不固定的话 `accept-new` 等于 `no`：每次连接都是一个全新的临时
-known_hosts，「未知主机」这个条件永远成立，于是每次都放行 ——
-中间人换掉主机公钥也照连不误。TOFU 要成立，第一次学到的东西必须留下来。
-任何时候都不用 `StrictHostKeyChecking=no`。管理员也可以用
-`ssh-keyscan` 预先填好（更强），或清空以重新学习（服务器真换了密钥时）。
+Without pinning, `accept-new` is equivalent to `no`: every connection gets a brand new
+temporary known_hosts, the condition "unknown host" is always true, and so everything is
+accepted every time — a man-in-the-middle swapping the host key connects just fine. For
+TOFU to mean anything, what was learned the first time has to survive. We never use
+`StrictHostKeyChecking=no` under any circumstances. An admin may also prefill it with
+`ssh-keyscan` (stronger), or clear it to relearn (when the server really did rotate its
+key).
 
-**★ 用 `IdentityAgent` + `IdentityFile=none` 限定身份，不能用 `IdentitiesOnly=yes`。**
+**★ Identity is constrained with `IdentityAgent` + `IdentityFile=none`, never with `IdentitiesOnly=yes`.**
 
-`IdentitiesOnly` 的语义是「只用配置/命令行里指定的身份**文件**」，
-它会把 agent 提供的身份一并排除掉 —— 而我们的 key 只存在于 agent 里。
-加上它的表现是 `Permission denied (publickey)`：看起来像仓库没授权，
-实际上 key 根本没被拿出来试过。
+`IdentitiesOnly` means "use only the identity **files** named in the configuration or on
+the command line", which excludes the identities the agent offers — and our key exists
+only inside the agent. Add it and the symptom is `Permission denied (publickey)`: it
+looks like the repository was not authorized, when in fact the key was never offered at
+all.
 
-★ 没配私钥的 ssh 仓库仍然回退到宿主机的 `~/.ssh`（历史行为，部署在有
-SSH 配置的机器上是合法用法），配置页会说明容器里通常没有这份配置。
+★ An ssh repository with no private key configured still falls back to the host's
+`~/.ssh` (historical behavior, and a legitimate use on a machine that has SSH configured),
+and the configuration page notes that a container usually does not have that config.
 
-#### 5.4.3 连通性探测
+#### 5.4.3 Connectivity probe
 
-`POST /api/v1/admin/repositories/{id}/probe` 跑一次 `git ls-remote --heads`，
-验三件事：域名通不通、凭证对不对、默认分支在不在。只读、不落盘、不建镜像。
+`POST /api/v1/admin/repositories/{id}/probe` runs one `git ls-remote --heads` and
+verifies three things: the domain resolves and connects, the credential works, and the
+default branch exists. Read-only, nothing written to disk, no mirror created.
 
-★ 存在的理由是「配错了要在配置页上知道」。没有它，验证凭证的唯一办法
-是派一个任务，然后看它以「准备工作区失败：… 401」告终 ——
-那条报错分不清是 token 过期、scope 不够，还是用户名占位不对，
-而这三种原因的下一步动作完全不同。
+★ It exists so that a misconfiguration is visible on the configuration page. Without it,
+the only way to verify a credential is to dispatch a task and watch it end with
+"workspace preparation failed: … 401" — an error that cannot distinguish an expired
+token from insufficient scope from a wrong username placeholder, and those three call
+for completely different next steps.
 
-用 `ls-remote` 不用 `clone`：要验的三件事它全能答且是秒级，
-而 clone 一个大仓库要几分钟 —— 贵到没人愿意点第二次的检查等于没有检查。
+`ls-remote` rather than `clone`: it answers all three questions in seconds, whereas
+cloning a large repository takes minutes — and a check so expensive nobody clicks it
+twice is no check at all.
 
-#### 5.4.4 质量核验命令
+#### 5.4.4 The quality verification command
 
-`checkCommand`（如 `pnpm test`）在 Agent 收工后、**提交之前**于工作区执行，
-失败也照样提交（失败的改动同样需要被人看到）。
+`checkCommand` (e.g. `pnpm test`) runs in the workspace after the Agent finishes and
+**before the commit**; a failure still commits (failed changes need to be seen too).
 
-★★ 它是 reviewing 阶段唯一的**真实**测试数据源。不配的话，
-`qualityGatePassed` 这道门禁只能依据「Agent 说它跑过测试了」——
-那是一句自述，不是证据。所以未配置时配置页会把这句话直接说出来。
+★★ It is the only source of **real** test data in the reviewing stage. Without it, the
+`qualityGatePassed` gate has nothing to go on but "the Agent said it ran the tests" —
+which is a self-report, not evidence. So when it is unconfigured, the configuration page
+says exactly that.
 
-★ 它是在服务端 shell 里执行的任意命令，配置权限就是 `repository.manage`
-（组织管理员），与登记仓库同一档 —— 能登记仓库的人本来就能让 Agent
-往里写代码，不设更高的门槛没有意义。
+★ It is an arbitrary command executed in a server-side shell, and the permission to
+configure it is `repository.manage` (org admin), the same tier as registering a
+repository — anyone who can register a repository can already have Agents write code
+into it, so a higher bar would be pointless.
 
 ---
 
-## 6. 审计日志
+## 6. Audit log
 
-产品文档 10.5 要求记录：操作者、身份类型、时间、输入、操作、目标资源、Policy 判断、审批记录、执行结果、失败原因、关联项目和任务。
+Product doc 10.5 requires recording: the actor, the identity type, the time, the input, the operation, the target resource, the Policy decision, the approval record, the execution result, the failure reason, and the associated project and task.
 
-### 6.1 实现
+### 6.1 Implementation
 
-审计日志**不是独立系统**，而是 `events` 表的一个视图——因为事件模型（[03](03-event-model.md)）已经记录了全部要素：
+The audit log **is not a separate system**; it is a view over the `events` table — because the event model ([03](03-event-model.md)) already records every element:
 
-| 审计要素 | 事件字段 |
+| Audit element | Event field |
 | --- | --- |
-| 操作者 + 身份类型 | `actor_type`, `actor_id` |
-| 时间 | `occurred_at` |
-| 操作 | `type` |
-| 目标资源 | `subject_type`, `subject_id` |
-| 输入 | `payload` |
-| Policy 判断 | `payload`（policy.evaluated 事件）+ `context_snapshot` |
-| 审批记录 | decision.* 事件 |
-| 执行结果 | agent_run.* 事件 |
-| 失败原因 | `payload.error` |
-| 关联项目任务 | `project_id`, `correlation_id` |
+| Actor + identity type | `actor_type`, `actor_id` |
+| Time | `occurred_at` |
+| Operation | `type` |
+| Target resource | `subject_type`, `subject_id` |
+| Input | `payload` |
+| Policy decision | `payload` (policy.evaluated events) + `context_snapshot` |
+| Approval record | decision.* events |
+| Execution result | agent_run.* events |
+| Failure reason | `payload.error` |
+| Associated project and task | `project_id`, `correlation_id` |
 
 ```sql
 CREATE VIEW audit_log AS
@@ -841,80 +922,82 @@ WHERE level = 'milestone' OR type IN (
 );
 ```
 
-**这是把事件模型做扎实的直接回报**：不需要在每个操作点额外写审计代码，也就不会出现"某个路径忘了写审计"的漏洞。
+**This is the direct payoff of taking the event model seriously**: no extra audit code at every operation site, and therefore no hole of the form "some path forgot to write an audit record".
 
-### 6.2 不可篡改
+### 6.2 Tamper resistance
 
 ```sql
 REVOKE UPDATE, DELETE ON events FROM apos_app;
 ```
 
-应用连接的数据库角色没有修改权限。归档到 S3 时开启对象锁（WORM）。
+The database role the application connects with has no modify rights. Archives to S3 are written with object lock (WORM) enabled.
 
-### 6.3 必须记审计的操作
+### 6.3 Operations that must be audited
 
-除常规事件外，以下操作强制额外标记 `audit: true`：
+Beyond the ordinary events, the following are forcibly marked `audit: true`:
 
-- 权限变更（人类与 Agent）
-- Policy 创建/修改/停用
-- 自治等级变更
-- 强制放行（验收标准、阻塞）
-- 决策改派
-- 集成连接/断开、Source of Truth 变更
-- 敏感数据原文查看
-- 审计日志导出
+- Permission changes (human and Agent)
+- Policy creation / modification / deactivation
+- Autonomy level changes
+- Force-pass (acceptance criteria, blockers)
+- Decision reassignment
+- Integration connect / disconnect, Source of Truth changes
+- Viewing the original of sensitive data
+- Audit log export
 
-对应的事件类型见 `packages/contracts/src/events/index.ts` 的 `AUDIT_EVENTS`。
-授权变更分两类：
+The corresponding event types are in `AUDIT_EVENTS` in `packages/contracts/src/events/index.ts`.
+Authorization changes come in two kinds:
 
-- **谁担任什么角色**（subject 是被改的那个人 / Agent）：
+- **Who holds which role** (the subject is the person / Agent being changed):
   `project.member_added` / `project.member_role_changed` /
   `project.member_removed` / `user.org_role_changed`
-- **角色本身是什么**（subject 是角色）：
+- **What the role itself is** (the subject is the role):
   `role.created` / `role.updated` / `role.deleted`
 
-**为什么这两类都要有**：§7 把「权限累积」列为本产品的特有威胁，
-它的第一条缓解手段就是「权限变更全审计」。只记第一类的话，
-「谁给研发这个角色加上了放宽规则的权限」查不到 ——
-而逐个人翻授权记录也拼不出真相，每个人的记录都只会显示「他一直是研发」。
+**Why both kinds are needed**: §7 lists permission creep as a threat specific to this
+product, and its first mitigation is "audit every permission change". Record only the
+first kind and "who gave the engineering role the power to loosen rules" is
+unanswerable — and going through people's authorization records one by one will not
+reconstruct it either, because each person's record only ever says "they have always been
+engineering".
 
 ---
 
-## 7. 威胁模型
+## 7. Threat model
 
-针对这个产品的特有威胁：
+Threats specific to this product:
 
-| 威胁 | 场景 | 缓解 |
+| Threat | Scenario | Mitigation |
 | --- | --- | --- |
-| **Agent 越权** | Agent 调用未授权工具或访问越界资源 | 双重执行点（§3.2）+ 违规告警 + 自动暂停 |
-| **提示注入** | 需求文档/代码注释/PR 描述中嵌入指令，诱导 Agent 越权 | 上下文与指令分离；工具调用侧的权限校验不依赖 Agent 判断；破坏性操作强制走 Policy |
-| **成本攻击** | 恶意或错误配置导致 Agent 无限循环烧钱 | 单 Run 成本上限 + 项目预算硬阻断 + 异常增长检测 |
-| **权限累积** | 逐次小幅放宽，最终 Agent 权限过大 | 权限变更全审计 + 定期权限审查报告 + 放宽需 `tech_lead` |
-| **决策绕过** | 通过修改 Policy 让高风险操作自动化 | 三类操作的底线硬编码在求值器里（§4.1）+ 放宽需模拟 + Agent 不能改 Policy |
-| **拼写绕过** | 用一个认不出来的 `operationType` 让安全底线匹配不上 | fact 取值按枚举严格解析，认不出即拒收，绝不兜底成近似值（§4.1） |
-| **Run 令牌泄漏** | 外部运行时环境被攻破 | Run 级短期令牌 + 仅限该 runId 的操作 |
-| **同步投毒** | 通过外部系统（Jira）注入恶意需求 | 外部导入的需求必须经人类确认才能进入 Planning |
-| **审计伪造** | 篡改历史记录掩盖行为 | 事件表不可修改 + WORM 归档 |
+| **Agent privilege escalation** | An Agent invokes an unauthorized tool or reaches a resource outside its scope | Two enforcement points (§3.2) + violation alerts + automatic suspension |
+| **Prompt injection** | Instructions embedded in a requirement document / code comment / PR description lure an Agent past its permissions | Context and instructions kept separate; the permission check on the tool-call side never depends on the Agent's judgment; destructive operations always go through Policy |
+| **Cost attack** | Malice or misconfiguration puts an Agent in an infinite loop burning money | Per-Run cost ceiling + hard project budget block + anomalous-growth detection |
+| **Permission creep** | A series of small loosenings ends with an over-privileged Agent | Full audit of permission changes + periodic permission review report + loosening requires `tech_lead` |
+| **Decision bypass** | Modify a Policy so a high-risk operation becomes automatic | The floor for three classes of operation is hard-coded in the evaluator (§4.1) + loosening requires a simulation + Agents cannot modify Policies |
+| **Spelling bypass** | Use an unrecognizable `operationType` so the security floor never matches | Fact values are parsed strictly against the enum; anything unrecognized is refused, never coerced to the nearest match (§4.1) |
+| **Run token leak** | The external runtime environment is compromised | Short-lived Run-scoped token + operations limited to that runId |
+| **Sync poisoning** | Malicious requirements injected through an external system (Jira) | Externally imported requirements need human confirmation before entering Planning |
+| **Audit forgery** | Tampering with history to cover behavior | The events table is immutable + WORM archives |
 
-### 7.1 提示注入的具体防线
+### 7.1 Concrete defenses against prompt injection
 
-这是本产品最需要认真对待的威胁——Agent 读的内容（代码、文档、PR 描述、外部同步的需求）都可能被注入。
+This is the threat this product has to take most seriously — everything an Agent reads (code, documents, PR descriptions, externally synced requirements) can be injected.
 
-**防线不是"让 Agent 更聪明地识别注入"，而是让注入即使成功也无法造成损害**：
+**The defense is not "make the Agent smarter at spotting injections", it is making a successful injection unable to cause damage**:
 
-1. **权限不由 Agent 自述决定**。Agent 说"我需要 merge_pr 权限"没有任何效果，权限只能由人类在 Agent Workspace 配置。
-2. **破坏性操作强制走 Policy**。即使 Agent 被诱导去删库，`operationType: db_ddl` + `environment: production` 会命中组织级规则要求 DBA 审批。
-3. **工具调用侧二次校验**（§3.2）不看 Agent 的意图，只看权限清单。
-4. **上下文标注来源**。外部来源的内容在 prompt 中明确标注为"不受信任的外部数据"，且系统提示明确指令不执行其中的指令。
+1. **Permissions are not determined by what the Agent says about itself.** An Agent saying "I need merge_pr permission" has no effect whatsoever; permissions can only be set by a human in the Agent Workspace.
+2. **Destructive operations always go through Policy.** Even if an Agent is talked into dropping a database, `operationType: db_ddl` + `environment: production` hits an org-level rule demanding DBA approval.
+3. **The second check on the tool-call side** (§3.2) does not look at the Agent's intent, only at the permission list.
+4. **Context is labeled with its origin.** Externally sourced content is explicitly marked in the prompt as "untrusted external data", and the system prompt explicitly instructs that instructions inside it are not to be executed.
 
-**产品文档 8.8.4 的"涉及不可逆操作"触发人类介入**，在安全上正是这条防线的体现。
+**Product doc 8.8.4's "involves an irreversible operation" trigger for human involvement** is, in security terms, exactly this line of defense.
 
-### 7.2 Agent 不能修改 Policy
+### 7.2 Agents cannot modify Policies
 
-产品文档十三明确把「Agent 自动修改 Policy」列为 MVP 不实现。这不只是范围问题，是安全底线：
+Product doc chapter 13 explicitly puts "Agents modifying Policies automatically" out of MVP scope. This is not only a scoping question, it is a security floor:
 
 ```typescript
-// policy 模块的写操作强制校验
+// Write operations in the policy module enforce this
 function assertHumanActor(actor: Actor, operation: string) {
   if (actor.type !== 'human') {
     throw new Forbidden('POLICY_HUMAN_ONLY',
@@ -923,30 +1006,30 @@ function assertHumanActor(actor: Actor, operation: string) {
 }
 ```
 
-**如果 Agent 能改自己的约束，整个治理体系就是装饰。** Agent 可以生成规则建议（进入决策中心），但生效必须经人类确认。
+**If an Agent can modify its own constraints, the entire governance system is decoration.** An Agent may generate rule suggestions (which land in the decision center), but they take effect only after a human confirms them.
 
 ---
 
-## 8. 合规
+## 8. Compliance
 
-| 要求 | 实现 |
+| Requirement | Implementation |
 | --- | --- |
-| 数据留存 | 事件 12 个月热 + 归档；可配置留存期 |
-| 数据删除请求（GDPR） | 用户数据可匿名化（保留事件结构，抹去个人标识） |
-| 数据驻留 | 部署级隔离，MVP 不做单实例多区域 |
-| 员工监控法规 | 个人绩效数据默认聚合展示，个人明细仅 `pm` 可见（页面文档 12 §8） |
-| 访问审计 | §6 |
-| 加密 | 传输 TLS 1.3；存储 KMS 信封加密（敏感字段） |
+| Data retention | Events hot for 12 months + archive; retention period configurable |
+| Data deletion request (GDPR) | User data can be anonymized (event structure preserved, personal identifiers erased) |
+| Data residency | Isolation at the deployment level; multi-region within one instance is out of MVP scope |
+| Employee monitoring regulations | Individual performance data is aggregated by default; per-person detail is visible only to `pm` (page doc 12 §8) |
+| Access auditing | §6 |
+| Encryption | TLS 1.3 in transit; KMS envelope encryption at rest (sensitive fields) |
 
-**个人绩效数据的边界值得特别注意**：Analytics 能算出每个人的平均决策时间、超时次数。这在部分地区可能构成员工监控。页面文档 12 已定义只做聚合展示，实现上要在 API 层强制——而不是靠前端不显示。
+**The boundary around individual performance data deserves particular care**: Analytics can compute each person's average decision time and number of timeouts. In some jurisdictions that may constitute employee monitoring. Page doc 12 already specifies aggregate-only display; the implementation must enforce it at the API layer — not by having the frontend decline to show it.
 
 ---
 
-## 9. 待确认问题
+## 9. Open questions
 
-1. **提示注入的防线是否足够？** §7.1 的四条防线依赖 Policy 配置正确。如果用户把某类操作配成自动放行，注入就有可乘之机。是否需要一类"不可被 Policy 放行"的操作（硬编码）？倾向于需要：删除资源、修改权限、执行付款三类硬编码为永远需要人类。
-2. **Agent 长期令牌的轮换机制**：90 天轮换需要运行时配合。不支持轮换的运行时怎么办？
-3. **权限审查报告**：定期（季度）生成"哪些 Agent 权限被放宽了、当前权限是否仍必要"的报告。是否 MVP 就做？倾向于 P1，但权限变更审计（数据基础）MVP 必须有。
-4. **多租户隔离强度**：MVP 是单实例多租户（RLS + 应用层）。金融/医疗客户可能要求物理隔离。这是部署形态问题，需产品确认目标客户。
-5. **敏感数据检测的准确性**：正则匹配会有漏报。是否需要接入专门的 DLP 服务？MVP 建议先用正则 + 用户可标注字段敏感级别。
-6. **`system` actor 的责任归属**：Flow Engine 自动流转出问题时，责任在谁？技术上是"规则执行了配置的行为"，但配置是人做的。审计上应当能追溯到"是谁配置了这条规则"——需要在 `system` 事件中附带触发规则的 `policy_id` 与该规则的创建者。
+1. **Are the prompt-injection defenses sufficient?** The four defenses in §7.1 depend on Policies being configured correctly. If a user configures some class of operation as auto-approved, injection has an opening. Do we need a class of operation that "Policy cannot approve" (hard-coded)? Leaning yes: deleting resources, modifying permissions, and executing payments hard-coded as always requiring a human.
+2. **Rotation for Agent long-lived tokens**: 90-day rotation needs cooperation from the runtime. What do we do about runtimes that do not support rotation?
+3. **Permission review report**: generate a periodic (quarterly) report of "which Agents had permissions loosened, and are the current permissions still necessary". Do we build it in MVP? Leaning P1, but the permission change audit (the data it rests on) must exist in MVP.
+4. **Strength of multi-tenant isolation**: MVP is single-instance multi-tenancy (RLS + application layer). Financial and healthcare customers may require physical isolation. That is a deployment-shape question and needs product confirmation on the target customer.
+5. **Accuracy of sensitive data detection**: regex matching will miss things. Do we need to integrate a dedicated DLP service? For MVP the suggestion is regex plus user-labeled field sensitivity.
+6. **Where responsibility lies for the `system` actor**: when a Flow Engine auto-transition goes wrong, who is responsible? Technically "the rules executed the configured behavior", but a person wrote the configuration. The audit trail should be able to trace back to "who configured this rule" — which means `system` events need to carry the `policy_id` of the triggering rule and that rule's author.

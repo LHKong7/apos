@@ -3,7 +3,7 @@ import { HOUR, percent, ratio, round, stat } from './stats';
 import { bucketOf, overlapMs, statusAt, type Segment } from './timeline';
 import type { AnalyticsInput, DecisionRow, HitlMetrics, RepeatedDecision } from './types';
 
-/** 人工覆盖的原因分类，与看板的 ManualMoveDialog 一一对应 */
+/** Reason categories for a manual override, mirroring the board's ManualMoveDialog one for one */
 const OVERRIDE_LABELS: Record<string, string> = {
   review_found_issue: '审核发现问题，需返工',
   requirement_changed: '需求变更',
@@ -22,21 +22,23 @@ const RESPONSE_BUCKETS = [
 ] as const;
 
 /**
- * 决策类型的中文名。未知类型直接显示原值，不猜。
+ * Chinese names for decision types. An unknown type is shown verbatim; nothing is guessed.
  *
- * ★ 这份表必须覆盖 decisionTypeFor()（apps/api flow/transition.ts）实际产出的每一个值。
- *   之前它只按页面文档的词汇写，而运行时发出的是另一套 —— 结果
- *   决策中心和 Analytics 的「重复决策」面板上印的一直是 high_risk_operation
- *   这样的裸 key。加类型时两边一起改。
+ * ★ This table must cover every value decisionTypeFor() (apps/api flow/transition.ts) actually
+ *   emits. It used to follow the page doc's vocabulary while the runtime emitted a different
+ *   set — so the Decision Center and the "repeated decisions" panel in Analytics spent a long
+ *   time printing bare keys such as high_risk_operation. Add a type in both places at once.
+ *
+ *   这份表必须覆盖 decisionTypeFor() 实际产出的每一个值，加类型时两边一起改。
  */
 const DECISION_LABELS: Record<string, string> = {
-  // 运行时实际产出（policy 命中后由 decisionTypeFor 决定）
+  // What the runtime actually emits (decided by decisionTypeFor once a policy matches)
   high_risk_operation: '高风险操作审批',
   release_approval: '发布审批',
   budget_overrun: '预算超限',
   agent_failure: 'Agent 连续失败',
   approval: '人工审批',
-  // 入口链路与历史数据
+  // Intake paths and historical data
   plan_approval: '计划批准',
   requirement_approval: '需求确认',
   test_env_release: '测试环境发布审批',
@@ -52,11 +54,14 @@ export function decisionLabel(type: string): string {
 }
 
 /**
- * Human-in-the-Loop（页面文档 12 §5.5 / 产品文档 8.13.3）。
+ * Human-in-the-Loop (page doc 12 §5.5 / product doc 8.13.3).
  *
- * ★ 这个 Tab 的落点是「重复决策 → 可自动化潜力」。
- *   其余数字都在描述现状，只有这一块告诉用户「你可以少做哪些事」，
- *   并且给出一键创建规则的入口。产品持续降低人类负担的飞轮就在这里。
+ * ★ The point of this tab is "repeated decisions → automation potential". Every other number
+ *   describes the status quo; only this section tells the user what they could stop doing, and
+ *   hands them a one-click entry point to create the rule. This is the flywheel by which the
+ *   product keeps lowering the human burden.
+ *
+ *   其余数字都在描述现状，只有这一块告诉用户「你可以少做哪些事」。
  */
 export function computeHitl(
   input: AnalyticsInput,
@@ -74,16 +79,16 @@ export function computeHitl(
     })),
   );
 
-  // 超时：已过 dueAt 仍未解决，或解决时已经晚了
+  // Overdue: past dueAt and still unresolved, or resolved after the deadline had passed
   const overdue = inWindow.filter(
     (d) => d.dueAt !== null && (d.resolvedAt ?? now) > d.dueAt,
   ).length;
 
-  // ── 自动化率 ──
+  // ── Automation rate ──
   const evals = policyEvals.filter((p) => p.at >= window.from && p.at <= window.to);
   const autoPassed = evals.filter((p) => AUTO.has(p.action)).length;
 
-  // ── 等待人类造成的阻塞时长 ──
+  // ── Hours blocked while waiting on a human ──
   let blockedByHumanHours = 0;
   for (const list of segments.values()) {
     for (const s of list) {
@@ -92,9 +97,10 @@ export function computeHitl(
     }
   }
 
-  // ── 各阶段人类介入比例 ──
-  // 分母是「窗口内经过该阶段的任务数」，分子是「其中需要人做决定的任务数」。
-  // Intake 天然接近 100%（需求必须人确认），Execution 越低越好。
+  // ── Human involvement by stage ──
+  // Denominator: work items that passed through the stage inside the window. Numerator: those
+  // among them that needed a human decision. Intake is naturally near 100% (a requirement has to
+  // be confirmed by a person); the lower Execution is, the better.
   const itemsPerStage = new Map<Stage, Set<string>>();
   for (const [itemId, list] of segments) {
     for (const s of list) {
@@ -106,18 +112,22 @@ export function computeHitl(
     }
   }
   /**
-   * ★ 决策归到「它发生时任务所在的阶段」，不是任务现在的阶段。
+   * ★ A decision is attributed to the stage the work item was in **when it happened**, not to the
+   *   stage the item is in now.
    *
-   *   按当前状态归类的话，所有已完成的任务都算 done，
-   *   于是整张图只剩下还没做完的那几项 —— 一个越用越空的分析图，
-   *   而且空得毫无道理可言。用时间线回溯当时的状态才对得上。
+   *   Bucketing by current status puts every completed item under `done`, leaving the chart with
+   *   only the unfinished few — an analysis that empties out the more the project succeeds, and
+   *   for no reason a reader could ever reconstruct. Replaying the timeline gives the right
+   *   answer.
+   *
+   *   按当前状态归类的话，图会越用越空，而且空得毫无道理可言。
    */
   const decidedPerStage = new Map<Stage, Set<string>>();
   for (const d of inWindow) {
     if (!d.workItemId) continue;
     const list = segments.get(d.workItemId);
-    // 往前挪 1ms：决策创建的那一刻任务正好切进 awaiting_decision，
-    // 而这张图问的是「这个决策是从哪个阶段抛出来的」
+    // Step back 1ms: at the instant the decision is created the item flips into
+    // awaiting_decision, and this chart asks which stage the decision was raised *from*
     const at = list ? statusAt(list, d.createdAt - 1, now) : null;
     const stage = at ? STATUS_STAGE[at] : d.stage;
     if (!stage) continue;
@@ -135,18 +145,20 @@ export function computeHitl(
     })
     .filter((row) => row.items > 0);
 
-  // ── 响应时间分布 ──
+  // ── Response time distribution ──
   const responseBuckets = RESPONSE_BUCKETS.map((b, i) => {
     const min = i === 0 ? 0 : RESPONSE_BUCKETS[i - 1]!.max;
     const inBucket = resolved.filter((d) => {
       const hours = (d.resolvedAt! - d.createdAt) / HOUR;
       return hours >= min && hours < b.max;
     });
-    // 最慢那一档里如果只有一类决策，直接点名 —— 这是最有行动价值的一句话
+    // If the slowest bucket holds only one kind of decision, name it — the single most
+    // actionable sentence on this tab
     const types = new Set(inBucket.map((d) => d.type));
     /**
-     * ★ 同时给类型码和中文说法：界面按码取词（`decision.type.*` 那组词条
-     *   本来就有），`slowest` 那句中文留给日志与认不出码的界面兜底。
+     * ★ Emit both the type code and the Chinese wording: the UI resolves copy from the code (the
+     *   `decision.type.*` messages already exist), while the `slowest` sentence stays as the
+     *   fallback for logs and for any UI that does not recognize the code.
      */
     const onlyType =
       b.max === Infinity && inBucket.length > 0 && types.size === 1 ? [...types][0]! : null;
@@ -158,13 +170,13 @@ export function computeHitl(
     };
   });
 
-  // ── 人工覆盖原因 ──
+  // ── Manual override reasons ──
   const overridesInWindow = overrides.filter((o) => o.at >= window.from && o.at <= window.to);
   const reasonCounts = new Map<string, number>();
   for (const o of overridesInWindow) {
-    // 没有分类 ≠ 用户选了「其他」。前者是这条路径没收集分类，
-    // 后者是用户主动归的类 —— 混在一起会让「其他」永远排第一，
-    // 而那恰恰是最没有信息量的一档
+    // No category ≠ the user picked "other". The first means this code path never collected a
+    // category; the second is a choice the user made. Merging them puts "other" permanently at
+    // the top of the list — and "other" is the least informative bucket there is
     reasonCounts.set(o.category ?? 'uncategorized', (reasonCounts.get(o.category ?? 'uncategorized') ?? 0) + 1);
   }
   const overrideReasons = [...reasonCounts.entries()]
@@ -195,15 +207,17 @@ export function computeHitl(
 }
 
 /**
- * 重复决策与可自动化潜力。
+ * Repeated decisions and their automation potential.
  *
- * ★ 判据必须同时看**次数**和**结果一致性**。
- *   只看次数会把「审了 12 次、批了 7 次驳了 5 次」也推荐规则化 ——
- *   那种决策恰恰最需要人，自动化了就是在制造事故。
- *   一致性高才说明这个判断稳定到可以写成规则。
+ * ★ The test has to look at **count** and **outcome consistency** together.
+ *   Count alone would recommend automating "reviewed 12 times, approved 7, rejected 5" — exactly
+ *   the kind of decision that most needs a human, and automating it manufactures incidents.
+ *   Only high consistency shows the judgment is stable enough to be written as a rule.
+ *
+ *   只看次数会把「批了 7 次驳了 5 次」也推荐规则化，而那种决策恰恰最需要人。
  */
 function findRepeated(decisions: DecisionRow[]): RepeatedDecision[] {
-  /** 少于这个次数谈不上「重复」 */
+  /** Below this count there is no "repetition" to speak of */
   const MIN_COUNT = 3;
 
   const byType = new Map<string, DecisionRow[]>();

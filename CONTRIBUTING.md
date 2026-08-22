@@ -1,99 +1,125 @@
-# 开发指南
+# Contributing
 
-*[English version / 英文版本](CONTRIBUTING.en.md)*
+*[中文版本 / Chinese version](CONTRIBUTING.zh.md)*
 
-## 环境准备
+## Getting set up
 
-需要 Node 22+ 与 pnpm 10+。
+Node 22+ and pnpm 10+.
 
 ```bash
 pnpm install
-docker compose up -d postgres redis   # 只起依赖；不点名会把整个产品跑起来
+docker compose up -d postgres redis   # dependencies only — an unqualified `up -d` starts the whole product
 cp .env.example .env
 
-pnpm db:generate              # 改了 schema 后生成迁移
-pnpm db:migrate               # 应用迁移
+pnpm db:generate              # generate a migration after changing the schema
+pnpm db:migrate               # apply migrations
 ```
 
-集成测试需要一个可用的 Postgres。默认连 `TEST_DATABASE_URL`，未设置时用
-`postgres://apos@localhost:5433/apos_test`——**注意是 `apos_test` 不是 `apos`**，
-测试会在 `beforeEach` 里 TRUNCATE 全表，指到开发库上会把正在调试的数据清空。
+Integration tests need a working Postgres. They connect to `TEST_DATABASE_URL`,
+defaulting to `postgres://apos@localhost:5433/apos_test` — **note `apos_test`,
+not `apos`**. The tests TRUNCATE every table in `beforeEach`, so pointing them at
+the development database wipes whatever you were debugging.
 
-完整的运行步骤与排错见[运行指南](docs/RUNNING.md)。
+Full setup and troubleshooting: [Running guide](docs/RUNNING.md).
 
 ```bash
-pnpm test                     # 全部测试（含集成测试）
+pnpm test                     # everything, including integration tests
 pnpm test:watch
 pnpm typecheck
 pnpm lint
 ```
 
-`pnpm lint` 只开会变成 bug 的规则，不管格式。重点是类型系统看不见的那些：
-React Hook 依赖漏项（在 SSE 驱动的界面上表现为「后端推了但这一块没变」）、
-未使用的导入、`any` 必须带理由。规则集见 `eslint.config.js`，那里写了每条为什么在。
+`pnpm lint` only enables rules that catch bugs; it says nothing about
+formatting. The focus is what the type system cannot see: missing React Hook
+dependencies (which show up on SSE-driven screens as "the backend pushed but
+this part did not change"), unused imports, and `any` without a stated reason.
+The rule set is in `eslint.config.js`, where each rule carries the reason it is
+switched on.
 
-## 仓库结构
+## Repository layout
 
 ```
 packages/
-  contracts/   前后端共享的领域类型与 Zod schema（唯一真相来源）
-  domain/      纯逻辑：状态机、Guard、Policy 求值、恢复策略。零 IO 依赖
-  db/          Drizzle schema、迁移、数据库客户端
+  contracts/   Domain types and Zod schemas shared by both sides (single source of truth)
+  domain/      Pure logic: state machine, guards, policy evaluation, recovery. Zero IO
+  db/          Drizzle schema, migrations, database client
 apps/
-  api/         Fastify 应用与应用层模块
-docs/          产品、页面与技术文档
+  api/         Fastify application and the application-layer modules
+docs/          Product, page and technical documentation
 ```
 
-## 三条不可违反的约束
+## Three constraints that must not be broken
 
-这三条来自产品定位，不是风格偏好。违反任何一条都会让产品失去核心价值。
+These come from the product's positioning, not from taste. Breaking any one of
+them costs the product its core value.
 
-### 1. 状态变更必须产生事件
+### 1. A status change must produce an event
 
-**不允许任何代码路径直接 `UPDATE work_items SET status = ...`。**
+**No code path may run `UPDATE work_items SET status = ...` directly.**
 
-状态变更统一走 `transition()`，它在同一事务内写状态与事件。这是产品文档 3.2
-「所有行为可追溯」的实现基础，也是 Policy 模拟、Analytics、审计日志的数据来源。
+Status changes go through `transition()`, which writes the status and the event
+in one transaction. It is the implementation of "every action is traceable"
+(product doc 3.2) and the data source behind policy simulation, analytics and
+the audit log.
 
 ```ts
-// ❌ 绕开事件写入，制造审计黑洞
+// ❌ Bypasses the event write and manufactures an audit black hole
 await db.update(workItems).set({ status: 'reviewing' }).where(...)
 
 // ✅
 await transition(db, { workItemId, trigger: 'agent_run_completed', actor, correlationId })
 ```
 
-### 2. Agent 是独立身份，不是人类的代理
+### 2. An Agent is an identity of its own, not a proxy for a person
 
-所有涉及操作者的字段是 `(actorType, actorId)` 而非 `userId`。Agent 有自己的
-凭证与权限集，**绝不能复用人类用户的 token**——否则审计日志会显示是人做的，
-权限范围会等于那个人的全部权限，且无法单独收紧 Agent 权限。
+Every field naming an operator is `(actorType, actorId)`, never `userId`. Agents
+hold their own credentials and their own permission set and **must never reuse a
+human token** — otherwise the audit log claims a person did it, the permission
+scope silently becomes that person's full scope, and Agent permissions can no
+longer be tightened on their own.
 
-### 3. Policy 评估必须携带上下文快照
+### 3. Policy evaluation must carry a context snapshot
 
-`policy.evaluated` 事件的 `contextSnapshot` 是 Policy 模拟回放的唯一数据来源。
-**这个字段事后无法补**——漏记了就意味着那段时间的历史数据永远无法用于验证新规则。
+The `contextSnapshot` on a `policy.evaluated` event is the only data policy
+simulation can replay from. **This field cannot be filled in afterward** —
+omitting it means the history from that period can never be used to validate a
+new rule.
 
-新增 Policy fact 时，同步更新 `buildPolicyContext()`，并知晓该 fact 只对之后的
-数据有效。
+When you add a policy fact, update `buildPolicyContext()` in the same change,
+and understand that the fact only holds for data recorded after it.
 
-## 测试要求
+## Testing requirements
 
-| 变更内容 | 必须补的测试 |
+| What you changed | What you must test |
 | --- | --- |
-| 状态机流转规则 | `machine.test.ts` 的穷举与可达性断言 |
-| Guard | 通过与失败两种路径，失败时的 reason 可读性 |
-| Policy 条件/动作 | 求值测试；涉及高风险操作时补安全底线测试 |
-| 恢复策略 | 每个错误分类都要有明确决策 |
-| 任何写状态的路径 | 集成测试断言「状态变了 → 有对应事件」 |
+| State machine transitions | The exhaustive and reachability assertions in `machine.test.ts` |
+| A guard | Both the passing and the failing path; the failure reason must be readable |
+| Policy conditions / actions | Evaluation tests; add a safety-floor test when high-risk operations are involved |
+| Recovery strategy | Every error class needs an explicit decision |
+| Any path that writes status | An integration test asserting "the status changed → the matching event exists" |
 
-`evaluate.test.ts` 中的**安全底线测试是 CI 阻断性的**：它用对抗性规则集穷举
-各种自治等级，断言 `NEVER_AUTO_APPROVE` 的三类操作永远不会被自动放行。
-这个测试失败意味着治理体系被绕过，不能合并。
+**The safety-floor test in `evaluate.test.ts` blocks CI.** It runs an
+adversarial rule set across every autonomy level and asserts that the three
+`NEVER_AUTO_APPROVE` operation classes are never let through automatically. If
+it fails, the governance model has been bypassed and the change cannot merge.
 
-## 命名约定
+## Naming conventions
 
-- 事件类型：`{subject}.{过去式动词}`，如 `work_item.status_changed`
-- 数据库：snake_case（Drizzle `casing: 'snake_case'` 自动转换）
-- API：camelCase，与前端 TS 一致
-- 金额：字符串形式的十进制，避免浮点精度问题
+- Event types: `{subject}.{past-tense verb}`, e.g. `work_item.status_changed`
+- Database: snake_case (Drizzle converts automatically via `casing: 'snake_case'`)
+- API: camelCase, matching the frontend TypeScript
+- Money: decimal as a string, to avoid floating-point error
+
+## Language
+
+The repository is bilingual with **English as the primary language** — see
+[CLAUDE.md](CLAUDE.md) for the full rules. In short: code comments carry both
+languages with English first, UI strings go through i18n
+(`apps/web/src/lib/i18n`) and never appear as literals, the UI defaults to
+English, and documents come in pairs — `X.md` is the English original and
+`X.zh.md` is its Chinese mirror — that link to each other from their first line.
+
+A short comment may stay in one language. The test is whether someone reading
+only English would be unable to follow the code without it; the ★ comments that
+explain *why* something is the way it is always carry both, because those are
+exactly what an outside reader needs.

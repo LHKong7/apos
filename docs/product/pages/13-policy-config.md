@@ -1,437 +1,440 @@
-# 13 Policy 配置
+# 13 Policy Configuration
 
-## 1. 页面信息
+*[中文版本 / Chinese version](13-policy-config.zh.md)*
 
-| 项 | 值 |
+## 1. Page Facts
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/settings/policies`（项目级）<br>`/admin/policies`（组织级） |
-| 层级 | 三级 / 二级页面 |
-| 主要角色 | `tech_lead` / `pm` / `org_admin` |
-| 优先级 | P0（MVP 基础版，文档 12.2） |
-| 对应产品文档 | 8.9 Policy & Governance Engine、6.10 Policy、8.9.4 自治等级、十 权限与安全 |
+| Route | `/projects/:projectId/settings/policies` (project level)<br>`/admin/policies` (org level) |
+| Level | Third-level / second-level page |
+| Primary roles | `tech_lead` / `pm` / `org_admin` |
+| Priority | P0 (the MVP baseline, product doc 12.2) |
+| Related product docs | 8.9 Policy & Governance Engine, 6.10 Policy, 8.9.4 Autonomy levels, ch. 10 Permissions and security |
 
 ---
 
-## 2. 页面目标
+## 2. Goal
 
-让人类**定义 Agent 的自治边界**，并且能确信这些规则真的会按预期生效。
+Let a human **define the boundaries of Agent autonomy** and be confident those rules will actually behave the way they expect.
 
-要回答：
+The page has to answer:
 
-1. 现在有哪些规则在管着这个项目？
-2. 某个具体操作会被怎么处理——自动执行还是找我？
-3. 我改了规则会有什么影响？
-4. 规则有没有漏洞或冲突？
+1. Which rules govern this project right now?
+2. How will one specific action be handled — run automatically, or come to me?
+3. What changes if I edit a rule?
+4. Are there holes or conflicts in the rules?
 
-**核心设计难题**：Policy 本质是规则引擎，容易做成只有工程师能看懂的配置界面。但真正需要设定边界的往往是项目负责人和业务负责人。**因此本页必须支持"不懂规则语法也能安全配置"。**
+**The core design problem**: a Policy engine is a rule engine underneath, which makes it very easy to end up with a configuration screen only engineers can read. But the people who actually need to set these boundaries are usually project leads and business owners. **So this page has to let someone configure it safely without knowing the rule syntax.**
 
-解法：模板 + 自然语言描述 + 模拟验证。
+The answer: templates + natural-language descriptions + simulation.
 
-**第二层难题（本轮解决）**：上面那句"某个操作会被怎么处理"看得见（顶部摘要），但**改不动**——改的入口在下面的规则列表里，形态完全不同：条件、动作、优先级。用户每次都要做一次翻译，把"部署这件事我想让 Agent 自己干"翻成一条规则，保存完再滚回顶部确认自己翻对了。看得见的那一行和改得动的那一行不是同一行。
+**The second-layer problem (solved this round)**: "how a given action will be handled" is visible — it's the summary at the top — but **not editable**. Editing happens further down in the rule list, in a completely different shape: conditions, actions, priorities. Every single time, the user has to perform a translation, turning "I want the Agent to handle deploys on its own" into a rule, then scroll back up after saving to check whether the translation came out right. The line you can see and the line you can change are not the same line.
 
-解法：**把摘要变成开关**。一个操作类型一行，右边一个开关，点哪一行就改哪一行；后台自动生成一条最小规则，保存闸（模拟、不能放宽组织规则、审计）一个不少。概念上少的那一层翻译，正是这一页最大的成本。
+The answer: **make the summary the switch**. One row per action type, a toggle on the right, and the row you click is the row that changes. Behind it the server generates the smallest rule that says so, with every save gate still in place — simulation, no loosening of org rules, an audit entry. That one layer of translation, the one that disappears conceptually, is this page's single largest cost.
 
 ---
 
-## 3. 入口与出口
+## 3. Entrances and Exits
 
-**入口**：项目设置；决策后的「创建规则」；Analytics 的自动化建议；计划确认页的「调整这些规则」；Agent Workspace 的失败策略链接。
+**Entrances**: project settings; "Create a rule" after a decision; automation suggestions in Analytics; "Adjust these rules" on the plan approval page; the failure-policy link in the Agent Workspace.
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 「查看命中记录」 | 决策列表 / Run 列表（预筛该 Policy） |
-| 「测试」 | 就地模拟结果 |
-| 冲突规则 | 本页（定位到冲突规则） |
-| 自治等级说明 | 项目设置 |
+| "View hits" | Decision list / Run list (pre-filtered to that Policy) |
+| "Test" | Simulation results, inline |
+| A conflicting rule | This page (scrolled to the conflicting rule) |
+| Autonomy level explainer | Project settings |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 订单系统重构 / 设置 / Policy          自治等级 [Agent-led + Approval ▾]    │
-│ [自定义例外] [模拟测试]                                                    │
-├────────────────────────────────────────────────────────────────────────────┤
-│ ℹ 当前配置下：8 类操作自动执行，3 类需要人类确认，1 类视情况    [收起]     │
-│ ┌── 点哪一行就改哪一行。每次切换只加一条项目规则，你写的规则一条不动 ──┐ │
-│ │ 读取代码与文档                                    [自动] [需人]        │ │
-│ │ 修改代码                                          [自动] [需人]        │ │
-│ │ 数据库结构变更          需人确认                  [自动] [需人] [清除] │ │
-│ │ 部署发布                在生产环境时需要人确认  ~ [自动] [需人]        │ │
-│ │ 删除资源                需人确认                  [自动] [需人]        │ │
-│ │ …                                                                      │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ ⚠ 检测到 2 个问题                                              [查看]      │ ← 默认收起
-├────────────────────────────────────────────────────────────────────────────┤
-│ [从模板新建：低风险任务自动批准] [指定环境的操作必须审批] [成本闸] …       │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 项目规则（4）                                                              │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 数据库结构变更：需人确认                                    ● 启用     │ │
-│ │ 当 操作类型 = 数据库结构变更，则 需人确认 → 角色 技术负责人             │ │
-│ │ 近 30 天命中 5 次                          [编辑] [停用] [删除] [历史] │ │
-│ ├────────────────────────────────────────────────────────────────────────┤ │
-│ │ 低风险任务自动批准                                          ● 启用     │ │
-│ │ 当 风险等级 = 低 且 单次执行成本 < 10，则 放行并通知 → 项目负责人       │ │
-│ │ 🟡「低风险任务自动批准」近 30 天一次都没命中 —— 可能条件写错了          │ │ ← 体检结论贴在规则上
-│ │ 近 30 天命中 0 次                          [编辑] [停用] [删除] [历史] │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Order System Rebuild / Settings / Policy           Autonomy level [Agent-led + Approval ▾] │
+│ [Custom exceptions] [Simulate]                                                             │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ℹ Right now: 8 action types automatic, 3 need a human, 1 depends                [Collapse] │
+│ ┌── Click a row to change that row. Each toggle adds one rule; yours stay untouched ─────┐ │
+│ │ Read code and docs                                          [Auto] [Human]             │ │
+│ │ Modify code                                                 [Auto] [Human]             │ │
+│ │ Database schema change    Needs a human                     [Auto] [Human] [Clear]     │ │
+│ │ Deploy / release          Human required in production    ~ [Auto] [Human]             │ │
+│ │ Delete resources          Needs a human                     [Auto] [Human]             │ │
+│ │ …                                                                                      │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ⚠ 2 problems detected                                                               [View] │ ← collapsed by default
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [New from template: auto-approve low-risk] [Scoped envs need approval] [Cost gate] …       │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Project rules (4)                                                                          │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Database schema change: needs a human                                        ● Enabled │ │
+│ │ When action type = database schema change, then require a human → role Tech Lead       │ │
+│ │ 5 hits in the last 30 days                         [Edit] [Disable] [Delete] [History] │ │
+│ ├────────────────────────────────────────────────────────────────────────────────────────┤ │
+│ │ Auto-approve low-risk tasks                                                  ● Enabled │ │
+│ │ When risk level = low and per-run cost < 10, then allow and notify → project lead      │ │
+│ │ 🟡 "Auto-approve low-risk tasks" no hits in 30 days — conditions may be wrong          │ │ ← health findings sit on the rule
+│ │ 0 hits in the last 30 days                         [Edit] [Disable] [Delete] [History] │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-三处与早期设计不同，都是减法：
+Three things differ from the earlier design, and all three are subtractions:
 
-| 消失的东西 | 为什么 |
+| What disappeared | Why |
 | --- | --- |
-| 优先级列与优先级输入框 | 要同时理解"越小越先""命中即停""组织规则占了前面那一段"才填得对，而填错的表现是规则安静地不生效。服务端往后追加，"高级"里仍改得到 |
-| "组织级 / 项目级"分区与 ⛓ 徽标 | 平台不再自带硬编码基线，组织级规则也还没有创建入口——列表里没有一行是它，给每行贴一个"项目"等于没贴 |
-| 顶部的体检清单与"定位规则"按钮 | 指向某条规则的结论贴到那条规则上，看到即改得到；剩下"没有规则可指"的那几条收进一个默认折叠的小节。首屏该回答"Agent 现在能干什么"，不是先摆一张问题清单 |
+| The priority column and the priority input | Filling it in correctly means holding "lower numbers go first," "matching stops at the first hit," and "org rules already occupy the front of the range" in your head at once — and filling it in wrong shows up as a rule that quietly never fires. The server appends new rules at the end; "Advanced" still exposes the number |
+| The "org level / project level" split and the ⛓ badge | The platform no longer ships hard-coded baselines, and org rules have no creation entrance yet — not a single row in this list is one, so tagging every row "project" tags nothing |
+| The health checklist at the top and its "jump to rule" button | A finding that points at a rule now sits on that rule, so seeing it and fixing it are the same place; the few findings with no rule to point at moved into a section collapsed by default. The first screen should answer "what can the Agent do right now," not open with a list of problems |
 
-**项目一条规则都没有时**，规则列表整块换成引导向导（§5.12）。
+**When a project has no rules at all**, the entire rule list is replaced by an onboarding wizard (§5.12).
 
-### 4.2 规则编辑器
+### 4.2 Rule Editor
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 编辑规则 #7                                            [简单模式 ⇄ 高级]   │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 规则名称  [低风险任务自动批准                                       ]      │
-│ 说明      [测试通过且成本可控的低风险任务无需人工审批               ]      │
-│ 优先级    [10]   ℹ 数字越小越先匹配，命中后停止                            │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 当满足以下条件（全部 ▾）                                                   │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ [风险等级 ▾]        [= ▾]  [低 ▾]                                  ✕  │ │
-│ │ [自动测试结果 ▾]    [= ▾]  [通过 ▾]                                ✕  │ │
-│ │ [Review Agent ▾]    [= ▾]  [通过 ▾]                                ✕  │ │
-│ │ [单任务成本 ▾]      [< ▾]  [$10        ]                           ✕  │ │
-│ │ [+ 添加条件]                                                          │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                            │
-│ 则执行                                                                     │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 动作  [Allow and Notify ▾]                                             │ │
-│ │ 通知  [项目负责人 ▾]  渠道 [飞书 ▾]                                    │ │
-│ │ ☐ 记录到审计日志（高风险动作强制勾选）                                  │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 📝 这条规则的意思是                                                        │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 当一个低风险任务的自动测试和 Review Agent 都通过，且这次执行花费不到    │ │
-│ │ $10 时，系统会自动批准它继续，并在飞书通知项目负责人。你不需要手动审批。│ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 🧪 用历史数据验证                                        [运行模拟]        │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 过去 30 天，这条规则会：                                                │ │
-│ │  ✓ 自动处理 47 次（当前需人工的 52 次中的 90%）                        │ │
-│ │  ⚠ 其中 2 次人类当时是「驳回」的：                                      │ │
-│ │     · 08-02 修改支付文案（人类认为需法务确认）  [查看]                  │ │
-│ │     · 07-28 删除废弃接口（人类认为影响外部调用）[查看]                  │ │
-│ │  → 建议：增加条件「不涉及对外接口」「不涉及支付相关」                   │ │
-│ │                                            [采纳建议] [我知道风险]     │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                          [取消]  [保存草稿]  [启用规则]    │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Edit rule #7                                                           [Simple ⇄ Advanced] │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Rule name    [Auto-approve low-risk tasks                              ]                   │
+│ Description  [Low-risk tasks that pass tests and stay cheap need no approval]              │
+│ Priority     [10]   ℹ Lower numbers match first; matching stops at the first hit           │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ When all of the following are true (all ▾)                                                 │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ [Risk level ▾]        [= ▾]  [Low ▾]                                                 ✕ │ │
+│ │ [Automated tests ▾]   [= ▾]  [Passed ▾]                                              ✕ │ │
+│ │ [Review Agent ▾]      [= ▾]  [Passed ▾]                                              ✕ │ │
+│ │ [Cost per task ▾]     [< ▾]  [$10        ]                                           ✕ │ │
+│ │ [+ Add condition]                                                                      │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                            │
+│ Then do                                                                                    │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Action  [Allow and Notify ▾]                                                           │ │
+│ │ Notify  [Project lead ▾]  Channel [Feishu ▾]                                           │ │
+│ │ ☐ Write to the audit log (forced on for high-risk actions)                             │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 📝 What this rule means                                                                    │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ When a low-risk task passes both its automated tests and the Review Agent,             │ │
+│ │ and the run costs less than $10, the system approves it automatically and              │ │
+│ │ notifies the project lead on Feishu. You never approve it by hand.                     │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 🧪 Validate against historical data                                       [Run simulation] │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Over the last 30 days, this rule would:                                                │ │
+│ │  ✓ Handle 47 automatically (90% of the 52 that need a human today)                     │ │
+│ │  ⚠ 2 of those the human actually rejected:                                             │ │
+│ │     · 08-02 Edit payment copy (human wanted legal sign-off)      [View]                │ │
+│ │     · 07-28 Delete a deprecated endpoint (external callers)      [View]                │ │
+│ │  → Suggested: add "no public-facing API" and "nothing payment-related"                 │ │
+│ │                                                [Accept suggestion] [I accept the risk] │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                      [Cancel]  [Save draft]  [Enable rule] │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Region Details
 
-### 5.1 操作开关矩阵（本页第一屏）
+### 5.1 The Action Switch Matrix (the first screen)
 
-**「8 类操作自动执行，3 类需要人类确认」** 是把一堆规则翻译成用户能理解的一句话；展开之后是一张**可操作**的表，每个操作类型一行：
+**"8 action types run automatically, 3 need a human"** is a pile of rules boiled down to one sentence a user can read; expanded, it becomes an **actionable** table with one row per action type:
 
 ```
-读取代码与文档                                    [自动] [需人]
-数据库结构变更          需人确认                  [自动] [需人] [清除]
-部署发布                在生产环境时需要人确认  ~ [自动] [需人]
+Read code and docs                                    [Auto] [Human]
+Database schema change     Needs a human              [Auto] [Human] [Clear]
+Deploy / release           Human required in prod   ~ [Auto] [Human]
 ```
 
-它与 `04 计划确认` 页的「批准后将自动发生」使用同一个计算逻辑（domain 的 `auditPolicies`），保证两页说的是同一件事。
+It shares its computation with the "happens automatically once you approve" block on `04 Plan Approval` (domain's `auditPolicies`), which is what guarantees the two pages are describing the same thing.
 
-**三态里只有两态可点。**「视情况」是系统**报告**出来的状态（比如"在生产环境时需要人确认"），不是一个用户能选的选项——它背后是条件更细的规则，选不出来，只说得出来。做成可点的第三个按钮，等于让用户选一个系统无法兑现的承诺。
+**Of the three states, only two are clickable.** "Depends" is a state the system **reports** — say, "a human is required in production" — not an option the user picks. Behind it is a rule with narrower conditions: something you can describe but not select. Making it a third clickable button would let the user choose a promise the system cannot keep.
 
-**一次切换 = 一条规则，不是一次合并。** 诱人的做法是把已有规则一起改掉，好让这一行"干净地"变成用户要的状态。不这么做：用户手写的规则是他表达过的意图，一次点击不该把它悄悄改写。开关只在最前面加一条（或改它自己上次加的那条），已有规则一条不动。于是"删掉这条规则即还原"永远成立——而这是一键操作能被信任的前提。
+**One toggle = one rule, not a merge.** The tempting move is to rewrite the existing rules along with it, so the row lands "cleanly" in the state the user asked for. We don't. A rule the user wrote by hand is an intent they expressed, and one click should not silently rewrite it. The switch only prepends a rule — or edits the one it prepended last time — and leaves existing rules untouched. That way "delete this rule and you're back where you started" always holds, and that is the precondition for trusting a one-click control at all.
 
-同一行再切一次是**改那一条**，不是叠一条新的。叠加的话，"部署 → 自动 → 需人 → 自动"会留下三条规则，用户不知道该删哪一条，也看不出哪一条还在生效。
+Toggling the same row again **edits that one rule** rather than stacking another on top. Stacking would leave "deploy → auto → human → auto" as three rules, with the user unable to tell which one to delete or which one is still in force.
 
-**但也因此，切换可能不生效。** 已有规则或安全底线仍然可能拦在前面。所以保存完必须重新体检一遍，把"这一行现在真的是什么状态"如实返回，并分开说清成因：
+**Which also means a toggle may not take effect.** An existing rule or a safety floor can still stand in front of it. So after saving, the health check has to run again and report honestly what state the row is actually in, naming the cause:
 
-| 成因 | 说法 | 用户能做什么 |
+| Cause | What we say | What the user can do |
 | --- | --- | --- |
-| 被别的规则挡住 | 「这几条规则仍然排在前面：…」 | 去改或删掉它们 |
-| 安全底线不允许 | 「删资源、改权限、执行付款永远要人确认」 | 什么也做不了，别再试 |
-| 自治等级决定的 | 「去顶部调自治等级，或把条件收窄」 | 换一个入口 |
+| Shadowed by another rule | "These rules still come first: …" | Go edit or delete them |
+| The safety floor forbids it | "Deleting resources, changing permissions, and executing payments always need a human" | Nothing at all; stop trying |
+| Set by the autonomy level | "Change the autonomy level at the top, or narrow the conditions" | Use a different entrance |
 
-报"已保存"就收工，用户会以为自己放开了，实际没有——而这种误解只会在出事的时候才被发现。
+Answering "Saved" and stopping there leaves the user believing they opened something up when they didn't — and that particular misunderstanding only surfaces once something has already gone wrong.
 
-### 5.2 组织级 vs 项目级（继承关系）
+### 5.2 Org level vs project level (inheritance)
 
-| 层级 | 来源 | 可否修改 |
+| Level | Source | Editable? |
 | --- | --- | --- |
-| 组织级 | 尚无创建入口（求值仍然认它们） | 项目内不可删除、不可放宽，**只能收紧** |
-| 项目级 | 本页 | 完全可编辑 |
+| Org level | No creation entrance yet (evaluation still honors them) | Cannot be deleted or loosened inside a project — **only tightened** |
+| Project level | This page | Fully editable |
 
-**只能收紧不能放宽**是硬约束——这保证了企业级治理底线不会被单个项目绕过（文档十 权限与安全）。判据是**结果**而不是两条规则的严格程度：逐个场景跑一遍，看有没有哪个原本被组织规则拦下的场景变成了自动放行。绕不过去，因为最终生效的就是这个结果。
+**Tighten-only, never loosen** is a hard constraint — it is what keeps a single project from routing around the enterprise governance floor (product doc ch. 10, Permissions and security). The test is the **outcome**, not which of two rules reads stricter: replay the scenarios one by one and see whether any scenario the org rule used to block now sails straight through. There is no way around it, because the outcome is exactly what ends up in force.
 
-尝试放宽时明确提示：「组织规则「生产数据库变更必须由 DBA 审批」要求这类操作必须人工确认，项目级规则不能放宽它。冲突场景：…」
+When someone tries to loosen, say so plainly: "The org rule 'Production database changes must be approved by a DBA' requires a human on this class of action, and a project rule cannot loosen it. Conflicting scenarios: …"
 
-> **平台不再自带硬编码的组织基线规则**（[09 安全](../../tech/09-security.md) §4.1）。生效规则 = 库里用户录入的那些，一条都没有就是零条；真正不能商量的三类（删资源 / 改权限 / 执行付款）硬编码在求值器里。因此本页现在只画项目规则——列表里没有一行是组织级的，"组织级 / 项目级"的分区与 ⛓ 徽标也就一并去掉了。
+> **The platform no longer ships hard-coded org baseline rules** ([09 Security](../../tech/09-security.md) §4.1). The rules in force are the ones users entered into the database; none entered means zero in force. The three that genuinely are non-negotiable — delete resources, change permissions, execute payments — are hard-coded into the evaluator. So this page now draws project rules only: no row in the list is an org rule, and with that the "org level / project level" split and the ⛓ badge went away too.
 
-### 5.3 规则列表
+### 5.3 Rule list
 
-每条规则展示：启用状态、名称、**自然语言化的条件与动作**、命中统计、以及**体检里指向它的那几句**。
+Every rule shows its enabled state, its name, **its conditions and action in plain language**, hit statistics, and **whichever health findings point at it**.
 
-**优先级不在这一行上**。它要求用户同时理解"越小越先""命中即停""组织规则占了前面那一段"三件事才读得懂，而这一行不是解释这三件事的地方。新规则由服务端往后追加，真要手动排的人在编辑器的"高级"里改得到。
+**Priority is not on this line.** Reading it requires understanding "lower numbers go first," "matching stops at the first hit," and "org rules occupy the front of the range" all at once, and this line is not the place to teach those three things. New rules are appended at the end by the server; anyone who genuinely needs to reorder them by hand can do it in the editor's "Advanced" pane.
 
-**命中统计是本页被低估的功能**：
-- 命中 0 次 → 规则可能写错了或场景不存在，提示检查
-- 命中频繁且总是同一结果 → 提示可以进一步自动化
-- 平均等待时间长 → 该规则是 Flow 瓶颈（与 `12 Analytics` 呼应）
+**Hit statistics are the underrated feature on this page**:
+- 0 hits → the rule may be wrong, or the scenario never occurs; prompt to check
+- Frequent hits that always end the same way → suggest automating one step further
+- A long average wait → this rule is a Flow bottleneck (echoes `12 Analytics`)
 
-停用的规则保留并显示停用原因与操作人——规则的变更历史本身就是组织知识。
+Disabled rules are kept, along with who disabled them and why — the change history of a rule is organizational knowledge in its own right.
 
-### 5.4 条件（文档 8.9.1）
+### 5.4 Conditions (product doc 8.9.1)
 
-支持文档列出的全部十六类条件：
+All sixteen condition types listed in the product doc are supported:
 
-| 分类 | 条件 |
+| Category | Conditions |
 | --- | --- |
-| 对象属性 | 项目类型、Work Item 类型、风险等级、是否可逆、是否涉及外部客户 |
-| 数据与环境 | 数据敏感度、操作环境、影响范围 |
-| Agent | Agent 类型、Agent 置信度、历史成功率、失败次数 |
-| 成本 | 模型成本、累计预算 |
-| 质量 | 测试结果、安全扫描 |
+| Object attributes | Project type, Work Item type, risk level, reversibility, whether external customers are involved |
+| Data and environment | Data sensitivity, operating environment, blast radius |
+| Agent | Agent type, Agent confidence, historical success rate, failure count |
+| Cost | Model cost, cumulative budget |
+| Quality | Test results, security scan |
 
-**条件组合**：MVP 支持「全部满足 / 任一满足」两层嵌套，不做无限嵌套——复杂度收益不成正比。
+**Condition composition**: the MVP supports two levels of nesting ("all of" / "any of") and no more — deeper nesting costs more complexity than it returns.
 
-**高级模式**提供表达式编辑（如 `risk == 'low' && test.passed && cost < 10`），供工程师精确控制，但不是默认。
+**Advanced mode** offers expression editing (e.g. `risk == 'low' && test.passed && cost < 10`) for engineers who want precise control, but it is not the default.
 
-### 5.5 动作（文档 8.9.2）
+### 5.5 Actions (product doc 8.9.2)
 
-| 动作 | 说明 | 需额外配置 |
+| Action | Description | Extra configuration |
 | --- | --- | --- |
-| Allow | 直接允许 | — |
-| Allow and Notify | 允许并通知 | 通知对象与渠道 |
-| Require Agent Review | 需 Agent 审核 | 指定 Review Agent |
-| Require Human Review | 需人类审核 | 责任人/角色、时限 |
-| Require Multiple Approvals | 多人会签 | 会签人、通过条件 |
-| Ask | 询问（不阻断，给建议） | 询问对象 |
-| Pause | 暂停任务 | 恢复条件 |
-| Deny | 拒绝 | 拒绝说明 |
-| Escalate | 升级 | 升级路径 |
-| Transfer to Human | 转人工执行 | 接手人 |
+| Allow | Let it through | — |
+| Allow and Notify | Let it through and notify | Recipients and channel |
+| Require Agent Review | Needs an Agent's review | Which Review Agent |
+| Require Human Review | Needs a human's review | Owner/role, deadline |
+| Require Multiple Approvals | Needs several sign-offs | Signers, passing condition |
+| Ask | Ask (advisory, non-blocking) | Who to ask |
+| Pause | Pause the task | Resume condition |
+| Deny | Refuse | Refusal explanation |
+| Escalate | Escalate | Escalation path |
+| Transfer to Human | Hand execution to a human | Who picks it up |
 
-**责任人指定**支持按角色（DBA、技术负责人）而非具体人——人员变动时规则不用改（文档 8.7.5）。
+**Owners can be named by role** (DBA, tech lead) rather than by person — when staff change, the rules don't (product doc 8.7.5).
 
-### 5.6 自然语言解释（关键设计）
+### 5.6 Plain-language explanation (a key design)
 
-规则编辑时实时生成一段人话解释。这解决了"配置界面只有工程师看得懂"的问题。
+While a rule is being edited, a plain-language explanation is regenerated live. This is what solves "only engineers can read the configuration screen."
 
-生成规则：把条件与动作按固定句式模板拼接，不用大模型——**必须保证解释与实际执行逻辑严格一致**，用模型生成会有偏差风险。
+How it is generated: conditions and actions are composed into fixed sentence templates, not written by an LLM — **the explanation has to match the execution logic exactly**, and a model introduces drift.
 
-### 5.7 模拟测试（本页最重要的功能）
+### 5.7 Simulation (the most important feature on this page)
 
-用历史数据回放验证规则效果。这是让用户敢于配置 Policy 的关键——**没有模拟，用户不敢放开自动化；不放开自动化，产品价值就打折**。
+Validate a rule by replaying it against historical data. This is what makes users willing to configure Policy at all — **without simulation, users don't dare open up automation; without open automation, the product's value is cut in half**.
 
-模拟输出：
+Simulation output:
 
-1. 会自动处理多少次
-2. **其中有多少次与人类当时的判断不一致**（最重要）
-3. 不一致的案例可点击查看
-4. 基于不一致案例给出的条件补充建议
+1. How many times it would have handled things automatically
+2. **How many of those disagreed with what the human decided at the time** (the important one)
+3. Clickable disagreement cases
+4. Suggested extra conditions derived from those disagreements
 
-**「其中 2 次人类当时是驳回的」** 这一条比任何说明都更能帮用户发现规则漏洞。
+**"2 of them the human actually rejected"** does more to expose a hole in a rule than any amount of documentation.
 
-独立的「模拟测试」Tab 还支持手动构造场景测试：
+The separate "Simulate" tab also supports hand-built scenarios:
 
 ```
-构造场景测试
-  Work Item 类型  [Task ▾]      风险等级 [低 ▾]
-  操作环境        [生产 ▾]      成本     [$8]
-  自动测试        [通过 ▾]      Agent 置信度 [85%]
-                                                        [运行测试]
+Build a scenario
+  Work Item type  [Task ▾]        Risk level   [Low ▾]
+  Environment     [Production ▾]  Cost         [$8]
+  Automated tests [Passed ▾]      Agent confidence [85%]
+                                                        [Run test]
 
-结果：⚠ 需要人类审批
-  命中规则 #1「生产数据库变更必须由 DBA 审批」（优先级 1）
-  未到达规则 #7（优先级 10）——被 #1 拦截
+Result: ⚠ Human approval required
+  Matched rule #1 "Production database changes must be approved by a DBA" (priority 1)
+  Never reached rule #7 (priority 10) — intercepted by #1
 
-  匹配过程：
-   #1 生产数据库变更     ✓ 命中 → Require Human Review → 停止
-   #7 低风险自动批准     ⊘ 未评估
+  Match trace:
+   #1 Production DB change    ✓ matched → Require Human Review → stop
+   #7 Low-risk auto-approve   ⊘ not evaluated
 ```
 
-匹配过程的可视化让用户理解优先级机制，避免"我明明配了自动批准为什么还找我"的困惑。
+Visualizing the match trace is what teaches the priority mechanism, and it heads off "I clearly configured auto-approve, so why is it still asking me?"
 
-### 5.8 冲突检测（体检）
+### 5.8 Conflict detection (the health check)
 
-自动检测：
+Detected automatically:
 
-| 问题类型 | 严重度 | 说明 |
+| Problem | Severity | Description |
 | --- | --- | --- |
-| 规则冲突 | 🔴 | 低优先级规则想收紧，却被高优先级规则先放行了——那道闸永远轮不到 |
-| 不可达规则 | 🟡 | 在任何常见场景下都不会命中 |
-| 过度宽松 | 🔴 | **有一条规则**明确把高风险操作放行了 |
-| 覆盖缺口 | ⚪ | 某类高风险操作没有规则覆盖，走的是自治等级默认 |
-| 零命中 | ⚪ | 建了七天以上、近 30 天一次没命中 |
-| 数据源没接 | 🟡 | 条件引用了还没接入的数据源，规则永远不会命中 |
+| Rule conflict | 🔴 | A lower-priority rule tries to tighten, but a higher-priority rule already let it through — that gate never gets its turn |
+| Unreachable rule | 🟡 | Will never match under any common scenario |
+| Too permissive | 🔴 | **Some rule** explicitly lets a high-risk action through |
+| Coverage gap | ⚪ | Some class of high-risk action has no rule covering it and falls back to the autonomy-level default |
+| Zero hits | ⚪ | Created more than seven days ago, not matched once in the last 30 days |
+| Data source not connected | 🟡 | A condition references a data source that isn't wired up yet, so the rule can never match |
 
-**结论贴在它说的那条规则上**，不再是页面顶部一份独立清单加一个"定位规则"按钮——看到问题的地方和能改的地方不该隔着一整屏。剩下"没有规则可指"的那几条（覆盖缺口、全都要审批）收进一个默认折叠的小节。
+**A finding sits on the rule it is about**, instead of living in a separate checklist at the top of the page behind a "jump to rule" button — where you see a problem and where you can fix it should not be a full screen apart. The remaining findings with no rule to point at (coverage gaps, "everything needs approval") go into a section collapsed by default.
 
-**覆盖缺口降到 ⚪，且一条规则都没有时不报**。它说的是"这里走的是默认策略"，而默认策略是自治等级的一部分、是用户自己选的，不是事故；零规则更不是"配漏了"，是还没开始配——对着一个空项目喊出九条"高风险操作没人管"，说的每一条都对，合起来只是把"你还没配规则"说了九遍。空列表由引导向导接手（§5.12），不由体检来吓人。
+**Coverage gap drops to ⚪, and is not reported at all when there are no rules.** What it says is "this falls back to the default policy," and the default policy is part of the autonomy level — something the user chose, not an incident. Zero rules is even less of a "you missed some": it means configuration hasn't started. Shouting nine "high-risk actions are unguarded" findings at an empty project produces nine individually correct statements that together say "you haven't written any rules yet" nine times over. An empty list is handed to the onboarding wizard (§5.12), not to the health check to frighten people with.
 
-真正的事故是**过度宽松**：有一条规则明确把高风险操作放行了。那条仍然是 🔴。
+The real incident is **too permissive**: some rule explicitly lets a high-risk action through. That one stays 🔴.
 
-### 5.9 自治等级（文档 8.9.4）
+### 5.9 Autonomy level (product doc 8.9.4)
 
-页面顶部的自治等级切换是 Policy 的"总开关"，三档对应不同的**默认动作**（没有任何规则命中时走它）：
+The autonomy-level selector at the top of the page is Policy's master switch. The three settings correspond to different **default actions**, used whenever no rule matches:
 
-| 等级 | 默认策略 |
+| Level | Default policy |
 | --- | --- |
-| Human-led | 大部分操作默认 `Require Human Review` |
-| Agent-led + Approval | 中低风险自动，关键节点审批（默认） |
-| Agent-autonomous | 默认自动，仅异常时 `Ask` |
+| Human-led | Most actions default to `Require Human Review` |
+| Agent-led + Approval | Low and medium risk automatic, approval at the key nodes (default) |
+| Agent-autonomous | Automatic by default, `Ask` only on anomalies |
 
-切换时显示影响预览：「切换到 Agent-autonomous 后，当前需人工确认的 6 类操作将减少到 2 类，具体变化：…」
+Switching shows an impact preview: "After switching to Agent-autonomous, the 6 action types that currently need human confirmation drop to 2. Specifically: …"
 
-**安全底线不受自治等级影响**：删资源、改权限、执行付款永远要人确认，这三类硬编码在求值器里（[09 安全](../../tech/09-security.md) §4.1）。这句话在切换弹窗里必须说出来——否则"Agent-autonomous"读起来像"什么都不问了"。
+**Safety floors are unaffected by the autonomy level**: deleting resources, changing permissions, and executing payments always need a human, and those three are hard-coded into the evaluator ([09 Security](../../tech/09-security.md) §4.1). The switching dialog has to say this out loud — otherwise "Agent-autonomous" reads as "it will never ask again."
 
-### 5.10 Tab：命中统计
+### 5.10 Tab: hit statistics
 
-各规则的命中次数、结果分布、平均等待时长、趋势。用于识别：
-- 该规则化的重复决策（高命中 + 结果一致）
-- 成为瓶颈的规则（长等待）
-- 形同虚设的规则（零命中）
+Hit count per rule, outcome distribution, average wait, trend. Used to spot:
+- Repeated decisions that ought to become rules (many hits + consistent outcome)
+- Rules that have turned into bottlenecks (long waits)
+- Rules that exist in name only (zero hits)
 
-### 5.11 Tab：变更历史
+### 5.11 Tab: change history
 
-谁在什么时候改了什么规则，改前改后对比。Policy 变更是高敏感操作，必须完整审计（文档 10.5）——**删除本身也记一条**（`after: null`）。只删不记的话，事后查"这里以前是不是有条规则拦着"的唯一线索，是这条规则最后一次**修改**的记录，而那条记录看起来完全正常：一次删除在历史上长得和"什么都没发生"一样。
+Who changed which rule when, with a before/after diff. Policy changes are highly sensitive and must be audited completely (product doc 10.5) — **a deletion gets its own entry too** (`after: null`). Without that, the only trace left for someone later asking "wasn't there a rule blocking this?" would be that rule's last **edit** — and that record looks perfectly ordinary. In the history, a deletion that isn't recorded looks exactly like nothing having happened.
 
-历史里那一栏说的是**结果**，不是术语：「少批一些 / 多批一些」而不是「放宽 / 收紧」。后者是治理模型的内部词汇，用户要读懂它得先知道这套模型分了两档权限——而信息量一点没少。
+The column in that history describes the **outcome**, not the jargon: "approves less / approves more" rather than "loosened / tightened." The latter is internal vocabulary from the governance model; to read it, a user first has to know the model splits permissions into two tiers — and nothing is lost by dropping it.
 
-### 5.12 首次引导向导（项目零规则时）
+### 5.12 First-run wizard (when a project has zero rules)
 
-平台不再自带基线规则，于是新项目这一页的规则区本来会是一个**空列表**加一排模板按钮。那两样东西一起说的是"这里本该有东西，你自己去配"——而用户此刻既不知道该配什么，也不知道配多少算够。最常见的结局是关掉页面，项目就这么零规则跑下去，等出事时才发现这里从来没设过边界。
+The platform no longer ships baseline rules, so on a new project this page's rule area would otherwise be an **empty list** plus a row of template buttons. Together those two things say "something belongs here, go configure it" — and at that moment the user knows neither what to configure nor how much counts as enough. The usual ending is that they close the page, the project runs on with zero rules, and nobody discovers that no boundary was ever set until something goes wrong.
 
-所以空列表整块换成四个问题：
+So the empty list is replaced wholesale by four questions:
 
-| 问题 | 生成什么 |
+| Question | What it generates |
 | --- | --- |
-| 这是个什么样的项目？ | 什么都不生成——只给下面三个问题一组建议答案 |
-| 生产发布要不要人批？ | 部署（仅生产环境）→ 需人确认 |
-| 数据库变更要不要人批？ | 数据库结构变更 + 数据变更 → 需人确认 |
-| 单次执行超过多少就先问一句？ | 成本闸规则；填 0 表示不要 |
+| What kind of project is this? | Nothing — it only seeds a suggested set of answers for the three questions below |
+| Should production releases need human approval? | Deploy (production only) → needs a human |
+| Should database changes need human approval? | Database schema change + data change → needs a human |
+| Above what per-run cost should we check with you first? | A cost-gate rule; 0 means no gate |
 
-三条设计约束：
+Three design constraints:
 
-- **一屏，不分步**。四个问题彼此独立、都能一眼答完，分步只是把一屏拆成四屏，代价是用户到最后一步才知道自己一共换来了什么。
-- **会建哪几条规则当场列出来**，跟着答案实时变。一键生成治理配置最容易变成"我不知道它给我配了什么"，而在治理配置上，"不知道自己有什么"和"什么都没有"一样危险——前者还多一层虚假的安全感。
-- **建议一律偏保守**。向导给的是起点，而一个把边界设得太松的起点，用户不会发现；太紧他第二天就来改了。
+- **One screen, not a stepper.** The four questions are independent and each answerable at a glance. Stepping them just turns one screen into four, at the price of the user not learning what the whole thing bought them until the last step.
+- **The rules it will create are listed right there**, updating live as the answers change. One-click governance setup slides very easily into "I don't know what it configured for me," and in governance, not knowing what you have is as dangerous as having nothing — with an extra layer of false confidence on top.
+- **The suggestions always err conservative.** The wizard hands over a starting point, and a starting point with boundaries set too loose is one the user will never notice; set too tight, they come back and change it the next day.
 
-一定要给"跳过，我自己配"这条路，而且它让出的是位置、不是把整块藏掉——已经想好要配什么的人，不该被一份他不想要的建议挡在门口。它只记在内存里，不落 localStorage：跳过一次就再也不出现的引导，等于把"这个项目还没设边界"永久藏了起来。
+There has to be a "Skip, I'll configure it myself" path, and what it yields is the space, not the whole block — someone who already knows what they want should not be stopped at the door by advice they never asked for. The skip lives in memory only, never in localStorage: onboarding that vanishes forever after one skip permanently hides the fact that this project has no boundaries set.
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**从决策创建规则（最高频路径）**
-
-```
-决策中心批准后 → [创建规则] → 本页新建规则（条件已预填）
-→ 检查自然语言解释是否符合预期
-→ [运行模拟] → 发现 2 次不一致 → [采纳建议] 增加排除条件
-→ 再次模拟 → 0 次不一致 → [启用规则]
-```
-
-**收紧治理（安全审计后）**
+**Creating a rule from a decision (the highest-frequency path)**
 
 ```
-新建规则 → 条件「操作类型 = 删除资源」→ 动作 Require Multiple Approvals
-→ 模拟：过去 30 天会拦截 3 次（其中 1 次是误删）
-→ 启用
+Decision Center, after approving → [Create rule] → a new rule here (conditions pre-filled)
+→ check that the plain-language explanation says what you meant
+→ [Run simulation] → 2 disagreements found → [Accept suggestion] adds an exclusion
+→ simulate again → 0 disagreements → [Enable rule]
 ```
 
-**排查"为什么找我"**
+**Tightening governance (after a security audit)**
 
 ```
-用户困惑某个低风险操作为何需要审批
-→ 模拟测试 Tab → 构造该场景 → 运行
-→ 匹配过程显示被 #1 拦截 → 理解原因
-→ 若确认规则过严 → 调整 #1 的条件（若为组织级则申请例外）
+New rule → condition "action type = delete resource" → action Require Multiple Approvals
+→ Simulation: would have blocked 3 times in the last 30 days (1 of them a mistaken delete)
+→ Enable
+```
+
+**Diagnosing "why is it asking me?"**
+
+```
+The user is puzzled that a low-risk action needs approval
+→ Simulate tab → build that scenario → run
+→ The match trace shows #1 intercepted it → cause understood
+→ If the rule really is too strict → adjust #1's conditions (or request an exception, if it's an org rule)
 ```
 
 ---
 
-## 7. 状态设计
+## 7. States
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 无项目级规则 | 规则区整块换成四个问题的引导向导（§5.12），不是空列表加一排模板按钮 |
-| 规则草稿 | 标注「草稿，未生效」，可继续编辑 |
-| 模拟中 | 进度提示；数据量大时异步执行后通知 |
-| 模拟数据不足 | 「历史数据不足 30 天，模拟结果仅供参考」 |
-| 保存冲突（他人同时修改） | 显示差异，要求重新确认 |
-| 组织规则变更影响项目 | 顶部提示「组织规则 #1 已于今日更新，可能影响本项目 2 条规则」+ [查看影响] |
+| No project-level rules | The rule area is replaced wholesale by the four-question wizard (§5.12), not an empty list plus a row of template buttons |
+| Draft rule | Marked "Draft, not in force"; editing can continue |
+| Simulating | Progress indicator; for large data sets, run it asynchronously and notify on completion |
+| Not enough data to simulate | "Less than 30 days of history — treat the simulation as indicative only" |
+| Save conflict (someone else edited concurrently) | Show the diff and require re-confirmation |
+| An org rule change affects this project | Banner at the top: "Org rule #1 was updated today and may affect 2 rules in this project" + [See the impact] |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看规则 | 项目成员（治理透明，所有人都该知道规则） |
-| 创建 / 编辑项目级规则 | `tech_lead` / `pm` |
-| **放宽规则**（减少人工介入） | `tech_lead`，且需模拟验证 + 记审计 |
-| 收紧规则 | `pm` 及以上 |
-| 把一类操作切成「自动」 | 同放宽（开关走的是和手写规则完全一样的保存路径） |
-| 把一类操作切成「需人」 | 同收紧 |
-| 停用规则 | `tech_lead`，必填原因 |
-| 编辑组织级规则 | `org_admin` |
-| 申请组织规则例外 | `tech_lead` 发起 → `org_admin` 审批 |
-| 修改自治等级 | `tech_lead` / `pm` |
+| View rules | Project member (governance is transparent; everyone should know the rules) |
+| Create / edit project-level rules | `tech_lead` / `pm` |
+| **Loosening a rule** (less human involvement) | `tech_lead`, plus a simulation and an audit entry |
+| Tightening a rule | `pm` and above |
+| Switching an action type to "Auto" | Same as loosening (the switch takes exactly the same save path as a hand-written rule) |
+| Switching an action type to "Human" | Same as tightening |
+| Disabling a rule | `tech_lead`, reason required |
+| Editing org-level rules | `org_admin` |
+| Requesting an exception to an org rule | `tech_lead` initiates → `org_admin` approves |
+| Changing the autonomy level | `tech_lead` / `pm` |
 
-**Agent 不能修改 Policy**（文档十三 MVP 暂不实现「Agent 自动修改 Policy」）。Agent 只能**建议**规则，由人类确认后生效。这是治理体系的根本约束——如果 Agent 能改自己的约束，整个治理就失效了。
+**Agents cannot modify Policy** (product doc ch. 13 — "Agents modifying Policy automatically" is out of MVP scope). An Agent may only **suggest** a rule, which takes effect once a human confirms it. This is the foundational constraint of the whole governance system: if an Agent could change its own constraints, governance would be void.
 
-**"收紧 / 放宽"这两个词不出现在界面上。** 它们是这张表的词汇，不是用户的：他要判断一个 ↑ 还是 ↓ 对自己意味着什么，得先知道这套模型分了两档权限——而这件事他不需要知道。他真正会撞上的只有一种情形：某个按钮是灰的。那时权限差异会以"你为什么点不了、该找谁"的形式出现，那句话服务端已经算好了。灰按钮加一句原因说得清的事，不必先教一套术语。
+**The words "tighten" and "loosen" never appear in the UI.** They are this table's vocabulary, not the user's. To work out what an ↑ or a ↓ means for them, they would first have to know that the model splits permissions into two tiers — and that is something they never need to know. The only situation they will actually run into is a grayed-out button, and at that point the permission difference shows up in the shape of "why can't I click this, and who do I ask" — a sentence the server has already computed. A gray button plus a clear reason covers it without teaching a vocabulary first.
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Policy`（全字段）、`Decision`（命中记录）、`Event`（模拟数据源）、`Agent`、`Project`
+**Domain objects**: `Policy` (all fields), `Decision` (hit records), `Event` (the simulation data source), `Agent`, `Project`
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/projects/{id}/policies
      → { org_policies[], project_policies[], summary: { auto_actions[], human_required[] },
          conflicts[] }
 
-POST /api/policies                    创建（priority 可省，服务端往后追加）
-PATCH /api/policies/{id}              编辑（priority 省略 = 保持原样）
+POST /api/policies                    Create (priority optional; the server appends at the end)
+PATCH /api/policies/{id}              Edit (priority omitted = leave it as is)
 POST /api/policies/{id}/toggle        { enabled, reason }
 
-PUT    /api/projects/{id}/policies/operation-switch          把一类操作切成自动 / 需人
+PUT    /api/projects/{id}/policies/operation-switch          Switch an action type to auto / human
        ← { operation_type, verdict: 'auto'|'human', environment?, name? }
        → { policy, direction, simulation,
-           applied,            ★ 这一行**真的**变了没有
+           applied,            ★ whether this row **actually** changed
            blocked_by,         'other_rules' | 'safety_floor' | 'autonomy_default' | null
-           shadowed_by[] }     挡在前面的规则
-DELETE /api/projects/{id}/policies/operation-switch/{op}     关掉开关（删掉它建的那条规则）
+           shadowed_by[] }     the rules standing in front of it
+DELETE /api/projects/{id}/policies/operation-switch/{op}     Turn the switch off (delete the rule it created)
 
-POST /api/policies/simulate           历史回放
+POST /api/policies/simulate           Historical replay
      ← { policy_draft, range: '30d' }
      → { would_auto_handle, total_applicable, mismatches: [{ event_id, human_decision,
          policy_decision, context }], suggestions[] }
 
-POST /api/policies/evaluate           手动构造场景测试
+POST /api/policies/evaluate           Hand-built scenario test
      ← { context: { work_item_type, risk, env, cost, ... } }
      → { result, matched_policy, evaluation_trace[] }
 
@@ -440,53 +443,53 @@ GET  /api/policies/{id}/history
 GET  /api/policy-templates?scenario=
 ```
 
-`applied` 与 `policy` 是两回事，界面必须分开读：规则存下来了不等于这一行变成了用户要的状态。文档 §9 原本要求放宽类变更携带 `simulation_id`，实际实现改成**服务端在保存时自己跑一遍模拟**——客户端给的 id 伪造一个字符串就能绕过，而这道闸恰恰是本页最重要的安全阀。
+`applied` and `policy` are two different things, and the UI has to read them separately: the rule being stored does not mean the row landed in the state the user wanted. §9 of the product doc originally required loosening changes to carry a `simulation_id`; the implementation instead has **the server run the simulation itself at save time** — a client-supplied id can be forged with any string at all, and this gate happens to be the most important safety valve on the page.
 
-**评估性能**：Policy 评估在 Flow Engine 的关键路径上，必须快（目标 < 10ms）。规则编译为决策树缓存，变更时失效重建。
+**Evaluation performance**: Policy evaluation sits on the Flow Engine's critical path and has to be fast (target < 10ms). Rules are compiled into a cached decision tree, invalidated and rebuilt whenever they change.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| **`policy_created{source}`** | 从决策/Analytics/手动创建的比例——衡量规则化飞轮是否转起来 |
-| **`simulation_run{mismatches}`** | **模拟功能使用率与发现的问题数——本页最关键的安全阀** |
-| `simulation_suggestion_accepted` | 建议采纳率 |
-| `policy_direction{tighten, loosen}` | 收紧 vs 放宽的比例（反映组织对 Agent 的信任演进） |
-| `policy_zero_hit_count` | 无效规则数量 |
-| `evaluate_scenario_used` | 场景测试的使用率（排障需求） |
-| `conflict_resolved` | 冲突检测的价值 |
+| **`policy_created{source}`** | The split between rules created from decisions, from Analytics, and by hand — measures whether the rule-making flywheel has started turning |
+| **`simulation_run{mismatches}`** | **How much simulation is used and how many problems it finds — the single most important safety valve on this page** |
+| `simulation_suggestion_accepted` | Suggestion acceptance rate |
+| `policy_direction{tighten, loosen}` | Tightening vs. loosening ratio (tracks how the organization's trust in Agents evolves) |
+| `policy_zero_hit_count` | How many rules are dead weight |
+| `evaluate_scenario_used` | Scenario-test usage (the diagnostic need) |
+| `conflict_resolved` | The value conflict detection is delivering |
 
-**页面成功标准**：放宽类规则变更 100% 经过模拟验证；每月新增有效规则 ≥ 2 条且自动处理比例持续上升；零命中规则 < 10%。
+**Success criteria for this page**: 100% of loosening rule changes go through simulation; at least 2 new effective rules per month with the automated-handling share rising steadily; zero-hit rules under 10%.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 规则数量 > 30 | 提示复杂度过高，建议合并；提供按场景分组视图 |
-| 优先级重复 | 不校验、也不要求用户调整——同优先级时更严的先评估（[05](../../tech/05-policy-engine.md) §3.1）。要求用户去调一个他看不见的数字，才是真正的边界情况 |
-| 条件引用了不存在的字段（如未接入的系统） | 标注「条件依赖未接入的数据源，该规则不会命中」+ 配置链接 |
-| 模拟结果与实际不符 | 模拟基于历史 Event 回放，可能因上下文缺失有偏差，页面明确标注「模拟仅供参考」 |
-| 规则导致所有操作都需审批 | 冲突检测提示「当前配置下 Agent 几乎无法自主执行，请检查」 |
-| 高风险操作无规则覆盖 | 覆盖缺口检测，⚪ 提示；**一条规则都没有时不报**，那不是"配漏了"而是"还没开始配"，交给引导向导（§5.12）|
-| 一类操作切了开关却没生效 | 如实报出成因（被别的规则挡住 / 安全底线 / 自治等级），并说清各自能做什么（§5.1）|
-| 认不出来的操作类型或环境值 | 拒收：评估会停下来报错，不兜底成"改代码"——兜底往宽的一侧猜，一个拼写错误就能绕过安全底线 |
-| 组织规则与项目规则语义冲突 | 组织规则优先；项目规则标注「被组织规则覆盖，不会生效」 |
-| 删除正在被引用的规则 | 显示引用方（进行中的决策），要求先处理 |
-| 规则生效延迟 | 保存后明确提示生效时间（缓存刷新），进行中的 Run 使用旧规则快照 |
+| More than 30 rules | Warn that complexity is getting high and suggest consolidating; offer a grouped-by-scenario view |
+| Duplicate priorities | Not validated, and the user is not asked to fix it — at equal priority the stricter rule is evaluated first ([05](../../tech/05-policy-engine.md) §3.1). Asking the user to adjust a number they cannot see is the real edge case |
+| A condition references a field that doesn't exist (e.g. a system not yet connected) | Mark it "this condition depends on a data source that isn't connected; the rule will never match" + a link to configure it |
+| The simulation disagrees with reality | The simulation replays historical Events and can drift where context is missing; the page states plainly that "simulation is indicative only" |
+| The rules make everything need approval | Conflict detection warns: "under this configuration the Agent can barely act on its own — please check" |
+| A high-risk action has no rule covering it | Coverage-gap detection, ⚪ severity; **not reported at all when there are no rules**, because that isn't "you missed some," it's "you haven't started" — handed to the onboarding wizard (§5.12) |
+| A toggled action type didn't take effect | Report the cause honestly (shadowed by another rule / safety floor / autonomy level) and say what can be done about each (§5.1) |
+| An unrecognized action type or environment value | Reject it: evaluation stops with an error rather than falling back to "modify code" — a fallback guesses toward the permissive side, and then a single typo is enough to slip past the safety floor |
+| An org rule and a project rule conflict semantically | The org rule wins; the project rule is marked "overridden by an org rule, will not take effect" |
+| Deleting a rule that is currently referenced | Show what references it (in-flight decisions) and require handling those first |
+| Delay before a rule takes effect | State the effective time explicitly after saving (cache refresh); in-flight Runs keep using their snapshot of the old rules |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. MVP 范围（文档 12.2）只要求四类基础配置：哪些任务自动执行、哪些需审批、失败多少次转人工、哪些环境必须审批。本文档描述的是完整形态。**建议 MVP 只做模板化配置（选择场景 → 填几个参数），不做自由条件编辑器**，把省下的资源投入模拟功能——模拟比灵活性更重要。
-2. 模拟的历史回放需要 Event 中保存足够的上下文快照。这对事件模型设计有要求，需要提前确认。
-3. 组织级规则的例外申请流程是否在 MVP 范围内？倾向于 MVP 不做，用"联系管理员"占位。
-4. Policy 的版本管理：规则变更后，进行中的任务用新规则还是旧规则？倾向于用任务启动时的规则快照，避免中途变更导致行为不一致。
-5. 自然语言解释的模板需要覆盖所有条件与动作组合，工作量不小。是否需要限制条件组合的复杂度以保证解释质量？
-6. 「Agent 建议规则」的能力（文档 8.7.1「Agent 建议自动化的重复决策」）与本页的关系需要理清——建议应该落在决策中心还是本页？倾向于两处都有入口，但创建流程统一在本页。
-7. 开关矩阵目前只有"自动 / 需人"两态可点，「视情况」只报告不可选。要让用户从这一行直接配出"生产要人批、其余自动"，需要一个比开关复杂、又比规则编辑器简单的中间形态——先看有多少人真的撞上这个需求。
-8. 组织级规则还没有创建入口（求值仍然认它们）。补上入口时，本页的规则列表要跟着长回"只读的那一档"：作用域徽标、只读提示、以及体检结论里指向组织规则时的跳转目标。
+1. The MVP scope (product doc 12.2) asks for only four basic settings: which tasks run automatically, which need approval, how many failures before handing off to a human, and which environments must be approved. This document describes the complete form. **Suggestion: have the MVP ship only templated configuration (pick a scenario → fill in a few parameters), skip the free-form condition editor**, and put the saved effort into simulation — simulation matters more than flexibility.
+2. Historical replay requires Events to carry enough context snapshot. That places a requirement on the event model design and needs confirming up front.
+3. Is the exception-request flow for org-level rules in MVP scope? Leaning toward leaving it out and using a "contact your administrator" placeholder.
+4. Policy versioning: after a rule changes, do in-flight tasks use the new rules or the old ones? Leaning toward the snapshot taken when the task started, to avoid mid-flight changes producing inconsistent behavior.
+5. The plain-language explanation templates have to cover every combination of condition and action, which is a fair amount of work. Should we cap condition-combination complexity to keep explanation quality up?
+6. The relationship between "Agents suggest rules" (product doc 8.7.1, "Agents suggest automating repeated decisions") and this page needs sorting out — should suggestions land in the Decision Center or here? Leaning toward entrances in both places, with the creation flow unified on this page.
+7. The switch matrix currently has only two clickable states, Auto and Human; "Depends" is reported and not selectable. Letting a user configure "production needs a human, everything else automatic" directly from that row would need an intermediate form — more capable than a switch, simpler than the rule editor. Let's first see how many people actually hit this need.
+8. Org-level rules still have no creation entrance (evaluation continues to honor them). When that entrance arrives, this page's rule list has to grow back its **read-only tier**: the scope badge, the read-only notice, and a jump target for health findings that point at an org rule.

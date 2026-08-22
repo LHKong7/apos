@@ -25,16 +25,19 @@ import {
 } from '../test/db';
 
 /**
- * 登录与开账号（docs/tech/09-security.md §1.3）。
+ * Login and account creation (docs/tech/09-security.md §1.3) / 登录与开账号。
  *
- * ★★ 这一层此前根本不存在：身份就是一个 `X-User-Id` 头，没有任何凭证，
- *   写上谁的 uuid 就是谁。整套 RBAC 建在它之上，因而也全是摆设 ——
- *   而接口清单上完全看不出这件事。
+ * ★★ This layer did not exist at all before: identity was an `X-User-Id` header with
+ *   no credential whatsoever — put someone's uuid in it and you were them. The whole
+ *   RBAC system was built on top of that and was therefore equally decorative, and
+ *   nothing in the endpoint listing gave the slightest hint of it.
  *
- * ★ 账号有三个来源：超管来自 .env（bootstrap）、组织管理员开的号、
- *   以及自助注册。三条路都不会把人放进**别人的**组织 ——
- *   注册开的是一个空的新组织，要进别人的组织仍然只有「被管理员加进去」。
- *   组织边界就是多租户边界，这条线由下面「自助注册」那组用例守着。
+ * ★ Accounts come from exactly three places: the superadmin from .env (bootstrap),
+ *   accounts an org admin opens, and self-service signup. None of the three ever puts
+ *   somebody into **someone else's** organization — signup creates a new empty org,
+ *   and getting into an existing one still means an admin adds you. The organization
+ *   boundary *is* the tenancy boundary, and the "self-service signup" cases below
+ *   are what guard that line.
  */
 
 const db = testDb();
@@ -53,7 +56,8 @@ beforeEach(async () => {
     integrations: integrationRegistry(),
     provider: new StubPlanningProvider(),
   });
-  // 夹具身份是直插的，没有口令 —— 登录相关的用例要自己补上
+  // The fixture identity is inserted directly and has no password — the login cases
+  // have to supply one themselves
   await db
     .update(users)
     .set({ passwordHash: await hashPassword(PASSWORD) })
@@ -101,11 +105,12 @@ describe('登录', () => {
   });
 
   /**
-   * ★★ 三种失败必须**无法区分**。
+   * ★★ The three failures must be **indistinguishable**.
    *
-   *   「这个邮箱没有账号」和「口令不对」一旦回不同的话，
-   *   登录接口就成了一个通讯录枚举探针：拿一份邮箱列表跑一遍，
-   *   哪些是这家公司的真账号就出来了。而那正是撞库的第一步。
+   *   The moment "no account for this email" answers differently from "wrong
+   *   password", the login endpoint becomes a directory-enumeration probe: run a list
+   *   of addresses through it and out come the ones that are real accounts at this
+   *   company. That is step one of a credential-stuffing run.
    */
   it('★ 账号不存在、没有口令、口令错误回同一句话', async () => {
     const noPassword = await createMember(db, fx, { name: '没设口令的人' });
@@ -134,13 +139,15 @@ describe('登录', () => {
 });
 
 /**
- * ★★ 陈旧的 X-Org-Id 不能把前端锁死。
+ * ★★ A stale X-Org-Id must not lock the frontend out.
  *
- *   浏览器一直记着上次选的组织（localStorage 的 apos.orgId）并原样带回来。
- *   那个组织可能已经被删、这个人可能已被移出、或者整个库被重建过。
- *   严格判定下这是 404 —— 而 404 会形成死锁：
- *   /organizations 拿不到 → 陈旧 id 没机会被纠正 → 下一个请求还带着它。
- *   表现是登录成功但整站空白，且退出重登也没用。
+ *   The browser remembers the last organization it was on (apos.orgId in
+ *   localStorage) and sends it right back. That org may have been deleted, this
+ *   person may have been removed from it, or the whole database may have been rebuilt.
+ *   Strictly evaluated that is a 404 — and a 404 here deadlocks: /organizations fails
+ *   → the stale id never gets a chance to be corrected → the next request carries it
+ *   again. The symptom is a successful login onto a completely blank site, which
+ *   logging out and back in does not fix.
  */
 describe('陈旧的当前组织', () => {
   const GONE = '00000000-0000-4000-8000-000000000000';
@@ -156,10 +163,10 @@ describe('陈旧的当前组织', () => {
   });
 
   /**
-   * ★★ 这条宽容**只**给 `/auth/me`，连 `/organizations` 都不给。
-   *   别处带错组织必须仍然是 404 —— 那既是多租户边界本身
-   *   （`assertCurrentOrg` 整条防线都建立在它上面），
-   *   也是「不确认这个组织存在」的那一层。
+   * ★★ This leniency is granted to `/auth/me` **only**, not even to
+   *   `/organizations`. Anywhere else a wrong org id must still be a 404 — that is
+   *   both the tenancy boundary itself (the entire `assertCurrentOrg` defense rests
+   *   on it) and the layer that declines to confirm whether an organization exists.
    */
   it('★ 其余端点带错组织仍然被拒', async () => {
     for (const url of ['/api/v1/projects', '/api/v1/organizations', '/api/v1/users']) {
@@ -192,7 +199,8 @@ describe('开账号', () => {
     const res = await login({ email: newAccount.email, password: newAccount.password });
     expect(res.statusCode).toBe(200);
 
-    // 已经属于本组织 —— 否则他登录后每个请求都是 401「不属于任何组织」
+    // Already a member of this org — otherwise every request after their login is a
+    // 401 "not a member of any organization"
     const me = await app.inject({
       method: 'GET',
       url: '/api/v1/auth/me',
@@ -203,9 +211,10 @@ describe('开账号', () => {
   });
 
   /**
-   * ★★ 这是这组端点存在的全部意义：账号是从**边界外**放进来的，
-   *   放行的门槛必须是组织管理员。普通成员能开账号的话，
-   *   任何一个成员都能给外面的人发一张进入这个租户的门票。
+   * ★★ This is the whole reason these endpoints exist: an account is being let in
+   *   from **outside the boundary**, so the bar to let it through has to be org admin.
+   *   If a plain member could open accounts, any member at all could hand an outsider
+   *   a ticket into this tenant.
    */
   it('★ 普通成员开不了账号', async () => {
     const plain = await createMember(db, fx, { orgRole: 'member' });
@@ -231,8 +240,9 @@ describe('开账号', () => {
   });
 
   /**
-   * ★ 邮箱已存在时不能再开一个号：同一个人两个账号，审计里就是两个人，
-   *   而「谁批准的」这类问题会永远差一半答案。
+   * ★ A duplicate email must not open a second account: one person with two accounts
+   *   is two people as far as the audit trail is concerned, and questions like "who
+   *   approved this" are then permanently missing half their answer.
    */
   it('★ 邮箱重复时拒绝，并指向「添加成员」', async () => {
     const res = await app.inject({
@@ -259,8 +269,9 @@ describe('开账号', () => {
   });
 
   /**
-   * ★★ 建账号是提权路径的第零步 —— 在此之前那个人还不存在。
-   *   查不到「谁给谁开的号」，整条提权链从一开始就断了（§6.3）。
+   * ★★ Creating an account is step zero of any privilege-escalation path — before it,
+   *   that person did not exist. If "who opened an account for whom" cannot be looked
+   *   up, the escalation chain is broken from its very first link (§6.3).
    */
   it('★ 建账号留下审计事件', async () => {
     await app.inject({
@@ -303,11 +314,12 @@ describe('改口令', () => {
 });
 
 /**
- * 自助注册（docs/tech/09-security.md §1）。
+ * Self-service signup (docs/tech/09-security.md §1) / 自助注册。
  *
- * ★★ 这里要守住的那条线：注册长出的是一个**新的空组织**，
- *   不是「把自己放进某个已有组织」。后者才是「组织边界就是多租户边界」
- *   要防的东西，而且这几条用例就是防止有人日后把它「优化」成后者。
+ * ★★ The line these cases hold: signup grows a **new empty organization**, never
+ *   "put myself into an existing one". The latter is precisely what "the organization
+ *   boundary is the tenancy boundary" exists to prevent, and these cases are what
+ *   stop someone from later "optimizing" signup into it.
  */
 describe('自助注册', () => {
   const register = (payload: Record<string, unknown>) =>
@@ -327,7 +339,7 @@ describe('自助注册', () => {
     expect(user.email).toBe('newcomer@acme.dev');
     expect(organization.id).toBeTruthy();
 
-    // 令牌当场可用，且当前组织就是刚建的那个
+    // The token works immediately, and the current org is the one just created
     const me = await app.inject({
       method: 'GET',
       url: '/api/v1/auth/me',
@@ -335,15 +347,16 @@ describe('自助注册', () => {
     });
     expect(me.statusCode).toBe(200);
     expect(me.json().currentOrgId).toBe(organization.id);
-    // ★ 在自己的组织里是 org_admin —— 「新的超管账号」在这套模型里就是这一句
+    // ★ org_admin inside their own organization — in this model that single fact is
+    //   what "a new superadmin account" means
     expect(me.json().orgRole).toBe('org_admin');
   });
 
   /**
-   * ★★ 注册**不能**让人看见别人的组织。
+   * ★★ Signup **must not** make anyone else's organization visible.
    *
-   *   这条线一旦破了，「自助注册」就真的变成了多租户边界的缺口 ——
-   *   而那正是 09-security 当初拒绝它的理由。
+   *   Break this line and self-service signup really does become a hole in the tenancy
+   *   boundary — which is exactly why 09-security rejected it in the first place.
    */
   it('★ 新注册的人看不到别人的组织与项目', async () => {
     const res = await register({
@@ -360,7 +373,7 @@ describe('自助注册', () => {
     expect(ids).toEqual([organization.id]);
     expect(ids).not.toContain(fx.orgId);
 
-    // 夹具那个项目属于别人的组织，够不着
+    // The fixture project belongs to someone else's organization; out of reach
     const board = await app.inject({
       method: 'GET',
       url: `/api/v1/projects/${fx.projectId}/board`,
@@ -388,9 +401,9 @@ describe('自助注册', () => {
   });
 
   /**
-   * ★ 和登录接口不同，注册**必须**说清楚邮箱被占用了 ——
-   *   不说的话用户没有任何办法完成注册。这是这类接口固有的取舍，
-   *   缓解手段是限流而不是把话说糊。
+   * ★ Unlike login, signup **has to** say plainly that the email is taken — without
+   *   that the user has no way to complete signup at all. The trade-off is inherent to
+   *   this kind of endpoint; the mitigation is rate limiting, not vaguer wording.
    */
   it('邮箱已存在时明确拒绝，且不会重复建号', async () => {
     const email = await emailOf(fx.userId);
@@ -410,10 +423,11 @@ describe('自助注册', () => {
   });
 
   /**
-   * ★★ 建号与建组织必须同生同死。
+   * ★★ Creating the user and creating the organization live or die together.
    *
-   *   分成两个事务的话，第二步失败会留下一个「能登录但不属于任何组织」的
-   *   账号 —— 他之后每个请求都是 401，而注册页显示的是「注册失败」。
+   *   Split across two transactions, a failure in the second step leaves an account
+   *   that can log in but belongs to no organization — every subsequent request is a
+   *   401, while the signup page told them signup had failed.
    */
   it('★ 注册成功的人一定属于某个组织', async () => {
     const res = await register({ email: 'paired@x.dev', name: '成对的', password: 'paired-password' });
@@ -440,10 +454,10 @@ describe('自助注册', () => {
 });
 
 /**
- * 注册总开关（`APOS_ALLOW_SIGNUP`）。
+ * The signup master switch (`APOS_ALLOW_SIGNUP`) / 注册总开关。
  *
- * ★ 默认开着 —— 上面那组「自助注册」用例一行环境变量都没设就能跑通，
- *   本身就是这条默认值的断言。
+ * ★ On by default — the signup cases above pass without setting a single environment
+ *   variable, which is itself the assertion about that default.
  */
 describe('注册开关', () => {
   const KEY = 'APOS_ALLOW_SIGNUP';
@@ -493,11 +507,12 @@ describe('注册开关', () => {
   });
 
   /**
-   * ★★ 认不出来的取值按**关**处理。
+   * ★★ An unrecognized value is treated as **off**.
    *
-   *   这是安全开关，两种失败方式代价差得很远：写成 `flase` 却当成开，
-   *   是运维明明想关、结果一直开着且毫无迹象；写成 `ture` 却当成关，
-   *   表现是「注册按钮不见了」，有人会当场报上来。宁可错在关上。
+   *   This is a security switch, and the two failure modes cost wildly different
+   *   amounts. Read `flase` as on and an operator who meant to close signup has left
+   *   it open with no sign anywhere. Read `ture` as off and the symptom is "the signup
+   *   button is gone", which somebody reports within the hour. Better to err closed.
    */
   it('★ 拼错的取值按关闭处理，而不是按开启', () => {
     process.env[KEY] = 'flase';
@@ -516,8 +531,8 @@ describe('注册限流', () => {
   beforeEach(() => resetSignupThrottle());
 
   /**
-   * ★ 未鉴权 + 每次跑一遍 scrypt + 写四张表。没有闸的话，
-   *   一个写错的脚本就能把 CPU 打满 —— 不需要有人恶意。
+   * ★ Unauthenticated, runs scrypt on every call, and writes four tables. With no gate
+   *   in front of it a single buggy script pins the CPU — no malice required.
    */
   it('★ 同一来源短时间内反复注册会被挡下', async () => {
     const now = Date.now();
@@ -536,9 +551,10 @@ describe('注册限流', () => {
 
 describe('SSE', () => {
   /**
-   * ★★ 这条流此前完全不鉴权：猜到频道名就能拿到那个项目实时推送的
-   *   全部事件 —— 状态流转、决策、Run 产出。REST 那边查同样的数据
-   *   要过成员关系闸门，这里绕过去了。
+   * ★★ This stream used to have no authentication at all: guess the channel name and
+   *   you received every event that project pushed in real time — status transitions,
+   *   decisions, Run output. Reading the same data over REST goes through the
+   *   membership gate; this route walked straight around it.
    */
   it('★ 未登录连不上事件流', async () => {
     const res = await app.inject({
@@ -550,15 +566,17 @@ describe('SSE', () => {
 });
 
 /**
- * 超管自举（09-security §1.3）。
+ * Superadmin bootstrap (09-security §1.3) / 超管自举。
  *
- * ★★ 这一整块此前一条测试都没有 —— 而它是第一次部署时**唯一**跑到的路径。
- *   于是 `ensureSuperadminOrg` 里那个进不了 uuid 列的 correlationId
- *   一直活着：`pnpm test` 全绿，`docker compose up` 起来的实例却建不出
- *   超管的组织，登录后每个请求都是 401「还不属于任何组织」。
+ * ★★ This whole block had no tests at all — and it is the **only** path a first-time
+ *   deployment takes. So the correlationId in `ensureSuperadminOrg` that could not fit
+ *   the uuid column survived: `pnpm test` was green while the instance from
+ *   `docker compose up` could not create the superadmin's organization, and every
+ *   request after login came back 401 "not a member of any organization yet".
  *
- *   ★ 只有真的走一遍自举才测得出来。这也是它当初能溜过去的原因：
- *     所有别的用例都用 seedFixture 直插数据，绕开了这条路。
+ *   ★ Only actually running the bootstrap catches it. That is also why it slipped
+ *     through in the first place: every other case inserts data via seedFixture and
+ *     bypasses this path entirely.
  */
 describe('超管自举', () => {
   const KEYS = ['APOS_SUPERADMIN_EMAIL', 'APOS_SUPERADMIN_PASSWORD', 'APOS_SUPERADMIN_ORG'] as const;
@@ -580,8 +598,9 @@ describe('超管自举', () => {
 
     expect(result.created).toBe(true);
     /**
-     * ★ 这一条是关键。账号建出来但组织没建成的话，人能登录、
-     *   但站点整个是空的 —— 而 created:true 会让人以为自举成功了。
+     * ★ This is the load-bearing assertion. If the account is created but the org is
+     *   not, the person can log in to a completely empty site — and created:true makes
+     *   it look as though the bootstrap succeeded.
      */
     expect(result.orgCreated).toBe(true);
 
@@ -591,7 +610,8 @@ describe('超管自举', () => {
       .where(eq(organizationMembers.userId, result.userId!));
     expect(membership?.role).toBe('org_admin');
 
-    // 建组织连带写的事件要真的落库 —— correlationId 进不了 uuid 列的话就是这里炸
+    // The event written alongside the org creation has to actually land — a
+    // correlationId that will not fit the uuid column blows up right here
     const [row] = await db
       .select({ correlationId: events.correlationId })
       .from(events)
@@ -602,8 +622,9 @@ describe('超管自举', () => {
   });
 
   /**
-   * ★ 幂等，而且**不覆盖已改过的口令** —— 否则 .env 里那个初始口令
-   *   就成了一个改不掉的后门（见 bootstrap.ts 顶部）。
+   * ★ Idempotent, and it **never overwrites a password that was changed** — otherwise
+   *   the initial password in .env becomes a backdoor nobody can close (see the top of
+   *   bootstrap.ts).
    */
   it('重复自举不再建号建组织，也不重置口令', async () => {
     process.env['APOS_SUPERADMIN_EMAIL'] = 'boot@example.com';
@@ -612,7 +633,7 @@ describe('超管自举', () => {
     const first = await bootstrapSuperadmin(db, () => {});
     expect(first.created).toBe(true);
 
-    // 用户改了口令
+    // The user changed their password
     const changed = await hashPassword('user-changed-password-9');
     await db.update(users).set({ passwordHash: changed }).where(eq(users.id, first.userId!));
 

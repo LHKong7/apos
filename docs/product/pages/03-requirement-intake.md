@@ -1,400 +1,404 @@
-# 03 需求录入与 AI 澄清
+# 03 Requirement Intake and AI Clarification
 
-## 1. 页面信息
+*[中文版本 / Chinese version](03-requirement-intake.zh.md)*
 
-| 项 | 值 |
+## 1. Page Facts
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/requirements/new`（录入）<br>`/projects/:projectId/requirements/:reqId`（澄清与确认） |
-| 层级 | 三级页面 |
-| 主要角色 | `sponsor` / `pm`（录入与确认）；`member`（可录入，不可确认） |
-| 优先级 | P0 |
-| 对应产品文档 | 8.2 Requirement Center、8.8.1 需求阶段 HITL、6.2 Requirement |
+| Route | `/projects/:projectId/requirements/new` (intake)<br>`/projects/:projectId/requirements/:reqId` (clarify and confirm) |
+| Level | Third-level page |
+| Primary roles | `sponsor` / `pm` (enter and confirm); `member` (can enter, cannot confirm) |
+| Priority | P0 |
+| Related product docs | 8.2 Requirement Center, 8.8.1 HITL in the requirement phase, 6.2 Requirement |
 
 ---
 
-## 2. 页面目标
+## 2. Goal
 
-把一段模糊的业务描述，变成一份**双方都认可、可以直接拆解的结构化需求**。
+Turn a vague business description into a **structured requirement both sides agree on and can be decomposed directly**.
 
-页面要回答：
+The page has to answer:
 
-1. AI 把我的需求理解成了什么？（左右对照，原文不丢失）
-2. 还缺什么？哪些必须我来定，哪些 AI 可以自己假设？
-3. 我确认之后会发生什么？
+1. What did the AI understand my requirement to be? (side by side, with the original never lost)
+2. What is still missing? What must I decide, and what can the AI assume on its own?
+3. What happens after I confirm?
 
-这是整个产品的第一个 Human Gate，也是决定后续所有自动化质量的地方。**宁可在这里多花两分钟，也不要让 Agent 基于错误理解跑三小时。**
+This is the product's first Human Gate, and it is where the quality of every downstream automation is decided. **Two extra minutes here beat three hours of an Agent running on a wrong understanding.**
 
 ---
 
-## 3. 入口与出口
+## 3. Entrances and Exits
 
-**入口**：新建项目后自动进入；项目总览「录入需求」；需求列表新建；外部同步（Jira / 邮件 / 会议纪要）产生的待确认需求。
+**Entrances**: automatically after creating a project; "Enter a requirement" on the project overview; New on the requirement list; requirements awaiting confirmation that arrived from an external sync (Jira / email / meeting notes).
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 确认需求 | `04 项目计划确认`（Project Agent 开始规划） |
-| 保存草稿 | 停留，需求状态 `draft` |
-| 驳回 / 暂缓 | 返回需求列表 |
-| 委派确认 | 生成 Decision → 对方的 `11 决策详情` |
+| Confirm the requirement | `04 Plan Approval` (the Project Agent starts planning) |
+| Save draft | Stay here; requirement status `draft` |
+| Reject / hold | Back to the requirement list |
+| Delegate the confirmation | Creates a Decision → the other person's `11 Decision Detail` |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
-### 4.1 步骤一：录入
+### 4.1 Step one: intake
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ ← 订单系统重构 / 新建需求                               [保存草稿]  │
+│ ← Order system rework / New requirement               [Save draft] │
 ├────────────────────────────────────────────────────────────────────┤
-│  ①录入 ──── ②AI 分析 ──── ③澄清 ──── ④确认                        │
+│  (1) Intake ── (2) AI analysis ── (3) Clarify ── (4) Confirm       │
 ├────────────────────────────────────────────────────────────────────┤
 │                                                                    │
-│  怎么录入？                                                         │
-│  [✏ 直接描述] [💬 对话] [📎 上传文档] [🔗 从外部系统导入]           │
+│  How do you want to enter it?                                      │
+│  [✏ Describe] [💬 Chat] [📎 Upload a doc] [🔗 Import from a tool]  │
 │                                                                    │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ 描述你想要什么，用自己的话就行。                                │  │
+│  │ Describe what you want, in your own words.                   │  │
 │  │                                                              │  │
-│  │ 现在用户查订单要等好几秒，客服天天投诉。想优化一下，最好能      │  │
-│  │ 支持按手机号、订单号、时间段搜。另外老板要求这周五前上线。      │  │
-│  │                                                              │  │
+│  │ Order lookups take several seconds now and support           │  │
+│  │ complains every day. We want to speed it up, ideally         │  │
+│  │ with search by phone number, order number, and date          │  │
+│  │ range. Also the boss wants it live before Friday.            │  │
 │  └──────────────────────────────────────────────────────────────┘  │
-│  📎 已附加：客服投诉汇总.xlsx  ×    产品会议纪要 0803.md  ×         │
+│  📎 Attached: support-complaints.xlsx  ×   product-mtg-0803.md  ×  │
 │                                                                    │
-│  优先级 [高 ▾]   期望完成 [2026-08-08 📅]                          │
+│  Priority [High ▾]   Target date [2026-08-08 📅]                   │
 │                                                                    │
-│                          分析预计消耗 ~$0.12   [开始 AI 分析 →]     │
+│                      Analysis costs ~$0.12   [Start AI analysis →] │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 步骤二 / 三：AI 分析与澄清（核心页面）
+### 4.2 Steps two and three: AI analysis and clarification (the core page)
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ ← 订单查询性能优化                    草稿 · AI 已分析      [保存] [确认→] │
+│ ← Order lookup performance        Draft · AI analyzed  [Save] [Confirm →] │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ 需求完整度  ████████░░ 72 分   目标 ✓ 范围 ✓ 验收 ⚠ 依赖 ✗ 风险 ⚠ 技术 ✓ │
+│ Completeness ████████░░ 72   Goal ✓ Scope ✓ Accept ⚠ Deps ✗ Risk ⚠ Tech ✓ │
 ├──────────────────────────────┬────────────────────────────────────────────┤
-│ 📄 原始输入          [编辑]   │ 🤖 AI 结构化结果        由 Project Agent 生成│
+│ 📄 Original input    [Edit]  │ 🤖 AI structured result  by Project Agent  │
 │ ┌──────────────────────────┐ │ ┌────────────────────────────────────────┐ │
-│ │ 现在用户查订单要等好几秒， │ │ │ 标题                            [编辑] │ │
-│ │ 客服天天投诉。想优化一下， │ │ │ 订单查询性能优化与多条件搜索           │ │
-│ │ 最好能支持按手机号、订单号、│ │ ├────────────────────────────────────────┤ │
-│ │ 时间段搜。另外老板要求这周 │ │ │ 业务背景                              │ │
-│ │ 五前上线。                │ │ │ 订单查询响应慢导致客服投诉集中…        │ │
-│ │                          │ │ │ 来源：原文第 1 句 + 客服投诉汇总.xlsx  │ │
-│ │ 📎 客服投诉汇总.xlsx      │ │ ├────────────────────────────────────────┤ │
-│ │ 📎 产品会议纪要 0803.md   │ │ │ 用户问题 / 业务目标 / 用户故事         │ │
-│ └──────────────────────────┘ │ │ 功能范围（3 项）                       │ │
-│                              │ │ 非功能要求（P95 < 500ms…）            │ │
-│ 💡 AI 引用的上下文            │ │ ├────────────────────────────────────────┤ │
-│ · 项目知识：订单表结构说明     │ │ │ 验收标准                        ⚠ 不完整│ │
-│ · 历史需求：#28 搜索优化      │ │ │ ☑ 三种条件均可查询                    │ │
-│ · 代码仓库：order-service    │ │ │ ☑ P95 响应 < 500ms                   │ │
-│                              │ │ │ ☐ ——缺少数据量级与并发前提            │ │
-│                              │ │ ├────────────────────────────────────────┤ │
-│                              │ │ │ 潜在风险（2）· 依赖关系（未识别）      │ │
-│                              │ │ └────────────────────────────────────────┘ │
+│ │ Order lookups take a few │ │ │ Title                           [Edit] │ │
+│ │ seconds now and support  │ │ │ Order lookup performance with multi-   │ │
+│ │ complains every day. We  │ │ │ field search                           │ │
+│ │ want search by phone,    │ │ ├────────────────────────────────────────┤ │
+│ │ order no., date range.   │ │ │ Business context                       │ │
+│ │ Boss wants it by Friday. │ │ │ Slow order lookups drive complaints…   │ │
+│ │                          │ │ │ Source: sentence 1 + complaints.xlsx   │ │
+│ │ 📎 complaints.xlsx       │ │ ├────────────────────────────────────────┤ │
+│ │ 📎 product-mtg-0803.md   │ │ │ User problem / Goal / User stories     │ │
+│ └──────────────────────────┘ │ │ Functional scope (3 items)             │ │
+│                              │ │ Non-functional (P95 < 500ms…)          │ │
+│ 💡 Context the AI cited      │ ├────────────────────────────────────────┤ │
+│ · Knowledge: orders schema   │ │ Acceptance criteria       ⚠ incomplete │ │
+│ · Past req: #28 search opt   │ │ ☑ All three filters queryable          │ │
+│ · Repo: order-service        │ │ ☑ P95 response < 500ms                 │ │
+│                              │ │ ☐ — missing data volume / concurrency  │ │
+│                              │ ├────────────────────────────────────────┤ │
+│                              │ │ Potential risks (2) · Dependencies (—) │ │
+│                              │ └────────────────────────────────────────┘ │
 ├──────────────────────────────┴────────────────────────────────────────────┤
-│ ❓ 需要澄清（5）        [必须我确认 3] [可用默认 1] [已自动解决 1]          │
+│ ❓ Needs clarification (5)   [Must confirm 3] [Default 1] [Auto-solved 1] │
 │ ┌───────────────────────────────────────────────────────────────────────┐ │
-│ │ 🔴 必须确认  Q1. "时间段搜索"的最大跨度是多少？                        │ │
-│ │    影响：决定是否需要分库分表改造，可能影响 3 天工期                    │ │
-│ │    Agent 倾向：最长 3 个月（依据：现有报表模块同类限制）                │ │
+│ │ 🔴 Must confirm  Q1. What is the maximum span of a date-range search? │ │
+│ │    Impact: decides whether we need sharding; up to 3 days of work     │ │
+│ │    Agent leans: 3 months (same cap as the reporting module)           │ │
 │ │    ┌─────────────────────────────────────────────────────┐            │ │
-│ │    │ [采纳倾向] [7 天] [1 个月] [3 个月] [不限]  或输入…   │            │ │
+│ │    │ [Use suggestion] [7d] [1mo] [3mo] [Any]  or type…   │            │ │
 │ │    └─────────────────────────────────────────────────────┘            │ │
 │ ├───────────────────────────────────────────────────────────────────────┤ │
-│ │ 🔴 必须确认  Q2. "周五上线"指生产环境全量，还是灰度？                   │ │
-│ │ 🔴 必须确认  Q3. 是否需要保留旧查询接口做兼容？                        │ │
+│ │ 🔴 Must confirm  Q2. Does "live Friday" mean full rollout or canary?  │ │
+│ │ 🔴 Must confirm  Q3. Do we keep the old query API for compatibility?  │ │
 │ ├───────────────────────────────────────────────────────────────────────┤ │
-│ │ 🟡 可用默认  Q4. 搜索结果分页大小？ → 将采用 20 条/页（组织默认）      │ │
-│ │              [接受默认] [我来定]                                       │ │
+│ │ 🟡 Default OK    Q4. Search page size? → 20/page (org default)        │ │
+│ │                  [Accept default] [I will decide]                     │ │
 │ ├───────────────────────────────────────────────────────────────────────┤ │
-│ │ 🟢 已解决    Q5. 订单表当前数据量？ → 4200 万行（来自项目知识库）      │ │
+│ │ 🟢 Solved        Q5. Current order table size? → 42M rows (from KB)   │ │
 │ └───────────────────────────────────────────────────────────────────────┘ │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ 📌 已记录假设（2）  · 不涉及历史数据迁移  · 搜索仅覆盖近 2 年订单   [修改] │
+│ 📌 Recorded assumptions (2)  · No data migration  · Last 2 years   [Edit] │
 ├───────────────────────────────────────────────────────────────────────────┤
-│  [驳回] [暂缓] [委派他人确认]        [重新分析 ~$0.09]   [确认需求 →]      │
+│ [Reject] [Hold] [Delegate]   [Re-analyze ~$0.09]  [Confirm requirement →] │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Region by Region
 
-### 5.1 录入方式（文档 8.2.1）
+### 5.1 Intake methods (product doc 8.2.1)
 
-| 方式 | 交互 | MVP |
+| Method | Interaction | MVP |
 | --- | --- | --- |
-| 直接描述 | 大文本框 + 附件 | ✅ |
-| 对话 | 聊天式多轮，Agent 边问边补 | ✅ |
-| 上传文档 | PRD / 会议纪要 / 邮件，解析后进结构化 | ✅ |
-| 外部导入 | Jira / Plane 单条或批量 | ✅（依赖 `14 集成设置`） |
-| API / Webhook | 无界面，落到需求列表待确认 | ✅ |
-| 客户反馈导入 | — | Post-MVP |
+| Describe it directly | Large text box + attachments | ✅ |
+| Conversation | Chat-style and multi-turn; the Agent asks as it goes | ✅ |
+| Upload a document | PRD / meeting notes / email, parsed into the structured form | ✅ |
+| External import | Jira / Plane, one at a time or in bulk | ✅ (depends on `14 Integration Settings`) |
+| API / webhook | No UI; lands in the requirement list awaiting confirmation | ✅ |
+| Customer feedback import | — | Post-MVP |
 
-**对话模式**与表单模式共享同一个需求对象，可随时切换：对话产生的结论实时写入右侧结构化面板。这点很重要——用户不该在"聊天"和"填表"之间二选一。
+**Conversation mode** and form mode share the same requirement object and can be switched between at any moment: conclusions reached in conversation are written into the structured panel on the right as they happen. This matters — the user should not have to choose between "chatting" and "filling in a form."
 
-### 5.2 完整度评分（文档 8.2.3）
+### 5.2 Completeness score (product doc 8.2.3)
 
-六个维度：目标、范围、验收标准、依赖、风险、技术上下文。每项 ✓ / ⚠ / ✗。
+Six dimensions: goal, scope, acceptance criteria, dependencies, risks, technical context. Each one ✓ / ⚠ / ✗.
 
-- **总分不是门槛**，不阻止用户确认低分需求，但 < 60 分时确认按钮旁提示「完整度较低，Agent 可能产生较多返工」
-- 点击任一维度，右侧面板滚动并高亮对应区块
-- 分数变化实时（用户回答澄清问题后立即回升），给予正反馈
+- **The total is not a gate.** It does not stop anyone from confirming a low-scoring requirement, but below 60 a note next to the confirm button reads "completeness is low; expect the Agent to produce more rework"
+- Click any dimension and the right-hand panel scrolls to the matching block and highlights it
+- The score updates live — it climbs the moment a clarifying question is answered, which is the positive feedback
 
-### 5.3 原始输入区
+### 5.3 Original input region
 
-**永远保留原文，且可编辑后重新分析。** 用户必须能验证 AI 没有曲解自己的意思。
+**The original text is kept forever, and can be edited and re-analyzed.** The user has to be able to check that the AI did not distort what they meant.
 
-AI 结构化结果的每个字段都标注**溯源**（来自原文第几句 / 哪个附件 / 哪条知识）。悬停时原文对应片段高亮——这是建立信任的关键交互。
+Every field of the AI's structured result is annotated with its **provenance** (which sentence of the original, which attachment, which piece of knowledge). Hovering highlights the matching span in the original text — this is the interaction that builds trust.
 
-### 5.4 结构化需求：AI 与人工两条路（文档 8.2.2）
+### 5.4 Structured requirement: two paths, AI and by hand (product doc 8.2.2)
 
-字段：标题、业务背景、用户问题、业务目标、用户故事、功能范围、非功能要求、验收标准、潜在风险、依赖关系、需澄清问题。
+Fields: title, business context, user problem, business goal, user stories, functional scope, non-functional requirements, acceptance criteria, potential risks, dependencies, open questions.
 
-**两个来源地位相同**：AI 分析、人工填写。空需求上两个入口并排给出（「让 AI 分析」/「自己填写」），
-需求列表新建时也是两个按钮——把人工那条做成小字兜底的话，用户只会在 AI 失败之后才发现它，
-而那时他已经等过一轮超时了。没配规划 Agent 的部署里，人工是**唯一**能走通的那条。
+**The two sources rank equally**: AI analysis, and filling it in by hand. An empty requirement offers both entrances side by side ("Let the AI analyze it" / "Fill it in myself"),
+and New on the requirement list is likewise two buttons — make the manual path a small-print fallback and users only discover it after the AI has failed,
+by which point they have already sat through one timeout. In a deployment with no planning Agent configured, by hand is the **only** path that works at all.
 
-每个字段：
-- 可编辑（当前实现是整块表单一次提交，不是逐字段内联），改过之后标记 `👤 人工`，未改的标 `🤖 AI`
-- 不完整的字段标 ⚠ 并说明缺什么
-- 验收标准以复选清单呈现——它后续会成为 Review 阶段的自动校验依据（文档 8.10.1），必须结构化而非自由文本。
-  人工写的标准与 AI 产出**同形**（补齐 id / status / verification），否则它在 Review 阶段永远不会被核验；
-  核验方式由人指定，默认「人工核验」——平台没有依据认定一条手写文本能被自动核验
+Every field:
+- Editable (today the whole form submits at once; there is no per-field inline editing). Once edited, a field is marked `👤 Human`; untouched fields stay `🤖 AI`
+- Incomplete fields carry a ⚠ and a note about what is missing
+- Acceptance criteria render as a checklist — they later become the basis for automatic verification in the Review phase (product doc 8.10.1), so they have to be structured, not free text.
+  Hand-written criteria take the **same shape** as AI output (id / status / verification filled in), or they will never be checked in Review;
+  the verification method is chosen by a person and defaults to "manual" — the platform has no grounds for deciding that a line of hand-typed text can be verified automatically
 
-**确认闸门只看内容，不看来源**：有标题、业务目标或验收标准三者之一即可确认（一张白纸会被拒，
-报错同时给出 AI 与人工两条出路）。按「分析过没有」设闸门，等于把人工那条路堵死在最后一步。
+**The confirmation gate looks at content, not at provenance**: any one of title, business goal, or acceptance criteria is enough to confirm (a blank page is refused,
+and the error offers both the AI and the manual way out). Gating on "has this been analyzed" walls off the manual path at the very last step.
 
-**谁来写这份 PRD，可以逐条需求指定**。结构化面板上方一个下拉框，候选是**本项目的 Agent 成员**——
-全体，不按适用类型筛（与项目设置里绑定规划 Agent 同一条判据）。不选就沿用项目绑定的规划 Agent
-—— 既有需求的行为一点不变。
+**Who writes this PRD can be chosen per requirement.** A dropdown above the structured panel lists **this project's Agent members** —
+all of them, not filtered by applicable type (the same criterion as binding a planning Agent in project settings). Leave it unset and the project's bound planning Agent is used
+— behavior for existing requirements does not change at all.
 
-**适用类型（`applicableTypes`）不是门槛**。它回答的是「派工作项时能不能派给它」，而写 PRD 压根
-不派工作项 —— 这会儿工作项还不存在，那正是 `agent_runs.work_item_id` 被放开成可空的原因。曾经
-拿它当门槛，后果是一个配了整队 Agent 的项目，能写 PRD 的却是零个，而界面上只有一个空下拉框，
-不会解释「去 Agent 配置里勾一个你不知道有什么用的复选框」。写得好不好是人看过产出之后换一个的
-事，不该由一个建号时随手勾的复选框提前替他决定。这个类型现在只在**自动挑选**时排先后：勾过的
-排在前面（那是有人明确表达过的意图），没勾过的照样能被挑中。
+**Applicable type (`applicableTypes`) is not a gate.** It answers "can a work item be dispatched to this Agent," and writing a PRD dispatches no work item at all —
+no work item exists yet, which is exactly why `agent_runs.work_item_id` was widened to nullable. Back when it was used as a gate, the result was a project with a full
+roster of Agents and zero of them able to write a PRD, with nothing on screen but an empty dropdown that could not explain "go tick a checkbox in Agent settings whose
+purpose you don't know." Whether an Agent writes well is something a person decides after reading its output and swapping it out — not something a checkbox ticked
+offhand at signup gets to decide in advance. The type now only sets the ordering for **automatic selection**: Agents that declare it sort first (someone stated that
+intent explicitly), and the ones that don't are still eligible.
 
-**能不能写 PRD 的判据只有一条：是不是这个项目的 Agent 成员**。停用的 Agent 也选得上 —— 界面上
-说清「下一次分析会失败」，因为停用多半是临时的，而这个选择要活到下一次分析。
+**There is exactly one criterion for writing a PRD: is this an Agent member of this project.** A disabled Agent can still be selected — the UI says plainly
+that the next analysis will fail, because disabling is usually temporary and this choice has to survive until the next analysis.
 
-选择记在需求上（`requirements.author_agent_id`），不是记在某一次分析上：选完之后离开页面、
-过两天回来点「重新分析」，那个选择还得在。否则「选了 Agent 由它来写」就只是「这一次碰巧用了它」，
-下一次又悄悄换回项目绑定的那个，而界面上没有任何迹象。
+The choice is stored on the requirement (`requirements.author_agent_id`), not on one particular analysis: pick an Agent, leave the page,
+come back two days later and hit "Re-analyze," and the choice has to still be there. Otherwise "I picked an Agent to write it" only ever meant "that one happened to be used this once,"
+and the next run quietly reverts to the project's bound Agent with no sign of it anywhere on screen.
 
-三条配套的纪律，缺一条这个下拉框就会变成摆设：
+Three disciplines go with the dropdown; drop any one and it becomes decoration:
 
-- **点名之后绝不换人**。被点名的 Agent 不可用（停用、被移出项目、运行时未注册）时，这次分析
-  如实回退到规则占位，原因写进 `analysisModel` 并显示在结果标题旁 —— 哪怕旁边就摆着一个完全
-  可用的备选，也不拿它顶上。项目绑定退到备选是「系统替你兜底」，点名之后换人是「系统否决了
-  你的选择还不告诉你」。
-- **成员校验是授权，不是体验**。规划 Run 会把项目资源只读挂进 Agent 的工作区，所以非本项目成员
-  的 Agent 一律拒掉 —— 在保存这一刻拒，不是等到分析白跑一次。
-- **已经选中、但如今不在候选里的那个照旧显示**，并说明下一次分析会失败。让它显示成「未指定」
-  是最坏的处理：库里明明还指着它。
+- **Once named, never substituted.** When the named Agent is unavailable (disabled, removed from the project, runtime not registered), that analysis falls back
+  honestly to the rule-based placeholder, with the reason written into `analysisModel` and shown next to the result heading — even with a perfectly usable
+  alternative sitting right there, it is not swapped in. The project binding falling back to an alternative is "the system covering for you"; substituting after
+  you named someone is "the system overruled your choice and didn't tell you."
+- **The membership check is authorization, not polish.** A planning Run mounts the project's resources read-only into the Agent's workspace, so an Agent that is not
+  a member of this project is refused outright — refused at the moment of saving, not after an analysis has already been wasted.
+- **An Agent already selected but no longer among the candidates still shows**, with a note that the next analysis will fail. Rendering it as "unset"
+  is the worst possible handling: the database still points straight at it.
 
-「历次分析」列表同步显示每次 Run 是**哪个 Agent** 跑的 —— 只显示模型的话，换了编写 Agent 前后
-两行看起来一模一样，那个选择等于没有反馈。
+The "Past analyses" list also shows **which Agent** ran each one — show only the model and the rows on either side of an author-Agent change look identical,
+which makes that choice feedback-free.
 
-**产出不合格时先给一次修正轮，而不是直接回退。** Agent 写回来的 JSON 过不了校验时（枚举值拼错、
-少一个字段、依赖指向不存在的任务），平台把校验器报的那几句原话连同上一版产物一起递回去，
-让**同一个** Agent 再跑一轮。两轮都不合格才回退到规则占位，回退原因里写明「重试过仍不合格」。
+**When output fails validation, give it one correction round rather than falling back immediately.** When the JSON an Agent writes back does not validate (a misspelled enum value,
+a missing field, a dependency pointing at a task that does not exist), the platform hands the validator's own error lines back along with the previous artifact
+and lets the **same** Agent run again. Only after two failed rounds does it fall back to the rule-based placeholder, and the fallback reason says "retried and still invalid."
 
-理由是这类错误几乎全是**格式**错误而不是理解错误：一份分析对了、只是把 `type` 写成了一个不存在的
-枚举值的 PRD，扔掉它等于把产品里最贵的那次调用整场作废，用户拿回一份与需求无关的通用模板。
-两轮的取舍也写在这里：第二轮拿着报错去改还改不对的，多半不是「再看一遍就会了」的那种错，
-而每多一轮用户就多等一次完整的 Agent 执行。
+The reason is that these errors are almost always **format** errors rather than comprehension errors: a PRD whose analysis is correct and whose only fault is a `type` set to
+an enum value that does not exist — throwing it away writes off the most expensive call in the product and hands the user back a generic template unrelated to their requirement.
+The two-round tradeoff belongs here too: a second round that has the error message in hand and still gets it wrong is usually not the "one more look and it'll click" kind of error,
+and every extra round costs the user another full Agent execution of waiting.
 
-配套的三条：**不换人**（换 Agent 就拿不到上一轮的产物，而修正轮的全部价值是「照着上一版改」）、
-**每轮一条独立的 Run 记录**（合并成一条的话「第一轮为什么废了」会被第二轮覆盖，而那正是事后
-唯一能看出「这个 Agent 老是写错枚举」的地方）、**成本按轮累计**（废掉的那一轮照样花了钱）。
+Three things go with it: **no substitution** (switching Agents loses the previous artifact, and the whole value of a correction round is "fix the last version"),
+**one independent Run record per round** (merge them into one and "why did round one fail" gets overwritten by round two — which is the only place anyone can ever see
+afterward that this Agent keeps botching enums), and **cost accrues per round** (the discarded round was paid for all the same).
 
-值得重试的只有「产出不合格」这一类。挑不到 Agent、运行时拒收、超时、压根没写出产物文件 ——
-同一个 Agent 再跑一次是同样的结果，重试它们只是把用户的等待时间翻倍。
+"Invalid output" is the only class worth retrying. No Agent could be picked, the runtime refused it, it timed out, it never wrote an artifact file at all —
+the same Agent run again produces the same result, and retrying those only doubles the user's wait.
 
-需求确认或驳回之后不再能换编写者（`409 INVALID_TRANSITION`）：那两个状态下分析入口本就关着，
-留一个能改的下拉框只会让人以为「改完再点重新分析就行」。
+The author can no longer be changed once a requirement is confirmed or rejected (`409 INVALID_TRANSITION`): in those two states the analysis entrance is closed anyway,
+and leaving an editable dropdown behind only suggests "change it and hit Re-analyze."
 
-**重新分析不覆盖人改过的字段**（§9 的并发要求）：判据是字段溯源里的 `source: 'human'`，
-被保住的字段会在分析后明确列出来——不说的话，用户会以为「分析漏了这几项」，
-而真相是平台在替他护着自己写的那几句。想让 AI 重写其中一项，把它改回空白再分析。
+**Re-analysis does not overwrite fields a human edited** (the concurrency requirement in §9): the criterion is `source: 'human'` in the field's provenance,
+and the preserved fields are listed explicitly after the analysis — say nothing and the user concludes "the analysis missed these,"
+when the truth is that the platform was protecting the sentences they wrote themselves. To have the AI rewrite one of them, clear it back to blank and analyze again.
 
-### 5.5 澄清问题（文档 8.2.4）
+### 5.5 Clarifying questions (product doc 8.2.4)
 
-按影响程度分四类，用颜色和排序强制区分：
+Four classes by impact, forced apart by color and by ordering:
 
-| 类别 | 标识 | 处理 |
+| Class | Marker | Handling |
 | --- | --- | --- |
-| 必须由人类确认 | 🔴 | 阻断式：未回答则确认按钮置灰 |
-| 可根据默认规则处理 | 🟡 | 一键接受默认，或自己填 |
-| 可记录假设后继续 | 🔵 | 自动记入"已记录假设"，可修改 |
-| 可自动从知识库解决 | 🟢 | 折叠展示，标注来源，供核对 |
+| Must be confirmed by a human | 🔴 | Blocking: the confirm button stays grayed out until it is answered |
+| Can be handled by a default rule | 🟡 | Accept the default in one click, or fill it in yourself |
+| Can be recorded as an assumption and moved past | 🔵 | Automatically added to "Recorded assumptions"; editable |
+| Can be resolved automatically from the knowledge base | 🟢 | Shown collapsed, with its source, for checking |
 
-每个 🔴 问题必须包含：
-- **问题本身**
-- **影响**（不回答会怎样，量化到工期或范围）
-- **Agent 倾向 + 依据**（不能只提问不给建议）
-- **快捷选项**（多数问题应能一键选，避免打字）
+Every 🔴 question must carry:
+- **the question itself**
+- **the impact** (what happens if you don't answer, quantified in schedule or scope)
+- **the Agent's leaning, plus its basis** (never ask without proposing)
+- **shortcut options** (most questions should take one click, not typing)
 
-**这是本页最重要的设计**：如果澄清问题让用户觉得"AI 在考我"，产品就失败了。每个问题都要让用户觉得"它已经想好了，只是需要我拍个板"。
+**This is the most important design on the page**: if the clarifying questions make the user feel the AI is quizzing them, the product has failed. Every question should read as "it has already thought this through and just needs me to make the call."
 
-### 5.6 已记录假设
+### 5.6 Recorded assumptions
 
-对应 `Requirement.confirmed_assumptions`。这些假设会传递给 Project Agent 和后续所有执行 Agent，因此必须可见、可修改。
+Maps to `Requirement.confirmed_assumptions`. These assumptions are passed on to the Project Agent and to every execution Agent downstream, so they have to be visible and editable.
 
-假设在后续被证伪时（执行阶段发现冲突），系统会回溯到本页并生成一条决策——这也是文档 8.8.4「发现需求冲突」触发人类介入的场景。
+When an assumption is later falsified — execution turns up a conflict — the system traces back to this page and generates a decision. This is also the "requirement conflict found" trigger for human involvement in product doc 8.8.4.
 
-### 5.7 底部操作（Human Gate，文档 8.2.5）
+### 5.7 Bottom actions (the Human Gate, product doc 8.2.5)
 
-| 操作 | 行为 |
+| Action | Behavior |
 | --- | --- |
-| 确认需求 | 状态 → `approved`，触发 Project Agent 规划，跳 `04` |
-| 修改后批准 | 即"编辑 + 确认"，无需独立按钮 |
-| 要求重新分析 | 用户补充说明后重跑，显示成本预估 |
-| 驳回 | 需填原因，状态 → `rejected`，通知提出人 |
-| 暂缓 | 状态 → `on_hold`，可设提醒时间 |
-| 委派他人确认 | 生成 Decision 指派给他人，本人可跟踪 |
+| Confirm the requirement | Status → `approved`, triggers Project Agent planning, jumps to `04` |
+| Approve with edits | Just "edit + confirm"; no separate button needed |
+| Request re-analysis | The user adds detail and it runs again, with a cost estimate shown |
+| Reject | Reason required; status → `rejected`; the submitter is notified |
+| Hold | Status → `on_hold`; a reminder time can be set |
+| Delegate the confirmation | Creates a Decision assigned to someone else, which you can track |
 
-确认前弹出简短确认框，说明**接下来会发生什么**：
-
-```
-确认后，Project Agent 将：
-· 拆解任务并生成执行计划（预计 2–4 分钟，~$0.35）
-· 计划生成后需要你或张伟批准才会开始执行
-
-☑ 计划生成后通知我
-
-              [返回修改]  [确认]
-```
-
----
-
-## 6. 核心交互流程
-
-**主流程**
+A short dialog before confirming spells out **what happens next**:
 
 ```
-录入原文 → [开始分析]（20–60s，显示 Agent 正在做什么）
-        → 结构化结果 + 澄清问题
-        → 回答 3 个必答问题（多数一键选）
-        → 完整度 72 → 91
-        → [确认需求] → 04 计划确认
-```
+After you confirm, the Project Agent will:
+· Break the work down and generate an execution plan (est. 2–4 min, ~$0.35)
+· Once the plan exists, you or Zhang Wei must approve it before execution starts
 
-**对话式录入**
+☑ Notify me when the plan is ready
 
-```
-用户："想优化订单查询"
-Agent："了解。目前查询慢主要出现在哪个场景？（1）列表页 （2）搜索 （3）详情页"
-用户："搜索"
-Agent："明白。补充两个信息就能开始：预期响应时间？需要支持哪些搜索条件？"
-      ↑ 右侧结构化面板同步生长
-```
-
-**外部导入的需求**
-
-```
-Jira 同步进来 → 需求列表出现"待确认"标记 → 进入本页
-→ 原始输入区显示 Jira 原文与字段映射
-→ 与本地编辑冲突时按 Source of Truth 设置处理（见 14 集成设置）
+              [Back to edit]  [Confirm]
 ```
 
 ---
 
-## 7. 状态设计
+## 6. Core Interaction Flows
 
-| 状态 | 处理 |
+**Main flow**
+
+```
+Enter the original text → [Start analysis] (20–60s, showing what the Agent is doing)
+                        → structured result + clarifying questions
+                        → answer the 3 required questions (mostly one click each)
+                        → completeness 72 → 91
+                        → [Confirm the requirement] → 04 Plan Approval
+```
+
+**Conversational intake**
+
+```
+User:  "I want to speed up order lookups"
+Agent: "Got it. Where does the slowness show up most? (1) list page (2) search (3) detail page"
+User:  "Search"
+Agent: "Understood. Two more things and we can start: what response time do you expect? Which search filters do you need?"
+       ↑ the structured panel on the right grows in step
+```
+
+**Requirements imported from outside**
+
+```
+Synced in from Jira → an "awaiting confirmation" badge appears in the requirement list → open this page
+→ the original-input region shows the Jira source text and the field mapping
+→ conflicts with local edits are handled per the Source of Truth setting (see 14 Integration Settings)
+```
+
+---
+
+## 7. State Design
+
+| State | Handling |
 | --- | --- |
-| AI 分析中 | 右侧区域逐字段流式填充，显示当前步骤（「正在检索项目知识库…」「正在生成验收标准…」），可取消 |
-| 分析失败 | 保留原文，显示失败原因 + 重试；不清空用户输入 |
-| 分析超时（> 3min） | 提示「分析耗时异常」+ [继续等待] [取消并转人工填写] |
-| 已确认（只读） | 全字段只读，头部显示确认人与时间，提供 [重新打开]（需 `pm`，记入 Event） |
-| 已被他人确认 | 实时提示「李娜已于 2 分钟前确认此需求」并切换只读 |
-| 长文档解析中 | 附件旁显示解析进度，不阻塞主文本录入 |
+| AI analyzing | The right-hand region fills field by field as it streams, showing the current step ("Searching the project knowledge base…", "Generating acceptance criteria…"); cancelable |
+| Analysis failed | Keep the original text, show the reason plus a retry; never clear what the user typed |
+| Analysis timed out (> 3 min) | "This analysis is taking unusually long" + [Keep waiting] [Cancel and fill it in by hand] |
+| Confirmed (read-only) | Every field read-only, the header shows who confirmed it and when, with [Reopen] (requires `pm`, recorded as an Event) |
+| Confirmed by someone else | Live notice — "Li Na confirmed this requirement 2 minutes ago" — and the page switches to read-only |
+| Long document being parsed | Parsing progress shown next to the attachment; does not block typing in the main text box |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 录入需求 | 项目成员 |
-| 编辑结构化字段 | 项目成员（确认前） |
-| 回答澄清问题 | 项目成员 |
-| **确认需求** | `sponsor` / `pm`（Human Gate 责任人，文档 8.7.5 业务范围 → 产品负责人） |
-| 驳回 | `sponsor` / `pm` |
-| 重新打开已确认需求 | `pm` 及以上，记审计 |
+| Enter a requirement | Project member |
+| Edit structured fields | Project member (before confirmation) |
+| Answer clarifying questions | Project member |
+| **Confirm the requirement** | `sponsor` / `pm` (the Human Gate owner; product doc 8.7.5, business scope → product owner) |
+| Reject | `sponsor` / `pm` |
+| Reopen a confirmed requirement | `pm` or above, audited |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Requirement`（全字段）、`Event`、`Artifact`（附件）、Knowledge（引用上下文）、`Decision`（委派确认时）
+**Domain objects**: `Requirement` (all fields), `Event`, `Artifact` (attachments), Knowledge (cited context), `Decision` (when the confirmation is delegated)
 
-**接口**
+**Endpoints**
 
 ```
-POST /api/projects/{id}/requirements                    创建草稿
-PUT  /api/requirements/{id}/author-agent                { agentId }，null = 回到项目绑定
-POST /api/requirements/{id}/analyze                     触发结构化，SSE 流式返回
+POST /api/projects/{id}/requirements                    create a draft
+PUT  /api/requirements/{id}/author-agent                { agentId }, null = back to the project binding
+POST /api/requirements/{id}/analyze                     trigger structuring, streamed back over SSE
      → event: field_updated { field, value, sources[] }
      → event: question_added { id, level, question, impact, suggestion, options[] }
      → event: score_updated { total, dimensions{} }
 POST /api/requirements/{id}/questions/{qid}/answer      { answer, accept_default? }
-PATCH /api/requirements/{id}                            人工编辑字段
-POST /api/requirements/{id}/approve                     { note? } → 触发 Plan 生成
-POST /api/requirements/{id}/reject                      { reason }（必填）
+PATCH /api/requirements/{id}                            manual field edits
+POST /api/requirements/{id}/approve                     { note? } → triggers Plan generation
+POST /api/requirements/{id}/reject                      { reason } (required)
 POST /api/requirements/{id}/delegate                    { assignee_id, due_at }
 ```
 
-**并发**：人类编辑过的字段不被 AI 重新分析覆盖（已实现，判据是字段溯源 `source: 'human'`，
-分析结果会回报保住了哪些字段）。字段级乐观锁与「冲突时提示差异由用户选择」尚未实现——
-当前是整块表单提交，同一条需求多人同时编辑时后写的赢。
+**Concurrency**: fields a human edited are not overwritten by re-analysis (implemented; the criterion is the field provenance `source: 'human'`,
+and the analysis result reports back which fields it preserved). Field-level optimistic locking and "show the difference on conflict and let the user choose" are not built yet —
+today the whole form submits at once, so when several people edit the same requirement the last write wins.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | What it tells us |
 | --- | --- |
-| `requirement_input_method{method}` | 四种录入方式的真实分布 |
-| `analysis_duration` / `analysis_cost` | 性能与成本基线 |
-| `question_answered{level, used_suggestion}` | **Agent 倾向的采纳率——衡量澄清质量的核心指标** |
-| `field_edited{field}` | 哪些字段 AI 总是写不好 |
-| `completeness_at_approval` | 用户实际在多少分时放行 |
-| `requirement_reopened` | 需求返工率（应尽量低） |
-| `time_to_approve` | 录入到确认的耗时（目标 < 5 分钟） |
+| `requirement_input_method{method}` | The real distribution across the four intake methods |
+| `analysis_duration` / `analysis_cost` | Performance and cost baselines |
+| `question_answered{level, used_suggestion}` | **Adoption rate of the Agent's leaning — the core measure of clarification quality** |
+| `field_edited{field}` | Which fields the AI consistently writes badly |
+| `completeness_at_approval` | The score at which users actually let things through |
+| `requirement_reopened` | Requirement rework rate (should stay as low as possible) |
+| `time_to_approve` | Time from intake to confirmation (target < 5 minutes) |
 
-**页面成功标准**：Agent 倾向采纳率 > 60%；确认后因需求理解错误导致的返工 < 10%。
+**Success criteria for this page**: adoption of the Agent's leaning > 60%; rework caused by a misunderstood requirement after confirmation < 10%.
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 输入过短（< 20 字） | 不阻止分析，但提示「描述较少，AI 会问更多问题」 |
-| 输入过长（> 20k 字） | 提示将分段处理，可能耗时较长并给出成本预估 |
-| 附件格式不支持 | 明确列出支持格式；不支持的仍可作为附件保留，只是不参与分析 |
-| 澄清问题超过 10 个 | 折叠为「必答 N 个」优先展示，其余收起——避免劝退 |
-| 用户全部跳过澄清直接确认 | 允许（低完整度警告），未答问题自动转为「已记录假设」并标注 `未经确认` |
-| AI 分析结果明显跑偏 | [反馈不准确] 收集案例；提供「清空重来」而非让用户逐字段改 |
-| 需求确认后原始需求在 Jira 被修改 | 生成一条「需求变更」决策，不自动覆盖已确认内容 |
-| 同一需求多人同时编辑 | 字段级锁 + 在线协作者头像提示 |
+| Input too short (< 20 characters) | Does not block analysis, but warns "short description; the AI will ask more questions" |
+| Input too long (> 20k characters) | Warns that it will be processed in segments, may take a while, and gives a cost estimate |
+| Unsupported attachment format | List the supported formats plainly; unsupported files can still be kept as attachments, they just do not feed the analysis |
+| More than 10 clarifying questions | Collapse to "N must-answer" shown first, the rest folded away — do not scare people off |
+| The user skips every clarification and confirms | Allowed (with the low-completeness warning); unanswered questions become "recorded assumptions" tagged `unconfirmed` |
+| The AI's analysis is clearly off the rails | [Report as inaccurate] collects the case; offer "clear and start over" rather than making the user fix it field by field |
+| The source requirement changes in Jira after confirmation | Generate a "requirement changed" decision; never silently overwrite confirmed content |
+| Several people editing the same requirement | Field-level locking plus avatars of whoever else is in the room |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. 完整度评分的六个维度权重需要定义；是否所有项目类型用同一套？研发类和调研类需求的"技术上下文"权重应当不同。
-2. 🔵「记录假设后继续」类问题是否需要在计划阶段再次向用户复述？倾向于在 `04 计划确认` 页顶部列出所有未经确认的假设。
-3. 对话模式与表单模式的数据同步在多轮长对话下如何保证不丢失？需要技术方案确认。
-4. 需求确认的责任人：文档 8.7.5 说业务范围变更归产品负责人，但小团队可能没有专职产品。是否允许项目创建者自定义该 Gate 的责任人？
+1. The weights of the six completeness dimensions still need to be defined; does every project type use the same set? "Technical context" should not weigh the same for an engineering requirement as for a research one.
+2. Should 🔵 "record the assumption and move on" questions be read back to the user again at the planning stage? Leaning toward listing every unconfirmed assumption at the top of `04 Plan Approval`.
+3. How is data kept in sync between conversation mode and form mode over a long multi-turn conversation without losing anything? Needs a technical design.
+4. Who owns requirement confirmation: product doc 8.7.5 says business-scope changes belong to the product owner, but a small team may have no dedicated product person. Should the project creator be allowed to configure who owns this Gate?

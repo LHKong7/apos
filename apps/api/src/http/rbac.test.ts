@@ -34,14 +34,16 @@ import { PERMISSIONS } from '@apos/domain';
 import { registerRoutes } from './routes';
 
 /**
- * RBAC 的服务端强制（docs/tech/09-security.md §2）。
+ * Server-side enforcement of RBAC (docs/tech/09-security.md §2) / RBAC 的服务端强制。
  *
- * ★ 这一组测试的对象是「拦不拦得住」，不是「功能通不通」。
- *   所以每个用例都用 {@link createMember} 造角色明确的人 ——
- *   夹具身份是组织管理员，拿它测「谁不能做什么」永远是绿的。
+ * ★ What these cases test is whether a request gets stopped, not whether a feature
+ *   works. That is why every case builds a person with an explicit role via
+ *   {@link createMember} — the fixture identity is an org admin, so testing "who
+ *   cannot do what" with it is green no matter what the code does.
  *
- * ★ 灰按钮不是权限。前端能不能点是另一回事，这里验的是
- *   直接打 API（或者用一个旧版本的前端）能不能绕过去。
+ * ★ A grayed-out button is not a permission. Whether the frontend lets you click is a
+ *   separate matter; what is verified here is whether hitting the API directly — or
+ *   with an older build of the frontend — gets around it.
  */
 
 const db = testDb();
@@ -80,16 +82,19 @@ async function makeRequirement(status = 'clarifying') {
     payload: { rawInput: '订单查询太慢' },
   });
   const id = res.json().requirement.id as string;
-  // 直接落状态，跳过澄清流程 —— 这一组测试关心的是谁能批，不是怎么走到能批
+  // Set the status directly and skip the clarification flow — this group cares about
+  // who may approve, not about how a requirement reaches an approvable state
   await db.execute(sql`update requirements set status = ${status} where id = ${id}`);
   return id;
 }
 
 describe('★★ 写路由必须登记权限，否则服务起不来', () => {
   /**
-   * 这条机制是整套 RBAC 里唯一「以后也不会漏」的保证：
-   * 权限矩阵没法从 URL 形状推出来，只能一条条登记 ——
-   * 那就让漏登记在启动时就炸，而不是等某天有人发现 viewer 能改自治等级。
+   * This mechanism is the only "and it will not be missed later either" guarantee in
+   * the whole RBAC system. The permission matrix cannot be derived from the shape of a
+   * URL; it has to be declared route by route — so a missing declaration is made to
+   * explode at startup, rather than surfacing the day somebody notices a viewer can
+   * change the autonomy level.
    */
   it('★ 没登记的写路由会让清点当场失败，并指名是哪一条', async () => {
     const probe = Fastify();
@@ -112,7 +117,7 @@ describe('★★ 写路由必须登记权限，否则服务起不来', () => {
     await probe.close();
   });
 
-  /** 真实的服务必须是清点通过的 —— 这条挂了说明有路由漏登记 */
+  /** The real app has to pass the census — a failure here means some route is undeclared */
   it('★ 现有全部路由都已登记或写明豁免', async () => {
     await expect(
       buildApp({
@@ -133,21 +138,21 @@ describe('★★ 写路由必须登记权限，否则服务起不来', () => {
 });
 
 /**
- * ★★ 「哪条路由要哪条权限」的对照表 —— 现在是**断言**，不是运行时的第二个真相。
+ * ★★ The "which route needs which permission" table — now an **assertion**, not a
+ *   second source of truth at runtime.
  *
- *   权限声明搬到了各条路由自己身上（`config.auth`），换来的是「加路由的人
- *   看得见它」。代价是这张全景图散掉了：抄错一条权限、把隔壁那条粘过来，
- *   在单个文件里都长得完全正常。
+ *   The declarations moved onto the routes themselves (`config.auth`), which buys
+ *   visibility for whoever adds a route. The price is that this overview scattered: a
+ *   permission typed wrong, or pasted in from the route next door, looks entirely
+ *   normal inside a single file.
  *
- *   所以对照表留在测试里，钉住搬家前后每一条的取值。它红了只有两种可能：
- *   有人改了某条路由的权限（那应该是一次明确的决定，连同这里一起改），
- *   或者搬家搬错了。
+ *   So the table stays here in the tests, pinning every value across the move. If it
+ *   goes red there are only two possibilities: somebody changed a route's permission
+ *   (which should be a deliberate decision, made here at the same time), or the move
+ *   was done wrong.
  *
- * The route-to-permission table, kept as an assertion rather than as runtime
- * state. Declarations now live on each route, which is what makes them visible
- * when you add one — but it scatters the overview, and a permission copied
- * from the neighboring route looks fine in isolation. This table pins every
- * value across the move.
+ *   权限声明搬到了各条路由自己身上，代价是全景图散掉了 —— 对照表留在测试里，
+ *   钉住每一条的取值。
  */
 const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'GET /api/v1/admin/capabilities': 'agent.view',
@@ -229,14 +234,15 @@ const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {
   'PUT /api/v1/projects/:id/agents/:agentId/access': 'agent.permissions.restrict',
   'PUT /api/v1/projects/:id/members/:memberId': 'project.members.manage',
   /**
-   * ★ 开关矩阵与「新建规则」同一档：路由表挡掉连收紧都不够格的人，
-   *   真正的方向判定在 savePolicy 里（§2.3 的不对称设计）。
-   *   给它一条更松的路径，等于把那套设计从后门绕过去。
+   * ★ The operation-switch matrix sits at the same level as "create a rule": the route
+   *   table turns away anyone not even qualified to tighten, and the real direction
+   *   judgment happens inside savePolicy (the asymmetric design in §2.3). Giving this
+   *   route a looser path is walking around that design through the back door.
    */
   'PUT /api/v1/projects/:id/policies/operation-switch': 'policy.tighten',
   'PUT /api/v1/requirements/:id/author-agent': 'requirement.edit',};
 
-/** 取决于请求内容的那几条，逐个单测（见下面「勾了 overrideGuards」那组） */
+/** The ones that depend on request content are tested individually (see the overrideGuards group below) */
 const DYNAMIC_ROUTES = new Set([
   'GET /api/v1/runs/:id/events',
   'PATCH /api/v1/work-items/:id/status',
@@ -262,17 +268,18 @@ describe('★★ 路由权限声明', () => {
   }
 
   /**
-   * ★★ 搬家不能改变任何一条路由要什么权限。
-   *   这是把集中表拆散那次改动的验收条件本身。
+   * ★★ The move must not have changed what any single route requires. This is the
+   *   acceptance criterion for the change that broke the central table apart.
    */
   it('每条路由声明的权限与对照表一致', async () => {
     const actual: Record<string, unknown> = {};
     for (const d of await declarations()) {
       const key = `${d.method} ${d.url}`;
       /**
-       * ★ Fastify 给每条 GET 自动配一条 HEAD。它继承同一份声明是**对的**
-       *   （HEAD 与 GET 该同档），只是对照表按显式注册的路由写的。
-       *   下面那条用例专门盯住这对孪生路由不会走散。
+       * ★ Fastify auto-registers a HEAD for every GET. Inheriting the same declaration
+       *   is **correct** (HEAD and GET belong at the same level); it is only that this
+       *   table is written against the explicitly registered routes. The case just
+       *   below watches that the twins never drift apart.
        */
       if (d.method === 'HEAD') continue;
       if (DYNAMIC_ROUTES.has(key)) continue;
@@ -285,8 +292,9 @@ describe('★★ 路由权限声明', () => {
   });
 
   /**
-   * ★★ HEAD 是 Fastify 自动配出来的，但它照样打到同一个 handler 上。
-   *   两者的声明一旦走散，就出现「HEAD 能读、GET 不能」这种没人会去试的口子。
+   * ★★ HEAD is generated by Fastify, but it still reaches the same handler. Let the
+   *   two declarations drift apart and you get a "HEAD can read it, GET cannot" hole —
+   *   exactly the kind nobody thinks to try.
    */
   it('自动生成的 HEAD 与对应的 GET 同一档权限', async () => {
     const all = await declarations();
@@ -299,7 +307,7 @@ describe('★★ 路由权限声明', () => {
     }
   });
 
-  /** ★ deferred 必须带理由：它是这套启动即失败机制唯一的绕过方式 */
+  /** ★ deferred must carry a reason: it is the only way around this fail-at-startup mechanism */
   it('deferred 的路由都写明了理由', async () => {
     const deferredOnes = (await declarations()).filter(
       (d) =>
@@ -314,7 +322,7 @@ describe('★★ 路由权限声明', () => {
     }
   });
 
-  /** ★ 声明里出现的权限名必须是目录里真有的 —— 敲错一个字母等于这条路由不设防 */
+  /** ★ Declared permission names must exist in the catalog — one typo leaves a route undefended */
   it('声明的权限名都在权限目录里', async () => {
     const known = new Set<string>(PERMISSIONS);
     for (const d of await declarations()) {
@@ -386,7 +394,7 @@ describe('§2.3 权限矩阵在服务端生效', () => {
     expect((await app.inject({ method: 'PATCH', url, headers: as(pm), payload })).statusCode).toBe(200);
   });
 
-  /** 「强制放行」绕过的是质量闸门，不能和「改状态」同一档 */
+  /** Force-through bypasses the quality gates; it cannot sit at the same level as "change status" */
   it('★ member 能改状态，但强制放行要 tech_lead', async () => {
     const member = await createMember(db, fx, { projectRole: 'member' });
     const item = await createWorkItem(db, fx, { status: 'reviewing' });
@@ -400,7 +408,7 @@ describe('§2.3 权限矩阵在服务端生效', () => {
     expect(forced.statusCode).toBe(403);
     expect(forced.json().error.message).toContain('强制放行');
 
-    // 同一个人不勾 overrideGuards 就不会被这一条挡住
+    // The same person, without ticking overrideGuards, is not stopped by this rule
     const plain = await app.inject({
       method: 'PATCH',
       url: `/api/v1/work-items/${item.id}/status`,
@@ -519,10 +527,12 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
   });
 
   /**
-   * ★★ 不给优先级也能建 —— 界面上已经不问这个数字了。
+   * ★★ A rule can be created without a priority — the UI no longer asks for that
+   *   number.
    *
-   *   接口如果仍然必填，表现是引导向导与规则编辑器一保存就 400，
-   *   而错误信息说的是一个用户根本没见过的字段。
+   *   If the endpoint still required it, the symptom would be the guided wizard and
+   *   the rule editor returning 400 the moment you save, with an error message naming
+   *   a field the user has never seen.
    */
   it('★ 不给优先级时由服务端往后追加', async () => {
     const lead = await createMember(db, fx, { projectRole: 'tech_lead' });
@@ -547,7 +557,7 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
     expect(res.json().policy.priority).toBe(AUTHORED_PRIORITY_MIN);
   });
 
-  /** 停用一条规则就是把治理拿掉 —— 与放宽同档，不能只按「改了个开关」算 */
+  /** Disabling a rule removes governance — it ranks as loosening, not as "flipped a toggle" */
   it('★ 停用规则算放宽，pm 停不了', async () => {
     const lead = await createMember(db, fx, { projectRole: 'tech_lead' });
     const pm = await createMember(db, fx, { projectRole: 'pm' });
@@ -570,8 +580,10 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
   });
 
   /**
-   * ★ 权限判定要在跑模拟之前：模拟会扫 90 天历史评估，
-   *   既贵，又会把「哪些历史任务会被自动放行」告诉不该看到的人。
+   * ★ Authorize before running the simulation: the simulation scans 90 days of
+   *   historical evaluations, which is both expensive and tells whoever asked which
+   *   past work items would have been auto-approved — information they may have no
+   *   business seeing.
    */
   it('★ 没资格放宽的人，连模拟都不该被跑起来', async () => {
     const pm = await createMember(db, fx, { projectRole: 'pm' });
@@ -585,7 +597,7 @@ describe('★★ Policy：收紧与放宽是两档权限', () => {
     });
 
     expect(res.statusCode).toBe(403);
-    // 没有留下任何痕迹：既没建规则，也没写事件
+    // Nothing was left behind: no rule created, no event written
     expect(await db.select().from(policies)).toHaveLength(before.length);
   });
 });
@@ -633,9 +645,11 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
   });
 
   /**
-   * ★ 硬拒绝优先级高于允许（§3.1）。从拒绝清单里拿掉一项是**放宽**，
-   *   哪怕上限一个字没动 —— 按「列表变短 = 收紧」的直觉判会判反，
-   *   而判反的后果正是「绝对不能合并代码」这条硬约束被 owner 自己撤掉。
+   * ★ A hard denial outranks an allowance (§3.1). Removing an entry from the deny list
+   *   is a **loosening**, even if the ceiling was not touched at all. The intuition
+   *   "shorter list = tighter" gets this exactly backwards, and getting it backwards
+   *   means an owner can revoke the hard constraint "must never merge code" on their
+   *   own authority.
    */
   it('★ 从硬拒绝里删一项算扩大权限，owner 做不到', async () => {
     const owner = await createMember(db, fx, { projectRole: 'member' });
@@ -651,9 +665,11 @@ describe('★ Agent 权限：扩大要 tech_lead，收紧 owner 就行', () => {
   });
 
   /**
-   * ★ Agent 没被显式登记进项目，但已经在里面跑过 —— 那它就是这个项目的。
-   *   只认显式登记的话，§2.3「扩大 Agent 权限需 tech_lead」会落空：
-   *   一个跑了三个月的 Agent 对项目负责人是「不属于任何项目」。
+   * ★ An Agent that was never explicitly enrolled in a project but has already run
+   *   inside it belongs to that project. Counting only explicit enrollment would void
+   *   §2.3 ("widening an Agent's permissions needs a tech_lead"): an Agent that has
+   *   been running for three months would read, to the project's lead, as "not a
+   *   member of any project".
    */
   it('★ tech_lead 扩得了在自己项目里跑过的 Agent 的权限', async () => {
     const owner = await createMember(db, fx, { projectRole: 'member' });
@@ -727,9 +743,10 @@ describe('★ 批量批准：权限按每条决策各自的项目判', () => {
   }
 
   /**
-   * ★★ 批量接口的 URL 里没有项目 id —— ②层闸门够不着它。
-   *   而无人认领的决策（assigneeId 为空）按产品口径照样进批量，
-   *   于是它对任何拿到 id 的人开放。这是绕过项目边界最省事的一条路。
+   * ★★ The batch endpoint has no project id in its URL, so the layer-② gate cannot
+   *   reach it. Unclaimed decisions (assigneeId is null) still enter the batch by
+   *   product design, which leaves them open to anyone who has an id. This is the
+   *   cheapest route around the project boundary there is.
    */
   it('★ 非成员批不动别的项目里无人认领的决策', async () => {
     const outsider = await createOutsider(db, fx);
@@ -743,7 +760,7 @@ describe('★ 批量批准：权限按每条决策各自的项目判', () => {
     });
 
     expect(res.json().approved).toBe(0);
-    // 不确认「这条决策存在」，与②层同一口径
+    // Do not confirm that the decision exists — same rule the layer-② gate follows
     expect(res.json().failed[0].error).toContain('没有访问权限');
 
     const [after] = await db.select().from(decisions).where(eq(decisions.id, d.id));
@@ -802,7 +819,7 @@ describe('成员与角色管理', () => {
     expect(ok.json().previousRole).toBe('member');
   });
 
-  /** §6.3：权限变更必须留痕，否则提权路径上最关键的一步查不到 */
+  /** §6.3: permission changes must leave a trace, or the key step of an escalation is unfindable */
   it('★ 角色变更写入审计事件', async () => {
     const target = await createMember(db, fx, { projectRole: 'member' });
     await app.inject({
@@ -823,10 +840,11 @@ describe('成员与角色管理', () => {
   });
 
   /**
-   * ★★ Agent 加入项目时可以不点角色，落到 executor。
+   * ★★ An Agent may join a project without a role being picked; it lands on executor.
    *
-   *   这一组测的是「默认发生在加入项目、而不是建 Agent」这条边界：
-   *   建 Agent 不该碰任何项目，加入项目才补最低档。
+   *   What this group pins down is the boundary "the default happens on joining a
+   *   project, not on creating the Agent": creating an Agent must touch no project at
+   *   all, and only joining one fills in the lowest level.
    */
   describe('Agent 加入项目的默认角色', () => {
     it('不给 role 的 Agent 进项目，拿到 executor', async () => {
@@ -844,11 +862,12 @@ describe('成员与角色管理', () => {
     });
 
     /**
-     * ★★ 这条比默认值本身更重要。
+     * ★★ This matters more than the default itself.
      *
-     *   「加入项目」和「改角色」是同一个端点，一次误点如果把管理员调过的
-     *   角色重置成 executor，降完之后它和「本来就是 executor」在界面上
-     *   完全一样 —— 没有人会发现自己被降权了。
+     *   "Join a project" and "change a role" are the same endpoint. If a stray click
+     *   reset a role an admin had adjusted back down to executor, the result would look
+     *   identical on screen to an Agent that was always an executor — nobody would ever
+     *   notice they had been demoted.
      */
     it('★ 已是成员的 Agent 再不给 role，角色不被覆盖', async () => {
       const agent = await seedAgent(db, fx, { registry, inProject: false });
@@ -892,11 +911,12 @@ describe('成员与角色管理', () => {
     });
 
     /**
-     * ★ 人没有安全的默认档：角色从业务负责人到只读都有，
-     *   替他默认任何一档都是替他做了一次授权决定。
+     * ★ There is no safe default level for a person: the roles run from business owner
+     *   to read-only, and picking any of them on their behalf is making an
+     *   authorization decision for them.
      */
     it('★ 人不给 role 一律拒绝，不套用 Agent 的默认档', async () => {
-      // projectRole: null = 本组织的人，但还不是这个项目的成员
+      // projectRole: null = in this organization, but not yet a member of this project
       const notYetMember = await createMember(db, fx, { projectRole: null });
 
       const res = await app.inject({
@@ -939,9 +959,9 @@ describe('成员与角色管理', () => {
     expect(res.json().error.message).toContain('本组织');
   });
 
-  /** 把自己锁在门外是权限系统最常见的自伤方式 */
+  /** Locking yourself out is the most common way people injure themselves with a permission system */
   it('★ 不能把项目里最后一位负责人降级', async () => {
-    // 夹具用户是唯一的 tech_lead
+    // The fixture user is the only tech_lead
     const res = await app.inject({
       method: 'PUT',
       url: `/api/v1/projects/${fx.projectId}/members/${fx.userId}`,
@@ -951,7 +971,7 @@ describe('成员与角色管理', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toContain('最后一位');
 
-    // 先立一个接班人就可以了
+    // Naming a successor first is all it takes
     const successor = await createMember(db, fx, { projectRole: 'pm' });
     expect(successor).toBeTruthy();
     const retry = await app.inject({
@@ -1018,7 +1038,7 @@ describe('权限清单（给前端灰按钮用）', () => {
     expect(body.projectRole).toBe('pm');
     expect(body.permissions['policy.tighten']).toBe(true);
     expect(body.permissions['policy.loosen']).toBe(false);
-    // 灰掉的按钮必须能说出为什么，否则用户会反复点它
+    // A grayed-out button has to be able to say why, or the user keeps clicking it
     expect(body.denyReasons['policy.loosen']).toContain('tech_lead');
   });
 

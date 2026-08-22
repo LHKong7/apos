@@ -1,294 +1,298 @@
-# 09 Agent Run 详情
+# 09 Agent Run Detail
 
-## 1. 页面信息
+*[中文版本 / Chinese version](09-agent-run-detail.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Field | Value |
 | --- | --- |
-| 路由 | `/runs/:runId`（独立页）<br>可在看板/详情页以侧栏打开 |
-| 层级 | 四级页面 |
-| 主要角色 | `member` / `tech_lead`（排障）；`agent_owner`（调优） |
-| 优先级 | P0 |
-| 对应产品文档 | 8.5.3 Agent Run、8.5.5 人工接管、6.9 Event、10.5 审计日志 |
+| Route | `/runs/:runId` (standalone page)<br>Can also open as a side drawer from the board or a detail page |
+| Level | Level-4 page |
+| Primary roles | `member` / `tech_lead` (troubleshooting); `agent_owner` (tuning) |
+| Priority | P0 |
+| Related product docs | 8.5.3 Agent Run, 8.5.5 Human takeover, 6.9 Event, 10.5 Audit log |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-一次 Agent 执行的**完整可回放记录**。这是产品"所有行为可追溯"理念（文档 3.2）的落点。
+A **complete, replayable record** of one agent execution. This is where the product's "every action is traceable" principle (doc 3.2) actually lands.
 
-要回答文档要求的全部问题：
+It has to answer every question the doc asks for:
 
-- 它接到的目标是什么？拿到了哪些上下文？
-- 它调用了哪些工具、做了什么？
-- 为什么失败？在哪一步失败的？
-- 花了多少 token、多少钱、多久？
-- 人类在什么时候介入了？
-- 最终产出了什么？
+- What goal was it handed? What context did it get?
+- Which tools did it call, and what did it do with them?
+- Why did it fail, and at which step?
+- How many tokens, how much money, how long?
+- When did a human step in?
+- What did it ultimately produce?
 
-**两类用户，两种深度**：项目负责人只想看懂"它做了什么、结果如何"；工程师需要看到原始请求与工具参数。页面必须同时服务两者，默认给前者，一键切换到后者。
+**Two kinds of readers, two depths**: a project lead only wants to understand "what did it do and how did it turn out"; an engineer needs the raw request and the tool arguments. The page has to serve both — default to the former, one click to the latter.
 
 ---
 
-## 3. 入口与出口
+## 3. Entry Points and Exits
 
-**入口**：Work Item 详情的 Run 记录；Agent Workspace 运行记录；看板卡片「看日志」；失败通知深链；审计日志。
+**Entry points**: the run list on a work item detail page; the run history in the Agent Workspace; "View log" on a board card; a deep link from a failure notification; the audit log.
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 所属任务 | `06 Work Item 详情` |
-| 执行 Agent | `08 Agent Workspace` |
-| 产物 | 外部（PR / 报告） |
-| 触发的决策 | `11 决策详情` |
-| 命中的 Policy | `13 Policy 配置` |
-| 「重试」 | 创建新 Run，跳转到新 Run |
+| Parent work item | `06 Work Item Detail` |
+| Executing agent | `08 Agent Workspace` |
+| Artifact | External (PR / report) |
+| Triggered decision | `11 Decision Detail` |
+| Policy that fired | `13 Policy Configuration` |
+| "Retry" | Creates a new run and jumps to it |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ ← 实现多条件查询 API / Run #1284                    [简明 ⇄ 详细] [导出]  │
-│ [🤖 code-agent-1] · claude-opus-5 · 执行中 12m34s                          │
-│ $8.20 · 82.3k tok (输入 71.2k / 输出 11.1k / 缓存命中 62%)                 │
-│                                    [⏸ 暂停] [🙋 接管] [⏹ 终止] [🔄 重试] │
-├───────────────────────────────────────────────────────────────────────────┤
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  步骤 7/11 · 正在实现索引查询逻辑            │
-├──────────────────────────────────┬────────────────────────────────────────┤
-│ [执行流] [输入] [产物] [成本] [错误]│ 概要                                  │
-│                                  │ ────────────────────────────────────── │
-│ ● 12:22:04  🚀 Run 启动           │ Run ID     #1284                      │
-│   目标：实现支持手机号/订单号/时间 │ 任务       实现多条件查询 API          │
-│   段的组合查询 API                │ 项目       订单系统重构                │
-│   ▸ 展开完整输入                  │ 触发       Flow Engine 自动调度        │
-│                                  │ 尝试       第 2 次（上次失败）          │
-│ ● 12:22:09  🔧 加载上下文          │ 状态       执行中                     │
-│   项目知识 3 篇 · 代码 12 文件     │ 开始       12:22:04                   │
-│   历史 Run #1281 失败原因          │ 已运行     12m34s / 超时 30m          │
-│   ▸ 查看上下文清单                │ ────────────────────────────────────── │
-│                                  │ 成本                                   │
-│ ● 12:22:31  🛠 read_file           │ 当前       $8.20                      │
-│   src/order/query.ts (284 行)     │ 预估       $6.40  ⚠ 超出 28%          │
-│                                  │ 上限       $15.00 ▓▓▓▓▓▓▓▓░░ 55%      │
-│ ● 12:23:02  🛠 search_codebase     │ ────────────────────────────────────── │
-│   "order query index" → 8 处      │ 工具调用   14 次                       │
-│                                  │  read_file        6                    │
-│ ● 12:25:44  💭 推理               │  search_codebase  3                    │
-│   决定采用复合索引方案而非分表     │  write_file       3                    │
-│   ▸ 展开推理过程                  │  run_tests        2                    │
-│                                  │ ────────────────────────────────────── │
-│ ● 12:27:10  🛠 write_file          │ 人类干预 (1)                          │
-│   src/order/query.ts  +142 −31    │ 👤 张伟 12:31 附加约束                 │
-│   ▸ 查看 diff                     │ 「仅限灰度 10%」  [详情]               │
-│                                  │ ────────────────────────────────────── │
-│ ● 12:29:52  🛠 run_tests           │ 产物 (1)                              │
-│   ✓ 48/48 通过 · 覆盖率 84%       │ 📎 PR #42  +284 −37                   │
-│                                  │ ────────────────────────────────────── │
-│ ● 12:31:18  👤 人类干预            │ 关联                                   │
-│   张伟 附加约束「仅限灰度 10%」    │ Policy #7 生产发布需审批  [查看]       │
-│   Agent 已确认并调整方案           │ 上次 Run #1281 (失败)     [对比]      │
-│                                  │                                        │
-│ ● 12:33:40  🛠 write_file          │                                        │
-│   src/order/index.sql  +18        │                                        │
-│                                  │                                        │
-│ ○ 进行中  实现索引查询逻辑…        │                                        │
-│   ⠋ 已运行 1m12s                  │                                        │
-└──────────────────────────────────┴────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ← Multi-condition query API / Run #1284                     [Brief ⇄ Detailed] [Export] │
+│ [🤖 code-agent-1] · claude-opus-5 · Running 12m34s                                      │
+│ $8.20 · 82.3k tok (in 71.2k / out 11.1k / cache hit 62%)                                │
+│                                       [⏸ Pause] [🙋 Take over] [⏹ Terminate] [🔄 Retry] │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  Step 7/11 · Implementing index query logic                │
+├──────────────────────────────────────────────┬──────────────────────────────────────────┤
+│ [Stream] [Input] [Artifacts] [Cost] [Errors] │ Summary                                  │
+│                                              │ ──────────────────────────────────────── │
+│ ● 12:22:04  🚀 Run started                   │ Run ID     #1284                         │
+│   Goal: one API for combined lookup by       │ Task       Multi-condition query API     │
+│   phone number, order ID, time range         │ Project    Order System Rebuild          │
+│   ▸ Expand full input                        │ Trigger    Flow Engine auto-dispatch     │
+│                                              │ Attempt    2nd (previous one failed)     │
+│ ● 12:22:09  🔧 Load context                  │ Status     Running                       │
+│   3 knowledge docs · 12 code files           │ Started    12:22:04                      │
+│   Failure reason from Run #1281              │ Elapsed    12m34s / timeout 30m          │
+│   ▸ View context manifest                    │ ──────────────────────────────────────── │
+│                                              │ Cost                                     │
+│ ● 12:22:31  🛠 read_file                     │ Current    $8.20                         │
+│   src/order/query.ts (284 lines)             │ Estimate   $6.40  ⚠ 28% over             │
+│                                              │ Cap        $15.00 ▓▓▓▓▓▓▓▓░░ 55%         │
+│ ● 12:23:02  🛠 search_codebase               │ ──────────────────────────────────────── │
+│   "order query index" → 8 hits               │ Tool calls 14                            │
+│                                              │  read_file        6                      │
+│ ● 12:25:44  💭 Reasoning                     │  search_codebase  3                      │
+│   Chose a composite index over sharding      │  write_file       3                      │
+│   ▸ Expand reasoning                         │  run_tests        2                      │
+│                                              │ ──────────────────────────────────────── │
+│ ● 12:27:10  🛠 write_file                    │ Human intervention (1)                   │
+│   src/order/query.ts  +142 −31               │ 👤 Zhang Wei 12:31 added constraint      │
+│   ▸ View diff                                │ "10% canary only"          [Details]     │
+│                                              │ ──────────────────────────────────────── │
+│ ● 12:29:52  🛠 run_tests                     │ Artifacts (1)                            │
+│   ✓ 48/48 passed · 84% coverage              │ 📎 PR #42  +284 −37                      │
+│                                              │ ──────────────────────────────────────── │
+│ ● 12:31:18  👤 Human intervention            │ Related                                  │
+│   Zhang Wei added "10% canary only"          │ Policy #7 Prod release approval   [View] │
+│   Agent acknowledged and adjusted            │ Previous Run #1281 (failed)    [Compare] │
+│                                              │                                          │
+│ ● 12:33:40  🛠 write_file                    │                                          │
+│   src/order/index.sql  +18                   │                                          │
+│                                              │                                          │
+│ ○ In progress  Implementing index lookup…    │                                          │
+│   ⠋ Running 1m12s                            │                                          │
+└──────────────────────────────────────────────┴──────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Region Detail
 
-### 5.1 头部
+### 5.1 Header
 
-Agent、模型、状态、耗时、成本、token 明细（含缓存命中率——这直接影响成本，值得暴露）。
+Agent, model, status, elapsed time, cost, and a token breakdown (including the cache hit rate — it feeds straight into cost, so it is worth surfacing).
 
-**四个操作按钮**是人工介入的入口（文档 8.5.5）：
+**Four action buttons** are the entry points for human intervention (doc 8.5.5):
 
-| 按钮 | 行为 |
+| Button | Behavior |
 | --- | --- |
-| 暂停 | Agent 在当前步骤结束后挂起，保留上下文，可恢复 |
-| 接管 | 见 `06 Work Item 详情` §5.2 |
-| 终止 | 立即停止，需确认；已产生的产物保留并标注「来自未完成的 Run」 |
-| 重试 | 创建新 Run，可选择：原样重试 / 补充上下文重试 / 换 Agent |
+| Pause | The agent suspends after finishing the current step, keeping its context; it can be resumed |
+| Take over | See `06 Work Item Detail` §5.2 |
+| Terminate | Stops immediately, with a confirmation; artifacts already produced are kept and labeled "from an unfinished run" |
+| Retry | Creates a new run; you can pick retry as-is / retry with more context / switch agents |
 
-**「增加约束」**（文档 8.5.5「增加约束」）：在 Run 执行中向 Agent 追加指令，不中断执行。这是一个轻量但重要的能力——用户看到 Agent 走偏时的第一反应往往是"提醒它一句"，而不是终止重来。
+**"Add a constraint"** (doc 8.5.5, "adding constraints"): append an instruction to the agent mid-run without interrupting it. This is a small capability that matters a lot — when a user sees an agent drifting, the first instinct is usually to *tell it something*, not to kill the run and start over.
 
 ```
-向执行中的 Agent 追加约束
+Add a constraint to the running agent
 
-[ 仅修改 order-service，不要动 shared-lib                    ]
+[ Only touch order-service, leave shared-lib alone           ]
 
-⚠ Agent 将在当前步骤结束后应用该约束（约 40s 后生效）
-   已完成的步骤不会回滚
+⚠ The agent will apply this after the current step ends (~40s)
+   Steps already completed are not rolled back
 
-                                    [取消]  [发送]
+                                          [Cancel]  [Send]
 ```
 
-### 5.2 进度条
+### 5.2 Progress Bar
 
-步骤 N/M + 当前步骤描述。步骤数由 Agent 自行规划，可能变化——变化时显示「计划步骤已从 9 调整为 11」，避免用户困惑于"进度倒退"。
+Step N/M plus a description of the current step. The step count is planned by the agent itself and can change — when it does, show "planned steps adjusted from 9 to 11" so the user is not left puzzling over progress that appears to move backward.
 
-### 5.3 执行流（核心区域）
+### 5.3 Execution Stream (the core region)
 
-时间线形式，每个条目：时间戳、类型图标、一行摘要、可展开详情。
+A timeline. Each entry carries a timestamp, a type icon, a one-line summary, and expandable detail.
 
-**类型与展示**：
+**Types and what they show**:
 
-| 类型 | 图标 | 简明模式显示 | 详细模式额外显示 |
+| Type | Icon | Shown in brief mode | Added in detailed mode |
 | --- | --- | --- | --- |
-| Run 启动 | 🚀 | 目标描述 | 完整 prompt、模型参数 |
-| 加载上下文 | 🔧 | 上下文来源数量 | 每个上下文项的内容与 token 数 |
-| 工具调用 | 🛠 | 工具名 + 关键参数 + 结果摘要 | 完整参数 JSON、完整返回值 |
-| 推理 | 💭 | 一句话结论 | 完整推理文本 |
-| 子 Agent 委派 | 🤝 | 子 Agent 名 + 任务 | 子 Run 链接 |
-| 人类干预 | 👤 | 谁做了什么 | 干预时的完整上下文 |
-| Policy 判定 | ⚖ | 命中规则 + 结果 | 规则条件与输入值 |
-| 错误 | ❌ | 错误摘要 | 堆栈、原始响应 |
-| 产物 | 📎 | 产物名 + 规模 | 外部链接、元数据 |
+| Run started | 🚀 | The goal | Full prompt, model parameters |
+| Load context | 🔧 | How many context sources | Content and token count of each context item |
+| Tool call | 🛠 | Tool name + key arguments + result summary | Full argument JSON, full return value |
+| Reasoning | 💭 | The conclusion in one line | Full reasoning text |
+| Sub-agent delegation | 🤝 | Sub-agent name + task | Link to the sub-run |
+| Human intervention | 👤 | Who did what | The full context at the moment of intervention |
+| Policy ruling | ⚖ | Rule matched + outcome | Rule conditions and the input values |
+| Error | ❌ | Error summary | Stack trace, raw response |
+| Artifact | 📎 | Artifact name + size | External link, metadata |
 
-**简明 / 详细切换**是本页最重要的开关。简明模式下：
+**The brief / detailed toggle** is the single most important switch on this page. In brief mode:
 
-- 隐藏推理全文、工具原始参数、上下文明细
-- 合并连续的同类工具调用（`read_file × 6` 折叠为一行，可展开）
-- 只保留"发生了什么"的可读叙述
+- Full reasoning text, raw tool arguments, and context details are hidden
+- Consecutive calls of the same tool are merged (`read_file × 6` collapses to one row, expandable)
+- Only the readable narrative of "what happened" survives
 
-**实时追加**：执行中的 Run，新事件从底部追加。**默认不自动滚动**（用户可能在读上面的内容），底部显示「↓ 3 条新事件」按钮。用户滚到底部时自动恢复跟随。
+**Live append**: for a running run, new events are appended at the bottom. **Auto-scroll is off by default** (the user may be reading something further up); a "↓ 3 new events" button appears at the bottom instead. Scrolling to the bottom re-enables follow mode.
 
-### 5.4 Tab：输入
+### 5.4 Tab: Input
 
-- **目标**：任务描述、验收标准、人类附加约束
-- **上下文清单**：每一项的来源（项目知识 / 代码文件 / 历史 Run / 需求文档 / 外部系统）、token 数、是否被 Agent 实际引用
+- **Goal**: task description, acceptance criteria, constraints added by humans
+- **Context manifest**: the source of each item (project knowledge / code file / prior run / requirements doc / external system), its token count, and whether the agent actually referenced it
 
-上下文清单是排障的关键：**很多失败的根因是"该给的没给"**，这个清单让人一眼看出缺什么。
+The context manifest is the key troubleshooting artifact: **a great many failures come down to "we never gave it the thing it needed"**, and this list makes the gap obvious at a glance.
 
-- **模型配置**：模型、温度、最大 token、工具集快照、权限快照
+- **Model configuration**: model, temperature, max tokens, tool-set snapshot, permission snapshot
 
-权限快照很重要——Agent 权限可能在 Run 之后被修改，回溯时需要知道当时的权限状态。
+The permission snapshot matters — an agent's permissions may be changed after the run, and reconstructing what happened requires knowing what they were at the time.
 
-### 5.5 Tab：产物
+### 5.5 Tab: Artifacts
 
-本 Run 产生的所有 Artifact，含代码 diff 内联预览（无需跳外部）、测试报告、生成的文档、截图。
+Every artifact this run produced, including inline code-diff previews (no need to leave the page), test reports, generated documents, and screenshots.
 
-代码 diff 支持在页面内查看，这比跳转到 GitHub 再回来的体验好很多。
+Viewing the code diff in place beats bouncing out to GitHub and back by a wide margin.
 
-### 5.6 Tab：成本
+### 5.6 Tab: Cost
 
-- token 明细（输入 / 输出 / 缓存读 / 缓存写）与对应单价
-- 按步骤的成本分布柱状图——**定位"哪一步烧钱"**
-- 与同 Agent 同类任务的历史平均对比
-- 超预估时的归因提示（如「上下文比平均大 3.2 倍，主要来自 12 个代码文件」）
+- Token breakdown (input / output / cache read / cache write) with the corresponding unit prices
+- A bar chart of cost by step — this is how you **find out which step is burning the money**
+- Comparison against the historical average for the same agent on the same kind of task
+- An attribution hint when the run overshoots its estimate (e.g. "context was 3.2× the average, mostly from 12 code files")
 
-### 5.7 Tab：错误（仅失败 Run 显示）
+### 5.7 Tab: Errors (only shown for failed runs)
 
 ```
-❌ Run 失败 · 第 1 次尝试 · 12:18:33
+❌ Run failed · attempt 1 · 12:18:33
 
-失败分类   上下文不足
-失败步骤   步骤 4/9 · search_codebase
-错误摘要   无法定位订单表结构定义，代码库中未找到 schema 文件
+Failure class    Insufficient context
+Failed step      Step 4/9 · search_codebase
+Error summary    Could not locate the orders table definition; no schema
+                 file found anywhere in the codebase
 
-Agent 的自述
-"我需要 orders 表的结构定义来设计查询索引，但在 order-service
- 仓库中未找到 migration 或 schema 文件。可能在其他仓库或由
- DBA 单独维护。"
+The agent's own account
+"I needed the structure of the orders table to design the query index, but
+ I could not find a migration or schema file in the order-service repo. It
+ may live in a different repo, or be maintained separately by the DBA."
 
-系统判定
-  ⚖ Policy #12「Agent 失败后处理」→ 允许重试（1/2）
-  已自动创建重试 Run #1284，并补充上下文：项目知识库「订单表结构说明」
+System ruling
+  ⚖ Policy #12 "Agent failure handling" → retry permitted (1/2)
+  Retry Run #1284 created automatically, with added context:
+  knowledge-base article "Orders table schema"
 
-▸ 展开原始错误与堆栈
+▸ Expand raw error and stack trace
 
-           [补充上下文重试] [改派其他 Agent] [转人工] [标记为需求问题]
+  [Retry with more context] [Reassign] [Hand to a human] [Flag as a requirements problem]
 ```
 
-**"Agent 的自述"**是关键设计：让 Agent 用人话解释自己为什么卡住，比堆栈有用得多。这也是排障效率的核心。
+**"The agent's own account"** is the key design here: having the agent explain in plain language why it got stuck is far more useful than a stack trace. It is the heart of troubleshooting efficiency on this page.
 
-### 5.8 右侧概要栏
+### 5.8 Right-Hand Summary Panel
 
-Run 元信息、成本、工具调用统计、人类干预记录、产物、关联对象（Policy、上次 Run、触发的决策）。
+Run metadata, cost, tool-call statistics, human interventions, artifacts, and related objects (policies, the previous run, decisions this run triggered).
 
-**「与上次 Run 对比」**：失败重试场景下，对比两次 Run 的上下文差异与执行路径差异，快速看出"补的上下文起作用了没有"。
+**"Compare with the previous run"**: in a failure-and-retry situation, diff the two runs' context and execution paths to see quickly whether the context you added actually made a difference.
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**排查失败（工程师）**
-
-```
-从看板 [看日志] 进入 → 错误 Tab
-→ 读 Agent 自述 → 判断是上下文问题
-→ 输入 Tab 确认上下文清单确实缺 schema
-→ [补充上下文重试] → 选择要补充的知识条目 → 新 Run 启动
-```
-
-**监督执行中的 Run（负责人）**
+**Diagnosing a failure (engineer)**
 
 ```
-简明模式 → 扫执行流 → 发现 Agent 在改不该改的仓库
-→ [增加约束]「仅修改 order-service」→ 40s 后生效
-→ 继续观察 → 正常 → 离开
+Arrive from the board via [View log] → Errors tab
+→ Read the agent's account → conclude it is a context problem
+→ Input tab confirms the context manifest really is missing the schema
+→ [Retry with more context] → pick the knowledge entries to add → new run starts
 ```
 
-**成本异常排查**
+**Supervising a running run (project lead)**
 
 ```
-成本超预估 28% → 成本 Tab → 按步骤分布
-→ 发现"加载上下文"占 62% → 输入 Tab 看上下文清单
-→ 发现引入了 12 个无关代码文件
-→ 反馈给 Agent 负责人调整上下文检索策略
+Brief mode → skim the execution stream → notice the agent editing a repo it shouldn't
+→ [Add a constraint] "Only touch order-service" → takes effect in 40s
+→ keep watching → looks fine → leave
 ```
 
-**审计回溯（合规场景）**
+**Investigating a cost anomaly**
 
 ```
-审计日志 → 定位到某次生产变更 → 进入对应 Run
-→ 详细模式 → 查看当时的权限快照、Policy 判定、人类批准记录
-→ 导出为审计报告
+28% over estimate → Cost tab → cost by step
+→ "Load context" accounts for 62% → Input tab, check the context manifest
+→ 12 irrelevant code files were pulled in
+→ report back to the agent's owner to tune the context retrieval strategy
+```
+
+**Audit reconstruction (compliance)**
+
+```
+Audit log → locate a particular production change → open the corresponding run
+→ Detailed mode → inspect the permission snapshot, policy rulings, and human approvals as of that moment
+→ export as an audit report
 ```
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 执行中 | 实时追加事件；进度条与成本实时更新；操作按钮全部可用 |
-| 已完成 | 执行流完整可回放；操作按钮收敛为 [重试][导出] |
-| 失败 | 默认打开错误 Tab（不让用户找）；提供四个补救动作 |
-| 已终止 | 标注终止人与原因；已产生产物标记「来自未完成的 Run」 |
-| 已暂停 | 显示暂停时长 + [恢复][终止]；上下文保留状态提示 |
-| 超时 | 标注「超时终止（30min）」+ 建议（拆分任务 / 提高超时 / 换模型） |
-| 事件量极大（> 1000） | 虚拟滚动 + 「跳到失败点」「跳到最后」快捷按钮 |
-| 权限不足查看详细模式 | 简明模式可见，详细模式（含原始 prompt）需 `tech_lead` |
+| Running | Events append live; progress bar and cost update live; all action buttons available |
+| Completed | The execution stream is fully replayable; actions narrow to [Retry][Export] |
+| Failed | Opens on the Errors tab by default (don't make the user hunt for it); offers the four remedies |
+| Terminated | Records who terminated it and why; artifacts already produced are labeled "from an unfinished run" |
+| Paused | Shows how long it has been paused plus [Resume][Terminate]; indicates that context is being held |
+| Timed out | Labeled "terminated on timeout (30min)" plus suggestions (split the task / raise the timeout / switch models) |
+| Very large event count (> 1000) | Virtual scrolling plus "Jump to failure" and "Jump to end" shortcuts |
+| Not permitted to see detailed mode | Brief mode is visible; detailed mode (which includes the raw prompt) requires `tech_lead` |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看 Run（简明模式） | 项目成员 |
-| 查看详细模式（原始 prompt、工具参数、上下文全文） | `tech_lead` / `agent_owner`（可能含敏感数据） |
-| 暂停 / 终止 | `tech_lead` / `pm` / `agent_owner` |
-| 增加约束 | `member` 及以上 |
-| 接管 | `member` 及以上 |
-| 重试 | `member` 及以上（成本计入预算） |
-| 导出 Run 记录 | `tech_lead`；导出行为本身记审计 |
+| View a run (brief mode) | Project member |
+| View detailed mode (raw prompt, tool arguments, full context) | `tech_lead` / `agent_owner` (may contain sensitive data) |
+| Pause / terminate | `tech_lead` / `pm` / `agent_owner` |
+| Add a constraint | `member` and above |
+| Take over | `member` and above |
+| Retry | `member` and above (the cost counts against the budget) |
+| Export the run record | `tech_lead`; the export itself is audited |
 
-**数据脱敏**：上下文中如包含敏感数据（客户 PII、密钥），按数据分级自动打码，仅 `org_admin` 可申请查看原文，且查看记审计。
+**Data masking**: if the context contains sensitive data (customer PII, secrets), it is masked automatically according to its data classification. Only `org_admin` may request the original, and that view is audited.
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`AgentRun`（全字段，文档 8.5.3）、`Event`、`Artifact`、`Agent`、`WorkItem`、`Policy`（判定记录）
+**Domain objects**: `AgentRun` (all fields, doc 8.5.3), `Event`, `Artifact`, `Agent`, `WorkItem`, `Policy` (ruling records)
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/runs/{id}
@@ -298,12 +302,12 @@ GET  /api/runs/{id}
 
 GET  /api/runs/{id}/events?level=brief|detailed&cursor=&after=
 GET  /api/runs/{id}/cost-breakdown?group_by=step
-GET  /api/runs/{id}/diff/{otherRunId}          与上次 Run 对比
+GET  /api/runs/{id}/diff/{otherRunId}          compare with the previous run
 
 POST /api/runs/{id}/pause
 POST /api/runs/{id}/resume
 POST /api/runs/{id}/terminate      { reason }
-POST /api/runs/{id}/constraints    { constraint }        执行中追加约束
+POST /api/runs/{id}/constraints    { constraint }        append a constraint mid-run
 POST /api/runs/{id}/retry          { additional_context[], agent_id? }
 GET  /api/runs/{id}/export?format=json|pdf
 
@@ -312,45 +316,45 @@ SSE  /api/stream?channels=run:{id}
      → run_progress { step, total, description, cost, tokens }
 ```
 
-**事件存储**：Run 事件量大且需长期保留（审计要求）。建议热数据（30 天）在主库，冷数据归档到对象存储，页面按需加载。
+**Event storage**: run events are voluminous and have to be retained for a long time (audit requirement). The suggested split is hot data (30 days) in the primary database and cold data archived to object storage, loaded by the page on demand.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| `run_detail_viewed{status, entry_from}` | 用户在什么情况下会看 Run（失败时应占多数） |
-| **`mode_switched{to: detailed}`** | **简明模式是否够用——切换率高说明简明模式信息不足** |
-| `constraint_added` | 「增加约束」的使用频率与场景 |
-| `retry_with_context{context_added}` | 补充上下文重试的成功率提升幅度 |
-| `error_tab_action{action}` | 四个补救动作的分布 |
-| `cost_breakdown_viewed` | 成本诊断的使用率 |
-| `run_export{format}` | 审计与汇报需求 |
+| `run_detail_viewed{status, entry_from}` | Under what circumstances users open a run (failures should dominate) |
+| **`mode_switched{to: detailed}`** | **Whether brief mode is good enough — a high switch rate means brief mode is under-informative** |
+| `constraint_added` | How often "add a constraint" gets used, and in what situations |
+| `retry_with_context{context_added}` | How much adding context lifts the retry success rate |
+| `error_tab_action{action}` | The distribution across the four remedies |
+| `cost_breakdown_viewed` | Adoption of cost diagnosis |
+| `run_export{format}` | Audit and reporting demand |
 
-**页面成功标准**：失败 Run 在本页一次操作内确定补救方案的比例 > 75%；详细模式切换率 < 30%（说明简明模式够用）。
+**Page success criteria**: for failed runs, > 75% settle on a remedy within a single action on this page; detailed-mode switch rate < 30% (meaning brief mode is doing its job).
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases and Exceptions
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| Run 事件流中断（Agent 运行时崩溃） | 显示「事件流中断，最后事件 3 分钟前」+ [检查 Agent 状态]；超时后按 Policy 判失败 |
-| 单个工具返回超大内容 | 折叠显示前 200 行 + [查看全文][下载] |
-| 上下文包含敏感数据 | 自动打码 + 标注「已脱敏，共 3 处」 |
-| 同一 Run 被多人同时操作 | 操作串行化；后到的操作提示「张伟刚刚暂停了此 Run」 |
-| Run 已归档（超过热数据期） | 加载稍慢，显示「正在从归档加载…」；操作按钮禁用（不能对归档 Run 重试） |
-| 子 Agent 委派形成深层嵌套 | 子 Run 以缩进树形展示，超过 3 层折叠 |
-| 成本在单次 Run 内异常飙升 | 执行流中插入红色警示事件「成本已达上限 80%」；触及上限按 Policy 自动暂停 |
-| 重试后仍失败（达上限） | 错误 Tab 顶部显示「已达重试上限，Policy 判定转人工」+ 决策链接 |
+| The event stream stops (agent runtime crashed) | Show "event stream interrupted, last event 3 minutes ago" plus [Check agent status]; after the timeout, policy declares it failed |
+| A single tool returns an enormous payload | Collapse to the first 200 lines plus [View full][Download] |
+| Context contains sensitive data | Mask automatically and label "masked, 3 occurrences" |
+| Several people act on the same run at once | Serialize the actions; the later one is told "Zhang Wei just paused this run" |
+| The run has been archived (past the hot-data window) | Loads a little slower, showing "loading from archive…"; action buttons are disabled (you cannot retry an archived run) |
+| Sub-agent delegation nests deeply | Sub-runs render as an indented tree, collapsed beyond 3 levels |
+| Cost spikes abnormally within a single run | Insert a red warning event into the stream: "cost has reached 80% of the cap"; hitting the cap auto-pauses per policy |
+| Still failing after retries (limit reached) | The Errors tab shows a banner: "retry limit reached, policy escalated to a human" plus a link to the decision |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. "Agent 的自述"需要 Agent 运行时配合输出结构化的失败说明。不同 Agent 接入方（Claude Code / Codex / 自定义）能力不一，统一 Agent Protocol（文档 9.3）中是否强制要求该字段？倾向于强制，缺失时降级为原始错误。
-2. 事件的保留期限与归档策略需与合规要求对齐（审计通常要求 1–3 年）。
-3. 「增加约束」的生效语义：是注入到下一轮对话，还是重启 Run 并携带新约束？前者更快但可能被忽略，后者可靠但浪费已有工作。倾向于前者 + 要求 Agent 显式确认。
-4. 详细模式包含原始 prompt，可能暴露内部提示词工程。是否需要按组织策略配置是否允许查看？
-5. Run 对比功能的价值需要验证——是否值得在 MVP 做？倾向于 P1。
+1. "The agent's own account" requires the agent runtime to emit a structured failure explanation. Different agent integrations (Claude Code / Codex / custom) vary in what they can produce — should the unified Agent Protocol (doc 9.3) make that field mandatory? Leaning toward mandatory, degrading to the raw error when it is missing.
+2. Event retention and archival policy needs to line up with compliance requirements (audits typically demand 1–3 years).
+3. The semantics of "add a constraint": inject it into the next turn of the conversation, or restart the run carrying the new constraint? The former is faster but may be ignored; the latter is reliable but throws away work already done. Leaning toward the former, with a requirement that the agent explicitly acknowledge it.
+4. Detailed mode exposes the raw prompt, which may reveal internal prompt engineering. Should whether it can be viewed be configurable per organization policy?
+5. The value of run comparison needs validation — is it worth building for the MVP? Leaning P1.

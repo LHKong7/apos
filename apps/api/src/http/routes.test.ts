@@ -71,12 +71,13 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * ★★ 伪造的令牌必须被拒。
+   * ★★ A forged token must be rejected.
    *
-   *   这是整套鉴权的地基：如果签名没被真的验，那么「身份」就退回成
-   *   调用方自己说了算，下面所有角色与成员关系的断言都失去意义。
-   *   `alg: none` 单列一条 —— 那是 JWT 最经典的绕过方式，
-   *   而它的表现是「攻击者随便变成谁」，测不出来就等于没设防。
+   *   This is the bedrock of the whole auth stack: if the signature is not actually
+   *   verified, "identity" collapses into whatever the caller claims, and every role and
+   *   membership assertion below loses its meaning. `alg: none` gets its own case — it is
+   *   the classic JWT bypass, and its symptom is "the attacker becomes anyone they like",
+   *   so not testing it is the same as having no defense at all.
    */
   it('★ 伪造、篡改、过期的令牌一律 401', async () => {
     const real = signToken(fx.userId);
@@ -87,9 +88,9 @@ describe('认证与错误映射', () => {
       ['不是 JWT 形状', 'null'],
       ['只有两段', `${head}.${body}`],
       ['签名被改', `${head}.${body}.${mac.slice(0, -2)}xy`],
-      // payload 换成别人，签名不变 —— 最直接的越权尝试
+      // Swap the payload for someone else, keep the signature — the bluntest escalation try
       ['声明被篡改', `${head}.${b64({ sub: randomUUID(), iat: 1, exp: 99999999999 })}.${mac}`],
-      // alg: none + 空签名
+      // alg: none plus an empty signature
       ['alg 为 none', `${b64({ alg: 'none', typ: 'JWT' })}.${body}.`],
       ['已过期', signToken(fx.userId, { ttlSeconds: -60 })],
     ];
@@ -105,7 +106,7 @@ describe('认证与错误映射', () => {
       expect(res.json().error.code, why).toBe('UNAUTHENTICATED');
     }
 
-    // 身份可选的端点同样不能把坏令牌当成「没带」静默放过
+    // Endpoints where identity is optional must not silently treat a bad token as "absent"
     for (const url of [
       '/api/v1/decisions',
       `/api/v1/projects/${fx.projectId}/board?onlyMine=true`,
@@ -150,12 +151,14 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * 身份那条路径当初已经单独修过（见上面的「伪造、篡改、过期的令牌一律 401」），
-   * 但同一个坑在路径参数和查询参数上还开着：值一路走到 SQL，
-   * Postgres 报 22P02，错误处理器不认这个码，于是吞成 500。
+   * The identity path was fixed on its own long ago (see "forged, tampered and expired
+   * tokens all get 401" above), but the same hole stayed open on path and query
+   * parameters: the value travels all the way into SQL, Postgres raises 22P02, the error
+   * handler does not recognize that code, and it gets swallowed as a 500.
    *
-   * ★ 后果有两层：调用方以为服务端挂了；告警面板上多出一批假故障，
-   *   真正的 500 被淹掉。所以这里断言的是**状态码**，不是有没有报错。
+   * ★ That costs twice: the caller believes the server is down, and the alerting board
+   *   fills up with phantom failures that drown out the real 500s. So what is asserted
+   *   here is the **status code**, not merely that an error happened.
    */
   it('★ 路径参数不是 UUID 时返回 400 而不是 500', async () => {
     for (const url of [
@@ -165,7 +168,7 @@ describe('认证与错误映射', () => {
       '/api/v1/decisions/not-a-uuid',
       '/api/v1/plans/not-a-uuid',
       '/api/v1/requirements/not-a-uuid',
-      // 前端把 /decision-inbox 写成 /decisions/inbox 就会落到这里
+      // A frontend that writes /decisions/inbox instead of /decision-inbox lands here
       '/api/v1/decisions/inbox',
     ]) {
       const res = await app.inject({ method: 'GET', url, headers: auth() });
@@ -175,17 +178,19 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * ★★ `X-Correlation-Id` 是给调用方带自己追踪 ID 用的，而
-   *   `events.correlation_id` 是 uuid 列。
+   * ★★ `X-Correlation-Id` exists so callers can carry their own trace id, while
+   *   `events.correlation_id` is a uuid column.
    *
-   *   之前这个头原样透传：客户端送一个 `trace-abc-123`（W3C traceparent、
-   *   Jaeger 的 span id…… 没有一个是 uuid），请求会一路走到 INSERT 才被
-   *   Postgres 以 22P02 顶回来，翻译成 400「路径或查询参数的格式不合法」。
-   *   现象是「这个接口对我永远 400，换个客户端就好了」，而报错里不提
-   *   correlation id 半个字。
+   *   The header used to be passed through verbatim: a client sends `trace-abc-123` (a
+   *   W3C traceparent, a Jaeger span id — none of them uuids), the request travels all
+   *   the way to the INSERT before Postgres throws it back with 22P02, which is
+   *   translated into a 400 "the path or query parameter format is invalid". The symptom
+   *   is "this endpoint always 400s for me, it works from another client", and the error
+   *   does not mention the correlation id at all.
    *
-   * ★ 第二条断言同样重要：改成「一律忽略请求头」也能让第一条变绿，
-   *   但那样就把这个头的功能整个删掉了，而没有任何测试会发现。
+   * ★ The second assertion matters just as much: "always ignore the header" would also
+   *   turn the first one green, but that deletes the header's entire purpose and no test
+   *   would notice.
    */
   it('★ X-Correlation-Id 不是 UUID 时照常受理，是 UUID 时被采纳', async () => {
     const create = (correlationId: string) =>
@@ -196,11 +201,11 @@ describe('认证与错误映射', () => {
         payload: { name: `项目-${randomUUID().slice(0, 8)}` },
       });
 
-    // ① 非 uuid 的追踪头不该把写入挡掉
+    // ① A non-uuid trace header must not block the write
     const messy = await create('trace-abc-123');
     expect(messy.statusCode).toBe(201);
 
-    // ② 合法 uuid 要真的落进事件，否则跨系统对不上日志
+    // ② A valid uuid has to land on the event, or logs will not line up across systems
     const mine = randomUUID();
     const ok = await create(mine);
     expect(ok.statusCode).toBe(201);
@@ -223,11 +228,12 @@ describe('认证与错误映射', () => {
   });
 
   /**
-   * docs/tech/09-security.md §2.1 的第②层「项目角色」。
+   * Layer ② of docs/tech/09-security.md §2.1: the project role.
    *
-   * ★ 这一层此前只在集成端点上实现了，别的项目数据一律没查成员关系 ——
-   *   实测中另一个组织的用户可以读、也可以写本项目的看板 / 执行图 /
-   *   Analytics / Policy / 需求。这里逐个端点钉住。
+   * ★ This layer used to exist only on the integration endpoints; no other project data
+   *   checked membership at all — in practice a user from another org could read *and*
+   *   write this project's board / execution graph / Analytics / Policy / requirements.
+   *   Each endpoint is pinned down here.
    */
   describe('★ 跨项目越权', () => {
     it('非成员读项目数据一律被拒', async () => {
@@ -264,8 +270,8 @@ describe('认证与错误映射', () => {
     });
 
     /**
-     * ★ /work-items/:id 这类路径上看不出项目，最容易被漏掉，
-     *   而它返回的同样是项目数据
+     * ★ Paths like /work-items/:id show no project, which makes them the easiest to
+     *   miss — and what they return is project data all the same
      */
     it('★ 资源路径（看不出项目的那些）同样挡住非成员', async () => {
       const outsider = await createOutsider(db, fx);
@@ -315,9 +321,10 @@ describe('认证与错误映射', () => {
     });
 
     /**
-     * ★ 列表类端点的 URL 里没有项目 id，按路径形状的闸门够不着 ——
-     *   实测中一个只属于一个项目的用户，收件箱里能看到三个项目、
-     *   跨三个组织的待决策。这类端点必须自己带范围。
+     * ★ List endpoints carry no project id in the URL, so a gate keyed on path shape
+     *   cannot reach them — in practice a user who belonged to one project saw pending
+     *   decisions from three projects across three orgs in their inbox. Endpoints like
+     *   these have to scope themselves.
      */
     it('★ 决策收件箱不返回非成员项目的决策', async () => {
       const item = await createWorkItem(db, fx, { status: 'awaiting_decision' });
@@ -393,7 +400,7 @@ describe('认证与错误映射', () => {
     });
     const body = res.body;
     expect(body).not.toMatch(/work_items|select|relation|column/i);
-    // 但要留下能自查的线索
+    // But leave a clue the caller can diagnose themselves with
     expect(res.json().error.details.pgCode).toBe('22P02');
   });
 });
@@ -402,7 +409,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
   it('走通完整流程', async () => {
     await seedAgent(db, fx, { registry });
 
-    // 录入需求
+    // Capture the requirement
     const created = await app.inject({
       method: 'POST',
       url: `/api/v1/projects/${fx.projectId}/requirements`,
@@ -412,7 +419,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(created.statusCode).toBe(201);
     const reqId = created.json().requirement.id;
 
-    // AI 结构化
+    // AI structuring
     const analyzed = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${reqId}/analyze`,
@@ -421,7 +428,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(analyzed.statusCode).toBe(200);
     expect(analyzed.json().mustConfirmCount).toBeGreaterThan(0);
 
-    // ★ 必答问题没答完时确认被拒，且告知是哪几个
+    // ★ Confirmation is refused while must-answer questions remain, and it names which ones
     const premature = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${reqId}/approve`,
@@ -432,7 +439,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(premature.json().error.code).toBe('UNANSWERED_MUST_CONFIRM');
     expect(premature.json().error.details.length).toBeGreaterThan(0);
 
-    // 回答澄清问题
+    // Answer the clarification questions
     const detail = await app.inject({
       method: 'GET',
       url: `/api/v1/requirements/${reqId}`,
@@ -450,7 +457,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
       expect(answered.statusCode).toBe(200);
     }
 
-    // 确认需求
+    // Confirm the requirement
     const approved = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${reqId}/approve`,
@@ -459,7 +466,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     });
     expect(approved.statusCode).toBe(200);
 
-    // 生成计划
+    // Generate the plan
     const planned = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${reqId}/plans`,
@@ -470,11 +477,12 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(plan.autoActions.length).toBeGreaterThan(0);
     expect(plan.humanGates.length).toBeGreaterThan(0);
 
-    // 批准计划
+    // Approve the plan
     /**
-     * ★ acknowledgedUnassigned：计划里的人工任务还没排人，approvePlan 会
-     *   为此先拦一次（UNASSIGNED_HUMAN_TASKS）。这里代表用户确认「先让它们
-     *   进待认领队列」—— 这条用例验的是全链路走得通，排人在计划页单独测。
+     * ★ acknowledgedUnassigned: the plan's human tasks have nobody assigned yet, so
+     *   approvePlan stops once for that (UNASSIGNED_HUMAN_TASKS). Passing it stands for
+     *   the user confirming "let them go into the unclaimed queue for now" — this case
+     *   checks that the whole chain runs, and assignment is tested on the plan page.
      */
     const activated = await app.inject({
       method: 'POST',
@@ -485,7 +493,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(activated.statusCode).toBe(200);
     expect(activated.json().activatedTasks).toBe(plan.taskCount);
 
-    // 触发调度
+    // Trigger scheduling
     const scheduled = await app.inject({
       method: 'POST',
       url: `/api/v1/projects/${fx.projectId}/schedule`,
@@ -496,7 +504,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
       scheduled.json().outcomes.filter((o: { action: string }) => o.action === 'dispatched'),
     ).toHaveLength(1);
 
-    // 看板反映真实状态
+    // The board reflects the real state
     await waitFor(async () => {
       const board = await app.inject({
         method: 'GET',
@@ -522,14 +530,15 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
 });
 
 /**
- * 需求结构化的两条路：AI 分析、人工填写。
+ * The two routes to a structured requirement: AI analysis and filling it in by hand.
  *
- * ★★ 这一组盯的是「人工那条路能不能自己走到头」。
+ * ★★ This group watches whether the manual route can reach the end on its own.
  *
- *   此前它走不到：结构化字段只开放了一半、人工改完不重算完整度、
- *   而确认按钮的前置是「分析过」。三样叠在一起的结果是，
- *   一份人写得清清楚楚的需求也必须先让 Agent 跑一遍才能确认 ——
- *   没配规划 Agent 或分析超时时（产品文档 03 §7），这一页直接是死路。
+ *   It could not: only half the structured fields were writable, a manual edit did not
+ *   recompute completeness, and the confirm button required "has been analyzed". Stacked
+ *   together, that meant even a requirement a person had written out perfectly still had
+ *   to be run through an Agent before it could be confirmed — and with no planning Agent
+ *   configured, or when analysis times out (product doc 03 §7), this page is a dead end.
  */
 describe('★ 需求：AI 与人工两条路并行', () => {
   async function createRequirement(rawInput = '订单查询太慢，想支持按手机号和时间段搜索') {
@@ -568,9 +577,10 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     expect(saved.statusCode).toBe(200);
 
     /**
-     * ★ 人工改完必须重算完整度并推进状态。
-     *   不重算的话它一直是 0 分 + draft，而用户正是照着这个分数
-     *   判断「够不够格确认」的，状态则决定确认按钮出不出现。
+     * ★ A manual edit has to recompute completeness and advance the status.
+     *   Without that it stays at score 0 and draft forever — and that score is exactly
+     *   what the user reads to judge "is this good enough to confirm", while the status
+     *   decides whether the confirm button appears at all.
      */
     const r = saved.json().requirement;
     expect(r.status).toBe('awaiting_approval');
@@ -578,7 +588,8 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     expect(r.completeness.goal).toBe(100);
     expect(r.completeness.acceptance).toBeGreaterThan(0);
 
-    // 没有澄清问题也照样能确认 —— 澄清是 AI 分析的产物，不是确认的前置
+    // Confirmation works without clarifications — those are an output of AI analysis, not a
+    // precondition for confirming
     const approved = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${id}/approve`,
@@ -587,7 +598,7 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     });
     expect(approved.statusCode).toBe(200);
 
-    // 规划器读的是库里那几个字段，不关心它们是谁写的
+    // The planner reads those columns from the database and does not care who wrote them
     const planned = await app.inject({
       method: 'POST',
       url: `/api/v1/requirements/${id}/plans`,
@@ -608,7 +619,7 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    // ★ 只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路
+    // ★ Saying only "run AI analysis first" makes a deployment with no planning Agent a dead end
     expect(res.json().error.message).toContain('AI 分析');
     expect(res.json().error.message).toContain('自己填');
   });
@@ -633,12 +644,14 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     const [ac] = detail.json().requirement.acceptanceCriteria;
 
     /**
-     * ★ 下游按 id 指回这一条、按 verification 分派核验。
-     *   缺哪一样都表现为「这条标准永远没人验」，而页面上它和别的没区别。
+     * ★ Downstream code points back at this criterion by id and routes verification by
+     *   `verification`. Missing either one shows up as "nobody ever verifies this
+     *   criterion", while on the page it looks no different from the rest.
      */
     expect(ac.id).toBeTruthy();
     expect(ac.status).toBe('pending');
-    // 平台没有依据认定一条手写文本能自动核验，默认成 auto 是替用户许了个承诺
+    // The platform has no basis for deciding a hand-written line can be verified
+    // automatically; defaulting to auto would make a promise on the user's behalf
     expect(ac.verification).toBe('human');
   });
 
@@ -649,8 +662,9 @@ describe('★ 需求：AI 与人工两条路并行', () => {
   });
 
   /**
-   * ★ 需求上的风险是一串字符串。放个对象进来的话，报错要等到生成计划
-   *   那一步（`r.includes is not a function`），而那时人早就走开了。
+   * ★ Risks on a requirement are a list of strings. Let an object in and the error only
+   *   surfaces at plan generation (`r.includes is not a function`), by which time the
+   *   person who typed it has long walked away.
    */
   it('风险不是字符串数组时在保存那一刻被拒', async () => {
     const id = await createRequirement();
@@ -676,9 +690,10 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     const ai = before.json().requirement;
 
     /**
-     * ★★ 编辑器一次提交整份需求，其中只有业务目标是人改的。
-     *   按「提交了什么」记溯源的话，整块面板会全变成「👤 人工」——
-     *   而那一排标记存在的唯一理由正是分清哪句话是自己写的。
+     * ★★ The editor submits the whole requirement at once, and only the business goal was
+     *   actually edited by a human. Recording provenance by "what was submitted" would
+     *   turn the entire panel into "👤 human" — and the only reason those markers exist is
+     *   to tell which sentences the user wrote themselves.
      */
     await edit(id, {
       title: ai.title,
@@ -698,19 +713,20 @@ describe('★ 需求：AI 与人工两条路并行', () => {
 
     expect(r.businessGoal).toBe('人工改过的业务目标');
     /**
-     * ★★ 「这句话是我写的还是 AI 写的」正是确认时最该看清的一件事。
-     *   两种来源混在一起显示，等于把这个判断从用户手里拿走。
+     * ★★ "Did I write this sentence or did the AI?" is the single most important thing to
+     *   see clearly at confirmation time. Displaying both sources as one takes that
+     *   judgment out of the user's hands.
      */
     expect(r.fieldProvenance.businessGoal.source).toBe('human');
-    // 原样带回来的字段不算人改的 —— 它还是 AI 写的那一句
+    // A field sent back unchanged does not count as human-edited — it is still the AI's line
     expect(r.fieldProvenance.title.source).not.toBe('human');
     expect(r.fieldProvenance.businessContext.source).not.toBe('human');
-    // 人工编辑不动原文，也不动 AI 那一轮的署名
+    // A manual edit touches neither the raw input nor the attribution of that AI round
     expect(r.rawInput).toContain('订单查询太慢');
     expect(r.analysisModel).toBeTruthy();
   });
 
-  /** ★ 打开编辑器又原样保存，不该在审计流里留下一条「改过需求」 */
+  /** ★ Opening the editor and saving unchanged must not leave an "edited" entry in the audit */
   it('什么都没改时不记溯源也不发事件', async () => {
     const id = await createRequirement();
     await edit(id, FULL_MANUAL);
@@ -726,10 +742,12 @@ describe('★ 需求：AI 与人工两条路并行', () => {
   });
 
   /**
-   * ★★ 两条路要真正并行，就必须有一方让步 —— 让步的只能是 AI。
+   * ★★ For the two routes to truly run in parallel, one of them has to yield — and it can
+   *   only be the AI.
    *
-   *   人改过的东西被静默覆盖，代价是他重写一遍并且从此不敢再改；
-   *   AI 的建议被挡下，代价只是重新点一次分析之前先把那一项清空。
+   *   When a human edit is silently overwritten, the cost is that they rewrite it and
+   *   never dare edit again. When an AI suggestion is held back, the cost is merely
+   *   clearing that one field before clicking analyze again.
    */
   it('重新分析不覆盖人改过的字段，并说出保住了哪几个', async () => {
     const id = await createRequirement();
@@ -757,9 +775,9 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     const r = detail.json().requirement;
 
     expect(r.businessGoal).toBe('人工写的业务目标');
-    // 保住的字段仍然记着「人工」，否则下一轮分析就会把它盖掉
+    // A preserved field stays marked "human", or the next analysis round would overwrite it
     expect(r.fieldProvenance.businessGoal.source).toBe('human');
-    // 没被人碰过的字段照常被这一轮刷新
+    // Fields nobody touched are refreshed by this round as usual
     expect(r.title).toBeTruthy();
     expect(r.fieldProvenance.title.source).not.toBe('human');
   });
@@ -779,8 +797,9 @@ describe('★ 需求：AI 与人工两条路并行', () => {
   });
 
   /**
-   * ★ 驳回是一个结论。让编辑把它悄悄变回「待确认」，等于绕过了那个结论 ——
-   *   而驳回的人不会收到任何提示。
+   * ★ A rejection is a conclusion. Letting an edit quietly flip it back to "awaiting
+   *   approval" routes around that conclusion — and the person who rejected it is never
+   *   told.
    */
   it('人工编辑不会把已驳回的需求变回待确认', async () => {
     const id = await createRequirement();
@@ -797,11 +816,12 @@ describe('★ 需求：AI 与人工两条路并行', () => {
   });
 
   /**
-   * ★★ 删除与驳回是两件事。
+   * ★★ Deleting and rejecting are two different things.
    *
-   *   驳回记录一个结论，删除抹掉一条本不该存在的记录（录错、重复提交、
-   *   试验数据）。只有驳回时，后者会被当成前者用 —— 于是「已驳回」
-   *   列表里堆满噪音，真正的驳回结论反而看不见。
+   *   A rejection records a conclusion; a deletion erases a record that should never have
+   *   existed (a typo, a duplicate submission, test data). With only rejection available,
+   *   the second gets used for the first — so the "rejected" list fills with noise and the
+   *   real rejection conclusions become invisible.
    */
   describe('删除需求', () => {
     const del = (id: string, headers: Record<string, string>) =>
@@ -834,21 +854,21 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     });
 
     /**
-     * ★ 实体没了，事件是它存在过的唯一痕迹 —— 只留一个 id 的话，
-     *   审计时翻到这一行也不知道删掉的是什么。
+     * ★ Once the entity is gone, the event is the only trace that it ever existed — with
+     *   just an id on it, someone auditing this line has no idea what was deleted.
      */
     it('删除留下带标题的领域事件', async () => {
       const id = await createRequirement('删了也要留痕的需求');
       await del(id, auth());
 
       /**
-       * ★ 必须按 id 倒序取最后一条。
+       * ★ The last row has to be taken by ordering on id descending.
        *
-       *   这条需求身上不止一个事件（created 在前、deleted 在后），
-       *   而不带 ORDER BY 的 SELECT 里行的顺序是**没有保证**的 ——
-       *   拿 `[ev]` 当「最新那条」在这里恰好取到了 created，
-       *   于是断言失败；换个执行计划它又可能碰巧通过。
-       *   测试里的顺序假设要写出来，不能靠运气。
+       *   This requirement carries more than one event (created first, deleted after), and
+       *   row order in a SELECT without ORDER BY is **not guaranteed** — treating `[ev]` as
+       *   "the newest one" happened to return `created` here, so the assertion failed;
+       *   under a different query plan it might just as easily have passed. An ordering
+       *   assumption in a test has to be written down, not left to luck.
        */
       const [ev] = await db
         .select()
@@ -861,9 +881,10 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     });
 
     /**
-     * ★ 有派生物就不能删：计划与工作项有独立的生命周期，这条需求已经
-     *   影响了别的东西。此时正确的动作是驳回，而报错必须说清挡在哪 ——
-     *   只说「删不掉」，用户不知道该去处理什么。
+     * ★ Anything derived from it blocks deletion: plans and work items have lifecycles of
+     *   their own, so this requirement has already affected other things. The right action
+     *   then is to reject it, and the error has to say exactly what is in the way — "cannot
+     *   delete" alone leaves the user with nothing to act on.
      */
     it('已生成计划的需求删不掉，且报出挡在哪', async () => {
       const id = await createRequirement();
@@ -892,8 +913,8 @@ describe('★ 需求：AI 与人工两条路并行', () => {
     });
 
     /**
-     * ★ 用 createMember 造明确角色 —— 夹具身份是组织管理员，
-     *   拿它测「谁不能删」永远是绿的。
+     * ★ Build an explicit role with createMember — the fixture identity is an org admin, so
+     *   testing "who cannot delete" with it is green no matter what.
      */
     it('viewer 与普通成员都不能删', async () => {
       const id = await createRequirement();

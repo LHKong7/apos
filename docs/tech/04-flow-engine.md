@@ -1,41 +1,43 @@
 # 04 Flow Engine
 
-产品文档 8.6 的原话是「Flow Engine 负责推进项目状态，而不只是保存状态」。这一句区分了本产品与传统看板——传统看板等用户拖卡片，Flow Engine 主动找活干。
+*[中文版本 / Chinese version](04-flow-engine.zh.md)*
+
+Product doc §8.6 says it plainly: "the Flow Engine is responsible for advancing project state, not merely for storing it." That single sentence is what separates this product from a conventional kanban board — a kanban board waits for someone to drag a card; the Flow Engine goes looking for work to do.
 
 ---
 
-## 1. 组成
+## 1. Parts
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Flow Engine                                                 │
 │                                                              │
-│  ① Transition       状态流转（同步，事务内）                  │
-│     · 状态机校验  · Guard 求值  · Policy 评估  · 写状态+事件  │
+│  ① Transition       state transitions (sync, in a txn)       │
+│     · machine check · guards · policy · write state + events │
 │                                                              │
-│  ② Scheduler        主动调度（worker，每 5s + 事件触发）      │
-│     · 找 ready 任务  · 依赖检查  · WIP 检查  · 派发           │
+│  ② Scheduler        active dispatch (worker, 5s + on event)  │
+│     · find ready    · deps  · WIP  · dispatch                │
 │                                                              │
-│  ③ BlockerDetector  阻塞识别（worker，每 60s）                │
-│     · 九类阻塞规则扫描                                        │
+│  ③ BlockerDetector  blocker detection (worker, every 60s)    │
+│     · scans the nine blocker rules                           │
 │                                                              │
-│  ④ Recovery         恢复策略（事件触发）                      │
-│     · 重试 / 换 Agent / 降级 / 拆分 / 转人工 / 终止           │
+│  ④ Recovery         recovery strategy (event-driven)         │
+│     · retry / swap agent / downgrade / split / human / stop  │
 │                                                              │
-│  ⑤ Forecast         延期预测（worker，每 30min）              │
-│     · 关键路径 + 历史 Cycle Time + 等待时间                   │
+│  ⑤ Forecast         slip forecasting (worker, every 30 min)  │
+│     · critical path + historical cycle time + wait time      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-①是同步的、在请求路径上；②③⑤是后台循环；④由事件驱动。
+① is synchronous and sits on the request path; ②③⑤ are background loops; ④ is event-driven.
 
 ---
 
-## 2. 状态机
+## 2. State machine
 
-### 2.1 声明式定义
+### 2.1 Declarative definition
 
-状态机是数据，不是代码里的 switch。这样才能被前端复用（拖拽卡片时校验目标列是否合法）、被测试穷举、被文档自动生成。
+The state machine is data, not a `switch` buried somewhere in the code. That is what lets the front end reuse it (checking whether a drop target column is legal while a card is being dragged), lets tests enumerate it exhaustively, and lets documentation be generated from it.
 
 ```typescript
 // packages/domain/src/flow/work-item-machine.ts
@@ -84,7 +86,8 @@ export const WORK_ITEM_MACHINE: Machine<WorkItemStatus, WorkItemTrigger> = {
     { from: 'acceptance', trigger: 'accepted',            to: 'done' },
     { from: 'acceptance', trigger: 'rejected',            to: 'changes_requested' },
 
-    // 决策等待：可从多个状态进入，批准后回到原状态
+    // Waiting on a decision: reachable from many states, and approval returns
+    // the item to wherever it came from
     { from: '*',          trigger: 'decision_required',   to: 'awaiting_decision',
       effects: ['rememberPreviousStatus'] },
     { from: 'awaiting_decision', trigger: 'decision_approved', to: '$previous' },
@@ -95,11 +98,11 @@ export const WORK_ITEM_MACHINE: Machine<WorkItemStatus, WorkItemTrigger> = {
 };
 ```
 
-**`$previous` 机制**：任务可能在执行中、审核中、发布前的任意时刻需要人类决策，批准后要回到原来的位置。用 `type_data.previous_status` 记录。这比为每个状态定义一个专门的 `awaiting_decision_from_X` 状态清爽得多。
+**The `$previous` mechanism**: a task can need a human decision at any moment — mid-execution, mid-review, just before release — and once approved it has to return to where it was. `type_data.previous_status` records that. It is far cleaner than defining a dedicated `awaiting_decision_from_X` state for every state that can ask.
 
-### 2.2 Guard
+### 2.2 Guards
 
-Guard 是纯函数，输入是上下文，输出是通过与否 + 失败原因。失败原因要能直接展示给用户（页面文档 05 §5.6 要求拖拽到非法列时说明原因）。
+A guard is a pure function: context in, pass/fail plus a failure reason out. The failure reason has to be showable to the user directly (page doc 05 §5.6 requires that dragging a card to an illegal column explains why it was refused).
 
 ```typescript
 export const GUARDS: Record<string, Guard> = {
@@ -130,9 +133,11 @@ export const GUARDS: Record<string, Guard> = {
 };
 ```
 
-**`overridable`** 标记哪些 guard 可以被人类强制放行（页面文档 06 §5.4 的「强制放行」）。强制放行必须填原因并记审计。
+(The `reason` strings above are the Chinese sentences the domain layer actually produces — "N upstream dependencies unmet", "stage X is at its WIP limit of N", "N acceptance criteria have not passed.")
 
-### 2.3 依赖满足判定（8.6.2 七种依赖类型）
+**`overridable`** marks which guards a human may force past (the "force through" action in page doc 06 §5.4). Forcing through requires a written reason and is recorded in the audit trail.
+
+### 2.3 Deciding whether a dependency is met (§8.6.2, the seven dependency types)
 
 ```typescript
 function isDependencyMet(dep: Dependency, ctx: Context): boolean {
@@ -155,11 +160,11 @@ function isDependencyMet(dep: Dependency, ctx: Context): boolean {
 }
 ```
 
-`permission` 类型值得注意：它让"Agent 权限不足"成为一种**依赖**而非**失败**。这样任务会停在 `blocked` 而不是反复失败，且阻塞原因清晰指向权限问题——对应产品文档 8.6.4「权限不足」。
+The `permission` type is the interesting one: it makes "the Agent lacks a permission" a **dependency** rather than a **failure**. The task parks in `blocked` instead of failing over and over, and the blocker points squarely at the permission gap — this is product doc §8.6.4, "insufficient permission."
 
 ---
 
-## 3. Transition：唯一的状态变更入口
+## 3. Transition: the one and only way state changes
 
 ```typescript
 interface TransitionInput {
@@ -167,8 +172,8 @@ interface TransitionInput {
   subjectId: string;
   trigger: string;
   actor: Actor;
-  reason?: string;               // 人类操作时必填
-  overrideGuards?: string[];     // 强制放行的 guard 名，需权限
+  reason?: string;               // required when a human is acting
+  overrideGuards?: string[];     // names of guards to force past; requires permission
   correlationId?: string;
   causationId?: bigint;
 }
@@ -179,70 +184,71 @@ interface TransitionResult {
   to: string;
   policyVerdict?: PolicyVerdict;
   createdDecisionId?: string;
-  blockedBy?: GuardFailure[];    // 失败时返回，供 UI 展示原因
+  blockedBy?: GuardFailure[];    // returned on failure so the UI can explain why
   events: DomainEvent[];
 }
 ```
 
-### 3.1 执行顺序
+### 3.1 Order of operations
 
 ```
-1. 加行锁（SELECT ... FOR UPDATE）
-2. 查状态机：(from, trigger) → to？
-      ✗ → 返回 InvalidTransition + 当前可用的 triggers（供 UI 提示）
-3. 求值 guards
-      ✗ 且不可 override → 返回 GuardFailed + 原因明细
-      ✗ 但可 override 且 actor 有权限 → 记录 override 事件，继续
-4. 构建 PolicyContext → policy.evaluate()
-      · allow                → 继续到目标状态
-      · allow_and_notify     → 继续 + 排队通知
-      · require_agent_review → 转 reviewing，派发 Review Agent
-      · require_human_review → 转 awaiting_decision + 创建 Decision
-      · require_multi_approval → 同上，创建会签
-      · pause                → 转 blocked，原因为 policy
-      · deny                 → 拒绝，返回原因
-      · escalate             → 创建高优先级 Decision 给上级
-5. 执行 effects（切换执行主体、创建 Incident 等）
-6. UPDATE 状态（带乐观锁版本号）
-7. INSERT events（policy.evaluated + status_changed + 其他）
-8. 提交
-9. 提交后发布事件 → SSE / 通知 / Analytics / 触发下游调度检查
+1. Take a row lock (SELECT ... FOR UPDATE)
+2. Consult the machine: does (from, trigger) → to exist?
+      ✗ → return InvalidTransition + the triggers currently available (for UI hints)
+3. Evaluate guards
+      ✗ and not overridable → return GuardFailed + the detailed reasons
+      ✗ but overridable and the actor has the permission → record an override event, continue
+4. Build the PolicyContext → policy.evaluate()
+      · allow                → continue to the target state
+      · allow_and_notify     → continue + queue a notification
+      · require_agent_review → move to reviewing, dispatch a Review Agent
+      · require_human_review → move to awaiting_decision + create a Decision
+      · require_multi_approval → same, but create a co-signed decision
+      · pause                → move to blocked, reason = policy
+      · deny                 → refuse, return the reason
+      · escalate             → create a high-priority Decision for the escalation target
+5. Run effects (switch executor, create an Incident, …)
+6. UPDATE the state (with the optimistic-lock version number)
+7. INSERT events (policy.evaluated + status_changed + whatever else)
+8. Commit
+9. Publish events after commit → SSE / notifications / Analytics / downstream scheduling checks
 ```
 
-### 3.2 并发控制
+### 3.2 Concurrency control
 
-两层保护：
+Two layers of protection:
 
-| 层 | 手段 | 防什么 |
+| Layer | Mechanism | Guards against |
 | --- | --- | --- |
-| 悲观 | `SELECT ... FOR UPDATE` | 同一 Work Item 的并发流转（Agent 回调 + 人类操作同时到达） |
-| 乐观 | `WHERE version = $expected` | 跨请求的丢失更新（用户 A 读取后编辑，期间 B 已改） |
+| Pessimistic | `SELECT ... FOR UPDATE` | Concurrent transitions on one Work Item (an Agent callback and a human action arriving together) |
+| Optimistic | `WHERE version = $expected` | Lost updates across requests (user A reads, then edits; B changed it in between) |
 
-**乐观锁冲突的处理**：不重试，直接返回 409 并携带最新状态。页面文档 05 §11 定义了 UI 表现——「张伟刚刚将其移到了 Execution」。
+**Handling an optimistic-lock conflict**: do not retry — return 409 with the latest state attached. Page doc 05 §11 defines the UI behavior: 「张伟刚刚将其移到了 Execution」("Zhang Wei just moved this to Execution").
 
-**避免死锁**：一次事务只锁一个 Work Item。需要同时改多个（如批量操作）时，按 ID 排序后依次单独处理，不在一个事务里锁多行。
+**Avoiding deadlock**: one transaction locks exactly one Work Item. When several have to change (a bulk action, say), sort by ID and process them one at a time rather than locking multiple rows in a single transaction.
 
 ---
 
-## 4. Scheduler：主动调度
+## 4. Scheduler: active dispatch
 
-这是「Agent 推进」的引擎。产品文档 8.3.4 定义了调度依据。
+This is the engine behind "the Agent moves things forward." Product doc §8.3.4 defines what dispatch decisions are based on.
 
-### 4.1 主循环
+### 4.1 Main loop
 
 ```typescript
-// worker: flow-scheduler，每 5s 一轮 + 收到相关事件时立即触发一轮
+// worker: flow-scheduler — one round every 5s, plus an immediate round
+// whenever a relevant event arrives
 async function scheduleRound() {
   const candidates = await findSchedulableItems();   // §4.2
 
   for (const item of candidates) {
-    // WIP 检查（8.6.3）
+    // WIP check (§8.6.3)
     if (!await checkWipLimits(item)) {
       await markQueued(item, 'wip_limit');
       continue;
     }
 
-    // 执行主体解析
+    // Resolve the executor
     const assignment = item.executorId
       ? { type: item.executorType, id: item.executorId }
       : await resolveExecutor(item);                 // §4.3
@@ -258,7 +264,7 @@ async function scheduleRound() {
       continue;
     }
 
-    // Agent：预算与并发检查后派发
+    // Agent: dispatch once the budget and concurrency checks pass
     const budgetOk = await checkBudget(item, assignment);
     if (!budgetOk.ok) {
       await createDecision('budget_overrun', item, budgetOk);
@@ -274,14 +280,14 @@ async function scheduleRound() {
 }
 ```
 
-### 4.2 候选查询
+### 4.2 Candidate query
 
 ```sql
 SELECT wi.* FROM work_items wi
 WHERE wi.project_id IN (SELECT id FROM projects WHERE status = 'active')
   AND wi.status = 'ready'
   AND wi.deleted_at IS NULL
-  -- 所有前置依赖已满足
+  -- every upstream dependency is satisfied
   AND NOT EXISTS (
     SELECT 1 FROM work_item_dependencies d
     JOIN work_items dep ON dep.id = d.from_id
@@ -289,32 +295,33 @@ WHERE wi.project_id IN (SELECT id FROM projects WHERE status = 'active')
       AND NOT (
         (d.type = 'finish_to_start' AND dep.status IN ('done','released','acceptance'))
         OR (d.type = 'start_to_start' AND dep.actual_start IS NOT NULL)
-        -- 其余类型由应用层二次判定（涉及 artifacts/decisions 等跨表条件）
+        -- the other types get a second pass in the application layer
+        -- (they need cross-table conditions: artifacts, decisions, …)
       )
   )
 ORDER BY wi.priority ASC, wi.planned_start ASC NULLS LAST
 LIMIT 100
-FOR UPDATE SKIP LOCKED;      -- ★ 多 worker 实例并行调度不冲突
+FOR UPDATE SKIP LOCKED;      -- ★ multiple worker instances can schedule in parallel without colliding
 ```
 
-`FOR UPDATE SKIP LOCKED` 让多个 scheduler 实例可以同时跑而不重复派发同一任务。
+`FOR UPDATE SKIP LOCKED` is what lets several scheduler instances run at once without dispatching the same task twice.
 
-### 4.3 执行主体匹配（8.3.4）
+### 4.3 Matching an executor (§8.3.4)
 
 ```typescript
 function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
-  // 硬性条件：不满足直接淘汰
+  // Hard requirements: fail one and you are out
   if (!agent.applicableTypes.includes(item.type)) return null;
   if (agent.status !== 'active') return null;
   if (ctx.agentLoad[agent.id] >= agent.maxConcurrency) return null;
-  if (!hasRequiredPermissions(agent, item)) return null;      // 权限范围
+  if (!hasRequiredPermissions(agent, item)) return null;      // permission scope
   if (agent.costLimitPerRun && item.estimatedCost > agent.costLimitPerRun) return null;
 
-  // 加权评分
+  // Weighted score
   const skillMatch   = jaccard(agent.skills, item.requiredSkills);       // 0–1
-  const successRate  = agent.stats.successRate ?? 0.7;                   // 样本不足给中性值
+  const successRate  = agent.stats.successRate ?? 0.7;                   // neutral value when the sample is thin
   const loadFactor   = 1 - ctx.agentLoad[agent.id] / agent.maxConcurrency;
-  const contextMatch = ctx.agentContextAffinity[agent.id] ?? 0.5;        // 是否做过同模块
+  const contextMatch = ctx.agentContextAffinity[agent.id] ?? 0.5;        // has it worked this module before?
   const costFactor   = 1 - normalize(agent.stats.avgCost, ctx.costRange);
 
   const score =
@@ -327,7 +334,8 @@ function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
   return {
     agentId: agent.id,
     score,
-    // ★ 理由必须可解释——页面文档 04 §5.4 要求改派下拉展示匹配依据
+    // ★ The reasoning has to be legible — page doc 04 §5.4 requires the reassign
+    //   dropdown to show what each candidate matched on
     reasons: [
       `Skill 匹配 ${(skillMatch * 100).toFixed(0)}%（${intersect(agent.skills, item.requiredSkills).join(', ')}）`,
       `历史成功率 ${(successRate * 100).toFixed(0)}%（${agent.stats.sampleSize} 次）`,
@@ -337,30 +345,32 @@ function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
 }
 ```
 
-**需要人类经验的任务**：产品文档 8.3.4 提到"是否需要人类经验"是分配依据之一。实现上由 Plan 生成时在 `type_data.requires_human` 标记，或由 Policy 规则强制（如"涉及生产 DDL 的任务必须分配给人类"）。
+(The three `reasons` strings are the Chinese UI copy: skill match %, historical success rate with sample size, and current load.)
 
-**权重不是硬编码**：存在项目配置里，允许调整。默认值来自上表，需要真实数据验证后校准。
+**Tasks that need human judgment**: product doc §8.3.4 lists "does this need human experience" as one basis for assignment. In practice that is marked as `type_data.requires_human` when the Plan is generated, or forced by a Policy rule (e.g. "any task touching production DDL must go to a human").
 
-### 4.4 WIP 控制（8.6.3）
+**The weights are not hard-coded**: they live in project configuration and can be adjusted. The defaults above are starting points and need calibration against real data.
 
-五类限制：
+### 4.4 WIP control (§8.6.3)
+
+Five kinds of limit:
 
 ```typescript
 async function checkWipLimits(item: WorkItem): Promise<WipCheck> {
   const checks = [
-    // 阶段 WIP
+    // stage WIP
     { key: 'stage', limit: project.wipLimits[targetStage],
       current: await countByStage(project.id, targetStage) },
-    // Agent 并发
+    // Agent concurrency
     { key: 'agent', limit: agent.maxConcurrency,
       current: await countRunningRuns(agent.id) },
-    // 人类待处理决策数
+    // decisions pending on one human
     { key: 'human_decisions', limit: project.wipLimits.humanPendingDecisions,
       current: await countPendingDecisions(assigneeId) },
-    // 项目运行成本
+    // project run cost
     { key: 'project_cost', limit: project.budgetAmount,
       current: project.costSpent },
-    // 任务类型并发
+    // concurrency per task type
     { key: 'type', limit: project.wipLimits[`type:${item.type}`],
       current: await countRunningByType(project.id, item.type) },
   ];
@@ -369,28 +379,28 @@ async function checkWipLimits(item: WorkItem): Promise<WipCheck> {
 }
 ```
 
-**WIP 满时不挤占**：产品文档页面文档 05 §11 定义了行为——生成决策「WIP 已满，是否提升上限或暂停低优先级任务」，而不是自动踢掉低优先级任务。自动挤占会让用户失去对系统行为的预期。
+**A full WIP limit does not evict anything**: page doc 05 §11 defines the behavior — raise a decision, 「WIP 已满，是否提升上限或暂停低优先级任务」("WIP is full — raise the limit, or pause the low-priority tasks?"), rather than silently kicking out lower-priority work. Automatic eviction costs the user their ability to predict what the system will do.
 
 ---
 
-## 5. BlockerDetector（8.6.4）
+## 5. BlockerDetector (§8.6.4)
 
-九类阻塞，每 60 秒扫描一次：
+Nine kinds of blocker, scanned once every 60 seconds:
 
-| # | 阻塞类型 | 判据 | 检测方式 |
+| # | Blocker type | Criterion | How it is detected |
 | --- | --- | --- | --- |
-| 1 | 任务超时 | `now > planned_end + grace` 且未完成 | SQL |
-| 2 | 依赖未满足 | 停在 `ready` 超过阈值且依赖未满足 | SQL + 应用层 |
-| 3 | Agent 连续失败 | 同一 Work Item 连续 N 次 Run 失败 | SQL |
-| 4 | 等待决策过久 | `decision.created_at < now - threshold` | SQL |
-| 5 | 外部服务不可用 | 集成健康检查失败且有任务依赖它 | 健康检查表 |
-| 6 | 成本超限 | `project.cost_spent >= budget` 或 Run 超单次上限 | SQL |
-| 7 | 权限不足 | Agent 缺少任务所需权限（依赖判定已覆盖） | 派发前检查 |
-| 8 | 多 Agent 结果冲突 | Review 结论不一致且无人裁决 | 应用层 |
-| 9 | 长期无事件 | Work Item 最后事件时间 > 阈值且状态为进行中 | SQL |
+| 1 | Task overdue | `now > planned_end + grace` and not finished | SQL |
+| 2 | Dependency unmet | Sitting in `ready` past a threshold with a dependency still unmet | SQL + application layer |
+| 3 | Agent failing repeatedly | N consecutive failed Runs on the same Work Item | SQL |
+| 4 | Decision waiting too long | `decision.created_at < now - threshold` | SQL |
+| 5 | External service down | An integration health check fails and some task depends on it | Health-check table |
+| 6 | Over cost limit | `project.cost_spent >= budget`, or a Run over its per-run cap | SQL |
+| 7 | Insufficient permission | The Agent lacks a permission the task needs (already covered by dependency evaluation) | Pre-dispatch check |
+| 8 | Conflicting Agent results | Review conclusions disagree and nobody has adjudicated | Application layer |
+| 9 | No events for a long time | The Work Item's last event is older than the threshold while the status is in-flight | SQL |
 
 ```sql
--- 类型 9：长期无事件（最容易发现"Agent 悄悄卡住"的情况）
+-- Type 9: no events for a long time (the surest way to catch "the Agent quietly got stuck")
 SELECT wi.id, wi.title, wi.status, MAX(e.occurred_at) AS last_event
 FROM work_items wi
 LEFT JOIN events e ON e.subject_type='work_item' AND e.subject_id=wi.id
@@ -401,32 +411,32 @@ HAVING MAX(e.occurred_at) < now() - interval '30 minutes'
     OR MAX(e.occurred_at) IS NULL;
 ```
 
-检测到阻塞后：写 `blocked_since` / `blocked_reason` / `blocked_detail`，发 `work_item.blocked` 事件，交给 Recovery 决定下一步。
+Once a blocker is detected: write `blocked_since` / `blocked_reason` / `blocked_detail`, emit `work_item.blocked`, and hand it to Recovery to decide what happens next.
 
-**阈值可配置**，且不同阻塞类型阈值不同（等待决策 4h vs 长期无事件 30min）。
+**Thresholds are configurable**, and they differ by blocker type (4h for a waiting decision vs. 30min for no events at all).
 
-### 5.x 写之前先判「变了没有」
+### 5.x Check whether anything changed before you write
 
-调度器每轮都会对同一个工作项重新推出同一个结论（这个 Agent 还是没被加进项目）。**无条件写的代价有两处**：
+Every round, the scheduler re-derives the same conclusion about the same work item (this Agent still has not been added to the project). **Writing unconditionally costs you in two places**:
 
-1. 事件表里堆出几十条一模一样的 `work_item.blocked`，把真正的状态变更淹掉 —— Timeline 从「发生了什么」退化成一段日志；
-2. `blocked_since` 每轮被刷新，于是卡片上的「已阻塞 8h12m」恒等于「0m」—— 而那一栏本来是用来判断「卡了多久」的。
+1. The event table fills with dozens of identical `work_item.blocked` rows that bury the real state changes — the Timeline degrades from "what happened" into a log file;
+2. `blocked_since` gets refreshed every round, so the card's 「已阻塞 8h12m」("blocked for 8h12m") is permanently 「0m」— and that field exists precisely to tell you how long something has been stuck.
 
-所以 `markBlocked()` 只在**首次阻塞或原因变化**时写库与发事件，判等走 `sameBlockedDetail()`（与原因码定义在同一个文件里，改码时跟着改）。判等按 `agentId` 排序后比对：候选顺序取决于查询计划，不是语义的一部分。
+So `markBlocked()` writes to the database and emits an event only on **the first block, or when the reason changes**; equality is decided by `sameBlockedDetail()` (defined in the same file as the reason codes, so changing a code drags the comparison along with it). The comparison sorts by `agentId` first: candidate ordering comes from the query plan and is not part of the meaning.
 
-### 5.y 拒绝理由是**码**不是句子
+### 5.y A rejection reason is a **code**, not a sentence
 
-`matchExecutors()` 的每条拒绝带 `code`（为什么被淘汰）、`scope`（这条限制配在哪一层）与 `params`（插值参数），定义在 `packages/contracts/src/work-item/blocked.ts`。中文句子保留在 `reason` 里，只服务日志与存量数据。
+Every rejection out of `matchExecutors()` carries a `code` (why this candidate was eliminated), a `scope` (which layer that restriction is configured at), and `params` (interpolation values), defined in `packages/contracts/src/work-item/blocked.ts`. The Chinese sentence stays in `reason`, serving only logs and existing rows.
 
-`scope` 存在的唯一理由是消灭一类自相矛盾的展示：Agent 档案页写着「允许 write_file」而看板说「缺少 write_file」—— 两句都对，一个是组织级上限，一个是项目级授权。不标层级，用户看到的是系统在自打嘴巴，然后跑去改错地方。
+`scope` exists for exactly one reason: to kill a class of self-contradictory display. The Agent's profile page says "write_file allowed" while the board says "missing write_file" — both are true, one is the organization-level ceiling and the other is the project-level grant. Without the layer labeled, what the user sees is the system contradicting itself, and then they go fix the wrong thing.
 
-`FIX_FOR_CODE` 是原因码到修复入口的**唯一**映射表。界面各处各猜一套的下场是同一条原因在两个页面上跳到两个地方。
+`FIX_FOR_CODE` is the **single** map from reason code to remediation entry point. When each part of the UI guesses its own, the same reason lands the user in two different places on two different pages.
 
 ---
 
-## 6. Recovery（8.6.5）
+## 6. Recovery (§8.6.5)
 
-阻塞或失败发生后，按 Policy 决定恢复动作。**这是产品"自主恢复"能力的落点。**
+After a block or a failure, Policy decides the recovery action. **This is where the product's "autonomous recovery" claim actually lands.**
 
 ```typescript
 const RECOVERY_ACTIONS = {
@@ -442,76 +452,77 @@ const RECOVERY_ACTIONS = {
 };
 ```
 
-### 6.1 默认恢复策略
+### 6.1 Default recovery strategy
 
-Policy 未特别配置时的兜底（可被项目 Policy 覆盖）：
+The fallback when no Policy says otherwise (project Policy can override it):
 
 ```
-Agent Run 失败
+Agent Run failed
 ├─ error_class = context_insufficient
-│    第 1 次 → retry（自动补充相关知识与上次失败信息到上下文）
-│    第 2 次 → request_decision（让人补充上下文）
+│    1st time → retry (automatically fold the relevant knowledge and the last
+│                      failure into the context)
+│    2nd time → request_decision (ask a human to supply the missing context)
 ├─ error_class = capability_mismatch
-│    立即 → switch_agent；无候选 → transfer_to_human
+│    immediately → switch_agent; no candidate → transfer_to_human
 ├─ error_class = tool_failure / external_unavailable
-│    指数退避 retry ×3 → 仍失败 → request_decision
+│    retry ×3 with exponential backoff → still failing → request_decision
 ├─ error_class = timeout
-│    第 1 次 → split_task（让 Project Agent 拆细）
-│    第 2 次 → transfer_to_human
+│    1st time → split_task (have the Project Agent break it down)
+│    2nd time → transfer_to_human
 ├─ error_class = permission_denied
-│    不重试 → request_decision（决策内容：是否扩大 Agent 权限）
+│    no retry → request_decision (the decision: widen the Agent's permissions or not)
 ├─ error_class = budget_exceeded
-│    不重试 → request_decision（决策责任人 = Sponsor）
-└─ 连续失败 ≥ 3（任意原因）
-     → pause + escalate 到技术负责人（产品文档 8.9.3 明确示例）
+│    no retry → request_decision (decision owner = Sponsor)
+└─ 3 or more consecutive failures (any cause)
+     → pause + escalate to the tech lead (spelled out in product doc §8.9.3)
 ```
 
-**关键设计**：不同错误类型的恢复策略必须不同。无差别重试三次是最糟的实现——`permission_denied` 重试 100 次也不会成功，只是烧钱。这依赖 Agent Protocol 提供可靠的错误分类（[06](06-agent-protocol.md) §6）。
+**The key design point**: different error classes must recover differently. Blindly retrying three times is the worst possible implementation — `permission_denied` will not succeed on the hundredth attempt either, it will just burn money. All of this depends on the Agent Protocol delivering trustworthy error classification ([06](06-agent-protocol.md) §6).
 
-### 6.2 恢复的成本护栏
+### 6.2 Cost guardrail on recovery
 
-每次恢复动作都要检查累计成本：
+Every recovery action checks cumulative cost first:
 
 ```typescript
 if (item.actualCost + estimatedRetryCost > item.estimatedCost * 3) {
-  // 已花到预估的 3 倍，不再自动重试
+  // Already spent 3× the estimate — stop retrying automatically
   return createDecision('cost_overrun_on_retry', item);
 }
 ```
 
 ---
 
-## 7. Forecast：延期预测（8.6.6）
+## 7. Forecast: predicting slip (§8.6.6)
 
-页面文档 02 §5.2 要求预测结果可解释——用户必须能看到七项输入各自的贡献度，否则不会信任预测。
+Page doc 02 §5.2 requires the forecast to be explainable — the user has to see how much each of the seven inputs contributed, or they will not trust the number.
 
-### 7.1 方法
+### 7.1 Method
 
-MVP 不用机器学习，用可解释的加法模型：
+The MVP uses no machine learning; it uses an explainable additive model:
 
 ```typescript
 function forecast(project: Project): Forecast {
-  const cp = criticalPath(project);              // 关键路径任务序列
+  const cp = criticalPath(project);              // the critical-path task sequence
   const remaining = cp.filter(t => !isDone(t));
 
   let expectedDays = 0;
   const factors: Factor[] = [];
 
   for (const task of remaining) {
-    // 基准：计划工期
+    // Baseline: the planned duration
     let taskDays = task.estimatedHours / WORK_HOURS_PER_DAY;
 
-    // 因子 1：历史 Cycle Time 修正（该类型任务的实际/计划比值）
+    // Factor 1: historical cycle-time correction (actual/planned ratio for this task type)
     const cycleRatio = history.cycleTimeRatio(project, task.type) ?? 1.0;
     taskDays *= cycleRatio;
 
-    // 因子 2：Agent 成功率修正（失败要重跑）
+    // Factor 2: Agent success-rate correction (failures mean re-runs)
     if (task.executorType === 'agent') {
       const sr = agentStats(task.executorId).successRate ?? 0.85;
-      taskDays *= (1 / sr);                      // 成功率 80% → 期望 1.25 次
+      taskDays *= (1 / sr);                      // 80% success rate → expect 1.25 attempts
     }
 
-    // 因子 3：决策等待（该任务是否含人类节点）
+    // Factor 3: decision wait (does this task contain a human gate?)
     if (task.hasHumanGate) {
       const avgWait = history.avgDecisionWaitHours(project, task.decisionType);
       taskDays += avgWait / 24;
@@ -520,7 +531,7 @@ function forecast(project: Project): Forecast {
     expectedDays += taskDays;
   }
 
-  // 因子 4：当前阻塞的即时影响
+  // Factor 4: the immediate impact of current blockers
   const blockedImpact = currentBlockers(cp)
     .reduce((sum, b) => sum + hoursSince(b.blockedSince) / 24, 0);
   expectedDays += blockedImpact;
@@ -528,9 +539,9 @@ function forecast(project: Project): Forecast {
   const drift = expectedDays - daysUntil(project.endsAt);
 
   return {
-    probability: sigmoid(drift / SCALE),         // 延期概率
+    probability: sigmoid(drift / SCALE),         // probability of slipping
     driftDays: drift,
-    // ★ 归因：按贡献度排序，页面直接展示
+    // ★ Attribution: ranked by contribution, rendered straight onto the page
     factors: rankFactors([
       { name: '决策等待时间', contribution: decisionWaitDays, ... },
       { name: 'Agent 重试损耗', contribution: retryDays, ... },
@@ -542,81 +553,83 @@ function forecast(project: Project): Forecast {
 }
 ```
 
-### 7.2 样本不足时不预测
+(The four factor names are the Chinese UI strings: decision wait time, Agent retry overhead, current blockers, and historical duration drift. `primaryCause` renders as "primary cause: decision wait, 8h12m.")
 
-页面文档 02 §11 明确要求：项目 < 3 天或完成任务 < 5 时显示「样本不足，暂不预测」，而不是给一个低置信度数字。
+### 7.2 No forecast when the sample is too thin
 
-**理由**：一个错误的预测比没有预测更有害——用户会据此做决策，然后失去对系统的信任。
+Page doc 02 §11 is explicit: when the project is under 3 days old or has fewer than 5 completed tasks, show 「样本不足，暂不预测」("not enough data — no forecast yet") instead of a low-confidence number.
 
-### 7.3 关键路径计算
+**Why**: a wrong forecast is worse than no forecast — users act on it, and then they stop trusting the system.
 
-标准 CPM（关键路径法）在依赖图上跑：
+### 7.3 Computing the critical path
+
+Standard CPM (critical path method) run over the dependency graph:
 
 ```
-1. 拓扑排序
-2. 正向遍历算最早开始/结束（ES/EF）
-3. 反向遍历算最晚开始/结束（LS/LF）
-4. 浮动时间 = LS - ES，浮动为 0 的任务构成关键路径
+1. Topological sort
+2. Forward pass for earliest start/finish (ES/EF)
+3. Backward pass for latest start/finish (LS/LF)
+4. Float = LS - ES; the tasks with zero float form the critical path
 ```
 
-复杂度 O(V+E)，200 节点的项目毫秒级完成。结果缓存到 `plans.critical_path`，依赖或工期变化时失效重算。
+O(V+E), which finishes in milliseconds for a 200-node project. The result is cached in `plans.critical_path` and invalidated for recomputation whenever dependencies or durations change.
 
-**多条等长关键路径**：全部标注（页面文档 07 §11 已定义 UI 表现）。
+**Several equally long critical paths**: mark all of them (page doc 07 §11 already defines the UI treatment).
 
 ---
 
-## 8. 与 Policy Engine 的边界
+## 8. The boundary with the Policy Engine
 
-两者容易混淆，明确分工：
+The two are easy to confuse, so here is the division of labor:
 
 | | Flow Engine | Policy Engine |
 | --- | --- | --- |
-| 回答 | **能不能**从 A 到 B（结构合法性） | **该不该**自动做（治理判断） |
-| 依据 | 状态机、依赖、WIP | 风险、成本、环境、质量 |
-| 结果 | 允许 / 拒绝 + 原因 | allow / require_review / deny / … |
-| 可配置性 | 状态机由产品定义，企业可配阶段 | 企业与项目自由配置规则 |
+| Answers | **Can** we go from A to B (structural legality) | **Should** this happen automatically (governance judgment) |
+| Based on | State machine, dependencies, WIP | Risk, cost, environment, quality |
+| Result | Allow / refuse + reason | allow / require_review / deny / … |
+| Configurability | The machine is defined by the product; enterprises can configure stages | Enterprises and projects configure rules freely |
 
-**调用关系**：Flow 调 Policy，不反向。Policy 是纯函数（输入 context，输出 verdict），不感知状态机的存在——这让它可以被独立测试和模拟回放。
+**Direction of calls**: Flow calls Policy, never the reverse. Policy is a pure function (context in, verdict out) with no awareness that a state machine exists — which is what makes it independently testable and replayable in simulation.
 
 ---
 
-## 9. 测试策略
+## 9. Testing strategy
 
-状态机与调度逻辑是系统的心脏，测试要求高于其他模块。
+The state machine and the scheduling logic are the heart of the system; the testing bar is higher here than elsewhere.
 
-| 层次 | 内容 | 工具 |
+| Level | What | Tooling |
 | --- | --- | --- |
-| 单元 | 状态机穷举：所有 (from, trigger) 组合的期望结果 | Vitest，表驱动 |
-| 单元 | Guard 纯函数 | Vitest |
-| 单元 | 依赖满足判定的七种类型 | Vitest |
-| 单元 | CPM 关键路径（含多路径、环检测） | Vitest |
-| 集成 | Transition 的事务性：状态与事件同时写入或同时不写 | Testcontainers + 真实 PG |
-| 集成 | 并发流转：两个请求同时改同一 Work Item | 并发测试 |
-| 集成 | Scheduler 的 SKIP LOCKED：多实例不重复派发 | 多进程测试 |
-| 场景 | 完整链路：需求 → 计划 → 派发 → 失败 → 恢复 → 完成 | 集成测试 + Mock Agent |
+| Unit | State machine, exhaustively: the expected result for every (from, trigger) pair | Vitest, table-driven |
+| Unit | Guards as pure functions | Vitest |
+| Unit | All seven dependency-satisfaction types | Vitest |
+| Unit | CPM critical path (multiple paths, cycle detection) | Vitest |
+| Integration | Transition atomicity: state and event are written together or not at all | Testcontainers + real PG |
+| Integration | Concurrent transitions: two requests changing one Work Item at once | Concurrency test |
+| Integration | Scheduler `SKIP LOCKED`: multiple instances never double-dispatch | Multi-process test |
+| Scenario | The full chain: requirement → plan → dispatch → failure → recovery → done | Integration test + mock Agent |
 
-**不变式断言**（在集成测试中全局校验）：
+**Invariant assertions** (checked globally in the integration tests):
 
 ```typescript
-// 任何状态变更后必须存在对应事件
+// Any state change must have a matching event
 assert(eventsFor(workItem).some(e => e.type === 'work_item.status_changed'
   && e.payload.to === workItem.status));
 
-// 处于 blocked 的任务必须有 blocked_reason
+// A task in blocked must have a blocked_reason
 assert(workItem.status !== 'blocked' || workItem.blockedReason != null);
 
-// awaiting_decision 的任务必须有未解决的 decision
+// A task in awaiting_decision must have an unresolved decision
 assert(workItem.status !== 'awaiting_decision'
   || pendingDecisions(workItem).length > 0);
 ```
 
 ---
 
-## 10. 待确认问题
+## 10. Open questions
 
-1. **调度权重的初始值需要真实数据校准。** 目前 0.30/0.25/0.15/0.15/0.15 是拍的。建议 MVP 上线后收集 2–4 周数据，用"实际成功且低成本的分配"作为标签做一次回归校准。
-2. **`$previous` 机制在多层嵌套时的行为**：任务从 executing 进入 awaiting_decision，决策期间又产生第二个决策，回退时应该回到哪？建议用栈而非单值，但会增加复杂度。MVP 可限制为"同一时刻只允许一个未决决策"。
-3. **Scheduler 的公平性**：当前按 priority + planned_start 排序，可能导致低优先级任务长期饿死。是否需要引入等待时间加权？倾向于需要，但 MVP 可先观察。
-4. **人类任务的调度**：目前只是"分配 + 通知"，没有真正的调度语义（人不会因为系统派发就开始做）。人类任务的 `executing` 状态如何触发？靠人手动标记还是靠外部信号（如 commit）？倾向于两者都支持。
-5. **延期预测的因子权重与 sigmoid 参数**需要标定。MVP 可先只输出 `driftDays` 与归因，不输出概率——概率给错了比不给更糟。
-6. **恢复策略中的 `split_task`** 需要调用 Project Agent 重新规划，这是一次 LLM 调用，成本与延迟都不低。是否应该限制自动拆分的触发频率？
+1. **The initial scheduling weights need calibration against real data.** Today's 0.30/0.25/0.15/0.15/0.15 are guesses. The suggestion is to collect 2–4 weeks of data after the MVP ships and run one regression calibration, using "assignments that actually succeeded and were cheap" as the label.
+2. **How `$previous` should behave when nesting**: a task goes from executing into awaiting_decision, and during that decision a second decision is raised — where should it return to? A stack rather than a single value is the right answer, but it adds complexity. The MVP can restrict things to "only one open decision at a time."
+3. **Scheduler fairness**: today it sorts by priority + planned_start, which can starve low-priority tasks indefinitely. Should waiting time be weighted in? Probably yes, but the MVP can watch first.
+4. **Scheduling human tasks**: right now this is only "assign + notify," with no real scheduling semantics (people do not start work just because the system dispatched it). What moves a human task into `executing` — a manual mark, or an external signal such as a commit? Leaning toward supporting both.
+5. **The forecast's factor weights and sigmoid parameters** need calibration. The MVP can emit only `driftDays` and the attribution, without a probability — a wrong probability is worse than none.
+6. **`split_task` in the recovery strategy** has to call the Project Agent to replan, which is an LLM call with real cost and latency. Should the trigger rate for automatic splitting be capped?

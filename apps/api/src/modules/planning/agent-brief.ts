@@ -1,23 +1,34 @@
 import type { StructureInput, StructuredRequirement } from './provider';
 
 /**
- * Agent 要写出的文件名。
+ * The file name the agent must write / Agent 要写出的文件名。
  *
- * ★ 固定成一个约定路径，而不是让 Agent 自己起名再去猜：
- *   猜的那一步没有任何收益，却引入了一整类「跑完了但找不到产物」的失败。
+ * ★ Fixed to one agreed path instead of letting the agent name the file and then
+ *   guessing what it picked: the guessing step buys nothing and opens a whole class
+ *   of "the run finished but the output cannot be found" failures.
+ *
+ * ★ 固定成一个约定路径，而不是让 Agent 自己起名再去猜：猜的那一步没有任何收益，
+ *   却引入了一整类「跑完了但找不到产物」的失败。
  */
 export const OUTPUT_FILE = 'apos-output.json';
 
 /**
- * 任务书。这是 Agent 唯一看得到的东西，写得好不好直接决定产出质量。
+ * The brief. It is the only thing the agent ever sees, so how well it is written
+ * decides the quality of the output outright.
  *
- * 三条原则：
- * 1. **先说交付物再说任务** —— 这些 CLI 会边读边动手，把"写到哪个文件、
- *    什么格式"放在最后，它很可能已经按自己的想法写了一半。
- * 2. **给 schema 而不是给描述** —— "包含验收标准"会得到各种形状；
- *    给出字段名与取值枚举，才可能一次通过校验。
- * 3. **说清楚判断标准而不是只说做什么** —— 澄清问题分四级这件事，
- *    不解释「什么算 must_confirm」的话，Agent 会把所有问题都标成最高级。
+ * Three principles:
+ * 1. **State the deliverable before the task** — these CLIs act while they read, so
+ *    if "which file, which format" comes last they have already written half of
+ *    something in their own shape.
+ * 2. **Give a schema, not a description** — "include acceptance criteria" yields a
+ *    different shape every time; only field names and value enums stand a chance of
+ *    passing validation on the first try.
+ * 3. **Spell out the judgment criteria, not just the work** — clarifications come in
+ *    four levels, and without explaining what counts as must_confirm the agent files
+ *    every single question at the highest one.
+ *
+ * 任务书。这是 Agent 唯一看得到的东西，写得好不好直接决定产出质量。三条原则：
+ * 先说交付物再说任务；给 schema 而不是给描述；说清楚判断标准而不是只说做什么。
  */
 function header(task: string): string {
   return `# ${task}
@@ -31,7 +42,7 @@ JSON。不要输出到别处，不要只在对话里打印，不要用 \`\`\` �
 `;
 }
 
-/** 澄清分级的判据。不写清楚的话所有问题都会被标成 must_confirm */
+/** How clarifications are graded. Left unstated, every question comes back must_confirm */
 const CLARIFICATION_RULES = `
 ### 澄清问题怎么分级
 
@@ -50,17 +61,24 @@ const CLARIFICATION_RULES = `
 `;
 
 /**
- * 输出语言指令。
+ * The output-language instruction / 输出语言指令。
  *
- * ★★ 必须显式写死，不能靠 brief 自己是中文来暗示。
- *   brief 是中文而需求是英文时，模型两边都占理，于是它每次自己选一个 ——
- *   现场就是同一个项目里中英两份 PRD 并存（问题记录：BUG-4）。
+ * ★★ It has to be nailed down explicitly; an implicit cue — the brief itself being
+ *   written in Chinese — is not enough. When the brief is Chinese and the
+ *   requirement is English, both sides have a claim and the model picks one per
+ *   call. In the field that meant one project carrying a Chinese PRD and an English
+ *   PRD side by side (issue log: BUG-4).
+ *
+ * ★ It constrains only **the fields the platform asks it to produce**. The user's
+ *   own wording and identifiers taken from existing code are copied verbatim —
+ *   translating those renames something that belongs to the user.
+ *
+ * ★★ 必须显式写死，不能靠 brief 自己是中文来暗示。brief 是中文而需求是英文时，
+ *   模型两边都占理，于是它每次自己选一个 —— 现场就是同一个项目里中英两份 PRD
+ *   并存（问题记录：BUG-4）。
  *
  * ★ 只约束**平台要它写的字段**。用户原话、既有代码里的标识符照抄，
  *   翻译它们等于给用户的东西改名。
- *
- * Stated explicitly because an implicit cue (a Chinese brief) loses to an
- * English requirement about half the time.
  */
 function languageRule(locale: 'en' | 'zh' | undefined): string {
   const target = locale === 'zh' ? '简体中文' : '英文（English）';
@@ -138,37 +156,51 @@ ${input.rawInput}
 }
 
 /**
- * 上一版产物在修正任务书里最多带这么多字符。
+ * How many characters of the previous output the repair brief may carry.
  *
- * ★ 带全的诱惑很大 —— 但一份被判废的计划可能有几十 KB，整个塞回去会把
- *   真正要读的那句「哪里错了」挤到几千行之后。Agent 需要的是**定位**，
- *   而问题清单已经把字段路径说清楚了；产物只是用来对照。
+ * ★ The temptation is to include all of it — but a rejected plan can run to tens of
+ *   KB, and pasting the whole thing back pushes the one line that actually matters
+ *   ("here is what was wrong") thousands of lines down. What the agent needs is
+ *   **orientation**, and the problem list already names the exact field paths; the
+ *   output is only there to compare against.
+ *
+ * ★ 带全的诱惑很大 —— 但一份被判废的计划可能有几十 KB，整个塞回去会把真正要读的
+ *   那句「哪里错了」挤到几千行之后。Agent 需要的是定位，而问题清单已经把字段路径
+ *   说清楚了；产物只是用来对照。
  */
 const PREVIOUS_OUTPUT_LIMIT = 8_000;
 
 /**
- * 修正轮的任务书。
+ * The brief for the repair round / 修正轮的任务书。
  *
- * ★★ 为什么要有这一轮：`agent-output.ts` 的注释里写着「拒收换来的是一次
- *   重试或一次澄清」，但在此之前**根本没有重试** —— 一个枚举值拼错，
- *   产品里最贵的那次调用整场作废，用户直接掉进一份与需求无关的规则模板。
- *   而模型犯的多半是格式错误，不是理解错误：把 zod 报的那几句原样递回去，
- *   它通常一次就改对了。
+ * ★★ Why this round exists: `agent-output.ts` says in its comments that "rejection
+ *   buys a retry or a clarification", yet before this there **was no retry** — one
+ *   misspelled enum value threw away the most expensive call in the product and
+ *   dropped the user into a rule-based template that had nothing to do with their
+ *   requirement. And what the model gets wrong is almost always formatting rather
+ *   than comprehension: hand back the zod complaint verbatim and it usually fixes
+ *   it in a single round.
  *
- * ★★ 必须带上**报错**与**上一版产物**两样，缺一样这一轮就白跑：
- *   只给报错，Agent 不知道自己当时写了什么，只能从头重写一遍
- *   （于是很可能重犯同一个错）；只给产物，它不知道哪里不合格。
+ * ★★ Both the **complaint** and the **previous output** must be carried; drop either
+ *   and the round is wasted. The complaint alone leaves the agent with no idea what
+ *   it wrote last time, so it rewrites from scratch (and often repeats the same
+ *   mistake); the output alone does not say what failed.
  *
- * ★ 原任务书整份附在后面，不做删减。Agent 这一轮是新开的一次会话，
- *   它没有上一轮的记忆 —— schema 与那几条硬要求必须再给一遍。
+ * ★ The original brief is appended in full, uncut. This round is a freshly opened
+ *   session with no memory of the last one — the schema and the hard requirements
+ *   have to be handed over again.
  *
- * The repair brief for the retry round. Without it, one misspelled enum threw
- * away the most expensive call in the product and dropped the user into a
- * generic template. The failure is almost always formatting rather than
- * comprehension, so handing back the exact validator complaint usually fixes it
- * in one round. Both the complaint and the previous output are required: the
- * complaint alone leaves the agent rewriting from scratch (and often repeating
- * the mistake), the output alone does not say what was wrong.
+ * ★★ 为什么要有这一轮：拒收本该换来一次重试，但在此之前根本没有重试 —— 一个枚举值
+ *   拼错，产品里最贵的那次调用整场作废，用户直接掉进一份与需求无关的规则模板。
+ *   模型犯的多半是格式错误，不是理解错误：把 zod 报的那几句原样递回去，它通常一次
+ *   就改对了。
+ *
+ * ★★ 必须带上报错与上一版产物两样，缺一样这一轮就白跑：只给报错，Agent 不知道
+ *   自己当时写了什么，只能从头重写一遍（于是很可能重犯同一个错）；只给产物，
+ *   它不知道哪里不合格。
+ *
+ * ★ 原任务书整份附在后面，不做删减。Agent 这一轮是新开的一次会话，它没有上一轮的
+ *   记忆 —— schema 与那几条硬要求必须再给一遍。
  */
 export function buildRepairBrief(
   originalBrief: string,
@@ -359,9 +391,13 @@ ${JSON.stringify(
     })),
     assumptions: req.assumptions,
     /**
-     * ★★ 已回答的澄清是**最硬的输入**：它是人明确表过态的地方。
-     *   不带进来的话，Agent 会把已经问清楚的东西重新假设一遍，
-     *   而用户上一步逐条回答的工作等于白做。
+     * ★★ Answered clarifications are the **hardest input there is**: they are the
+     *   points a human took an explicit position on. Leave them out and the agent
+     *   re-assumes things that were already settled, which throws away the work the
+     *   user just did answering them one by one.
+     *
+     * ★★ 已回答的澄清是最硬的输入：它是人明确表过态的地方。不带进来的话，Agent 会把
+     *   已经问清楚的东西重新假设一遍，而用户上一步逐条回答的工作等于白做。
      */
     answeredClarifications: req.clarifications
       .filter((c) => c.answer)

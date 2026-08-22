@@ -24,8 +24,12 @@ import { formatRef } from '../modules/work-item/numbering';
 import { notFound } from './errors';
 
 /**
- * 执行图（页面文档 07 §9）。
+ * The execution graph (page doc 07 §9) / 执行图（页面文档 07 §9）。
  *
+ * Nodes, edges, critical path, diagnostics, and layout are all computed in one pass — keeping
+ * layout on the server is deliberate: it is a pure function, so here it can be cached,
+ * exhaustively tested, and guaranteed to render the same graph on every client (a screenshot
+ * pasted into the weekly report matches what everyone else sees).
  * 节点、边、关键路径、诊断、布局一次算完 —— 布局放服务端是刻意的：
  * 它是纯函数，放这里才能缓存、被测试穷举，也才能保证同一张图在不同客户端
  * 长得一样（截图发进周报里对得上）。
@@ -61,7 +65,8 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
 
   const nodes = await buildNodes(db, items, project.identifier);
   const edges: GraphEdge[] = deps
-    // 跨项目或已删除任务的悬空边会让布局算出诡异的空列
+    // Dangling edges to cross-project or deleted items make the layout produce odd empty
+    // columns
     .filter((d) => ids.includes(d.fromId) && ids.includes(d.toId))
     .map((d) => ({ from: d.fromId, to: d.toId, type: d.type, lagMinutes: d.lagMinutes }));
 
@@ -77,20 +82,26 @@ export async function getGraph(db: Database, projectId: string, layout: LayoutKi
 }
 
 /**
- * 只要诊断与归因，不要布局。
+ * Diagnostics and attribution only; no layout / 只要诊断与归因，不要布局。
  *
- * ★★ 「问题诊断」此前只在执行图那一页看得见 —— 那里的每条问题都带着
+ * ★★ "Problem diagnostics" used to be visible on the execution-graph page alone — and there
+ *   every problem carries an actionable button (reassign / nudge / adjust the policy), which
+ *   makes it the most useful block in the product (issues #38 / #40). Seeing a blocked task on
+ *   the board or the overview, all a user could do was open it and work it out themselves.
+ *
+ * ★ Shares the same domain functions as `getGraph` rather than carrying a second copy of the
+ *   judgment — the cost of two implementations is not duplicated code, it is two answers that
+ *   disagree.
+ *
+ * ★ Skips `layoutGraph`: layout is the most expensive step in the set, and the overview draws
+ *   no graph.
+ *   「问题诊断」此前只在执行图那一页看得见 —— 那里的每条问题都带着
  *   「改派 / 催办 / 调整 Policy」这类可执行按钮，而这恰恰是全站最有用的
  *   一块（问题记录 #38 / #40）。看板与总览上看到一条阻塞任务时，
  *   用户能做的只有点开它自己想办法。
- *
- * ★ 与 `getGraph` 共用同一套 domain 函数，不另写一份判定 ——
+ *   与 `getGraph` 共用同一套 domain 函数，不另写一份判定 ——
  *   两份实现的代价不是重复代码，是两个对不上的答案。
- *
- * ★ 跳过 `layoutGraph`：布局是这一整套里最贵的一步，而总览上不画图。
- *
- * Shares the same domain functions as getGraph so the two never disagree, and
- * skips layout — the expensive step — because the overview draws no graph.
+ *   跳过 `layoutGraph`：布局是这一整套里最贵的一步，而总览上不画图。
  */
 export async function getProjectDiagnostics(db: Database, projectId: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
@@ -124,7 +135,7 @@ export async function getProjectDiagnostics(db: Database, projectId: string) {
 
 type ItemRow = typeof workItems.$inferSelect;
 
-/** 各类型任务缺少估时时的兜底工期（小时） */
+/** Fallback duration per work-item type when no estimate exists (hours) */
 const DEFAULT_HOURS: Record<string, number> = {
   approval: 2,
   decision: 2,
@@ -162,7 +173,7 @@ async function buildNodes(
     .orderBy(desc(agentRuns.attempt));
   const latestRun = new Map<string, (typeof runs)[number]>();
   for (const r of runs) {
-    // ★ 规划 Run 没有工作项，不进这张按工作项索引的表
+    // ★ Planning runs have no work item, so they never enter this work-item-keyed map
     if (!r.workItemId) continue;
     if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
   }
@@ -199,7 +210,8 @@ async function buildNodes(
         ? { id: item.ownerId, name: userName.get(item.ownerId) ?? '未知' }
         : null,
       durationHours: estimated ?? DEFAULT_HOURS[item.type] ?? 4,
-      // ★ 标出「这个数字是估的」—— 关键路径基于它算，用户有权知道置信度
+      // ★ Flag that this number is a guess — the critical path is computed from it, and the
+      // user is entitled to know how much to trust it
       durationEstimated: estimated === null,
       progressPct:
         run && run.stepCurrent !== null && run.stepTotal
@@ -223,8 +235,11 @@ async function buildNodes(
 }
 
 /**
- * 节点类型判定（页面文档 07 §5.1）。
+ * Deciding a node's kind (page doc 07 §5.1) / 节点类型判定（页面文档 07 §5.1）。
  *
+ * The order matters: an item waiting on a human decision is classified as an approval node
+ * first, whatever its own type says — the graph has to show "stuck on a person" at a glance,
+ * and that matters far more than "it was originally a task".
  * 顺序有讲究：等待人拍板的任务先归为审批节点，不管它本身是什么类型 ——
  * 图上要一眼看出「卡在人这里」，这比「它原本是个 task」重要得多。
  */
@@ -236,17 +251,24 @@ function nodeKindOf(item: ItemRow, hasPendingDecision: boolean): NodeKind {
   if (item.status === 'blocked' || item.blockedSince !== null) return 'waiting';
   if (item.executorType === 'human') return 'human_task';
   if (item.executorType === 'agent') return 'agent_task';
-  // 还没分配执行主体 —— 画成等待，因为它现在确实动不了
+  // No executor assigned yet — draw it as waiting, because right now it genuinely cannot move
   return 'waiting';
 }
 
 /**
- * 执行图只画「还在流动的部分」。
+ * The execution graph draws only the part still in motion / 执行图只画「还在流动的部分」。
  *
- * ★ 项目跑上几个月会攒下几百个已完成任务，全画出来的图没人看得懂，
+ * ★ A few months in, a project has hundreds of finished tasks; drawing them all produces a
+ *   graph nobody can read, while the question this page answers is "why is this chain not
+ *   moving" — and an isolated task finished three months ago contributes nothing to it.
+ *
+ *   But terminal items cannot simply be cut either: for a task waiting on a predecessor, the
+ *   fact that its predecessor is **done** is itself the key information ("upstream finished, so
+ *   why have I not started?"). Hence the rule: keep every non-terminal item, and keep only
+ *   those terminal items directly connected to a non-terminal one.
+ *   项目跑上几个月会攒下几百个已完成任务，全画出来的图没人看得懂，
  *   而这一页要回答的是「为什么这条链走不动」—— 三个月前做完的孤立任务
  *   对这个问题一点贡献都没有。
- *
  *   但也不能简单地把终态全砍掉：一个正在等前置的任务，它的前置**已完成**
  *   这件事本身就是关键信息（「上游做完了，为什么我还没开始」）。
  *   所以规则是：未终结的全留，终结的只留与未终结项直接相连的那些。

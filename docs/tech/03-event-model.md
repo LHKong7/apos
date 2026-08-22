@@ -1,92 +1,94 @@
-# 03 事件模型
+# 03 Event Model
 
-产品文档 6.9 把 Event 定义为「项目可追溯、可回放和可审计的基础」，3.2 要求系统能回答"谁做了什么、为什么这样做、用了哪些上下文"。本文档定义如何实现。
+*[中文版本 / Chinese version](03-event-model.zh.md)*
+
+Product spec §6.9 defines the Event as "the foundation that makes a project traceable, replayable, and auditable," and §3.2 requires the system to answer *who did what, why they did it, and what context they had*. This document defines how that gets implemented.
 
 ---
 
-## 1. 定位：不是 Event Sourcing
+## 1. Positioning: this is not Event Sourcing
 
-**明确不做完整事件溯源。** 领域表保存当前状态，事件表保存变更事实，两者同事务写入。
+**We explicitly do not do full event sourcing.** Domain tables hold current state, the event table holds the facts of change, and both are written in the same transaction.
 
-| 方案 | 为什么不选 |
+| Approach | Why not |
 | --- | --- |
-| 完整 Event Sourcing（状态由事件重放得出） | 看板、依赖图、Analytics 都需要复杂查询，投影层的开发与维护成本远超收益；状态机演进时历史事件的兼容处理是长期负担 |
-| 只有状态表 + 审计日志 | 审计日志通常是事后补的、不完整的，无法支撑产品要求的因果追溯与 Policy 模拟 |
-| **状态表 + 强制事件（本方案）** | 查询简单，事件完整。代价是需要纪律保证"不写事件就不能改状态" |
+| Full Event Sourcing (state derived by replaying events) | The board, the dependency graph, and Analytics all need non-trivial queries; building and maintaining a projection layer costs far more than it returns. And every time the state machine evolves, keeping old events compatible becomes a permanent tax |
+| State tables + an audit log | Audit logs are typically bolted on afterward and incomplete, which is not enough to support the causal tracing and Policy simulation the product requires |
+| **State tables + mandatory events (this design)** | Queries stay simple and the event record stays complete. The price is the discipline of "you cannot change state without writing an event" |
 
-**纪律如何强制**：唯一允许修改领域对象状态的入口是 `flow.transition()`，它在同一事务内写状态与事件。代码审查 + 集成测试断言（任意状态变更后必须存在对应事件）保证这条规则。
+**How the discipline is enforced**: the only entry point permitted to change the state of a domain object is `flow.transition()`, which writes state and event inside one transaction. Code review plus an integration-test assertion (every state change must have a corresponding event) keeps the rule honest.
 
 ---
 
-## 2. 事件分层
+## 2. Event layers
 
-系统中有两类事件，服务不同目的，**不能混为一谈**：
+There are two kinds of events in the system. They serve different purposes and **must not be conflated**:
 
-| | 领域事件 `events` | 运行事件 `run_events` |
+| | Domain events `events` | Run events `run_events` |
 | --- | --- | --- |
-| 语义 | 业务事实：状态变了、决策做了、产物产生了 | 执行细节：调了什么工具、推理了什么 |
-| 量级 | 单 Work Item 数十条 | 单 Run 数百至数千条 |
-| 写入者 | Flow Engine（唯一） | Agent 适配器 |
-| 消费者 | 审计、Analytics、通知、Flow、Policy 模拟 | Run 详情页时间线 |
-| 保留 | 永久（归档） | 30 天热 + 归档 |
-| 分区 | 按月 | 按月 |
+| Meaning | Business facts: state changed, decision made, artifact produced | Execution detail: which tool was called, what was reasoned |
+| Volume | Tens per Work Item | Hundreds to thousands per Run |
+| Writer | Flow Engine (sole writer) | Agent adapters |
+| Consumers | Audit, Analytics, notifications, Flow, Policy simulation | The Run detail page timeline |
+| Retention | Forever (archived) | 30 days hot + archive |
+| Partitioning | Monthly | Monthly |
 
-**提升规则**：`run_events` 中少数关键事件会被提升为领域事件。
+**Promotion rule**: a small number of significant `run_events` are promoted to domain events.
 
 ```
-run_events.type              → events.type
-─────────────────────────────────────────────────────
-run_started                  → agent_run.started
-artifact                     → artifact.produced
-run_ended (completed)        → agent_run.completed  → 触发 flow.transition
-run_ended (failed)           → agent_run.failed     → 触发 flow.transition
-human_intervention           → run.intervened
-policy_check (需人类)         → decision.created
-其余（tool_call/reasoning…）  → 不提升
+run_events.type                  → events.type
+──────────────────────────────────────────────────────────────
+run_started                      → agent_run.started
+artifact                         → artifact.produced
+run_ended (completed)            → agent_run.completed  → triggers flow.transition
+run_ended (failed)               → agent_run.failed     → triggers flow.transition
+human_intervention               → run.intervened
+policy_check (human required)    → decision.created
+all others (tool_call/reasoning) → not promoted
 ```
 
-这个分层的价值：Analytics 聚合与审计查询只扫描量级小两个数量级的 `events` 表。
+What the split buys us: Analytics aggregation and audit queries only ever scan the `events` table, which is two orders of magnitude smaller.
 
 ---
 
-## 3. 事件结构
+## 3. Event structure
 
 ```typescript
 // packages/contracts/src/events/domain-event.ts
 
 interface DomainEvent {
-  id: bigint;                    // 全局单调递增（SSE Last-Event-ID 用）
+  id: bigint;                    // Globally monotonic (used as the SSE Last-Event-ID)
   orgId: string;
   projectId: string | null;
 
-  type: DomainEventType;         // 见 §7 目录
+  type: DomainEventType;         // see the catalog in §7
   level: 'milestone' | 'detail';
 
-  // 谁做的
+  // who did it
   actorType: ActorType;          // human | agent | service | external | system
   actorId: string | null;
 
-  // 对谁做的
+  // what it was done to
   subjectType: SubjectType;      // work_item | requirement | plan | decision |
                                  // agent_run | project | policy | artifact | integration
   subjectId: string;
 
   payload: Record<string, unknown>;
 
-  // 为什么这样做 —— 因果链
-  causationId: bigint | null;    // 直接触发本事件的事件
-  correlationId: string;         // 同一业务流程的所有事件共享
+  // why it happened — the causation chain
+  causationId: bigint | null;    // the event that directly triggered this one
+  correlationId: string;         // shared by every event in the same business flow
 
-  // Policy 模拟回放所需的上下文快照（见 §4）
+  // context snapshot required to replay a Policy simulation (see §4)
   contextSnapshot: PolicyContext | null;
 
   occurredAt: Date;
 }
 ```
 
-### 3.1 因果链（causation chain）
+### 3.1 The causation chain
 
-这是回答"为什么这样做"的机制。示例——一次因 Policy 命中而产生决策，最终人类批准后任务继续：
+This is the mechanism that answers "why did this happen." Example — a Policy match produces a decision, and the task resumes once a human approves it:
 
 ```
 #1001  agent_run.completed        actor=agent:code-1     subject=run:1284
@@ -107,9 +109,9 @@ interface DomainEvent {
 #1005  work_item.status_changed    actor=system          subject=work_item:88
    │   causation=1003  correlation=c-7f3a
    │   payload: { from:'executing', to:'awaiting_decision' }
-   ▼   ……（人类批准，2 小时后）
+   ▼   …… (the human approves, two hours later)
 #1090  decision.approved           actor=human:wangqiang subject=decision:52
-   │   causation=null（人类主动发起，无前序事件）  correlation=c-7f3a
+   │   causation=null (human-initiated, no preceding event)  correlation=c-7f3a
    │   payload: { option:'A', constraints:[{type:'time_window',value:'02:00-05:00'}] }
    ▼
 #1091  work_item.status_changed    actor=system          subject=work_item:88
@@ -117,45 +119,45 @@ interface DomainEvent {
        payload: { from:'awaiting_decision', to:'reviewing' }
 ```
 
-**能回答的问题**：
+**Questions this can answer**:
 
-- 「为什么这个任务停了 2 小时？」→ 沿 causation 链回溯到 #1003 的 Policy 判定
-- 「谁批准的、批准时附加了什么？」→ #1090
-- 「这一整件事的全过程？」→ 按 `correlation_id` 查
+- "Why did this task sit idle for two hours?" → walk back up the causation chain to the Policy verdict at #1003
+- "Who approved it, and what conditions did they attach?" → #1090
+- "What happened across the whole episode?" → query by `correlation_id`
 
-`correlation_id` 在业务流程起点生成（用户操作、调度器派发、webhook 到达），沿调用链透传。
+The `correlation_id` is generated at the start of a business flow (a user action, a scheduler dispatch, an incoming webhook) and passed down the call chain.
 
-### 3.2 payload 约定
+### 3.2 payload conventions
 
-- 状态变更类：必须含 `{ from, to }`
-- 人工操作类：必须含 `{ reason }`（产品文档 8.4.4 要求人类覆盖必须记录原因）
-- 外部同步类：必须含 `{ origin: 'sync:{integration_id}' }`（防同步循环）
-- 成本相关：必须含 `{ cost_delta, cost_total }`
+- State changes: must carry `{ from, to }`
+- Manual actions: must carry `{ reason }` (product spec §8.4.4 requires a recorded reason for every human override)
+- External sync: must carry `{ origin: 'sync:{integration_id}' }` (to prevent sync loops)
+- Cost-related: must carry `{ cost_delta, cost_total }`
 
-payload 不存大对象。产物、报告等放 `artifacts` 表，事件里只存引用。
+Payloads do not hold large objects. Artifacts, reports, and the like live in the `artifacts` table; the event stores only a reference.
 
 ---
 
-## 4. 上下文快照：Policy 模拟的前提
+## 4. Context snapshots: the precondition for Policy simulation
 
-页面文档 13 要求"用历史数据验证规则"——把一条草稿规则拿到过去 30 天的数据上跑，看会自动处理多少次、其中多少次与人类当时的判断不一致。
+Page spec 13 requires "validating a rule against historical data" — take a draft rule, run it over the last 30 days of data, and see how many times it would have acted automatically and how often that would have disagreed with the human judgment at the time.
 
-**这个功能能否实现，完全取决于事件里有没有存足够的上下文。** 事后无法补。
+**Whether that feature is possible at all comes down to whether the events stored enough context.** It cannot be reconstructed after the fact.
 
-### 4.1 快照内容
+### 4.1 Snapshot contents
 
-在**所有会触发 Policy 评估的事件**上记录 `context_snapshot`，字段与 [05 Policy Engine](05-policy-engine.md) 定义的 fact 清单一一对应：
+Record a `context_snapshot` on **every event that can trigger a Policy evaluation**. Its fields map one-to-one onto the fact list defined in [05 Policy Engine](05-policy-engine.md):
 
 ```typescript
 interface PolicyContext {
-  // 对象属性
+  // object attributes
   projectType: string;
   workItemType: WorkItemType;
   riskLevel: RiskLevel;
   reversible: boolean;
   externalFacing: boolean;
 
-  // 环境与数据
+  // environment and data
   environment: 'dev' | 'test' | 'staging' | 'production' | null;
   dataSensitivity: 'public' | 'internal' | 'confidential' | 'restricted' | null;
   impactScope: { tasks: number; services: string[] };
@@ -166,74 +168,74 @@ interface PolicyContext {
   agentSuccessRate: number | null;
   consecutiveFailures: number;
 
-  // 成本
+  // cost
   runCost: number;
   projectCostSpent: number;
   projectBudget: number | null;
 
-  // 质量
+  // quality
   testsResult: 'passed' | 'failed' | 'not_run';
   testCoverage: number | null;
   securityScan: 'passed' | 'failed' | 'not_run';
   agentReview: 'passed' | 'concerns' | 'failed' | 'not_run';
 
-  // 操作
+  // operation
   operationType: string;   // db_ddl | deploy | delete_resource | send_external | ...
 }
 ```
 
-### 4.2 存储权衡
+### 4.2 Storage trade-off
 
-全量存储会让事件表膨胀。策略：
+Storing a snapshot on everything would bloat the event table. The policy:
 
-| 事件类型 | 快照 |
+| Event type | Snapshot |
 | --- | --- |
-| 会触发 Policy 评估的（状态流转、Run 派发、发布） | 完整快照 |
-| 决策创建/解决 | 完整快照（模拟对比的基准） |
-| 其余 | 不存 |
+| Anything that triggers a Policy evaluation (state transitions, Run dispatch, releases) | Full snapshot |
+| Decision created / resolved | Full snapshot (the baseline a simulation compares against) |
+| Everything else | None |
 
-估算：完整快照约 800 字节 JSON，触发 Policy 的事件约占总量 20%。见 §6 容量估算。
+Estimate: a full snapshot is roughly 800 bytes of JSON, and Policy-triggering events are about 20% of total volume. See the capacity estimate in §6.
 
-### 4.3 模拟的局限
+### 4.3 Limits of simulation
 
-必须向用户说明：模拟基于**当时记录的快照**，如果新规则引用了当时未记录的 fact，该规则无法被可靠模拟。
+Users have to be told this plainly: a simulation runs against **the snapshot recorded at the time**. If a new rule references a fact that was not being recorded back then, that rule cannot be simulated reliably.
 
-**实现约束**：Policy 条件编辑器只允许选择 `PolicyContext` 中已定义的 fact。新增 fact 时，模拟能力从新增之日起生效，页面需明确提示「此条件从 2026-08-06 起有数据」。
+**Implementation constraint**: the Policy condition editor only offers facts already defined in `PolicyContext`. When a new fact is added, simulation coverage for it begins on the day it ships, and the page must say so explicitly: "this condition has data from 2026-08-06 onward."
 
 ---
 
-## 5. 写入路径
+## 5. Write path
 
-### 5.1 事务内写入 + 事务外发布
+### 5.1 Write inside the transaction, publish outside it
 
 ```typescript
 async function transition(input: TransitionInput): Promise<TransitionResult> {
   const outbox: DomainEvent[] = [];
 
   const result = await db.transaction(async (tx) => {
-    // 1. 行锁，防止并发流转
+    // 1. Row lock, to serialize concurrent transitions
     const item = await tx.selectForUpdate(workItems, input.subjectId);
 
-    // 2. 状态机校验 + guard
+    // 2. State-machine check + guards
     const target = resolveTransition(item.status, input.trigger);
     if (!target) throw new InvalidTransition(item.status, input.trigger);
 
-    // 3. Policy 评估（在事务内，结果决定走向）
+    // 3. Policy evaluation — inside the transaction, since the verdict decides where we go
     const ctx = await buildPolicyContext(tx, item, input);
     const verdict = policy.evaluate(ctx);
 
-    // 4. 按判定执行
+    // 4. Act on the verdict
     const finalStatus = verdict.requiresHuman ? 'awaiting_decision' : target;
     if (verdict.requiresHuman) {
       const decision = await createDecision(tx, item, verdict, ctx);
       outbox.push(event('decision.created', decision, { causation: ... }));
     }
 
-    // 5. 写状态
+    // 5. Write the state
     await tx.update(workItems).set({ status: finalStatus, version: item.version + 1 })
       .where(and(eq(workItems.id, item.id), eq(workItems.version, item.version)));
 
-    // 6. 写事件（同事务）
+    // 6. Write the events, in the same transaction
     outbox.push(
       event('policy.evaluated', item, { payload: verdict, contextSnapshot: ctx }),
       event('work_item.status_changed', item, {
@@ -245,76 +247,76 @@ async function transition(input: TransitionInput): Promise<TransitionResult> {
     return { finalStatus, verdict };
   });
 
-  // 7. ★ 事务提交后才发布 —— 订阅者不会看到未提交的状态
+  // 7. ★ Publish only after the commit — subscribers never see uncommitted state
   for (const e of outbox) await bus.publish(e);
 
   return result;
 }
 ```
 
-**为什么必须提交后发布**：如果在事务内发布，SSE 可能把「已进入 Review」推给浏览器，而事务随后回滚，前端状态就永久错了。
+**Why publishing must wait for the commit**: publish inside the transaction and SSE may tell the browser "this moved to Review" — and then the transaction rolls back, leaving the front end permanently wrong.
 
-**发布失败怎么办**：用 transactional outbox——事件已在库里，一个后台 worker 扫描未发布的事件补发。事件表加 `published_at` 字段（或单独的 outbox 表）。MVP 可以先用「提交后同步发布 + 失败重试」，量大了再上 outbox worker。
+**What if publishing fails**: use a transactional outbox — the events are already durable, so a background worker scans for unpublished ones and re-sends them. Add a `published_at` column to the event table (or a separate outbox table). For the MVP, "publish synchronously after commit, retry on failure" is enough; bring in the outbox worker once volume demands it.
 
-### 5.2 事件不可变
+### 5.2 Events are immutable
 
-`events` 表只允许 INSERT。数据库层面用权限限制：应用连接的角色没有 UPDATE/DELETE 权限。
+The `events` table only accepts INSERT. Enforce it at the database level: the role the application connects with has no UPDATE or DELETE privilege.
 
 ```sql
 REVOKE UPDATE, DELETE ON events FROM apos_app;
 ```
 
-需要"更正"历史事件时，写一条新的补偿事件，不改旧的。
+When history needs "correcting," write a new compensating event rather than editing the old one.
 
 ---
 
-## 6. 容量与分区
+## 6. Capacity and partitioning
 
-### 6.1 估算（MVP 规模）
+### 6.1 Estimate (MVP scale)
 
-假设：50 个活跃项目，每项目每天 20 个 Work Item 状态流转，5 次 Agent Run，每 Run 平均 200 条 run_events。
+Assume 50 active projects, each with 20 Work Item state transitions and 5 Agent Runs per day, and an average of 200 run_events per Run.
 
-| 表 | 日增 | 月增 | 单行 | 月体积 |
+| Table | Per day | Per month | Row size | Monthly volume |
 | --- | --- | --- | --- | --- |
-| `events` | 50 × 60 = 3,000 | 90,000 | ~1.2 KB（含快照） | ~110 MB |
+| `events` | 50 × 60 = 3,000 | 90,000 | ~1.2 KB (with snapshot) | ~110 MB |
 | `run_events` | 50 × 5 × 200 = 50,000 | 1,500,000 | ~0.6 KB | ~900 MB |
 
-结论：**PostgreSQL 完全够用，不需要 Kafka**。到达 10 倍规模（约 500 项目）时再评估。
+Conclusion: **PostgreSQL handles this comfortably; no Kafka needed**. Revisit at 10× the scale (around 500 projects).
 
-### 6.2 分区策略
+### 6.2 Partitioning strategy
 
 ```sql
--- 按月 RANGE 分区
+-- Monthly RANGE partitions
 CREATE TABLE events (...) PARTITION BY RANGE (occurred_at);
 
 CREATE TABLE events_2026_08 PARTITION OF events
   FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
 
--- 用 pg_partman 或定时任务自动创建下月分区
+-- Create next month's partition automatically, via pg_partman or a scheduled job
 ```
 
-**热冷分离**：
+**Hot/cold split**:
 
-| 数据 | 位置 | 访问方式 |
+| Data | Location | Access |
 | --- | --- | --- |
-| `events` 近 12 个月 | PostgreSQL | 直接查询 |
-| `events` 12 个月以上 | S3（Parquet） | 按需加载，页面提示"正在从归档加载" |
-| `run_events` 近 30 天 | PostgreSQL | 直接查询 |
-| `run_events` 30 天以上 | S3（每 Run 一个 JSONL 文件） | Run 详情页按需拉取 |
+| `events`, last 12 months | PostgreSQL | Queried directly |
+| `events`, older than 12 months | S3 (Parquet) | Loaded on demand; the page shows "loading from archive" |
+| `run_events`, last 30 days | PostgreSQL | Queried directly |
+| `run_events`, older than 30 days | S3 (one JSONL file per Run) | Pulled on demand by the Run detail page |
 
-`run_events` 归档按 Run 打包成单文件，因为查询模式总是"看某一次 Run 的全部事件"，不需要跨 Run 检索。
+Archived `run_events` are packed one file per Run, because the query pattern is always "show me everything from this one Run" — there is no need to search across Runs.
 
-**归档后的操作限制**：归档 Run 不能重试（页面文档 09 §11 已说明）。
+**What archiving forecloses**: an archived Run cannot be retried (as page spec 09 §11 already states).
 
 ---
 
-## 7. 事件类型目录
+## 7. Event type catalog
 
-命名规范：`{subject}.{past_tense_verb}`。事件是已发生的事实，动词用过去式。
+Naming convention: `{subject}.{past_tense_verb}`. An event is a fact that has already happened, so the verb is past tense.
 
 ### 7.1 Project
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `project.created` | milestone | type, autonomy_level, budget |
 | `project.autonomy_changed` | milestone | from, to, reason |
@@ -324,7 +326,7 @@ CREATE TABLE events_2026_08 PARTITION OF events
 
 ### 7.2 Requirement
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `requirement.created` | milestone | input_method, source_ref |
 | `requirement.analyzed` | milestone | completeness, question_count, cost |
@@ -336,34 +338,34 @@ CREATE TABLE events_2026_08 PARTITION OF events
 
 ### 7.3 Plan
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `plan.generated` | milestone | version, task_count, cost_estimate, duration_ms |
-| `plan.item_modified` | detail | item_id, field, from, to（人工调整计划） |
+| `plan.item_modified` | detail | item_id, field, from, to (manual plan edits) |
 | `plan.approved` | milestone | approvers[], acknowledged_overrun |
 | `plan.revision_requested` | milestone | feedback |
 | `plan.superseded` | milestone | by_version |
 
 ### 7.4 Work Item
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `work_item.created` | milestone | type, parent_id, executor |
 | `work_item.status_changed` | milestone | from, to, reason?, origin? |
 | `work_item.assigned` | milestone | executor_type, executor_id, match_reasons |
 | `work_item.blocked` | milestone | reason, blocking_ref |
 | `work_item.unblocked` | milestone | blocked_duration_s |
-| `work_item.taken_over` | milestone | **reason（必填）**, agent_handling |
+| `work_item.taken_over` | milestone | **reason (required)**, agent_handling |
 | `work_item.handed_back` | milestone | handover_note |
 | `work_item.acceptance_updated` | detail | criterion_id, passed, verification |
-| `work_item.force_passed` | milestone | **reason（必填）**, criteria[] |
+| `work_item.force_passed` | milestone | **reason (required)**, criteria[] |
 | `work_item.dependency_added` / `removed` | detail | from, to, type |
 | `work_item.split` | milestone | into[] |
 | `work_item.merged` | milestone | into |
 
 ### 7.5 Agent Run
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `agent_run.dispatched` | milestone | agent_id, idempotency_key, context_size |
 | `agent_run.started` | milestone | model, tools[] |
@@ -377,7 +379,7 @@ CREATE TABLE events_2026_08 PARTITION OF events
 
 ### 7.6 Decision
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `decision.created` | milestone | type, risk, assignee, due_at, policy_id |
 | `decision.approved` | milestone | option_id, constraints[], resolution_time_s |
@@ -391,15 +393,15 @@ CREATE TABLE events_2026_08 PARTITION OF events
 
 ### 7.7 Policy
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `policy.evaluated` | detail | matched_policy, action, trace[] + **contextSnapshot** |
 | `policy.created` / `updated` | milestone | direction, simulation_id, diff |
-| `policy.disabled` | milestone | **reason（必填）** |
+| `policy.disabled` | milestone | **reason (required)** |
 
 ### 7.8 Artifact / Integration
 
-| 类型 | level | payload 要点 |
+| Type | level | payload highlights |
 | --- | --- | --- |
 | `artifact.produced` | milestone | kind, ref, metadata |
 | `integration.connected` / `disconnected` | milestone | provider, scopes |
@@ -410,38 +412,39 @@ CREATE TABLE events_2026_08 PARTITION OF events
 
 ---
 
-## 8. 消费者
+## 8. Consumers
 
 ```
-events 写入
+event written
    │
-   ├──▶ SSE 扇出          实时更新浏览器（按 §4.3 频道映射）
-   ├──▶ Flow Engine       某些事件触发下游状态检查（如依赖完成 → 检查后置任务）
-   ├──▶ Notification      按产品文档十一的通知类型路由
-   ├──▶ Analytics         增量更新预聚合表
-   ├──▶ Audit             高敏感事件额外写入不可变审计存储
-   └──▶ Knowledge (P1)    从事件中提取可复用经验
+   ├──▶ SSE fan-out       Live updates to browsers (channel mapping per §4.3)
+   ├──▶ Flow Engine       Some events trigger downstream state checks
+   │                      (e.g. a dependency completes → check the tasks behind it)
+   ├──▶ Notification      Routed by the notification types in product spec §11
+   ├──▶ Analytics         Incremental updates to pre-aggregated tables
+   ├──▶ Audit             Highly sensitive events also written to immutable audit storage
+   └──▶ Knowledge (P1)    Extract reusable experience from the event stream
 ```
 
-**订阅者必须幂等**：同一事件可能被重复投递（重试、outbox 补发）。做法是记录 `(consumer, event_id)` 已处理表，或让处理逻辑天然幂等。
+**Subscribers must be idempotent**: the same event may be delivered more than once (retries, outbox re-sends). Either keep a `(consumer, event_id)` processed table, or make the handler naturally idempotent.
 
-**订阅者失败不影响主流程**：事件已经落库，消费失败只影响衍生功能（通知没发出、聚合延迟），不影响业务状态正确性。这是把事件写入放在事务内、消费放在事务外的直接收益。
+**A failing subscriber does not break the main flow**: the event is already durable, so a consumption failure only degrades derived features (a notification never went out, an aggregate lags) — business state stays correct. That is the direct payoff of writing events inside the transaction and consuming them outside it.
 
 ---
 
-## 9. 查询模式
+## 9. Query patterns
 
-| 场景 | 查询 |
+| Scenario | Query |
 | --- | --- |
-| Work Item 时间线 | `WHERE subject_type='work_item' AND subject_id=? ORDER BY occurred_at` |
-| 项目最近活动（默认里程碑级） | `WHERE project_id=? AND level='milestone' ORDER BY id DESC LIMIT 20` |
-| 追溯某次变更的原因 | 递归 CTE 沿 `causation_id` 向上 |
-| 一次完整业务流程 | `WHERE correlation_id=? ORDER BY id` |
-| Policy 模拟数据源 | `WHERE type='policy.evaluated' AND occurred_at > ? AND context_snapshot IS NOT NULL` |
-| 审计：某人的所有操作 | `WHERE actor_type='human' AND actor_id=? ORDER BY occurred_at DESC` |
-| 审计：某 Agent 的所有操作 | `WHERE actor_type='agent' AND actor_id=?` |
+| Work Item timeline | `WHERE subject_type='work_item' AND subject_id=? ORDER BY occurred_at` |
+| Recent project activity (milestone level by default) | `WHERE project_id=? AND level='milestone' ORDER BY id DESC LIMIT 20` |
+| Trace why some change happened | Recursive CTE walking up `causation_id` |
+| One complete business flow | `WHERE correlation_id=? ORDER BY id` |
+| Policy simulation data source | `WHERE type='policy.evaluated' AND occurred_at > ? AND context_snapshot IS NOT NULL` |
+| Audit: everything one person did | `WHERE actor_type='human' AND actor_id=? ORDER BY occurred_at DESC` |
+| Audit: everything one Agent did | `WHERE actor_type='agent' AND actor_id=?` |
 
-递归追溯示例：
+Recursive trace example:
 
 ```sql
 WITH RECURSIVE chain AS (
@@ -454,10 +457,10 @@ SELECT * FROM chain ORDER BY id;
 
 ---
 
-## 10. 待确认问题
+## 10. Open questions
 
-1. **`context_snapshot` 的字段范围**需要与 [05](05-policy-engine.md) 的 fact 清单锁定后再实现。一旦上线，新增 fact 只对之后的数据有效，因此**首版要尽量把可能用到的 fact 都记上**，宁可多存。
-2. **Outbox 是 MVP 就做还是后置？** 「提交后同步发布」在进程崩溃的窄窗口内会丢事件（业务状态正确，但 SSE/通知丢失）。建议 MVP 接受这个风险，用「客户端定期全量刷新」兜底，P1 再上 outbox。
-3. **审计存储是否需要独立于业务库？** 合规严格的场景可能要求审计日志写入 WORM 存储。MVP 用 PostgreSQL 权限限制 + 定期归档到 S3（开启对象锁）应该够，需与合规确认。
-4. **事件 schema 版本演进**：payload 结构变化时如何兼容旧事件？建议事件加 `schema_version` 字段，读取侧做版本适配。MVP 可先不加，但要预留字段位置。
-5. **`run_events` 的 seq 生成**：跨进程如何保证单调？目前设想由 Agent 适配器在单个 Run 内递增（一个 Run 只被一个适配器实例处理）。需要确认孤儿接管后 seq 不冲突。
+1. **The field set of `context_snapshot`** should be locked against the fact list in [05](05-policy-engine.md) before implementation. Once it ships, a newly added fact only applies to data from that day forward, so **the first version should record every fact we might plausibly need** — err on the side of storing too much.
+2. **Outbox now or later?** "Publish synchronously after commit" loses events in the narrow window where the process crashes (business state stays correct, but the SSE update or notification is gone). The recommendation is to accept that risk for the MVP, backstopped by periodic full refreshes on the client, and add the outbox in P1.
+3. **Does audit storage need to live outside the business database?** Strict compliance regimes may require audit logs in WORM storage. For the MVP, PostgreSQL privilege restrictions plus periodic archival to S3 (with object lock enabled) should be sufficient — to be confirmed with compliance.
+4. **Event schema evolution**: how do we stay compatible with old events when the payload structure changes? The suggestion is a `schema_version` field on events, with version adaptation on the read side. The MVP can skip it, but should reserve the slot.
+5. **Generating `seq` for `run_events`**: how do we guarantee monotonicity across processes? The current thinking is that the Agent adapter increments it within a single Run (a Run is only ever handled by one adapter instance). We need to confirm that seq values do not collide after an orphaned Run is taken over.

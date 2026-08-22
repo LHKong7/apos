@@ -1,141 +1,143 @@
-# Autonomous Project OS 技术实现文档
+# Autonomous Project OS Technical Documentation
 
-本目录是[产品功能文档](../product/autonomous-project-os.md)与[页面文档](../product/pages/README.md)的技术落地方案。
+*[中文版本 / Chinese version](README.zh.md)*
+
+This directory is the technical implementation plan behind the [product feature doc](../product/autonomous-project-os.md) and the [page docs](../product/pages/README.md).
 
 ---
 
-## 一、文档清单
+## 1. Document index
 
-| # | 文档 | 内容 | 是否与语言相关 |
+| # | Document | Contents | Language-dependent? |
 | --- | --- | --- | --- |
-| — | [技术选型](#二技术选型) | 见本文档下方 | ✅ |
-| 01 | [系统架构](01-architecture.md) | 服务划分、部署拓扑、数据流、并发模型 | 部分 |
-| 02 | [领域模型与数据库](02-domain-model.md) | 10 个核心对象的表结构与约束 | ❌ |
-| 03 | [事件模型](03-event-model.md) | 事件定义、因果链、审计、回放 | ❌ |
-| 04 | [Flow Engine](04-flow-engine.md) | 状态机、依赖、调度、阻塞识别与恢复 | ❌ |
-| 05 | [Policy Engine](05-policy-engine.md) | 规则表示、评估、模拟回放、继承与冲突 | ❌ |
-| 06 | [Agent Protocol](06-agent-protocol.md) | 统一 Agent 接入协议与适配器 | ❌ |
-| 07 | [API 设计](07-api-design.md) | REST 约定、SSE 契约、幂等与并发 | ❌ |
-| 08 | [前端架构](08-frontend-architecture.md) | React 分层、实时数据、性能 | ✅ |
-| 09 | [身份、权限与安全](09-security.md) | Identity 模型、RBAC/ABAC、审计、密钥 | ❌ |
-| 10 | [MVP 实施计划](10-mvp-plan.md) | 分阶段交付、里程碑、风险 | ❌ |
-| 11 | [工作区抽象](11-workspace-abstraction.md) | Agent 工作目录的铺料 / 交货分离、基线与变更集、四个后端 | ❌ |
-| 12 | [多语言](12-i18n.md)（[EN](12-i18n.en.md)） | 词条表、服务端原因码、枚举归属、守门的三条测试 | ✅ |
+| — | [Technology choices](#2-technology-choices) | Below, in this document | ✅ |
+| 01 | [System architecture](01-architecture.md) | Service breakdown, deployment topology, data flow, concurrency model | Partly |
+| 02 | [Domain model and database](02-domain-model.md) | Table structures and constraints for the 10 core objects | ❌ |
+| 03 | [Event model](03-event-model.md) | Event definitions, causal chains, audit, replay | ❌ |
+| 04 | [Flow Engine](04-flow-engine.md) | State machine, dependencies, scheduling, blocker detection and recovery | ❌ |
+| 05 | [Policy Engine](05-policy-engine.md) | Rule representation, evaluation, simulation replay, inheritance and conflicts | ❌ |
+| 06 | [Agent Protocol](06-agent-protocol.md) | The unified agent integration protocol and its adapters | ❌ |
+| 07 | [API design](07-api-design.md) | REST conventions, the SSE contract, idempotency and concurrency | ❌ |
+| 08 | [Front-end architecture](08-frontend-architecture.md) | React layering, live data, performance | ✅ |
+| 09 | [Identity, permissions, and security](09-security.md) | Identity model, RBAC/ABAC, audit, secrets | ❌ |
+| 10 | [MVP delivery plan](10-mvp-plan.md) | Phased delivery, milestones, risks | ❌ |
+| 11 | [Workspace abstraction](11-workspace-abstraction.md) | Separating setup from delivery in an agent's working directory; baselines and changesets; the four backends | ❌ |
+| 12 | [Internationalization](12-i18n.md) ([ZH](12-i18n.zh.md)) | Message catalogs, server-side reason codes, enum ownership, the three tests that guard it | ✅ |
 
 ---
 
-## 二、技术选型
+## 2. Technology choices
 
-### 2.1 结论
+### 2.1 The short answer
 
-| 层 | 选型 |
+| Layer | Choice |
 | --- | --- |
-| 前端 | React 18 + TypeScript + Vite |
-| 后端 | **Node.js 22 + TypeScript**（Fastify） |
-| 数据库 | PostgreSQL 16（主库 + JSONB + 分区） |
-| 缓存 / 消息 | Redis 7（Pub/Sub + BullMQ 队列） |
-| 对象存储 | S3 兼容（产物、归档事件） |
-| 部署 | 容器化，单体优先，按 §2.4 拆分点演进 |
+| Front end | React 18 + TypeScript + Vite |
+| Back end | **Node.js 22 + TypeScript** (Fastify) |
+| Database | PostgreSQL 16 (primary store + JSONB + partitioning) |
+| Cache / messaging | Redis 7 (Pub/Sub + BullMQ queues) |
+| Object storage | S3-compatible (artifacts, archived events) |
+| Deployment | Containerized, monolith first, split along the seams in §2.4 as it grows |
 
-### 2.2 后端为什么选 Node 而不是 Python
+### 2.2 Why Node on the back end rather than Python
 
-**负载形状决定的。** 这是一个编排控制面，不是计算系统：
+**The shape of the load decides it.** This is an orchestration control plane, not a compute system:
 
-| 主要工作 | 特征 |
+| Main work | Shape |
 | --- | --- |
-| 监督 Agent Run | 单个 Run 可运行 30 分钟，全程等待 LLM 流式输出 |
-| 接收 webhook | GitHub / Jira / CI 事件高频涌入 |
-| SSE 扇出 | 每个在线用户 1–3 条长连接，看板与 Run 详情实时更新 |
-| 外部 API 同步 | 大量并发 HTTP 调用，受限流约束 |
-| Policy 评估 | 内存中的规则匹配，微秒级 |
-| Flow 状态推进 | 数据库事务 |
+| Supervising agent runs | A single run may last 30 minutes, spent waiting on streamed LLM output the whole way |
+| Receiving webhooks | GitHub / Jira / CI events arriving at high frequency |
+| SSE fan-out | 1–3 long-lived connections per online user; board and run detail update live |
+| Syncing external APIs | Many concurrent HTTP calls, bounded by rate limits |
+| Policy evaluation | In-memory rule matching, microseconds |
+| Advancing flow state | Database transactions |
 
-几乎全是 I/O 密集与状态管理，没有一处是 CPU 密集。Node 的事件循环直接对上这个形状。
+Nearly all of it is I/O-bound work and state management; none of it is CPU-bound. Node's event loop maps straight onto that shape.
 
-**四条具体理由：**
+**Four concrete reasons:**
 
-1. **前后端共享领域类型。** 10 个核心对象、14 个数据密集页面。`WorkItem`、`Decision`、`Policy` 的条件 AST、Agent Protocol 的事件联合类型——这些结构在 TypeScript 里用判别联合（discriminated union）表达最自然，前端拿到的是同一份定义而非生成产物。类型漂移是这类系统最大的 bug 来源。
+1. **Domain types shared across front end and back end.** Ten core objects, fourteen data-dense pages. `WorkItem`, `Decision`, the condition AST of `Policy`, the event union in the Agent Protocol — these structures are most naturally expressed as discriminated unions in TypeScript, and the front end consumes the same definition rather than a generated copy of it. Type drift is the biggest single source of bugs in a system like this.
 
-2. **Agent 生态。** MCP 与 Claude Agent SDK 是 TypeScript 优先的。Agent 运行时适配层（[06](06-agent-protocol.md)）是整个系统风险最高的集成面，用一等公民 SDK 减少踩坑。
+2. **The agent ecosystem.** MCP and the Claude Agent SDK are TypeScript-first. The agent runtime adapter layer ([06](06-agent-protocol.md)) is the highest-risk integration surface in the system; a first-class SDK means fewer holes to fall into.
 
-3. **长连接与流式转发。** Agent Run 的事件流需要从 Agent 运行时流入、落库、再流出到浏览器。Node 的流式原语让这条链路很短。
+3. **Long-lived connections and stream forwarding.** An agent run's event stream has to flow in from the agent runtime, land in the database, and flow back out to the browser. Node's streaming primitives keep that path short.
 
-4. **单语言的团队速度。** 目标用户是小团队与 OPC，实现团队大概率也不大。少一门语言 = 少一套工具链、CI、依赖管理、招人要求。
+4. **One language, one team's velocity.** The target users are small teams and one-person companies, and the team building this is probably small too. One language fewer means one fewer toolchain, CI setup, dependency manager, and hiring requirement.
 
-### 2.3 什么情况下应该改选 Python
+### 2.3 When you should pick Python instead
 
-诚实地说，有两种情况我会反过来：
+Honestly, there are two cases where I'd go the other way:
 
-| 情况 | 说明 |
+| Case | Notes |
 | --- | --- |
-| **团队已经是 Python 强项** | 这条压过上面所有技术论证。用不熟的语言写编排系统的代价，远大于语言本身的适配度差异 |
-| **知识检索/分析要早期进程内做** | Knowledge Center（产品文档 8.12）的语义检索、Analytics 的复杂计算，Python 生态明显更好 |
+| **The team is already strong in Python** | This outweighs every technical argument above. The cost of building an orchestration system in a language you don't know well dwarfs the difference in how well the language fits the problem |
+| **Knowledge retrieval / analytics have to run in-process early** | For the Knowledge Center's semantic retrieval (product doc 8.12) and Analytics' heavier computation, the Python ecosystem is clearly better |
 
-**如果选 Python**：FastAPI + SQLAlchemy 2.0 + Pydantic v2 + asyncio，用 OpenAPI 生成前端类型。本目录 02–07、09、10 共 8 份文档完全适用，只需改写本节与 [01 架构](01-architecture.md) 的运行时部分。
+**If you do choose Python**: FastAPI + SQLAlchemy 2.0 + Pydantic v2 + asyncio, with front-end types generated from OpenAPI. Eight of the documents here — 02–07, 09, 10 — apply as-is; only this section and the runtime portion of [01 Architecture](01-architecture.md) need rewriting.
 
-**折中方案**：主控制面用 Node，把知识检索与分析计算做成独立 Python 服务，通过内部 API 调用。[01 架构](01-architecture.md) §5 预留了这个拆分点。
+**The middle road**: Node for the main control plane, with knowledge retrieval and analytics computation split out into a standalone Python service called over an internal API. [01 Architecture](01-architecture.md) §5 reserves that seam.
 
-### 2.4 为什么是模块化单体而不是微服务
+### 2.4 Why a modular monolith rather than microservices
 
-MVP 阶段的服务边界还没被验证过。产品文档里 Flow Engine、Policy Engine、Agent 编排三者的交互密度很高（每次状态流转都要过 Policy，每次 Agent 事件都要驱动 Flow），过早拆分会把这些调用变成网络调用，换来分布式事务的麻烦。
+At the MVP stage, nobody has validated where the service boundaries belong. In the product docs, the Flow Engine, the Policy Engine, and agent orchestration interact constantly — every state transition goes through Policy, every agent event drives Flow. Splitting too early turns those calls into network calls and buys distributed transactions in exchange.
 
-**做法**：一个部署单元，内部模块边界严格（禁止跨模块直接访问数据表，只能走模块导出的接口），worker 进程按职责分开。这样拆分时是搬代码而不是拆纠缠。
+**How it works**: one deployment unit, with strict internal module boundaries (no module reaches into another module's tables; calls go through exported interfaces only) and worker processes separated by responsibility. That way, splitting later means moving code rather than untangling it.
 
-拆分触发条件写在 [01 架构](01-architecture.md) §5。
+The triggers for splitting are written down in [01 Architecture](01-architecture.md) §5.
 
-### 2.5 关键依赖
+### 2.5 Key dependencies
 
-| 用途 | 选型 | 理由 |
+| Purpose | Choice | Why |
 | --- | --- | --- |
-| HTTP 框架 | Fastify | 性能好，schema 驱动的校验与序列化，原生支持 SSE |
-| ORM / 查询 | Drizzle ORM | 类型安全且贴近 SQL；这个系统有大量复杂查询与 CTE，重 ORM 会碍事 |
-| 校验 | Zod | 与 TS 类型双向推导，同一份 schema 用于 API 校验、Policy 条件、Agent Protocol |
-| 队列 | BullMQ (Redis) | 延迟任务、重试、并发限制（WIP 控制直接用得上） |
-| 迁移 | Drizzle Kit | — |
-| LLM | `@anthropic-ai/sdk` | Project Agent 与需求结构化 |
-| MCP | `@modelcontextprotocol/sdk` | Agent 与工具接入 |
-| 测试 | Vitest + Testcontainers | 状态机与 Policy 必须对真实 PG 测 |
-| 前端状态 | TanStack Query + Zustand | 服务端状态与 UI 状态分离 |
-| 前端图 | React Flow + dagre | Execution Graph |
+| HTTP framework | Fastify | Fast, schema-driven validation and serialization, native SSE support |
+| ORM / queries | Drizzle ORM | Type-safe and close to SQL; this system runs a lot of complex queries and CTEs, where a heavy ORM gets in the way |
+| Validation | Zod | Infers both ways with TS types; one schema serves API validation, Policy conditions, and the Agent Protocol |
+| Queue | BullMQ (Redis) | Delayed jobs, retries, concurrency limits (WIP control uses that directly) |
+| Migrations | Drizzle Kit | — |
+| LLM | `@anthropic-ai/sdk` | Project Agent and requirement structuring |
+| MCP | `@modelcontextprotocol/sdk` | Agent and tool integration |
+| Testing | Vitest + Testcontainers | The state machine and Policy have to be tested against a real PG |
+| Front-end state | TanStack Query + Zustand | Keeps server state and UI state apart |
+| Front-end graphs | React Flow + dagre | Execution Graph |
 
-**刻意不引入的**：
+**Deliberately left out:**
 
-- **Temporal / 工作流引擎**：Flow Engine 本身就是领域特定的工作流引擎，产品需求（WIP 控制、Policy 门禁、人类决策节点）没有通用引擎能直接满足。用通用引擎会变成"在引擎上再写一个引擎"。
-- **GraphQL**：页面与接口的对应关系清晰，REST + 少量聚合端点足够；SSE 的实时需求 GraphQL Subscription 反而更重。
-- **微服务框架 / 服务网格**：见 §2.4。
-- **Kafka**：MVP 的事件量用 PostgreSQL + Redis 完全够（估算见 [03 事件模型](03-event-model.md) §6）。
-
----
-
-## 三、三条贯穿全系统的技术约束
-
-这三条来自产品定位，不是技术偏好，违反任何一条都会让产品失去核心价值。
-
-### 3.1 一切状态变更都必须产生 Event
-
-产品文档 3.2「所有行为可追溯」要求系统能回答：谁做了什么、为什么这样做、用了哪些上下文、谁批准了关键决策。
-
-**技术含义**：不允许任何代码路径直接 `UPDATE` 领域表而不写 Event。状态变更统一走 Flow Engine 的 transition 接口，由它在同一事务内写状态与事件。详见 [03](03-event-model.md)。
-
-### 3.2 Agent 是独立身份，不是人类的代理
-
-产品文档 10.3 明确要求 Agent 权限独立于人类用户配置。
-
-**技术含义**：所有涉及操作者的字段是 `(actor_type, actor_id)` 而非 `user_id`；Agent 有自己的凭证与权限集；禁止"Agent 使用某人的 token 执行"这种实现。详见 [09](09-security.md)。
-
-### 3.3 Policy 评估在关键路径上，且必须可模拟
-
-每次调度、每次状态流转、每次高风险操作都要过 Policy。同时页面文档 13 要求用历史数据回放验证规则。
-
-**技术含义**：
-- 评估必须快（P99 < 10ms）→ 规则编译进内存，不查库
-- 回放要求 Event 携带**足够重建评估上下文的快照**，这是对事件设计的硬约束
-
-详见 [05](05-policy-engine.md)。
+- **Temporal / workflow engines**: the Flow Engine *is* a domain-specific workflow engine, and the product requirements (WIP control, Policy gates, human decision nodes) are not something a general-purpose engine satisfies directly. Using one turns into "writing an engine on top of an engine."
+- **GraphQL**: the mapping from pages to endpoints is clear, so REST plus a few aggregate endpoints is enough; for the real-time requirement, GraphQL Subscriptions are heavier than SSE, not lighter.
+- **Microservice frameworks / service meshes**: see §2.4.
+- **Kafka**: PostgreSQL + Redis handle the MVP's event volume with room to spare (estimate in [03 Event model](03-event-model.md) §6).
 
 ---
 
-## 四、系统全景
+## 3. Three technical constraints that run through the whole system
+
+These three come from what the product is, not from technical taste. Break any one of them and the product loses its core value.
+
+### 3.1 Every state change must produce an Event
+
+Product doc 3.2, "every action is traceable," requires the system to answer: who did what, why they did it, what context they used, and who approved the critical decisions.
+
+**What that means technically**: no code path may `UPDATE` a domain table without writing an Event. State changes all go through the Flow Engine's transition interface, which writes the state and the event inside the same transaction. See [03](03-event-model.md).
+
+### 3.2 An agent is an identity of its own, not a stand-in for a human
+
+Product doc 10.3 explicitly requires agent permissions to be configured independently of human users'.
+
+**What that means technically**: every field that names an actor is `(actor_type, actor_id)`, never `user_id`; agents carry their own credentials and permission sets; an implementation where "the agent runs using somebody's token" is forbidden. See [09](09-security.md).
+
+### 3.3 Policy evaluation sits on the critical path, and must be simulatable
+
+Every scheduling pass, every state transition, and every high-risk operation goes through Policy. At the same time, page doc 13 requires validating rules by replaying them against historical data.
+
+**What that means technically**:
+- Evaluation has to be fast (P99 < 10ms) → rules are compiled into memory, never queried from the database
+- Replay requires every Event to carry **a snapshot sufficient to rebuild the evaluation context**, which is a hard constraint on event design
+
+See [05](05-policy-engine.md).
+
+---
+
+## 4. System at a glance
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -144,7 +146,7 @@ MVP 阶段的服务边界还没被验证过。产品文档里 Flow Engine、Poli
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────────┐
-│  API Layer (Fastify)   认证 · 授权 · 校验 · SSE 扇出                │
+│  API Layer (Fastify)   AuthN · AuthZ · Validation · SSE fan-out     │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Application Modules                                                │
 │  ┌──────────┐┌──────────┐┌──────────┐┌──────────┐┌───────────────┐ │
@@ -156,7 +158,7 @@ MVP 阶段的服务边界还没被验证过。产品文档里 Flow Engine、Poli
 │  │Orchestr. ││  Module  ││ Module   ││ (P1)     ││   & Access    │ │
 │  └──────────┘└──────────┘└──────────┘└──────────┘└───────────────┘ │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Event Bus (进程内 + Redis Pub/Sub)                                 │
+│  Event Bus (in-process + Redis Pub/Sub)                             │
 └──────┬──────────────────────────────────────────────┬───────────────┘
        │                                              │
 ┌──────▼────────────────────┐              ┌──────────▼───────────────┐
@@ -164,20 +166,20 @@ MVP 阶段的服务边界还没被验证过。产品文档里 Flow Engine、Poli
 │  · Run Supervisor         │              └──────────────────────────┘
 │  · Flow Scheduler         │
 │  · Blocker Detector       │              ┌──────────────────────────┐
-│  · Integration Sync       │◀────────────▶│  外部系统                 │
-│  · Analytics Aggregator   │              │  GitHub / Jira / 飞书     │
+│  · Integration Sync       │◀────────────▶│  External systems        │
+│  · Analytics Aggregator   │              │  GitHub / Jira / Feishu  │
 │  · Notification Dispatcher│              │  Agent Runtimes (MCP…)   │
 └───────────────────────────┘              └──────────────────────────┘
 ```
 
 ---
 
-## 五、阅读顺序建议
+## 5. Suggested reading order
 
-**要理解系统怎么运转**：[01 架构](01-architecture.md) → [03 事件模型](03-event-model.md) → [04 Flow Engine](04-flow-engine.md)
+**To understand how the system runs**: [01 Architecture](01-architecture.md) → [03 Event model](03-event-model.md) → [04 Flow Engine](04-flow-engine.md)
 
-**要开始写代码**：[02 领域模型](02-domain-model.md) → [07 API](07-api-design.md) → [10 实施计划](10-mvp-plan.md)
+**To start writing code**: [02 Domain model](02-domain-model.md) → [07 API](07-api-design.md) → [10 Delivery plan](10-mvp-plan.md)
 
-**要接入 Agent**：[06 Agent Protocol](06-agent-protocol.md) → [11 工作区抽象](11-workspace-abstraction.md) → [09 安全](09-security.md)
+**To integrate an agent**: [06 Agent Protocol](06-agent-protocol.md) → [11 Workspace abstraction](11-workspace-abstraction.md) → [09 Security](09-security.md)
 
-**要做前端**：[08 前端架构](08-frontend-architecture.md) → [07 API](07-api-design.md) → 对应[页面文档](../product/pages/README.md)
+**To work on the front end**: [08 Front-end architecture](08-frontend-architecture.md) → [07 API](07-api-design.md) → the matching [page docs](../product/pages/README.md)

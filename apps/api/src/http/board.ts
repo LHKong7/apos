@@ -24,30 +24,36 @@ import {
 } from '@apos/contracts';
 
 /**
- * 看板卡片。字段对应页面文档 05 §5.3 —— 卡片按状态决定显示什么，
- * 因此这里把各状态需要的字段都查出来，由前端按状态取用。
+ * Board cards. The fields map to page doc 05 §5.3 — a card decides what to show from
+ * its status, so everything any status could need is fetched here and the client
+ * picks per status.
+ * 看板卡片，字段对应页面文档 05 §5.3。
  */
-/** 依赖链上的一个引用 —— 够画出「谁挡谁」，不够的部分点进卡片再看 */
+/** One reference on the dependency chain — enough to draw "who blocks whom"; the rest is behind the card */
 export interface DependencyRef {
   id: string;
   ref: string;
   title: string;
   status: string;
-  /** 依赖类型（finish_to_start 等）；反向那一栏不带，避免误读成对称关系 */
+  /**
+   * Dependency type (finish_to_start and friends). The reverse direction omits it, so
+   * nobody misreads the relation as symmetric.
+   * 反向那一栏不带类型，避免误读成对称关系。
+   */
   type: string | null;
   met: boolean;
 }
 
-/** 「这条依赖算满足了」的状态集。与 domain 的 isDependencyMet 同口径 */
+/** Statuses that count as "this dependency is met" — same rule as domain's isDependencyMet */
 const MET_STATUSES = ['done', 'released', 'acceptance'];
 
 export interface BoardCard {
   id: string;
   /**
-   * 人类可读编号（`ORD-19`）。
+   * Human-readable reference (`ORD-19`) / 人类可读编号。
    *
-   * ★ 卡片上必须有它：站会上指一张卡、聊天里提一条任务、
-   *   提交信息里引用一条任务，用的都是这个，而不是 uuid。
+   * ★ The card has to carry it: pointing at a card in standup, mentioning a task in
+   *   chat, citing one in a commit message — all of those use this, never the uuid.
    */
   ref: string;
   title: string;
@@ -60,11 +66,11 @@ export interface BoardCard {
   owner: { id: string; name: string } | null;
   humanGate: HumanGate | null;
   humanGateRef: string | null;
-  /** 决策剩余时限，负数表示已超时 */
+  /** Minutes left on the decision; negative means it is already overdue */
   decisionDueInMinutes: number | null;
   blockedSince: string | null;
   blockedReason: string | null;
-  /** 结构化阻塞细节。界面优先读它，`blockedReason` 只是兜底句 */
+  /** Structured blocking detail. The UI reads this first; `blockedReason` is only the fallback sentence */
   blockedDetail: BlockedDetail | null;
   blockedMinutes: number | null;
   progress: { step: number; total: number | null; description: string | null } | null;
@@ -76,48 +82,58 @@ export interface BoardCard {
   latestNote: string | null;
   artifactCount: number;
   unmetDependencies: number;
-  /** 谁挡着这张卡 —— 含已完成的，界面要能画出整条链而不只是没完成那截 */
+  /**
+   * What blocks this card — completed ones included, because the UI has to draw the
+   * whole chain, not only the unfinished tail of it.
+   */
   blockedBy: DependencyRef[];
-  /** 这张卡挡着谁。「先做哪个」只有这一栏答得了 */
+  /** What this card blocks. "Which one first?" is a question only this column answers */
   blocking: DependencyRef[];
   updatedAt: string;
 }
 
 /**
- * 「计划待批准」卡片（页面文档 05 §5.2 的原型图，Planning 列那一张）。
+ * The "plan awaiting approval" card — the one in the Planning column of the mockup in
+ * page doc 05 §5.2 / 「计划待批准」卡片。
  *
- * ★★ 为什么它不是 BoardCard 的一种，而是独立类型：
+ * ★★ Why this is its own type instead of a flavor of BoardCard:
  *
- *   计划不是工作项 —— 它没有状态机、没有执行者、没有依赖、不能被拖动。
- *   硬塞进 BoardCard 就要给一半字段填 null，而下游那些 `card.status === 'executing'`
- *   的分支会开始处理一个永远不成立的形态。更要命的是 `columns[].items`
- *   被 Kanban / List / Agent / Decision **四个视图**共用，它们一律按工作项
- *   处理：点开会去查一个不存在的 work item，批量重试会把计划一起发出去。
+ *   A plan is not a work item. It has no state machine, no executor, no dependencies,
+ *   and cannot be dragged. Forcing it into BoardCard means half the fields are null,
+ *   and every downstream `card.status === 'executing'` branch starts handling a shape
+ *   that can never occur. Worse, `columns[].items` is shared by **four views** —
+ *   Kanban, List, Agent, Decision — all of which treat its contents as work items:
+ *   opening one would look up a work item that does not exist, and a bulk retry would
+ *   dispatch the plan along with everything else.
  *
- *   所以它单独挂在 {@link BoardColumn.plans} 上：想渲染的视图去读，
- *   不认识它的视图什么都不用改，也不会误伤。
+ *   So it hangs off {@link BoardColumn.plans} on its own: views that want to render it
+ *   read it, and views that do not know about it need no change and cause no damage.
+ *
+ *   计划不是工作项，硬塞进 BoardCard 会让四个共用 `columns[].items` 的视图去处理一个
+ *   永远不成立的形态。单独挂一栏，不认识它的视图什么都不用改。
  */
 export interface PlanCard {
   id: string;
   requirementId: string | null;
-  /** 需求标题。需求还没结构化出标题时退回原文截断 */
+  /** Requirement title; falls back to a truncated raw input before the requirement is structured */
   title: string;
   version: number;
-  /** 批准后会带出多少个任务 —— 卡片上的「+6 任务」 */
+  /** How many tasks approval brings along — the "+6 tasks" on the card */
   taskCount: number;
   /**
-   * 谁该批。★ `plan.approve` 是 tech_lead 的权限（rbac/catalog.ts），
-   * 所以这里给的是项目的技术负责人，而不是需求的提出者。
+   * Who should approve. ★ `plan.approve` is a tech_lead permission (rbac/catalog.ts),
+   * so this is the project's tech lead, not whoever raised the requirement.
    */
   approver: { id: string; name: string } | null;
   estimatedHours: string | null;
   estimatedTokens: number | null;
   /**
-   * 已经等了多久（分钟）。
+   * How long it has been waiting, in minutes / 已经等了多久（分钟）。
    *
-   * ★ 是「已等待」而不是原型图上的「⏳ 4h 内」倒计时 —— 计划本身没有
-   *   截止时间字段，编一个出来等于在界面上撒谎。等待时长是真实数据，
-   *   而且同样能表达「这事拖着没人管」，那正是这个位置要传达的信息。
+   * ★ This is elapsed waiting time, not the "⏳ within 4h" countdown from the mockup.
+   *   A plan has no deadline field, and inventing one means the UI is lying. Waiting
+   *   time is real data and carries the same message — "this has been sitting here
+   *   with nobody on it" — which is exactly what this spot is for.
    */
   waitingMinutes: number;
   createdAt: string;
@@ -131,8 +147,9 @@ export interface BoardColumn {
   items: BoardCard[];
   hasMore: boolean;
   /**
-   * 待批准的计划。目前只有 planning 列非空 —— 其余列固定为 `[]`
-   * 而不是省略，省得每个消费方都要判一次 undefined。
+   * Plans awaiting approval. Only the planning column is ever non-empty today; the
+   * rest are a fixed `[]` rather than omitted, so no consumer has to test for
+   * undefined.
    */
   plans: PlanCard[];
 }
@@ -146,7 +163,7 @@ const STAGE_NAMES: Record<StageT, string> = {
   done: 'Done',
 };
 
-/** Done 列默认折叠，避免长期项目的 Done 列无限增长 */
+/** Done is collapsed by default, so a long-running project's Done column cannot grow without bound */
 const DONE_LIMIT = 5;
 const COLUMN_LIMIT = 20;
 
@@ -157,11 +174,15 @@ export interface BoardFilters {
   humanGateOnly?: boolean;
   blockedOnly?: boolean;
   /**
-   * 待认领：标为人工执行、但没有执行者的任务。
+   * Unclaimed: tasks marked for human execution that have no executor.
    *
-   * ★★ 这一档必须能筛出来，否则「批准时确认让它们先没人接」就成了一句空话 ——
-   *   那些任务会进 ready 然后停在那里：调度器不碰人工任务，而没有人被通知过
-   *   它是自己的。没有这个入口，它们在看板上和别的卡片长得一模一样。
+   * ★★ This filter has to exist, or "confirm at approval time that these go out
+   *   unassigned" is an empty promise. Those tasks reach ready and then stop there:
+   *   the scheduler does not touch human tasks, and nobody was ever told one is
+   *   theirs. Without this entry point they look exactly like every other card on
+   *   the board.
+   *
+   *   待认领 = 标为人工执行但没有执行者的任务，没有这个入口它们会静静停在 ready。
    */
   unclaimedOnly?: boolean;
 }
@@ -172,7 +193,8 @@ export async function getBoard(
   filters: BoardFilters = {},
 ): Promise<{ columns: BoardColumn[]; summary: BoardSummary }> {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  // 抛普通 Error 会被错误处理器归为 500，让调用方以为是服务端故障
+  // A plain Error would be classified as a 500 by the error handler, telling the
+  // caller the server broke when in fact the project simply does not exist
   if (!project) throw notFound('project');
 
   const conditions = [eq(workItems.projectId, projectId), isNull(workItems.deletedAt)];
@@ -185,8 +207,9 @@ export async function getBoard(
   if (filters.blockedOnly) conditions.push(sql`${workItems.blockedSince} IS NOT NULL`);
   if (filters.unclaimedOnly) {
     /**
-     * ★ 兼容旧数据：executionMode 是从 requiresHuman 拆出来的，
-     *   老工作项的 typeData 里只有后者。两个都认，与 executionModeOf 同一条口径。
+     * ★ Backward compatibility: executionMode was split out of requiresHuman, and
+     *   older work items only carry the latter in their typeData. Accept both, using
+     *   exactly the rule executionModeOf uses.
      */
     conditions.push(
       sql`${workItems.executorId} IS NULL
@@ -215,18 +238,20 @@ export async function getBoard(
     const all = enriched.filter((c) => c.stage === stage);
     const limit = stage === 'done' ? DONE_LIMIT : COLUMN_LIMIT;
     /**
-     * ★ 计划卡片只落在 planning 列。
+     * ★ Plan cards land in the planning column only.
      *
-     *   这个归属放在服务端而不是让前端自己判「plans 该画在哪一列」——
-     *   列的构成本来就是这里定的（STAGE_NAMES、WIP、折叠上限都在这），
-     *   分两处决定迟早会漂移成「后端给了但前端没画」。
+     *   That placement is decided server-side rather than leaving the client to work
+     *   out "which column do plans belong in" — the composition of the columns is
+     *   defined right here anyway (STAGE_NAMES, WIP limits, the collapse cap), and
+     *   splitting the decision across two places eventually drifts into "the backend
+     *   sent them and the frontend never drew them".
      */
     const plans = stage === 'planning' ? pendingPlans : [];
     return {
       key: stage,
       name: STAGE_NAMES[stage],
       wipLimit: project.wipLimits?.[stage] ?? null,
-      // 列头计数要含计划，否则 Planning 列会显示 0 却挂着一张卡
+      // The column count must include plans, or Planning shows 0 while a card hangs under it
       count: all.length + plans.length,
       items: all.slice(0, limit),
       hasMore: all.length > limit,
@@ -238,10 +263,11 @@ export async function getBoard(
 }
 
 /**
- * 待批准的计划。
+ * Plans awaiting approval / 待批准的计划。
  *
- * ★ 与 overview.ts 用的是同一个判据（`status = 'awaiting_approval'`）——
- *   总览横幅说「有计划待批准」而看板上没有那张卡，是最难解释的一种不一致。
+ * ★ Same criterion overview.ts uses (`status = 'awaiting_approval'`). An overview
+ *   banner announcing "a plan is waiting for approval" while the board shows no such
+ *   card is about the hardest inconsistency there is to explain to a user.
  */
 async function loadPendingPlans(
   db: Database,
@@ -250,14 +276,16 @@ async function loadPendingPlans(
   filters: BoardFilters,
 ): Promise<PlanCard[]> {
   /**
-   * ★★ 筛选器是按工作项设计的，对计划大多无意义。不能默认「不匹配就留着」——
-   *   那会让用户勾了「只看阻塞」之后，Planning 列里那张计划卡岿然不动，
-   *   看起来像筛选坏了。
+   * ★★ The filters were designed for work items and mostly mean nothing for a plan.
+   *   The default cannot be "keep it when it does not match" — that leaves the plan
+   *   card sitting unmoved in the Planning column after a user ticks "blocked only",
+   *   which reads as a broken filter.
    *
-   *   逐条判断它对计划成不成立：
-   *   - 阻塞 / 执行者 / 风险：计划没有这些属性 → 该筛选开启时隐藏计划
-   *   - Human Gate：计划待批准**本身就是**在等人 → 保留
-   *   - 只看我的：我是不是批准人 → 下面单独判
+   *   So each filter is judged on whether it even applies to a plan:
+   *   - blocked / executor / risk: a plan has none of these properties → hide plans
+   *     whenever that filter is on
+   *   - Human Gate: a plan awaiting approval **is** waiting on a human → keep it
+   *   - only mine: am I the approver → decided separately just below
    */
   if (filters.blockedOnly || filters.executorType || filters.riskLevel?.length) return [];
   if (filters.onlyMine && filters.onlyMine !== techLeadId) return [];
@@ -281,9 +309,10 @@ async function loadPendingPlans(
   if (rows.length === 0) return [];
 
   /**
-   * 任务数。★ 计划生成时任务就已经建成 draft 了（planning/service.ts），
-   * 所以这里数的是真实存在的行，不是计划里那份清单的长度 —— 两者在
-   * 「有人手工删过其中一条」之后会不一样，而卡片该说的是现在有几条。
+   * Task count. ★ Tasks are already created as drafts when the plan is generated
+   * (planning/service.ts), so this counts rows that actually exist rather than the
+   * length of the list inside the plan. The two diverge as soon as someone deletes one
+   * by hand, and what the card should report is how many there are now.
    */
   const counts = await db
     .select({ planId: workItems.planId, n: sql<number>`count(*)::int` })
@@ -315,9 +344,10 @@ async function loadPendingPlans(
 }
 
 /**
- * ★ 需求在结构化之前没有 title，只有用户粘进来的原文。
- *   这时候显示空标题的卡片等于「有个东西要你批，但不告诉你是什么」——
- *   退回原文首句，至少能认出是哪一条。
+ * ★ Before it is structured, a requirement has no title — only the raw text the user
+ *   pasted in. A card with an empty title at that point says "there is something for
+ *   you to approve, but not what it is". Falling back to the first line of the raw
+ *   input at least lets them recognize which one this is.
  */
 function planTitle(title: string | null, rawInput: string | null): string {
   if (title?.trim()) return title;
@@ -355,10 +385,11 @@ function summarize(cards: BoardCard[]): BoardSummary {
 type WorkItemRow = typeof workItems.$inferSelect;
 
 /**
- * 批量补齐卡片所需的关联数据。
+ * Batch-load everything the cards need alongside the work items.
  *
- * 刻意做成一次性批查而不是逐卡片查询 —— 看板可能有上百张卡片，
- * N+1 会让首屏预算（1.5s）完全没有余地。
+ * Deliberately one set of bulk queries rather than a query per card: a board can hold
+ * hundreds of cards, and an N+1 leaves no room at all inside the 1.5s first-paint
+ * budget.
  */
 async function enrich(
   db: Database,
@@ -376,7 +407,7 @@ async function enrich(
     .orderBy(desc(agentRuns.attempt));
   const latestRun = new Map<string, (typeof runs)[number]>();
   for (const r of runs) {
-    // ★ 规划 Run 没有工作项，不进这张按工作项索引的表
+    // ★ Planning runs have no work item, so they do not belong in this by-work-item map
     if (!r.workItemId) continue;
     if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
   }
@@ -405,16 +436,18 @@ async function enrich(
   }
 
   /**
-   * 依赖。
+   * Dependencies / 依赖。
    *
-   * ★★ 除了「有几条没完成」，还要说清**是哪几条**。
+   * ★★ Beyond "how many are unfinished", say **which ones**.
    *
-   *   卡片上此前只有一个「🔗 1」，用户知道自己被挡着，但不知道被谁挡着 ——
-   *   要弄清「TEST-11 卡着 TEST-12」得挨个点开五张卡去拼拓扑
-   *   （问题记录 #21）。数字回答不了任何一个后续问题。
+   *   The card used to show a bare "🔗 1": the user knew they were blocked but not by
+   *   what — working out that TEST-11 is holding up TEST-12 meant opening five cards
+   *   and reassembling the topology by hand (issue log #21). A number answers none of
+   *   the follow-up questions.
    *
-   * ★ 两个方向都带：上游（谁挡着我）与下游（我挡着谁）。只给上游的话，
-   *   「先做哪个」这个问题仍然答不了 —— 挡住五个人的那条才该先做。
+   * ★ Both directions travel: upstream (what blocks me) and downstream (what I block).
+   *   Upstream alone still cannot answer "which one first" — the item blocking five
+   *   others is the one that should be done first.
    */
   const depRows = await db
     .select({
@@ -429,7 +462,7 @@ async function enrich(
     .innerJoin(workItems, eq(workItems.id, workItemDependencies.fromId))
     .where(inArray(workItemDependencies.toId, ids));
 
-  /** 我挡着谁 —— 反方向查一次，`from` 在 ids 里的那些 */
+  /** What I block — the reverse query, the rows whose `from` is in ids */
   const blockingRows = await db
     .select({
       fromId: workItemDependencies.fromId,
@@ -503,12 +536,13 @@ async function enrich(
           : null,
       owner: r.ownerId ? { id: r.ownerId, name: userName.get(r.ownerId) ?? '未知' } : null,
       /**
-       * ★ 有待办决策时，Gate 一定显示为「在等人」。
+       * ★ Whenever a pending decision exists, the gate must read "waiting on a human".
        *
-       * work_items.human_gate 是上一次流转留下的值，会滞后：
-       * 一个任务上可能同时挂着两条决策，批掉其中一条会把它写成 approved，
-       * 而另一条还在等人 —— 卡片却显示「已批准」，还带着「处理 →」按钮。
-       * 待办决策是当下的事实，存量字段只是历史。
+       * `work_items.human_gate` is whatever the last transition left behind, and it
+       * lags: a task can carry two decisions at once, and approving one of them writes
+       * the field to `approved` while the other is still waiting — so the card claims
+       * "approved" and still shows a "Handle →" button. The pending decision is the
+       * present fact; the stored field is only history.
        */
       humanGate: decision ? 'waiting_for_decision' : r.humanGate,
       humanGateRef: decision?.id ?? null,
@@ -541,7 +575,7 @@ async function enrich(
 }
 
 
-/** Human Gate 显示优先级：decision_overdue 覆盖其他状态 */
+/** Human Gate display priority: decision_overdue outranks every other state */
 export function effectiveHumanGate(gates: HumanGate[]): HumanGate | null {
   if (gates.length === 0) return null;
   return gates.reduce((a, b) => (HUMAN_GATE_PRIORITY[a] >= HUMAN_GATE_PRIORITY[b] ? a : b));

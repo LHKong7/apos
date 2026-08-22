@@ -7,15 +7,19 @@ import { seedAgent } from '../../test/agent-fixtures';
 import { dispatchRun } from './dispatch';
 
 /**
- * 派发时下发「哪些情形会被拦下」。
+ * Ship "what will get you stopped" along with the dispatch / 派发时下发哪些情形会被拦下。
  *
- * ★★ 这组测的是**接线**，不是筛选规则本身 —— 后者在
- *   packages/domain/src/policy/gates.test.ts 里穷举。
+ * ★★ This suite tests the **wiring**, not the selection rules themselves — those are enumerated
+ *   in packages/domain/src/policy/gates.test.ts.
  *
- *   接线断在任何一处（契约字段没填、上下文快照没接上、规则没加载全），
- *   表现都是同一个：Agent 收到一份空的闸门清单，照常开工，然后在流转那步
- *   被冻住。整条链路上不会有任何报错，测试也全绿 —— 所以必须从
- *   真正下发出去的那份 TaskDispatch 上取值来断言。
+ *   Break the wiring anywhere (an unfilled contract field, a context snapshot that never got
+ *   plugged in, rules that were not all loaded) and the symptom is identical: the Agent receives
+ *   an empty gate list, starts work as usual, and then freezes at the transition step. Nothing
+ *   along that chain throws and every test stays green — which is why the assertions have to read
+ *   values off the TaskDispatch that was actually handed out.
+ *
+ *   这组测的是接线，不是筛选规则本身。接线断在任何一处，表现都是 Agent 收到空清单、
+ *   照常开工、在流转那步被冻住，全程无报错 —— 所以必须从真正下发的 TaskDispatch 上断言。
  */
 const db = testDb();
 let fx: Fixture;
@@ -25,11 +29,13 @@ beforeEach(async () => {
 });
 
 /**
- * 两条真实形状的高风险规则。
+ * Two high-risk rules shaped like real ones / 两条真实形状的高风险规则。
  *
- * ★★ 平台不再自带硬编码基线 —— 库里没有规则时，闸门清单本来就该是空的。
- *   所以这组测试必须自己先把规则建出来，否则测的是「没有规则时会怎样」，
- *   而那证明不了接线是通的。
+ * ★★ The platform no longer ships hard-coded baselines — with no rules in the database, an empty
+ *   gate list is the correct answer. So this suite has to create its own rules first; otherwise
+ *   it is testing "what happens with no rules at all", which proves nothing about the wiring.
+ *
+ *   平台不再自带硬编码基线，库里没规则时清单本来就该是空的，所以这里必须自己先建规则。
  */
 async function seedGovernanceRules() {
   await db.insert(policies).values([
@@ -90,9 +96,12 @@ async function dispatchedTask(): Promise<TaskDispatch> {
 
 describe('派发时下发 Policy 闸门', () => {
   /**
-   * ★ 派发时 operationType 还是默认的 code_change、environment 还是 null，
-   *   照当前上下文直接求值的话这两条规则一条都不命中。这条盯的正是
-   *   「未定的 fact 按可能处理」这个语义有没有活着穿过整条链路。
+   * ★ At dispatch time operationType is still the default code_change and environment is still
+   *   null, so evaluating against the current context hits neither rule. This test watches
+   *   whether the "an undetermined fact counts as possible" semantics survives the whole chain.
+   *
+   *   派发时两条规则按当前上下文都不命中，这条盯的是「未定的 fact 按可能处理」有没有
+   *   活着穿过整条链路。
    */
   it('★ 会拦人的规则要到达 Agent', async () => {
     await seedGovernanceRules();
@@ -103,7 +112,7 @@ describe('派发时下发 Policy 闸门', () => {
     expect(names).toContain('生产数据库变更必须由 DBA 审批');
   });
 
-  /** ★ 一条规则都没有时，清单就是空的 —— 不是「一份默认清单」 */
+  /** ★ With no rules at all the list is empty — not "some default list" / 不是一份默认清单 */
   it('★ 库里没有规则时下发空清单', async () => {
     const task = await dispatchedTask();
     expect(task.policyGates).toEqual([]);
@@ -119,8 +128,11 @@ describe('派发时下发 Policy 闸门', () => {
   });
 
   /**
-   * ★ 项目自己配的规则也要进 —— 只发组织级规则的话，用户在 Policy 页上
-   *   写的东西对 Agent 完全不存在，而那恰恰是他最想让 Agent 知道的部分。
+   * ★ Rules a project configured for itself must go out too. Ship only org-level rules and
+   *   everything the user wrote on the Policy page simply does not exist for the Agent — and
+   *   that is exactly the part they most wanted the Agent to know.
+   *
+   *   只发组织级规则的话，用户在 Policy 页上写的东西对 Agent 完全不存在。
    */
   it('★ 项目级规则与组织级规则一起下发', async () => {
     await seedGovernanceRules();
@@ -162,8 +174,10 @@ describe('派发时下发 Policy 闸门', () => {
   });
 
   /**
-   * ★ 自动放行的规则不该出现。它对 Agent 没有任何可执行含义，
-   *   而清单一长，真正会拦人的那几条就被稀释了。
+   * ★ Auto-allow rules must not appear. They carry no actionable meaning for an Agent, and a
+   *   longer list dilutes the few entries that will actually stop it.
+   *
+   *   自动放行的规则对 Agent 没有可执行含义，清单一长就把真正会拦人的那几条稀释了。
    */
   it('自动放行的规则不下发', async () => {
     await db.insert(policies).values({

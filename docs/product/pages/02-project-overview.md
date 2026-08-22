@@ -1,240 +1,245 @@
-# 02 项目总览
+# 02 Project Overview
 
-## 1. 页面信息
+*[中文版本 / Chinese version](02-project-overview.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Field | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId` |
-| 层级 | 二级页面（项目内首页） |
-| 主要角色 | `pm` / `tech_lead` / `sponsor`（主要消费者）；`member` 只读为主 |
-| 优先级 | P0 |
-| 对应产品文档 | 8.1 项目负责人视角、8.3.6 项目摘要、8.6.6 延期预测、8.13.4 项目健康度 |
+| Route | `/projects/:projectId` |
+| Level | Second-level page (project home) |
+| Primary roles | `pm` / `tech_lead` / `sponsor` (the main consumers); `member` mostly read-only |
+| Priority | P0 |
+| Related product docs | 8.1 The project owner's view, 8.3.6 Project summary, 8.6.6 Delay forecast, 8.13.4 Project health |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-给项目负责人一个**指挥台**，一屏回答：
+Give the project owner a **command deck** that answers four questions on one screen:
 
-1. 项目现在健康吗？会不会延期？
-2. 谁在做什么——人和 Agent 分别在推进什么？
-3. 卡在哪里？为什么卡住？
-4. 有什么需要我现在拍板？
+1. Is the project healthy right now? Is it going to slip?
+2. Who is doing what — what are the humans pushing forward, and what are the Agents?
+3. Where is it stuck, and why?
+4. What needs a call from me right now?
 
-本页不是数据大屏。每个指标旁都必须有下一步动作，否则不放。
+This page is not a dashboard wall. Every metric on it has to come with a next action; if it doesn't, it doesn't ship.
 
 ---
 
-## 3. 入口与出口
+## 3. Entrances and Exits
 
-**入口**：项目列表卡片点击；全局项目切换器；通知与外部链接（Slack 消息里的项目链接）。
+**Entrances**: clicking a card in the project list; the global project switcher; notifications and external links (the project link in a Slack message).
 
-**出口**：
+**Exits**:
 
-| 区域 | 去向 |
+| Area | Goes to |
 | --- | --- |
-| 待决策条目 | `11 决策详情` |
-| 阻塞任务 | `06 Work Item 详情` |
-| 关键路径节点 | `07 Execution Graph`（锚定该节点） |
-| Agent 卡片 | `08 Agent Workspace` |
-| 「查看完整分析」 | `12 项目 Analytics` |
-| 需求列表项 | `03 需求录入与澄清` |
-| 「计划待批准」 | `04 计划确认` |
-| 顶部 Tab | 看板 / 执行图 / 设置 |
+| Pending decision item | `11 Decision Detail` |
+| Blocked task | `06 Work Item Detail` |
+| Critical-path node | `07 Execution Graph` (anchored on that node) |
+| Agent card | `08 Agent Workspace` |
+| "View full analysis" | `12 Project Analytics` |
+| Requirement list item | `03 Requirement Intake and Clarification` |
+| "Plan awaiting approval" | `04 Plan Confirmation` |
+| Top tabs | Board / Execution Graph / Settings |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ ← 项目  订单系统重构        [Agent-led + Approval ▾]   [⏸ 暂停] [⚙ 设置]  │
-│ 总览 | 看板 | 计划 | 执行图 | 需求 | Agent 团队 | 决策记录 | Analytics     │
-├───────────────────────────────────────────────────────────────────────────┤
-│ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐         │
-│ │ 健康度    │ │ 进度      │ │ 延期风险  │ │ 待决策    │ │ 成本      │         │
-│ │  62 ⚠    │ │  78%     │ │  高 68%  │ │   2      │ │ $128/500 │         │
-│ │ ▼8 本周   │ │ 39/50    │ │ 预计+4天 │ │ 1 项超时  │ │ ▓▓▓░░26% │         │
-│ └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘         │
-├───────────────────────────────────────────────────────────────────────────┤
-│ ⚡ 需要你处理 (2)                                                          │
-│ ┌───────────────────────────────────────────────────────────────────────┐ │
-│ │ ⏰ 超时 2h10m  支付网关选型                      高风险   [处理 →]     │ │
-│ │ ⚠ 4h 内到期   Plan v3 变更批准（新增 6 个任务）  中风险   [处理 →]     │ │
-│ └───────────────────────────────────────────────────────────────────────┘ │
-├──────────────────────────────────┬────────────────────────────────────────┤
-│ ⛔ 阻塞与风险 (3)                  │ 🤖 Agent 团队                          │
-│ ┌──────────────────────────────┐ │ ┌────────────────────────────────────┐ │
-│ │ ⛔ 8h12m  订单查询 API        │ │ │ [🤖 code-agent-1]  ● 执行中        │ │
-│ │   等待 DBA 审批               │ │ │  实现订单查询 API   12m  $8.20     │ │
-│ │   👤 王强 (未响应)  [催办]    │ │ │  成功率 92% (23/25)                │ │
-│ ├──────────────────────────────┤ │ ├────────────────────────────────────┤ │
-│ │ ⛔ 3h05m  支付回调测试        │ │ │ [🤖 test-agent-1]  ● 阻塞          │ │
-│ │   依赖未完成: 订单查询 API    │ │ │  连续失败 2 次  下次将请求人工      │ │
-│ ├──────────────────────────────┤ │ │                    [查看 Run →]    │ │
-│ │ ⚠ 关键路径延期风险 高          │ │ ├────────────────────────────────────┤ │
-│ │   支付模块 → 上线，剩 6 天     │ │ │ [🤖 review-agent] ● 空闲           │ │
-│ │                  [看执行图 →]│ │ │ [🤖 research-agent] ● 空闲         │ │
-│ └──────────────────────────────┘ │ └────────────────────────────────────┘ │
-├──────────────────────────────────┼────────────────────────────────────────┤
-│ 📋 今日摘要        [重新生成]     │ 👥 人类成员                             │
-│ ┌──────────────────────────────┐ │ 👤 张伟  技术负责人  3 待办 · 1 决策    │
-│ │ 由 Project Agent 生成 09:00   │ │ 👤 李娜  产品负责人  0 待办 · 1 决策    │
-│ │                              │ │ 👤 王强  DBA        1 决策 ⏰超时      │
-│ │ 昨日完成 6 个任务，支付模块   │ ├────────────────────────────────────────┤
-│ │ 进度落后计划 2 天，主要原因是 │ │ 📈 近 7 日流动                          │
-│ │ DBA 审批等待 8 小时…          │ │  完成 ▁▃▅▂▇▃▄   阻塞 ▁▁▃▅▂▁▁          │
-│ │                   [展开全文] │ │              [完整分析 →]              │
-│ └──────────────────────────────┘ └────────────────────────────────────────┘
-├───────────────────────────────────────────────────────────────────────────┤
-│ 🕐 最近活动                                        [全部来源 ▾] [查看全部] │
-│ ● 15:02 👤 张伟   批准发布 v1.4.0 并附加约束「灰度 10%」                    │
-│ ● 14:36 🔧 系统   Policy「生产数据库变更」命中 → 生成决策，责任人 王强      │
-│ ● 14:33 🤖 code-agent-1  提交产物 PR #42  [查看]                          │
-└───────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│ ← Projects   Order System Rewrite    [Agent-led + Approval ▾]   [⏸ Pause] [⚙ Settings]    │
+│ Overview | Board | Plan | Graph | Requirements | Agent Team | Decisions | Analytics       │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐      │
+│ │ Health       │ │ Progress     │ │ Delay risk   │ │ Decisions    │ │ Cost         │      │
+│ │   62 ⚠       │ │   78%        │ │ High  68%    │ │    2         │ │ $128/500     │      │
+│ │ ▼8 this week │ │ 39/50        │ │ est. +4 days │ │ 1 overdue    │ │ ▓▓▓░░ 26%    │      │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘      │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│ ⚡ Needs You (2)                                                                          │
+│ ┌───────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ ⏰ Overdue 2h10m   Payment gateway selection        High risk    [Handle →]           │ │
+│ │ ⚠ Due within 4h    Plan v3 approval (6 new tasks)   Medium risk  [Handle →]           │ │
+│ └───────────────────────────────────────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────┬─────────────────────────────────────────────┤
+│ ⛔ Blockers & Risks (3)                     │ 🤖 Agent Team                               │
+│ ┌─────────────────────────────────────────┐ │ ┌─────────────────────────────────────────┐ │
+│ │ ⛔ 8h12m   Order Query API              │ │ │ [🤖 code-agent-1]    ● Running          │ │
+│ │   Waiting on DBA approval               │ │ │  Implement order query API  12m  $8.20  │ │
+│ │   👤 Wang Qiang (no reply)     [Nudge]  │ │ │  Success rate 92% (23/25)               │ │
+│ ├─────────────────────────────────────────┤ │ ├─────────────────────────────────────────┤ │
+│ │ ⛔ 3h05m   Payment Callback Tests       │ │ │ [🤖 test-agent-1]    ● Blocked          │ │
+│ │   Unmet dependency: Order Query API     │ │ │  2 failures in a row; next one          │ │
+│ ├─────────────────────────────────────────┤ │ │  escalates to a human    [View run →]   │ │
+│ │ ⚠ Critical-path delay risk: High        │ │ ├─────────────────────────────────────────┤ │
+│ │   Payments → Launch, 6 days left        │ │ │ [🤖 review-agent]    ● Idle             │ │
+│ │                     [Open graph →]      │ │ │ [🤖 research-agent]  ● Idle             │ │
+│ └─────────────────────────────────────────┘ │ └─────────────────────────────────────────┘ │
+├─────────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ 📋 Daily Summary         [Regenerate]       │ 👥 People                                   │
+│ ┌─────────────────────────────────────────┐ │ ┌─────────────────────────────────────────┐ │
+│ │ Generated by Project Agent, 09:00       │ │ │ 👤 Zhang Wei   Tech lead  3 todo · 1 dec│ │
+│ │                                         │ │ │ 👤 Li Na       PM         0 todo · 1 dec│ │
+│ │ 6 tasks closed yesterday. Payments      │ │ │ 👤 Wang Qiang  DBA      1 dec ⏰ overdue│ │
+│ │ is 2 days behind plan, mostly a DBA     │ │ ├─────────────────────────────────────────┤ │
+│ │ approval that sat for 8 hours…          │ │ │ 📈 Last 7 days      [Full analytics →]  │ │
+│ │                       [Read full]       │ │ │  Done ▁▃▅▂▇▃▄     Blocked ▁▁▃▅▂▁▁       │ │
+│ └─────────────────────────────────────────┘ │ └─────────────────────────────────────────┘ │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│ 🕐 Recent Activity                                   [All sources ▾] [View all]           │
+│ ● 15:02 👤 Zhang Wei      Approved release v1.4.0 with the constraint "10% canary"        │
+│ ● 14:36 🔧 System         Policy "Production DB change" hit → decision, owner Wang Qiang  │
+│ ● 14:33 🤖 code-agent-1   Submitted artifact PR #42  [View]                               │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Area by Area
 
-### 5.1 项目头部
+### 5.1 Project Header
 
-| 元素 | 说明 |
+| Element | Notes |
 | --- | --- |
-| 项目名 | 可内联编辑（`pm` 及以上） |
-| 自治等级下拉 | 切换需二次确认，弹窗说明「切换到 Agent-autonomous 后，中低风险任务将不再向你请求批准」，变更记入 Event 与审计日志 |
-| 暂停按钮 | 立即停止调度新任务；执行中的 Run 可选「等待完成」或「立即终止」 |
-| 设置 | 跳项目设置，含 `13 Policy 配置`、`14 集成设置` |
+| Project name | Editable inline (`pm` and above) |
+| Autonomy level dropdown | Switching takes a second confirmation; the dialog spells out what changes — "once you switch to Agent-autonomous, low- and medium-risk tasks will stop asking you for approval." The change is written to an Event and to the audit log |
+| Pause button | Stops scheduling new tasks immediately; for Runs already executing, pick either "let them finish" or "terminate now" |
+| Settings | Jumps to project settings, which include `13 Policy Configuration` and `14 Integration Settings` |
 
-### 5.2 指标卡（5 个）
+### 5.2 Metric Cards (5)
 
-| 卡片 | 主值 | 副值 | 点击去向 |
+| Card | Main value | Secondary value | Click target |
 | --- | --- | --- | --- |
-| 健康度 | 0–100 | 周环比 | Analytics 健康度明细 |
-| 进度 | 完成百分比 | 完成数/总数 | 看板 |
-| 延期风险 | 高/中/低 + 概率 | 预计偏差天数 | 执行图（关键路径高亮） |
-| 待决策 | 数量 | 其中超时数 | Decision Center（预筛本项目） |
-| 成本 | 已用/预算 | 占比进度条 | Analytics 成本明细 |
+| Health | 0–100 | Week-over-week change | Analytics health breakdown |
+| Progress | Percent complete | Completed / total | Board |
+| Delay risk | High/medium/low + probability | Projected drift in days | Execution graph (critical path highlighted) |
+| Pending decisions | Count | How many are overdue | Decision Center (pre-filtered to this project) |
+| Cost | Spent / budget | Percentage bar | Analytics cost breakdown |
 
-延期风险来自文档 8.6.6，输入为当前进度、历史 Cycle Time、Agent 成功率、依赖状态、阻塞时间、决策等待时间、剩余工作量。悬停显示这七项的贡献度——**用户必须能看懂预测是怎么来的**，否则不会信任它。
+Delay risk comes from doc 8.6.6. Its inputs are current progress, historical cycle time, Agent success rate, dependency state, time spent blocked, decision wait time, and remaining work. Hovering shows how much each of those seven contributed — **the user has to be able to see where the forecast came from**, or they will not trust it.
 
-### 5.3 需要你处理
+### 5.3 Needs You
 
-同 `01 项目列表` 的待处理区，但限定本项目且不限 5 条。为空时折叠。
+Same as the pending area on `01 Project List`, but scoped to this project and not capped at five. Collapses when empty.
 
-### 5.4 阻塞与风险
+### 5.4 Blockers and Risks
 
-对应文档 8.6.4 的九类阻塞。每条包含：
+Covers the nine kinds of blocker from doc 8.6.4. Every row carries:
 
-- 阻塞时长（组件 §5.7）
-- 任务标题
-- **阻塞原因**（不能只说"阻塞"）
-- 责任对象（人 / Agent / 外部系统）
-- **一个直接动作**：催办 / 改派 / 降低模型成本 / 拆分任务 / 转人工 / 强制放行
+- How long it has been blocked (component §5.7)
+- The task title
+- **Why it is blocked** — never just "blocked"
+- Who or what owns it (person / Agent / external system)
+- **One direct action**: nudge / reassign / drop to a cheaper model / split the task / hand to a human / force through
 
-「催办」按项目通知配置发送（Slack / 飞书 / 邮件），并在决策上记一次 `reminded` 事件，防止重复轰炸——同一决策 2 小时内只能催办一次。
+"Nudge" goes out over whatever the project's notification settings say (Slack / Feishu / email) and records a `reminded` event on the decision so nobody gets carpet-bombed — the same decision can be nudged at most once every 2 hours.
 
-排序：阻塞时长降序，但「关键路径上的阻塞」永远置顶并加红色标记。
+Sort order is longest-blocked first, except that **blockers on the critical path** always pin to the top with a red marker.
 
-### 5.5 Agent 团队
+### 5.5 Agent Team
 
-每个 Agent 一行，展示：名称、状态点、当前任务、已耗时、当前 Run 成本、历史成功率。
+One row per Agent, showing: name, status dot, current task, elapsed time, cost of the current Run, and historical success rate.
 
-**异常态强调**：
+**Abnormal states get emphasis**:
 
-- 连续失败 → 橙色边框 + 「连续失败 N 次，达到 3 次将按 Policy 请求人工」
-- 成本异常 → 「本 Run 成本已达平均值 3.2 倍」
-- 长时间无事件 → 「12 分钟无输出，可能卡住」+ [查看 Run] [终止]
+- Repeated failures → orange border plus "N failures in a row; at 3 it will ask for a human, per Policy"
+- Cost anomaly → "this Run has already cost 3.2× the average"
+- Long silence → "12 minutes with no output, may be stuck" plus [View Run] [Terminate]
 
-点击进 `08 Agent Workspace`；点击当前任务进 `09 Agent Run 详情`。
+Clicking the card goes to `08 Agent Workspace`; clicking the current task goes to `09 Agent Run Detail`.
 
-### 5.6 今日摘要
+### 5.6 Daily Summary
 
-Project Agent 自动生成（文档 8.3.6）。默认展示 3 行，可展开。
+Generated automatically by the Project Agent (doc 8.3.6). Three lines by default, expandable.
 
-**必须标注**：生成时间、生成模型、「AI 生成」标识。提供 [重新生成]（消耗成本，按钮旁显示预估 `~$0.08`）与 [反馈不准确]（反馈进入 Agent 评估数据）。
+**Must be labeled**: generation time, the model that generated it, and an "AI generated" marker. Offers [Regenerate] — which costs real money, so show the estimate `~$0.08` next to the button — and [Report as inaccurate], whose feedback flows into Agent evaluation data.
 
-摘要中提到的任务、决策、PR 均为可点击链接。
+Tasks, decisions, and PRs mentioned in the summary are all clickable links.
 
-### 5.7 人类成员
+### 5.7 People
 
-显示每人的待办数与待决策数——让负责人看到**人的负载**，这是判断该不该继续压任务的依据。有超时决策的成员用红色标注。
+Shows each person's open task count and pending decision count — this is how the owner sees **human load**, which is what tells them whether to keep piling work on. Anyone holding an overdue decision is flagged red.
 
-点击成员打开侧栏：其在本项目的任务列表、决策历史、平均决策时长。
+Clicking a member opens a side panel: their tasks on this project, their decision history, and their average decision time.
 
-### 5.8 近 7 日流动
+### 5.8 Last 7 Days
 
-极简 sparkline：完成数、阻塞数。不做复杂图表，详细分析在 `12 项目 Analytics`。
+A bare sparkline: items completed, items blocked. Nothing more elaborate — the real analysis lives in `12 Project Analytics`.
 
-### 5.9 最近活动
+### 5.9 Recent Activity
 
-Event Timeline 组件（§5.8），默认 20 条，支持按来源过滤（系统/Agent/人类/外部同步）。
+The Event Timeline component (§5.8), 20 entries by default, filterable by source (system / Agent / human / external sync).
 
-**默认过滤掉 Agent 的工具调用级事件**，只显示里程碑级事件（产物提交、状态变更、审批、失败）——否则会被 Agent 日志淹没。用户可手动打开「显示全部细节」。
-
----
-
-## 6. 核心交互流程
-
-**每日巡检（项目负责人）**
-
-```
-进入总览 → 看 5 个指标卡 → 处理"需要你处理" → 看阻塞区并逐条派活
-        → 扫今日摘要确认没有遗漏 → 离开
-```
-
-**异常响应**
-
-```
-延期风险变红 → 点开看七项贡献度 → 发现"决策等待时间"占比最大
-             → 回到阻塞区催办 / 改派决策责任人
-             → 若是结构性问题，去 13 Policy 配置调整审批规则
-```
-
-**Agent 失控响应**
-
-```
-Agent 卡片显示连续失败 → 查看 Run → 判断是任务问题还是 Agent 问题
-  ├─ 任务描述不清 → 去 Work Item 补充上下文 → 重跑
-  ├─ Agent 能力不足 → 改派其他 Agent
-  └─ 需求本身有冲突 → 发起决策 → 回到需求页澄清
-```
+**Agent tool-call-level events are filtered out by default**; only milestone-level events show — artifact submitted, status changed, approval, failure — because otherwise Agent logs drown out everything else. The user can turn on "show all detail" by hand.
 
 ---
 
-## 7. 状态设计
+## 6. Core Interaction Flows
 
-| 状态 | 处理 |
+**The daily walkthrough (project owner)**
+
+```
+Open the overview → scan the 5 metric cards → clear "Needs You" → work down the blocker
+                    list, assigning each one
+                  → skim the daily summary to confirm nothing slipped past → leave
+```
+
+**Responding to an anomaly**
+
+```
+Delay risk turns red → open the seven contributing factors → find that "decision wait time"
+                       dominates
+                     → go back to the blocker area: nudge, or reassign the decision owner
+                     → if the cause is structural, go to 13 Policy Configuration and adjust
+                       the approval rules
+```
+
+**Responding to a runaway Agent**
+
+```
+Agent card shows repeated failures → view the Run → is this the task's fault or the Agent's?
+  ├─ Task description is unclear    → add context on the Work Item → rerun
+  ├─ Agent is not capable enough    → reassign to another Agent
+  └─ The requirement itself conflicts → raise a decision → back to the requirements page to clarify
+```
+
+---
+
+## 7. State Design
+
+| State | Handling |
 | --- | --- |
-| 加载 | 指标卡先出（缓存值 + 「更新中」），其余区域骨架屏 |
-| 项目刚创建（无需求） | 隐藏全部指标区，全屏引导「录入第一个需求」→ `03` |
-| 需求已确认但计划未批准 | 顶部横幅「计划 v1 等待批准」+ [去批准] → `04`；下方区域正常显示但多为空 |
-| 项目已暂停 | 全页加灰色蒙层顶部条「项目已暂停，Agent 调度已停止」+ [恢复] |
-| 项目已结项 | 只读；摘要区替换为「项目复盘」（文档 8.8.8） |
-| 错误 | 分区降级：某区加载失败只影响该区，显示重试按钮 |
+| Loading | Metric cards land first (cached values plus an "updating" flag); everything else shows skeletons |
+| Project just created, no requirements yet | Hide every metric area; full-screen prompt to "capture your first requirement" → `03` |
+| Requirements confirmed, plan not yet approved | Top banner "Plan v1 awaiting approval" plus [Go approve] → `04`; the areas below render normally, though most will be empty |
+| Project paused | Gray scrim over the page, top bar reading "Project paused, Agent scheduling stopped" plus [Resume] |
+| Project closed | Read-only; the summary area is replaced by "Project retrospective" (doc 8.8.8) |
+| Error | Degrade area by area: one area failing to load affects only that area, which shows a retry button |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requires |
 | --- | --- |
-| 查看 | 项目成员 / `viewer` |
-| 修改自治等级 | `tech_lead` / `pm` |
-| 暂停 / 恢复项目 | `pm` 及以上 |
-| 催办决策 | 项目成员 |
-| 改派决策责任人 | `pm` / 原责任人 |
-| 终止 Agent Run | `tech_lead` / `pm` / 该 Agent 的 `agent_owner` |
-| 强制放行阻塞 | `tech_lead`，且必须填写原因 |
+| View | Project member / `viewer` |
+| Change the autonomy level | `tech_lead` / `pm` |
+| Pause / resume the project | `pm` and above |
+| Nudge a decision | Project member |
+| Reassign a decision owner | `pm` / the current owner |
+| Terminate an Agent Run | `tech_lead` / `pm` / that Agent's `agent_owner` |
+| Force a blocker through | `tech_lead`, and a reason is mandatory |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Project`、`WorkItem`、`Decision`、`Agent`、`AgentRun`、`Event`、`Plan`（关键路径与里程碑）
+**Domain objects**: `Project`, `WorkItem`, `Decision`, `Agent`, `AgentRun`, `Event`, `Plan` (critical path and milestones)
 
-**接口**
+**Endpoints**
 
 ```
 GET /api/projects/{id}/overview
@@ -243,49 +248,49 @@ GET /api/projects/{id}/overview
 
 GET /api/projects/{id}/events?level=milestone&limit=20&source=
 
-POST /api/decisions/{id}/remind        催办（2h 冷却）
+POST /api/decisions/{id}/remind        nudge (2h cooldown)
 POST /api/projects/{id}/summary/regenerate
-PATCH /api/projects/{id}  { autonomy_level | status }   需二次确认 token
+PATCH /api/projects/{id}  { autonomy_level | status }   requires a second-confirmation token
 
 SSE /api/stream?channels=project:{id}
 ```
 
-**实时更新范围**：指标卡、Agent 状态、阻塞列表、最近活动。今日摘要不实时刷新（避免读到一半变化）。
+**What updates live**: metric cards, Agent status, the blocker list, recent activity. The daily summary does not refresh live — nobody wants it rewriting itself halfway through a read.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| `overview_viewed{role}` | 各角色使用频率 |
-| `blocker_action{type}` | 阻塞区是否真的驱动了行动——本页核心价值验证 |
-| `delay_risk_expanded` | 用户是否关心预测依据（信任度信号） |
-| `summary_feedback{helpful}` | AI 摘要质量 |
-| `agent_card_clicked{state}` | 用户在什么状态下会去查 Agent |
-| `autonomy_level_changed{from,to}` | 用户对自治的信任演进 |
+| `overview_viewed{role}` | How often each role uses the page |
+| `blocker_action{type}` | Whether the blocker area actually drives action — the core value of this page, tested here |
+| `delay_risk_expanded` | Whether users care about the basis for the forecast (a trust signal) |
+| `summary_feedback{helpful}` | Quality of the AI summary |
+| `agent_card_clicked{state}` | Which states send users to go look at an Agent |
+| `autonomy_level_changed{from,to}` | How user trust in autonomy evolves over time |
 
-**页面成功标准**：阻塞区条目的 24h 内处理率 > 70%；今日摘要「不准确」反馈率 < 15%。
+**Success criteria for this page**: more than 70% of blocker entries acted on within 24h; fewer than 15% of daily summaries flagged "inaccurate".
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Case | Handling |
 | --- | --- |
-| 阻塞项 > 10 | 只显示前 5 条 + 「还有 N 项」，按关键路径优先 |
-| Agent > 10 | 折叠为「执行中 / 异常」两组，空闲的收起 |
-| 摘要生成失败 | 显示「摘要生成失败」+ 原因 + 重试，不显示半截内容 |
-| 延期预测数据不足（项目 < 3 天或完成任务 < 5） | 显示「样本不足，暂不预测」而非给出低置信度数字 |
-| 成本已超预算 | 顶部红色横幅 + 按 Policy 决定是否已自动暂停调度 |
-| 同一决策被多人同时催办 | 服务端去重，前端提示「李娜已在 10 分钟前催办」 |
-| 关键路径因计划变更而改变 | 在最近活动中显式记一条「关键路径已变更」事件 |
+| More than 10 blockers | Show the first 5 plus "N more", critical path first |
+| More than 10 Agents | Collapse into two groups, "running" and "abnormal"; fold the idle ones away |
+| Summary generation fails | Show "summary generation failed" plus the reason plus a retry — never half a summary |
+| Not enough data for a delay forecast (project under 3 days old, or fewer than 5 tasks completed) | Say "not enough samples to forecast yet" rather than hand out a low-confidence number |
+| Cost already over budget | Red banner at the top, plus whether scheduling has already auto-paused per Policy |
+| Several people nudge the same decision at once | Deduplicated server-side; the client says "Li Na already nudged 10 minutes ago" |
+| Critical path changes because the plan changed | Write an explicit "critical path changed" event into recent activity |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. 延期风险的七项贡献度如何向非技术用户解释？是否需要一句自然语言归因（「主要因为等待人类决策」）？倾向于需要。
-2. 今日摘要的生成时机：固定每日 09:00，还是用户首次进入时按需生成？后者成本更可控但会有等待。
-3. 「强制放行阻塞」是否风险过高？考虑限制为仅非生产环境可用。
-4. 人类成员负载数据是否跨项目汇总？跨项目更准确，但涉及其他项目的数据权限。
+1. How do we explain the seven delay-risk factors to a non-technical user? Do we need a one-sentence natural-language attribution ("mostly because it is waiting on human decisions")? Leaning yes.
+2. When should the daily summary be generated — fixed at 09:00 every day, or on demand the first time someone opens the page? On demand is easier to keep a lid on cost-wise, but it makes the user wait.
+3. Is "force a blocker through" too dangerous? Consider restricting it to non-production environments.
+4. Should the human-load numbers aggregate across projects? Cross-project is more accurate, but it pulls in data permissions on other projects.

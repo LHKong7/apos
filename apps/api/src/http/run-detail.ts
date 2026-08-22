@@ -16,25 +16,29 @@ import { notFound } from './errors';
 import { serializeEvent } from './serialize';
 
 /**
- * 简明 / 详细（页面文档 09 §5.3）。
+ * Brief / detailed (page doc 09 §5.3) / 简明与详细。
  *
- * ★ 两者的差别是**每条事件的深度**，不是**返回哪些事件**。
+ * ★ The difference is **how deep each event goes**, not **which events come
+ *   back**.
  *
- *   一度用 run_events.level 来分（简明只回 milestone），结果简明模式
- *   只剩三行「启动 / 产出 / 结束」—— 中间做了什么全没了，
- *   而「它做了什么」恰恰是这一页存在的理由。
- *   level 那个字段是给 SSE 降级和低成本扫表用的，不是给这里用的。
+ *   Splitting on run_events.level for a while (brief returning milestones
+ *   only) left brief mode with three lines — "started / produced / ended" —
+ *   and everything in between gone, when "what did it actually do" is the
+ *   entire reason this page exists. That level column is for SSE degradation
+ *   and cheap table scans, not for this.
  *
- *   简明模式返回全部事件但不带 payload：省掉的正是体积的大头
- *   （推理全文、工具原始参数、上下文明细），也正是页面文档要求隐藏的东西。
+ *   Brief mode returns every event but without the payload: what it drops is
+ *   exactly the bulk (full reasoning text, raw tool arguments, context detail),
+ *   which is also exactly what the page doc asks to hide.
  */
 export type EventLevel = 'brief' | 'detailed';
 
 /**
- * Run 详情（页面文档 09 §9）。
+ * Run detail (page doc 09 §9) / Run 详情。
  *
- * 一次查全，不让前端分五次请求 —— 这是排障页面，
- * 打开慢一秒都会让人退回去用日志。
+ * Fetched in one pass rather than five front-end requests — this is a
+ * troubleshooting page, and one extra second to open sends people back to
+ * reading raw logs / 打开慢一秒都会让人退回去用日志。
  */
 export async function getRunDetail(db: Database, runId: string) {
   const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
@@ -42,9 +46,11 @@ export async function getRunDetail(db: Database, runId: string) {
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
   /**
-   * ★ 规划 Run 没有工作项 —— 这不是「工作项被删了」，是它本来就不该有。
-   *   下面几处按工作项展开的关联（同批尝试、人工干预、Policy 命中）
-   *   对它一律为空，而不是去查一个 id 为 null 的行。
+   * ★ A planning run has no work item — this is not "the work item was
+   *   deleted", it was never supposed to have one. Every relation below that
+   *   hangs off a work item (sibling attempts, human interventions, policy
+   *   hits) comes back empty for it, rather than querying for a row whose id
+   *   is null.
    */
   const [item] = run.workItemId
     ? await db.select().from(workItems).where(eq(workItems.id, run.workItemId))
@@ -61,7 +67,7 @@ export async function getRunDetail(db: Database, runId: string) {
 
   const decisionRows = await db.select().from(decisions).where(eq(decisions.runId, runId));
 
-  // ★ 「同一个工作项的历次尝试」对规划 Run 无意义，直接空列表
+  // ★ "Previous attempts at the same work item" means nothing for a planning run: empty list
   const siblings = run.workItemId
     ? await db
         .select({
@@ -80,9 +86,10 @@ export async function getRunDetail(db: Database, runId: string) {
     : [];
 
   /**
-   * ★ 四类 token 在服务端就加好。丢四列给前端再加一遍，
-   *   等于把「记账单位怎么定义」复制到了第二个地方 ——
-   *   将来加一类 token，两处里必然有一处忘了改。
+   * ★ The four token classes are summed on the server. Handing four columns to
+   *   the front end to add up again copies the definition of "what counts as
+   *   usage" into a second place — add a fifth class of token later and one of
+   *   the two is certain to be forgotten.
    */
   const attempts = siblings.map((s) => ({
     id: s.id,
@@ -130,10 +137,11 @@ export async function getRunDetail(db: Database, runId: string) {
     project: project ? { id: project.id, name: project.name } : null,
 
     /**
-     * 输入区（页面文档 09 §5.4）。
+     * The input section (page doc 09 §5.4).
      *
-     * 上下文清单是排障的关键：很多失败的根因是「该给的没给」，
-     * 把每一项列出来，缺什么一眼看得出。
+     * The context inventory is the heart of troubleshooting: a great many
+     * failures root-cause to "something that should have been supplied was
+     * not", so listing every item makes the gap obvious at a glance.
      */
     input: {
       goal: run.goal,
@@ -141,7 +149,7 @@ export async function getRunDetail(db: Database, runId: string) {
       model: run.model,
       modelConfig: run.modelConfig,
       tools: run.toolsSnapshot,
-      /** ★ 派发时的权限快照。权限可能在 Run 之后被改，回溯必须看当时的 */
+      /** ★ Permission snapshot at dispatch. Permissions can change after a run; audits read this */
       permissions: run.permissionSnapshot as AgentPermissions | null,
     },
 
@@ -153,13 +161,13 @@ export async function getRunDetail(db: Database, runId: string) {
         cacheWrite: run.tokensCacheWrite,
         total:
           run.tokensInput + run.tokensOutput + run.tokensCacheRead + run.tokensCacheWrite,
-        // 缓存命中率直接决定用量，值得单独暴露
+        // Cache hit rate drives usage directly, so it is worth exposing on its own
         cacheHitRate:
           run.tokensInput + run.tokensCacheRead > 0
             ? run.tokensCacheRead / (run.tokensInput + run.tokensCacheRead)
             : 0,
       },
-      /** 运行时结算的美元值，界面标为参考值 —— 不参与任何判定 */
+      /** The dollar figure the runtime settled; the UI marks it indicative — no rule ever reads it */
       costUsd: run.cost,
       estimatedTokens: item?.estimatedTokens ?? null,
       tokenLimit: agent?.tokenLimitPerRun ?? null,
@@ -221,10 +229,11 @@ export interface EventPage {
 }
 
 /**
- * 事件分页。
+ * Event pagination / 事件分页。
  *
- * 一次 Run 可能上千条事件，全量返回会让页面卡在解析 JSON 上；
- * after 游标同时用于执行中 Run 的增量追加。
+ * One run can produce thousands of events, and returning them all leaves the
+ * page stuck parsing JSON. The `after` cursor doubles as the incremental tail
+ * for a run that is still executing.
  */
 export async function getRunEvents(
   db: Database,
@@ -253,9 +262,9 @@ export async function getRunEvents(
       type: r.type,
       level: r.level,
       summary: r.summary,
-      // 简明模式不回 payload：体积的大头在这里，隐藏它也正是页面文档的要求
+      // Brief mode drops the payload: the bulk lives here, and hiding it is what the page doc asks
       payload: level === 'detailed' ? r.payload : null,
-      /** ★ 迁移之前的行是 NULL —— 那时没记，不是记了 0 */
+      /** ★ Rows from before the migration are NULL — nothing was recorded then, not "0 recorded" */
       tokensDelta: r.tokensDelta,
     })),
     level,
@@ -272,14 +281,16 @@ export interface CostStep {
 }
 
 /**
- * 按步骤的 token 分布（页面文档 09 §5.6）。
+ * Token distribution per step (page doc 09 §5.6).
  *
- * 回答的是「哪一步烧配额」。没有这个视图，超支只能看到一个总数，
- * 而超支最常见的原因（上下文太大、某个工具反复重试）恰好都是分步骤才看得出来的。
+ * It answers "which step burns the quota". Without this view an overrun is
+ * just one total, while the most common causes of an overrun (context too
+ * large, one tool retrying over and over) are visible only per step.
  *
- * ★ 历史行的 tokens_delta 是 NULL（迁移之前没有这一列），按 0 计。
- *   这会让换单位之前的 Run 在这个视图上显示为全 0 —— 如实反映
- *   「那时候没记」，而不是拿美元换算出一个看起来有数的假分布。
+ * ★ Historical rows have a NULL tokens_delta (the column did not exist before
+ *   the migration) and count as 0. That makes runs from before the unit change
+ *   show as all zeros in this view — an honest "it was not recorded back then"
+ *   rather than converting dollars into a plausible-looking fake distribution.
  */
 export async function getCostBreakdown(db: Database, runId: string): Promise<CostStep[]> {
   const rows = await db
@@ -310,7 +321,7 @@ export async function getCostBreakdown(db: Database, runId: string): Promise<Cos
   return [...steps.values()];
 }
 
-// ── 内部 ──────────────────────────────────────────────────────────────
+// ── Internal ──────────────────────────────────────────────────────────
 
 type RunRow = typeof agentRuns.$inferSelect;
 type RunEventRow = typeof runEvents.$inferSelect;
@@ -328,7 +339,7 @@ function countToolCalls(rows: RunEventRow[]) {
   };
 }
 
-/** 失败发生在哪一步 —— 定位比「失败了」有用得多 */
+/** Which step the failure happened at — a location is far more useful than "it failed" */
 function failurePoint(rows: RunEventRow[]): { step: number | null; total: number | null; at: string | null } {
   const errorAt = rows.findIndex((r) => r.type === 'error');
   if (errorAt === -1) return { step: null, total: null, at: null };
@@ -347,10 +358,11 @@ function failurePoint(rows: RunEventRow[]): { step: number | null; total: number
 }
 
 /**
- * 人类在这次 Run 期间做了什么。
+ * What humans did during this run / 人类在这次 Run 期间做了什么。
  *
- * 按时间窗口而不是按 subject 取 —— 人类的干预可能落在 Work Item 上
- * （接管、附加约束、强制放行），只查 agent_run 会全部漏掉。
+ * Selected by time window rather than by subject — a human intervention can
+ * land on the work item instead (taking over, attaching a constraint, forcing
+ * a release), and querying agent_run alone would miss every one of them.
  */
 async function loadInterventions(db: Database, run: RunRow) {
   const from = run.startedAt ?? run.createdAt;
@@ -362,7 +374,7 @@ async function loadInterventions(db: Database, run: RunRow) {
     .where(
       and(
         eq(events.actorType, 'human'),
-        // ★ 没有工作项时只按 Run 自己找，别拿 null 去比
+        // ★ With no work item, match on the run alone — never compare against null
         run.workItemId
           ? or(eq(events.subjectId, run.id), eq(events.subjectId, run.workItemId))
           : eq(events.subjectId, run.id),
@@ -389,9 +401,9 @@ async function loadInterventions(db: Database, run: RunRow) {
   }));
 }
 
-/** Run 期间命中的 Policy —— 审计回溯要能回答「当时是哪条规则放行/拦下的」 */
+/** Policies hit during the run — an audit has to answer which rule let it through or blocked it */
 async function loadPolicyHits(db: Database, run: RunRow) {
-  // ★ Policy 评估挂在工作项上；规划 Run 没有工作项，也就没有命中记录
+  // ★ Policy evaluations hang off the work item; a planning run has none, so no hits either
   if (!run.workItemId) return [];
   const from = run.startedAt ?? run.createdAt;
   const to = run.endedAt ?? new Date();
@@ -421,7 +433,7 @@ async function loadPolicyHits(db: Database, run: RunRow) {
         occurredAt: r.occurredAt.toISOString(),
       };
     })
-    // 没命中任何规则的评估对排障没有信息量，滤掉
+    // An evaluation that matched no rule carries no troubleshooting signal, so drop it
     .filter((p) => p.policyName !== null);
 }
 

@@ -38,44 +38,59 @@ import { confirmClose, useUnsavedGuard } from '../../lib/useUnsavedGuard';
 import { RuntimeConfigForm } from './RuntimeConfigForm';
 
 /**
- * Agent 配置（页面文档 08 §5.5）。
+ * Agent configuration (page doc 08 §5.5) / Agent 配置。
  *
- * ★ Agent 是一等对象，运行时是它的一个属性 —— 没有单独的「接入」层。
- *   建 N 个 Agent 就是 N 套独立配置：CLI 类型、该 CLI 的参数、凭证、
- *   权限、成本上限全在一张表里填完，不用先去别处建接入再回来挂。
+ * ★ An agent is a first-class object and its runtime is one of its properties —
+ *   there is no separate "connection" layer. Creating N agents means N independent
+ *   configurations: CLI kind, that CLI's parameters, credential, permissions, and cost
+ *   ceiling are all filled in on one form, with no detour to create a connection
+ *   elsewhere and come back to attach it.
  *
- * ★★ 运行时配置是一个**自定义 JSON 文本框**，不是一堆逐项渲染的输入框。
+ * ★★ The runtime configuration is a **free-form JSON box**, not a pile of
+ *   field-by-field inputs.
  *
- *   逐项表单的问题不在于难用，在于它划定了能配什么：平台的字段表一定
- *   滞后于 CLI 本身，而滞后的那几周里，界面上没有那一栏 = 这个功能不存在。
- *   接中转站、加一个上周新出的 flag，都不该等平台发版。
+ *   The trouble with a per-field form is not that it is awkward, it is that it decides
+ *   what can be configured at all: the platform's field list always lags the CLI
+ *   itself, and during those weeks of lag, "no such box in the UI" means "this feature
+ *   does not exist". Pointing at a relay, or adding a flag that shipped last week,
+ *   should not have to wait for a platform release.
  *
- *   平台认识的键仍然在服务端校验（写错的值当场拒掉），不认识的键原样保存
- *   并在保存后提示 —— 它可能是你有意下发的，也可能是键名敲错了。
+ *   Keys the platform knows are still validated server-side (a bad value is refused on
+ *   the spot); keys it does not know are stored verbatim and reported after saving —
+ *   such a key may be deliberate, or it may be a typo.
  *
- * ★ 每种 CLI 能配什么由**平台**定义（contracts 的 RUNTIME_KIND_SPECS），
- *   这里把它渲染成 JSON 框旁边的**说明书**：能配什么键、取值范围、默认值、
- *   哪些影响成本或安全。JSON 框里没有标签，没有这张表用户只能猜键名。
+ * ★ What each CLI accepts is defined by the **platform** (RUNTIME_KIND_SPECS in
+ *   contracts), and rendered here as a **reference sheet** next to the JSON box: which
+ *   keys exist, their ranges, their defaults, and which ones affect cost or safety. The
+ *   JSON box has no labels, so without that sheet the user is guessing key names.
  *
- * ★ 凭证输入框只在**新建或轮换**时出现，且永远不回显原值 ——
- *   一个能从界面读出 token 的系统，早晚会有人把它截图发出去。
+ * ★ The credential input appears only when **creating or rotating**, and never echoes
+ *   the stored value back — in a system where a token can be read off the screen,
+ *   sooner or later someone screenshots it.
+ *
+ * ★★ 运行时配置是一个自定义 JSON 文本框，不是逐项渲染的输入框：平台的字段表一定
+ *   滞后于 CLI 本身，而滞后的那几周里「界面上没有那一栏」等于「这个功能不存在」。
+ *   平台认识的键仍在服务端校验，不认识的键原样保存并在保存后提示。凭证只在新建或
+ *   轮换时出现，且永远不回显。
  */
 
 type Tab = 'agents' | 'binding' | 'conventions';
 
 /**
- * ★ 存词条键、不存译文：模块级常量取不到 hook，而且切语言时不会重算 ——
- *   在这里就把 `t()` 调完，标签会永远停在首次渲染时的那个语言。
- *   Keys, not translated strings: a module constant cannot call the hook and
- *   is not recomputed when the locale changes, so resolving here would freeze
- *   these labels in whichever language rendered first.
+ * ★ Keys, not translated strings: a module-level constant cannot call the hook and is
+ *   not recomputed when the locale changes, so resolving `t()` here would freeze these
+ *   labels in whichever language happened to render first.
+ *
+ * ★ 存词条键、不存译文：模块级常量取不到 hook，切语言时也不会重算。
  */
 /**
- * Agent 健康度那一行的说法。
+ * How the agent health line is worded / Agent 健康度那一行的说法。
  *
- * ★★ 服务端给的是「码 + 参数 + 一句中文」三件套，界面画的必须是码那一份。
- *   这一行说的是「这个 Agent 为什么派不出去」—— 全站最需要看懂的一句话之一，
- *   而它原来在英文界面上是中文。中文那句留作认不出码时的兜底。
+ * ★★ The server hands over a triple — code, params, and a Chinese sentence — and the
+ *   UI must render from the code. This line says "why this agent cannot be dispatched",
+ *   one of the most important sentences in the whole product, and it used to appear in
+ *   Chinese even in the English UI. The Chinese sentence stays as the fallback for a
+ *   code the catalog does not recognize.
  */
 function runtimeProblemText(agent: {
   problem: string | null;
@@ -96,8 +111,9 @@ function credentialProblemText(agent: CredentialProblemFields): string {
 }
 
 /**
- * ★ 「环境变量 X：<原因>」这句话由界面拼，不由服务端拼 ——
- *   两层中文套在一起时，英文界面上两层都露馅。
+ * ★ The sentence "environment variable X: <reason>" is assembled by the UI, not by the
+ *   server — when two layers of Chinese nest inside each other, both layers leak into
+ *   the English interface.
  */
 function envProblemText(p: {
   key: string;
@@ -113,25 +129,27 @@ function envProblemText(p: {
 const TABS: { key: Tab; labelKey: MessageKey; hintKey: MessageKey }[] = [
   { key: 'agents', labelKey: 'agentCfg.tab.agentsLabel', hintKey: 'agentCfg.tab.agents' },
   /**
-   * ★ 与「Agent 配置」分成两页，不是一页两段。
+   * ★ Split from "Agent config" into two pages, not two sections of one page.
    *
-   *   上一页回答「这个 Agent 是什么」（运行时、凭证、模型、工具与资源权限），
-   *   这一页回答「这个项目的哪个角色交给哪个已配置的 Agent」。
-   *   混在一起正是之前的问题：用户在项目设置里被问「用哪个 CLI」，
-   *   而那个选择的后果根本不在这一页上显示。
+   *   The other page answers "what is this agent" (runtime, credential, model, tool and
+   *   resource permissions); this one answers "which already-configured agent takes
+   *   which role in this project". Mixing them was the original problem: the user was
+   *   asked "which CLI" inside project settings, while the consequences of that choice
+   *   were nowhere on the page.
    */
   { key: 'binding', labelKey: 'agentCfg.tab.binding', hintKey: 'agentCfg.tab.bindingDesc' },
   /**
-   * ★★ 「代码仓库」与「存储目标」都不在这一页了，它们合并成导航里的
-   *   **工作区来源**（pages/Settings/WorkspaceSources.tsx）。
+   * ★★ Repositories and storage targets are no longer on this page; they merged into
+   *   **Workspace sources** in the nav (pages/Settings/WorkspaceSources.tsx).
    *
-   *   两者都不是某个 Agent 的属性，而是项目（或组织）级的资源登记 ——
-   *   一个 monorepo 被五个 Agent 引用、一个 bucket 被三个 Agent 引用都是常态。
-   *   挂在这一页底下既说错了归属，也让它找不到：想登记一个仓库或挂一个
-   *   数据目录的人，脑子里没有 Agent。
+   *   Neither is a property of an agent — both are project-level (or org-level)
+   *   resource registries, and one monorepo referenced by five agents or one bucket by
+   *   three is entirely normal. Hanging them under this page both asserted the wrong
+   *   ownership and made them unfindable: someone who wants to register a repository or
+   *   mount a data directory is not thinking about agents at all.
    *
-   *   留在这里的三格才真是 Agent 的属性：它是什么、项目里谁扮演什么角色、
-   *   干活时守哪些工程约定。
+   *   The three tabs that remain really are agent properties: what it is, which role it
+   *   plays in the project, and which engineering conventions it works under.
    */
   { key: 'conventions', labelKey: 'agentCfg.tab.conventions', hintKey: 'agentCfg.tab.conventionsDesc' },
 ];
@@ -140,12 +158,13 @@ export function AgentConfigPage() {
   const t = useT();
   const { projectId } = useParams<{ projectId: string }>();
   /**
-   * ★★ 标签页写进 URL。
+   * ★★ The active tab lives in the URL.
    *
-   *   看板上那条阻塞原因给的是「去给 main-agent 授权」这样的直达按钮 ——
-   *   它必须能落到**具体那一格**，而不是把人扔到这一页的第一个标签
-   *   让他自己找（问题记录 #12）。`?tab=` 同时也让这一页可收藏、可分享。
-   * ★ 认不出来的取值回落到默认格，不是白屏。
+   *   A blocked reason on the board offers a direct button like "go grant main-agent
+   *   access" — it has to land on **that specific tab**, not dump the person on this
+   *   page's first tab to hunt for it (issue log #12). `?tab=` also makes the page
+   *   bookmarkable and shareable.
+   * ★ An unrecognized value falls back to the default tab, not a blank screen.
    */
   const [params, setParams] = useSearchParams();
   const tab: Tab = (['agents', 'binding', 'conventions'] as const).find(
@@ -203,20 +222,22 @@ function AgentsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
   /**
-   * ★ 保存时平台不认识的配置键。
+   * ★ Config keys the platform did not recognize at save time.
    *
-   *   它们**已经存下来了**（配置是自定义 JSON），但仍然要说出来：
-   *   「有意下发一个平台还不认识的键」和「键名敲错了」存进去的样子一样，
-   *   而后者永远不会生效 —— 不提示的话，现场没有任何迹象。
+   *   They **were saved** (the config is free-form JSON), but they still have to be
+   *   surfaced: "deliberately passing a key the platform does not know yet" and "typed
+   *   the key name wrong" look identical once stored, and the second will never take
+   *   effect — with no warning, nothing on screen would ever hint at it.
    */
   const [unknownKeys, setUnknownKeys] = useState<string[]>([]);
   /**
-   * ★★ 「删除请求成功了，但那个 Agent 还在」。
+   * ★★ "The delete request succeeded, but the agent is still there."
    *
-   *   有历史执行记录、被需求指定为 PRD 编写者、还被项目角色绑着的 Agent
-   *   一律转为停用（后端 deleteAgent）—— 这是对的，但不说出来的话，用户看到的
-   *   只是「点了删除，它还在列表里」，也就是「删除按钮坏了」。
-   *   服务端返回的 reason 说清了是被什么牵连、下一步该去哪儿，必须显示出来。
+   *   An agent with execution history, named as a requirement's PRD author, or still
+   *   bound to a project role is converted to disabled instead (deleteAgent on the
+   *   server) — which is correct, but unsaid, all the user sees is "I clicked delete and
+   *   it is still in the list", i.e. "the delete button is broken". The reason the
+   *   server returns names what holds it and where to go next, so it must be shown.
    */
   const [retired, setRetired] = useState<{ name: string; reason: string } | null>(null);
 
@@ -231,7 +252,7 @@ function AgentsSection() {
   const remove = useMutation({
     mutationFn: (agent: AgentAdminRow) =>
       api.deleteAgent(agent.id).then((res) => ({ ...res, name: agent.name })),
-    /** 上一次删除留下的提示不能跟着这一次走 —— 它说的是另一个 Agent */
+    /** A notice left by the previous delete must not carry into this one — it is about a different agent */
     onMutate: () => setRetired(null),
     onSuccess: (res) => {
       setRetired(res.retired && res.reason ? { name: res.name, reason: res.reason } : null);
@@ -257,8 +278,9 @@ function AgentsSection() {
       </div>
 
       {/*
-        ★ 这里说的是「存成什么样」，不是「能不能存」。
-          没配主密钥照样能保存 —— 只是明文进库，值得知道，但不该拦着人干活。
+        ★ This talks about **how** it is stored, not whether it can be stored.
+          Saving works fine with no master key configured — the value just goes into the
+          database in the clear. Worth knowing, but not a reason to block the work.
       */}
       {!data.encryptsInlineSecrets && (
         <Notice tone="warning">
@@ -299,7 +321,7 @@ function AgentsSection() {
               onProbe={() => probe.mutate(a.id)}
               onEdit={() => openForm(a)}
               onDelete={() => remove.mutate(a)}
-              /** 报错只挂在被删的那张卡上：挂在所有卡上会看成「全都删不掉」 */
+              /** The error attaches only to the card being deleted: on every card it reads as "none of them can be deleted" */
               error={remove.variables?.id === a.id ? remove.error : null}
               probing={probe.isPending}
             />
@@ -314,9 +336,10 @@ function AgentsSection() {
           agent={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           /**
-           * ★ 有没有认不出来的键都关闭弹窗。
-           *   留着弹窗让用户「看完再关」的话，新建那次的 agent 已经建出来了，
-           *   而表单还以为自己是新建态 —— 再点一次保存就是第二个 Agent。
+           * ★ Close the dialog whether or not unknown keys turned up.
+           *   Keeping it open so the user can "read it and then close" leaves a form that
+           *   still thinks it is in create mode while the agent has already been created —
+           *   one more click on save and there are two agents.
            */
           onSaved={(keys) => {
             setEditing(null);
@@ -330,9 +353,10 @@ function AgentsSection() {
 }
 
 /**
- * ★ 取消接入层之后，「这把凭证被谁在用」失去了天然的答案位置。
- *   这块把它补回来 —— 轮换前能一眼看到要动几个 Agent，
- *   以及为什么 env: 形态只用动一处。
+ * ★ Once the connection layer was removed, "who is using this credential" lost its
+ *   natural home. This block puts it back — before a rotation you can see at a glance
+ *   how many agents are affected, and why the env: form only needs changing in one
+ *   place.
  */
 function CredentialUsage({ rows }: { rows: CredentialUsageRow[] }) {
   const t = useT();
@@ -393,16 +417,18 @@ function AgentCard({
   const [showCaps, setShowCaps] = useState(false);
 
   /**
-   * ★ 三种「不可用」分开显示。
-   *   混成一句「不可用」，用户不知道该去装依赖、换 key，还是换个 Agent。
+   * ★ The three kinds of "unusable" are shown separately.
+   *   Collapsed into one word, the user cannot tell whether to install a dependency,
+   *   replace a key, or pick a different agent.
    */
   const health = !agent.registered
     ? { tone: 'error' as const, text: runtimeProblemText(agent) }
     : !agent.credentialUsable && agent.credentialHint
       ? { tone: 'error' as const, text: credentialProblemText(agent) }
       : /*
-         * ★ 环境变量表里解不开的引用与凭证不可用是同一类问题：
-         *   配置看着完好，派发时才炸，而报错不会指向那个没设置的变量。
+         * ★ An unresolvable reference in the environment table is the same class of
+         *   problem as an unusable credential: the config looks intact and only blows up
+         *   at dispatch, and the error never points at the variable that was never set.
          */
         agent.runtimeConfigProblems.length > 0
         ? { tone: 'error' as const, text: envProblemText(agent.runtimeConfigProblems[0]!) }
@@ -410,7 +436,7 @@ function AgentCard({
           ? { tone: 'warning' as const, text: agent.problem ?? t('agentCfg.health.probeFailed') }
           : { tone: 'ok' as const, text: t('agentCfg.health.ready') };
 
-  /** 只展示与默认值不同的配置 —— 全列一遍会淹没真正被改过的那几项 */
+  /** Show only settings that differ from the defaults — listing them all drowns the few that were actually changed */
   const overrides = spec
     ? spec.fields.filter(
         (f) =>
@@ -420,9 +446,10 @@ function AgentCard({
     : [];
 
   /**
-   * ★ 平台不认识的键也要出现在卡片上。
-   *   它们同样会被下发给运行时，只是平台不知道它们是什么 —— 藏起来的话，
-   *   一个键名敲错的配置在这一页看上去和干净的配置一模一样。
+   * ★ Keys the platform does not recognize appear on the card too.
+   *   They are passed to the runtime just the same; the platform simply does not know
+   *   what they are. Hidden, a config with a typo'd key name looks exactly like a clean
+   *   one on this page.
    */
   const customKeys = Object.keys(agent.runtimeConfig).filter(
     (k) => !(spec?.fields ?? []).some((f) => f.key === k),
@@ -482,9 +509,10 @@ function AgentCard({
           )}
         </Field>
         {/*
-          ★ 空的时候要**显眼地**说出来，而不是显示一个「—」。
-            这个 Agent 会一直闲着，而它的凭证、探针、权限全是绿的 ——
-            不在卡片上点破的话，排查会从运行时一路查到调度器。
+          ★ When it is empty, say so **prominently** rather than rendering a dash.
+            The agent will simply sit idle while its credential, probe, and permissions
+            are all green — if the card does not call it out, the investigation runs all
+            the way from the runtime to the scheduler.
         */}
         <Field label={t('agent.scope.field')}>
           {agent.applicableTypes.length > 0 ? (
@@ -549,8 +577,9 @@ function AgentCard({
           {showCaps && (
             <div className="mt-2 space-y-1">
               {/*
-                ★ 不静默降级：缺什么能力、会有什么影响，全部摊开。
-                  用户在派高风险任务之前有权知道「这个 Agent 的暂停其实是终止」。
+                ★ No silent degradation: which capability is missing and what it costs are
+                  both laid out. Before dispatching a high-risk task, the user deserves to
+                  know that "pause" on this agent actually means "terminate".
               */}
               {agent.capability.missing.length === 0 ? (
                 <p className="text-[11px] text-emerald-700">{t('agentCfg.capabilitiesComplete')}</p>
@@ -590,7 +619,7 @@ function AgentForm({
   onSaved,
 }: {
   kinds: RuntimeKindSpec[];
-  /** 直接粘贴的敏感值是不是密文入库。两种都能存，只影响提示语 */
+  /** Whether a pasted secret is stored encrypted. Both work; it only changes the hint */
   encryptsInline: boolean;
   agent: AgentAdminRow | null;
   onClose: () => void;

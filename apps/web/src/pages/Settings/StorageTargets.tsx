@@ -23,41 +23,47 @@ import {
 } from '@/components/ui/select';
 
 /**
- * 存储目标 —— 非 Git 的工作区来源：对象存储桶 / 宿主机目录。
+ * Storage targets — the non-Git workspace sources: object buckets and host
+ * directories / 存储目标。
  *
- * ★★ 这个文件里只剩**组件**，页面在 WorkspaceSources.tsx。
+ * ★★ Only **components** are left in this file; the page lives in
+ *   WorkspaceSources.tsx.
  *
- *   存储目标曾经是「Agent 配置」下面的第四个标签页，先被拆成独立一页，
- *   现在与代码仓库合并成「工作区来源」—— 两类都不是某个 Agent 的属性，
- *   而是项目（或组织）级的资源登记，回答的是同一个问题：
- *   Agent 的活儿从哪来、产出去哪。
+ *   Storage targets were once the fourth tab under "Agent config", then a page of
+ *   their own, and are now merged with repositories into "workspace sources" —
+ *   neither kind is a property of some agent, both are project-level (or org-level)
+ *   resource registries answering the same question: where does the agent's work come
+ *   from and where does its output go.
  *
- * ★ 与代码仓库同处一页但**各自一张表单**：两类的字段完全不重叠
- *   （bucket / 寻址风格 vs 默认分支 / 分支前缀），混在一张表单里，
- *   不适用的那半边只能显示成灰掉的占位符 —— 而占位符会被当成真实配置。
+ * ★ Same page as repositories but **separate forms**: the fields of the two kinds do
+ *   not overlap at all (bucket / addressing style vs. default branch / branch prefix).
+ *   Mixed into one form, the inapplicable half can only render as a grayed-out
+ *   placeholder — and a placeholder gets read as real configuration.
  *
- * Components only; the page lives in WorkspaceSources.tsx. Same page as
- * repositories, separate forms — the two kinds share no fields, and a
- * grayed-out placeholder reads as real configuration.
+ * ★★ 这个文件里只剩组件，页面在 WorkspaceSources.tsx；与代码仓库同处一页但各自
+ *   一张表单 —— 两类字段完全不重叠，灰掉的占位符会被当成真实配置。
  */
 
 
-/** 存储目标类型 → 词条键 / Storage target kind → message key（模块级只存键） */
+/** Storage target kind → message key; module-level constants store keys only / 存储目标类型 → 词条键 */
 export const TARGET_KIND_KEYS: Record<StorageTargetRow['kind'], MessageKey> = {
   object_storage: 'storage.objectStorage',
   local: 'storage.localDir',
 };
 
 /**
- * 「产出交货到哪」选择器 —— 存储目标与代码仓库两张表单共用。
+ * The "where does output get delivered" picker — shared by the storage-target form and
+ * the repository form / 「产出交货到哪」选择器。
  *
- * ★ 从 AgentConfig 一起搬过来并导出：它讲的是存储目标（候选、可写性、
- *   寻址），只是**恰好**也被仓库表单用到。留在那边的话，这一页反过来
- *   要 import 那一页。
+ * ★ Moved here from AgentConfig and exported: what it talks about is storage targets
+ *   (candidates, writability, addressing) and it merely **happens** to be used by the
+ *   repository form too. Left behind, this page would have to import that one.
  *
- * ★★ 只列**可写**的存储目标。只读的目标在收尾时会被原样跳过，
- *   摆在这里可选就是在邀请用户配一个不会生效的值 —— 而那种失败
- *   （任务成功、产物页有记录、目标里什么都没有）极难自己想到。
+ * ★★ Only **writable** storage targets are listed. A read-only target is silently
+ *   skipped at delivery time, so offering it here invites the user to configure a
+ *   value that will never take effect — and that failure mode (task succeeded, the
+ *   artifacts page has a record, the target holds nothing) is extremely hard to reason
+ *   your way to.
  */
 export function DeliveryTargetPicker({
   value,
@@ -69,9 +75,9 @@ export function DeliveryTargetPicker({
   value: string | null;
   onChange: (v: string | null) => void;
   targets: StorageTargetRow[];
-  /** 编辑存储目标自身时传，用来把自己从候选里去掉 */
+  /** Passed while editing a storage target, to drop it from its own candidate list */
   selfId?: string;
-  /** 不选时的默认行为说明 */
+  /** Describes what happens when nothing is selected */
   defaultLabel: string;
 }) {
   const options = targets.filter((t) => t.writable && t.status === 'active' && t.id !== selfId);
@@ -144,8 +150,9 @@ export function StorageTargetCard({
           {target.scope === 'project' ? t('storage.scopeProject') : t('storage.scopeOrg')}
         </span>
         {/*
-          ★ 可写与否要在卡片上一眼看到：只读挂载在交货阶段会被原样跳过，
-            而「登记成只读却指望它接收产物」的表现是「任务成功但里面什么都没有」。
+          ★ Writability has to be visible at a glance on the card: a read-only mount is
+            silently skipped at delivery time, and "registered read-only yet expected to
+            receive output" shows up as "the task succeeded but there is nothing in it".
         */}
         <StatusDot
           tone={target.writable ? 'ok' : 'warning'}
@@ -231,11 +238,12 @@ export function StorageTargetCard({
 }
 
 /**
- * 服务端错误的说法。
+ * How a server error is worded / 服务端错误的说法。
  *
- * ★ 服务端带了 `{ code, params }` 时按码取词，取不到才回落到它那句中文。
- *   直接画 `error.message` 的代价是：一条本该指导用户改输入的校验错误，
- *   在英文界面上是一整句中文。
+ * ★ When the server sends `{ code, params }` the wording comes from the catalog; only
+ *   when the code is unknown does it fall back to the server's Chinese sentence.
+ *   Rendering `error.message` directly costs this: a validation error meant to tell the
+ *   user how to fix their input shows up as a full Chinese sentence in the English UI.
  */
 function apiErrorText(e: ApiError): string {
   const d = e.details as { code?: string; params?: Record<string, string | number> } | undefined;
@@ -253,17 +261,18 @@ export function StorageTargetForm({
   onDone,
 }: {
   projectId: string;
-  /** 传了就是编辑；标识与类型不可改 */
+  /** Passing one means edit mode; the ref and the kind cannot be changed */
   existing?: StorageTargetRow | null;
   /**
-   * 新建时的初始类型。
+   * The initial kind when creating / 新建时的初始类型。
    *
-   * ★ 工作区来源页在打开表单**之前**就问过类型了（KindPicker），
-   *   带进来省掉用户再选一次 —— 而「选完类型，表单里的类型又回到默认值」
-   *   会让人以为刚才那一步没生效。编辑时忽略：类型不可改。
+   * ★ The workspace-sources page already asked for the kind **before** opening the form
+   *   (KindPicker), so carrying it in spares the user a second pick — and "I chose a
+   *   kind, then the form's kind snapped back to the default" reads as the previous
+   *   step not having taken effect. Ignored while editing: the kind cannot be changed.
    */
   initialKind?: StorageTargetRow['kind'];
-  /** 交货目标的候选 */
+  /** Candidates for the delivery target */
   targets: StorageTargetRow[];
   encryptsInline: boolean;
   onClose: () => void;
@@ -305,7 +314,7 @@ export function StorageTargetForm({
                   forcePathStyle: form.forcePathStyle,
                 }
               : { rootPath: form.rootPath.trim() }),
-            // 留空 = 不改凭证（避免编辑别的字段时把凭证清掉）
+            // Empty = leave the credential alone (so editing other fields cannot wipe it)
             ...(form.credential.trim() ? { credential: form.credential.trim() } : {}),
           })
         : api.createStorageTarget({
@@ -385,9 +394,11 @@ export function StorageTargetForm({
         </Labeled>
 
         {/*
-          ★ 类型登记后不可改：两类的必填列完全不重叠，改一半会被库约束
-            整个拒掉，而报错指向的是约束名不是字段。要换就删了重建 ——
-            那条路上还有「有没有 Agent 授权指向它」这道检查。
+          ★ The kind is immutable once registered: the required columns of the two kinds
+            do not overlap, so a half-migrated row is rejected outright by a database
+            constraint whose error names the constraint, not the field. To switch, delete
+            and re-create — and that path also runs the "is any agent grant pointing at
+            it" check.
         */}
         <Labeled
           label={t('storage.kind')}
@@ -436,9 +447,9 @@ export function StorageTargetForm({
             </Labeled>
 
             {/*
-              ★★ 寻址风格选反了的表现是 DNS 解析失败，而那条报错里没有任何
-                东西指向「寻址风格」。所以默认打开路径风格，并在这里说清楚
-                什么时候该关掉。
+              ★★ Getting the addressing style backwards shows up as a DNS resolution
+                failure, and nothing in that error points at "addressing style". So
+                path-style is on by default, and this spot spells out when to turn it off.
             */}
             <Label className="flex items-start gap-2 text-xs text-slate-700">
               <Checkbox

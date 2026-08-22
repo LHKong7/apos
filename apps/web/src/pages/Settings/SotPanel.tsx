@@ -21,9 +21,10 @@ import {
 } from '@/components/ui/table';
 
 /**
- * SoT 取值 → 显示。
- * ★ `apos` 是产品名，两种语言写法一样，不进词条表；另外两个走词条。
- *   `apos` is a product name and reads the same in both languages.
+ * SoT value → label / SoT 取值 → 显示。
+ * ★ `apos` is a product name and reads the same in both languages, so it stays
+ *   out of the message catalog; the other two go through it.
+ *   `apos` 是产品名，两种语言写法一样，不进词条表；另外两个走词条。
  */
 const SOT_KEYS: Record<string, MessageKey | null> = {
   apos: null,
@@ -38,17 +39,23 @@ function sotLabel(value: string, tr: (k: MessageKey) => string): string {
 }
 
 /**
- * Source of Truth 配置（页面文档 14 §5.3）。
+ * Source of Truth configuration (page doc 14 §5.3) / Source of Truth 配置。
  *
- * ★ 这是整个集成设置里唯一带「⚠ 关键配置」角标的一块，因为它决定的是
- *   *以后哪一边的修改会被丢掉*。而它有一个别的配置都没有的特性：
- *   改错之后不会立刻报错，要等到某天有人发现两边数字对不上。
- *   所以这一屏做了三件别处不做的事 ——
- *   每格标出为什么默认是这个、改动先摆出差异再确认、每次修改都写事件。
+ * ★ This is the only block in the integration settings that carries the
+ *   "⚠ critical configuration" badge, because what it decides is *whose edits
+ *   get thrown away from now on*. It also has a property no other setting has:
+ *   getting it wrong raises no error at the time — it surfaces the day someone
+ *   notices the two systems disagree. So this screen does three things nothing
+ *   else does: it states per row why the default is what it is, it shows the
+ *   diff before confirming a change, and it writes an event on every change.
  *
- * ★ 预设一键铺满，但铺完之后每一格仍然摆在明面上。
- *   只给预设不给字段，用户就不知道自己的修改哪些会被丢；
- *   只给字段不给预设，普通用户根本配不动（§12.1 的取舍就在这里）。
+ *   这是唯一带「⚠ 关键配置」角标的一块 —— 它决定以后哪一边的修改会被丢掉，
+ *   而改错了不会立刻报错，要等到某天有人发现两边数字对不上。
+ *
+ * ★ A preset fills every row in one click, yet each row stays visible
+ *   afterward. Presets alone and the user cannot tell which of their edits will
+ *   be discarded; per-field controls alone and an ordinary user cannot
+ *   configure it at all (that is the trade-off in §12.1).
  */
 export function SotPanel({
   integration,
@@ -93,7 +100,7 @@ export function SotPanel({
   };
 
   const applyPreset = (key: string) => {
-    // 预设的逐字段取值由后端目录给出，前端不再抄一份
+    // The per-field values of a preset come from the backend catalog; no second copy here
     const preset = PRESET_FIELDS[key];
     if (!preset) return;
     setDraft({ ...value, ...preset });
@@ -171,8 +178,9 @@ export function SotPanel({
                     <span className="text-slate-700">{sotLabel(m.sourceOfTruth, t)}</span>
                   )}
                 </TableCell>
-                {/* ★ 每格都说明为什么默认是这个。看不懂默认值道理的用户
-                    只会照抄或乱改 —— 两种都通向「哪边数据都不敢信」 */}
+                {/* ★ Every row explains why its default is what it is. A user who
+                    cannot see the reasoning either copies it blindly or changes it at
+                    random — both roads end at "neither side's data can be trusted" */}
                 <TableCell className="py-1 text-slate-400">{sx(m.why, m.whyEn)}</TableCell>
                 <TableCell className="w-24 py-1 text-right text-slate-500" title={t('sot.onNonSotEdit')}>
                   {sx(m.strategyLabel, m.strategyLabelEn)}
@@ -216,9 +224,10 @@ export function SotPanel({
       )}
 
       {/**
-       * ★ 二次确认摆的是差异本身，不是一句「确定吗」。
-       *   「状态：APOS → 外部系统」后面必须跟上这个改动的后果 ——
-       *   用户点确定之前，得知道自己刚刚把谁的修改判了死刑。
+       * ★ The confirmation shows the diff itself, not a bare "are you sure?".
+       *   "Status: APOS → external system" has to be followed by what that
+       *   change means — before clicking confirm, the user needs to know whose
+       *   edits they just sentenced to be discarded.
        */}
       {confirming && (
         <Modal onClose={() => setConfirming(false)} title={t('sot.confirmTitle')}>
@@ -270,12 +279,14 @@ export function SotPanel({
 }
 
 /**
- * 预设的逐字段取值。
+ * The per-field values behind each preset / 预设的逐字段取值。
  *
- * ★ 这里和后端 SOT_PRESETS 是同一份数据的两处表述 —— 本该只有一份。
- *   之所以还留着，是因为预设只影响未保存的草稿，真正落库的是
- *   下面 select 里的逐字段值，服务端会重新校验每一格。
- *   即便这份抄错了，也只会让草稿显示成另一个预设，不会写入非法配置。
+ * ★ This table and the backend's SOT_PRESETS are two statements of the same
+ *   data — there should only be one. It survives because a preset only touches
+ *   the unsaved draft: what actually reaches the database is the per-field
+ *   value in each select below, and the server revalidates every one of them.
+ *   Even if this copy were wrong, the worst it does is render the draft as a
+ *   different preset; it cannot write an invalid configuration.
  */
 const PRESET_FIELDS: Record<string, Record<string, string>> = {
   apos_led: {

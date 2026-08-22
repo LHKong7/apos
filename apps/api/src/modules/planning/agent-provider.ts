@@ -33,24 +33,34 @@ import type {
 } from './provider';
 
 export interface AgentPlanningOptions {
-  /** 工作区根目录，与 Agent 执行工作区同源（AGENT_WORKSPACE_ROOT） */
+  /** Workspace root, the same one agent execution workspaces use (AGENT_WORKSPACE_ROOT). */
   root?: string;
-  /** 单次规划的墙钟上限。★ 没有 supervisor 兜底，这里必须自己管 */
+  /** Wall-clock ceiling for one planning attempt. ★ No supervisor backstop — this must self-police. */
   timeoutMs?: number;
   /**
-   * 复用进程里那一个 WorkspaceService。不给就自己建一个 ——
-   * 空目录后端没有镜像锁之类的跨实例状态，建第二个不会出问题，
-   * 但共用一个能让诊断输出汇到一处。
+   * Reuse the one WorkspaceService in this process. Build our own when none is
+   * given — the empty-directory backend keeps no cross-instance state (no mirror
+   * locks), so a second instance breaks nothing, but sharing one funnels every
+   * diagnostic into a single place.
+   *
+   * 复用进程里那一个 WorkspaceService。不给就自己建一个 —— 空目录后端没有镜像锁
+   * 之类的跨实例状态，建第二个不会出问题，但共用一个能让诊断输出汇到一处。
    */
   workspaces?: WorkspaceService;
   onDiagnostic?: (message: string, detail?: unknown) => void;
 }
 
 /**
- * 一行摘要 —— run_events.summary 是 NOT NULL，而 Run 详情页的简明模式只读它。
+ * One-line summary — run_events.summary is NOT NULL, and the run detail page's
+ * concise mode reads nothing but that column.
  *
- * ★ 不复用 ingest 里那个 summarize：那个是给执行 Run 写的，措辞围绕
- *   工作项与交付展开，用在规划上会说出「已提交到分支」这类根本没发生的事。
+ * ★ Deliberately not the `summarize` from ingest: that one is written for
+ *   execution runs and phrased around work items and deliverables, so on a
+ *   planning run it announces things like "pushed to the branch" that never
+ *   happened.
+ *
+ *   不复用 ingest 里那个 summarize：它的措辞围绕工作项与交付展开，
+ *   用在规划上会说出根本没发生的事。
  */
 function planningEventSummary(e: RunEvent): string {
   switch (e.type) {
@@ -70,74 +80,100 @@ function planningEventSummary(e: RunEvent): string {
 }
 
 /**
- * 自动挑选时**优先**考虑的适用类型 —— 注意是偏好，不是门槛。
+ * The applicable type the automatic pick **prefers** — a preference, not a gate.
  *
- * ★★ `applicableTypes` 回答的是「派工作项时能不能派给它」
- *   （domain/flow/matching.ts 里那条 `applicableTypes.includes(target.type)`），
- *   而写 PRD 根本不经过派工：这会儿工作项还不存在，那正是
- *   `agent_runs.work_item_id` 被放开成可空的原因。拿它当门槛是把两件事
- *   混成了一件，代价是项目里明明有一队 Agent，能写 PRD 的却是零个 ——
- *   而用户在需求页上看到的是一个空下拉框，没有任何线索说明为什么。
+ * ★★ `applicableTypes` answers "can this agent be *assigned* a work item of
+ *   type X" (`applicableTypes.includes(target.type)` in domain/flow/matching.ts),
+ *   and authoring a PRD dispatches no work item at all: none exists yet, which
+ *   is exactly why `agent_runs.work_item_id` was widened to nullable. Gating on
+ *   it conflated two things, and the cost was a project holding a full agent
+ *   team with zero eligible PRD authors — while the user saw an empty dropdown
+ *   on the requirement page and no hint as to why.
  *
- *   所以现在：**项目 Agent 成员都能写 PRD**，这个类型只用来给自动挑选
- *   排个先后。人点了名的那个一律照办（见 pickAgent）。
+ *   So now: **every project agent member can author a PRD**, and this type only
+ *   orders the automatic pick. An explicitly named agent is always honored
+ *   (see pickAgent).
  *
- *   `applicableTypes` answers "can this agent be *assigned* a work item of
- *   type X" — PRD authoring dispatches no work item at all, so gating on it
- *   conflated two things and left projects with a full agent team and zero
- *   eligible PRD authors. Any project agent member can author now; this type
- *   only orders the automatic pick.
+ *   自动挑选时优先考虑的适用类型 —— 是偏好，不是门槛。它回答的是「派工作项
+ *   时能不能派给它」，而写 PRD 根本不经过派工。拿它当门槛的代价是项目里明明
+ *   有一队 Agent，能写 PRD 的却是零个。现在项目 Agent 成员都能写，人点了名
+ *   的一律照办。
  */
 const PLANNING_TYPE = 'requirement';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 /**
- * 一次规划最多跑几轮（含第一轮）。
+ * How many rounds one planning attempt may take, first round included.
  *
- * ★ 是 2 不是 3。第二轮拿着 zod 的原话去改，模型改不对的多半也不是
- *   「再看一遍就会了」的那种错 —— 而每多一轮，用户就多等一次完整的
- *   Agent 执行，成本也多一份。真正救得回来的收益全在第二轮。
+ * ★ Two, not three. Round two hands the model zod's own words back; what it
+ *   still gets wrong after that is rarely the "look again and you'll see it"
+ *   kind of mistake — and every extra round costs the user another full agent
+ *   execution of waiting plus another round of spend. All of the recoverable
+ *   value sits in round two.
+ *
+ *   是 2 不是 3。每多一轮，用户就多等一次完整的 Agent 执行，成本也多一份，
+ *   而真正救得回来的收益全在第二轮。
  */
 const MAX_PLANNING_ROUNDS = 2;
 
 /**
- * 值得再来一轮的失败码。
+ * Failure codes worth another round.
  *
- * ★★ 判据是「同一个 Agent 拿着更多信息再跑一次，结果可能不一样吗」。
- *   产物不合格属于这一类：报错说清了哪个字段错在哪，改对它是模型做得到的事。
- *   而挑不到 Agent、运行时拒收、超时、压根没写出文件 —— 再跑一次是同样的
- *   结果，重试它们只是把用户的等待时间翻倍。
+ * ★★ The test is "given more information, could the same agent produce a
+ *   different result?" A rejected artifact qualifies: the error names the field
+ *   and says what is wrong with it, and fixing that is within the model's reach.
+ *   No agent available, runtime refusal, timeout, no file written at all — a
+ *   second run returns the same answer, so retrying those merely doubles the
+ *   user's wait.
+ *
+ *   判据是「同一个 Agent 拿着更多信息再跑一次，结果可能不一样吗」。产物不合格
+ *   属于这一类；挑不到 Agent、运行时拒收、超时、没写出文件则不是。
  */
 const REPAIRABLE_CODES = new Set<PlanFallbackCode>(['output_invalid', 'output_inconsistent']);
 
 /**
- * 用真实 Agent 运行时做需求结构化与计划生成。
+ * Requirement structuring and plan generation on a real agent runtime.
  *
- * ★★ 与执行 Run 的关系：**共用 agent_runs**，靠 kind 区分。
+ * ★★ Relationship to execution runs: **agent_runs is shared**, told apart by
+ *   `kind`.
  *
- *   这一段以前写的是「刻意不共用」，理由是 work_item_id 为 NOT NULL、
- *   放开它要动 75 处消费点。实测下来那个数字是高估的：真正引用
- *   `agentRuns.workItemId` 的非测试代码只有 8 处，而且全是
- *   `where work_item_id = <某个真实 id>` —— NULL 行永远不匹配，
- *   规划 Run 因此不会串进看板、执行图与工作项的 Run 列表。
- *   放开之后由 TypeScript 逐个点出剩下的假设，一处不漏。
+ *   This paragraph used to say the two were deliberately kept apart, on the
+ *   grounds that work_item_id was NOT NULL and widening it would touch 75
+ *   consumers. Measured, that number was an overestimate: only 8 non-test sites
+ *   read `agentRuns.workItemId`, and every one of them reads
+ *   `where work_item_id = <some real id>` — a NULL row never matches, so
+ *   planning runs cannot leak into the board, the execution graph, or a work
+ *   item's run list. Once the column was widened, TypeScript pointed out every
+ *   remaining assumption, one by one, missing none.
  *
- *   不共用的代价才是真的大：产品里最贵、最影响后续所有产出的那次调用，
- *   是唯一一次查不到的调用。
+ *   Not sharing is what costs: the most expensive call in the product, the one
+ *   every later artifact is built on, would be the only call nobody can look up
+ *   afterward.
  *
- * ★ 仍然自己管超时（下面的 withTimeout），不交给 supervisor：
- *   supervisor 接管孤儿 Run 的动作（判失败、进恢复队列、按工作项找替补）
- *   在没有工作项的记录上一条都不成立，所以两条循环都显式排除 planning。
- *   代价写在这里免得当成遗漏：**进程重启后中断的规划 Run 会停在 running
- *   上没人收尾** —— 要治得给规划单独一条收尾循环。
+ * ★ Timeouts are still handled here (withTimeout below) rather than handed to
+ *   the supervisor: everything the supervisor does with an orphaned run — mark
+ *   it failed, queue it for recovery, find a substitute by work item — is
+ *   meaningless on a row that has no work item, so both loops exclude planning
+ *   explicitly. The price is written down here so it is not mistaken for an
+ *   oversight: **a planning run interrupted by a process restart sits in
+ *   `running` with nobody to close it** — fixing that needs a reaper loop of
+ *   its own for planning.
  *
- * ★★ 任何一步出问题都回退到规则占位，并且**把真相写进 model 字段**。
+ * ★★ A problem at any step falls back to the rule-based placeholder, and
+ *   **the truth is written into the model field**.
  *
- *   这是整个类最重要的一条约束。在此之前界面上写着「🤖 AI 结构化结果」，
- *   而底下跑的是关键词正则 —— 用户拿回自己的原话换了三个标签，
- *   只会觉得「这 AI 真差」，不会想到根本没接模型。
- *   回退可以，但必须说出来。
+ *   This is the most important constraint in the class. Before it, the UI said
+ *   "🤖 AI structured result" while a keyword regex ran underneath — the user
+ *   got their own words back with three labels attached, concluded "this AI is
+ *   terrible", and never suspected no model had been called at all. Falling
+ *   back is fine; falling back silently is not.
+ *
+ *   与执行 Run 共用 agent_runs，靠 kind 区分 —— 不共用的代价是产品里最贵的
+ *   那次调用是唯一查不到的调用。超时仍然自己管，supervisor 那套动作在没有
+ *   工作项的记录上一条都不成立，代价是进程重启后中断的规划 Run 会停在
+ *   running 上没人收尾。任何一步出问题都回退到规则占位，并把真相写进 model
+ *   字段：回退可以，但必须说出来。
  */
 export class AgentPlanningProvider implements PlanningProvider {
   readonly name = 'agent';
@@ -157,7 +193,10 @@ export class AgentPlanningProvider implements PlanningProvider {
   constructor(
     private readonly db: Database,
     private readonly registry: RuntimeRegistry,
-    /** 兜底 —— 没配规划 Agent、运行时不可用、产物不合格时都走它 */
+    /**
+     * Fallback — taken when no planning agent is configured, when the runtime is
+     * unavailable, and when the artifact is rejected.
+     */
     private readonly fallback: PlanningProvider,
     private readonly options: AgentPlanningOptions = {},
   ) {}
@@ -202,10 +241,14 @@ export class AgentPlanningProvider implements PlanningProvider {
       clarifications: out.clarifications,
       assumptions: out.assumptions,
       /**
-       * ★ provenance 交空表而不是编一份。
-       *   它撑的是需求页的原文对照高亮，而 Agent 给不出可信的字符偏移
-       *   （它读到的是自己重写过的文本）。编出来的 span 会把高亮画在错的地方，
-       *   比没有高亮更糟 —— 那会让用户以为「AI 说这句话来自这里」。
+       * ★ Hand back an empty provenance map instead of inventing one.
+       *   It backs the requirement page's side-by-side highlighting against the
+       *   original text, and an agent cannot produce trustworthy character
+       *   offsets — what it read is its own rewritten text. Invented spans paint
+       *   the highlight in the wrong place, which is worse than no highlight at
+       *   all: the user reads it as "the AI says this sentence came from here".
+       *
+       *   编出来的 span 会把高亮画在错的地方，比没有高亮更糟。
        */
       provenance: {},
       cost: attempt.costUsd,
@@ -226,7 +269,10 @@ export class AgentPlanningProvider implements PlanningProvider {
       kind: 'plan',
       brief: buildPlanBrief(req, projectType, feedback, scope?.locale),
       schema: AgentPlanOutput,
-      /** ★ schema 过了不等于图是自洽的 —— 悬空 ref 与环会静默毁掉调度 */
+      /**
+       * ★ Passing the schema does not make the graph coherent — dangling refs
+       *   and cycles wreck scheduling silently.
+       */
       check: (plan) => validatePlanGraph(plan),
     });
 
@@ -277,39 +323,45 @@ export class AgentPlanningProvider implements PlanningProvider {
     };
   }
 
-  // ── 内部 ────────────────────────────────────────────────────────────
+  // ── Internals ───────────────────────────────────────────────────────
 
   /**
-   * 一次规划 = 最多两轮。
+   * One planning attempt = at most two rounds.
    *
-   * ★★ 在此之前这里只有一轮：产物不合格就整场作废，直接回退到规则占位。
-   *   而 `agent-output.ts` 上写着「拒收换来的是一次重试或一次澄清」——
-   *   那句话当时没有对应实现。代价具体是这样：模型把 `type` 写成
-   *   `"design"`（任务书自己的示例把 `design` 当 ref 用，它抄过去了），
-   *   于是**产品里最贵的那次调用**整场作废，用户拿回一份与需求无关的
-   *   通用模板，界面上只有一行灰字说明发生过什么。
+   * ★★ There used to be exactly one round: a rejected artifact discarded the
+   *   whole attempt and fell straight back to the rule-based placeholder — even
+   *   though `agent-output.ts` claimed "rejection buys a retry or a
+   *   clarification", which had no implementation behind it. Concretely: the
+   *   model wrote `type` as `"design"` (the brief's own example uses `design`
+   *   as a ref, and it copied that across), so **the most expensive call in the
+   *   product** was thrown away, the user got back a generic template unrelated
+   *   to their requirement, and the only account of what happened was one line
+   *   of gray text.
    *
-   *   而这类错误几乎全是**格式**错误，不是理解错误：把 zod 报的那几句
-   *   原样递回去，模型通常一轮就改对了。一轮修正的成本，远小于
-   *   把一次完整的需求分析扔掉。
+   *   Yet these failures are almost entirely **formatting** failures, not
+   *   comprehension failures: hand zod's own sentences back and the model
+   *   usually fixes them in one round. One repair round costs far less than
+   *   discarding a complete requirement analysis.
    *
-   * ★★ 只有 `output_invalid` / `output_inconsistent` 值得再来一轮。
-   *   其余的码（挑不到 Agent、运行时拒收、超时、压根没写出文件）
-   *   再跑一次也是同样的结果 —— 重试它们只是把用户的等待时间翻倍。
+   * ★★ Only `output_invalid` / `output_inconsistent` are worth another round.
+   *   The other codes (no agent available, runtime refusal, timeout, no file
+   *   written at all) return the same answer on a second run — retrying them
+   *   only doubles the user's wait.
    *
-   * ★ 同一个 Agent，不换人。换一个 Agent 意味着这一轮拿不到上一轮的产物
-   *   （工作区是按 Agent 的授权挂的），而修正轮的全部价值就是「照着上一版改」。
+   * ★ Same agent, no substitution. Switching agents means this round cannot see
+   *   the previous round's artifact (the workspace is mounted against that
+   *   agent's grants), and the entire value of a repair round is "revise the
+   *   previous version".
    *
-   * ★ 每一轮开一条**独立**的 agent_runs 记录。合并成一条的话，
-   *   「第一轮为什么废了」会被第二轮的结果覆盖掉 —— 而那正是事后唯一
-   *   能看出「这个 Agent 老是写错枚举」的地方。成本按轮累加。
+   * ★ Each round opens its own **separate** agent_runs row. Merged into one,
+   *   "why did round one fail" is overwritten by round two's result — and that
+   *   is the only place anyone can later notice "this agent keeps getting the
+   *   enum wrong". Cost accumulates across rounds.
    *
-   * At most two rounds. There used to be one: a rejected artifact discarded the
-   * most expensive call in the product and dropped the user into a generic
-   * template, even though the failure is almost always formatting rather than
-   * comprehension. Only the two "the artifact is wrong" codes are retried —
-   * re-running the others just doubles the wait. Same agent, separate run rows,
-   * cost accumulated across rounds.
+   *   一次规划最多两轮。此前只有一轮，产物不合格就整场作废；而这类错误几乎
+   *   全是格式错误，把 zod 报的原话递回去通常一轮就改对了。只有产物不合格
+   *   的两个码值得重试，其余重试只是把等待时间翻倍。同一个 Agent、每轮一条
+   *   独立的 Run 记录、成本按轮累加。
    */
   private async run<T>(input: {
     scope: PlanningScope | undefined;
@@ -344,10 +396,14 @@ export class AgentPlanningProvider implements PlanningProvider {
       const canRepair = REPAIRABLE_CODES.has(attempt.code) && round < MAX_PLANNING_ROUNDS;
       if (!canRepair) {
         /**
-         * ★ 「重试过仍不合格」必须写进 reason。这句话一路显示到需求页与
-         *   计划页上，而「试过一次没救回来」和「一次都没试」对用户是
-         *   两个不同的结论：前者说明该去看看那个 Agent 的模型选型，
-         *   后者说明该去看看平台。
+         * ★ "Still invalid after a retry" has to make it into the reason. This
+         *   string is displayed all the way through to the requirement page and
+         *   the plan page, and "we tried once and could not save it" versus "we
+         *   never tried" are two different conclusions for the user: the first
+         *   says go look at that agent's model choice, the second says go look
+         *   at the platform.
+         *
+         *   「试过一次没救回来」和「一次都没试」对用户是两个不同的结论。
          */
         return fail(attempt.code, repaired ? `${attempt.reason}（重试过仍不合格）` : attempt.reason);
       }
@@ -360,7 +416,11 @@ export class AgentPlanningProvider implements PlanningProvider {
     }
   }
 
-  /** 单轮：开 Run → 挂工作区 → 派发 → 收产物 → 校验。失败时把原始产物带回去给修正轮 */
+  /**
+   * One round: open the run → mount the workspace → dispatch → collect the
+   * artifact → validate. On failure the raw artifact is carried back so the
+   * repair round has something to revise.
+   */
   private async runOnce<T>(input: {
     scope: PlanningScope;
     kind: 'structure' | 'plan';
@@ -375,24 +435,34 @@ export class AgentPlanningProvider implements PlanningProvider {
     const dir = join(this.root(), 'planning', runId);
 
     /**
-     * ★★ 规划也是一次真的 Agent 执行，必须留痕。
+     * ★★ Planning is a real agent execution too, so it has to leave a trace.
      *
-     *   在此之前它只活在内存里：不出现在 Run 详情页与 Agent 视图、成本不进
-     *   agent_runs 的统计、出问题时事后什么也查不到。也就是说，产品里最贵、
-     *   最影响后续所有产出的那次调用，是唯一一次没有记录的调用。
+     *   Before this it lived only in memory: absent from the run detail page and
+     *   the agent view, its cost missing from the agent_runs totals, and nothing
+     *   to look up afterward when something went wrong. Which is to say the most
+     *   expensive call in the product, the one every later artifact is built on,
+     *   was the only call with no record.
      *
-     *   现在它是 kind='planning' 的一行，work_item_id 为空（工作项这会儿
-     *   还不存在 —— 那正是这一列被放开的原因）。
+     *   It is now a row with kind='planning' and a null work_item_id — no work
+     *   item exists at this point, which is exactly why that column was widened.
+     *
+     *   规划也是一次真的 Agent 执行，必须留痕：此前它只活在内存里，
+     *   产品里最贵的那次调用是唯一一次没有记录的调用。
      */
     await this.openRun(runId, agent, input.scope, input.kind, input.scope.requirementId ?? null);
 
     /**
-     * 每一条失败路径都要落到那一行上，否则它会永远停在 dispatching。
+     * Every failure path has to land on that row, or it sits in `dispatching`
+     * forever.
      *
-     * ★ 带上 `raw`：这一轮写出来的东西是修正轮唯一能照着改的底稿。
-     *   丢掉它，下一轮就只能从头重写 —— 于是很可能重犯同一个错。
-     * ★ 也带上 `costUsd`：废掉的这一轮**照样花了钱**，不计进去的话
-     *   计划页上那个成本数字会比实际少一轮。
+     * ★ Carry `raw`: whatever this round wrote is the only draft the repair
+     *   round has to revise. Drop it and the next round rewrites from scratch —
+     *   and very likely repeats the same mistake.
+     * ★ Carry `costUsd` too: the discarded round **still spent money**, and
+     *   leaving it out makes the cost on the plan page one round short.
+     *
+     *   每条失败路径都要落到那一行上，否则它会永远停在 dispatching；
+     *   `raw` 是修正轮唯一的底稿，废掉的那一轮照样花了钱。
      */
     const failRun = async (
       code: PlanFallbackCode,
@@ -407,28 +477,35 @@ export class AgentPlanningProvider implements PlanningProvider {
 
     try {
       /**
-       * ★ 走统一的工作区通道，而不是自己 mkdir 再手工捏一个 workspace 对象。
+       * ★ Go through the shared workspace channel instead of mkdir-ing a
+       *   directory and hand-rolling a workspace object.
        *
-       *   此前这里造的是 { repoRef:'planning', branch:'planning' } —— 一个
-       *   假的 Git 工作区，于是 prompt 会对 Agent 说「你在分支 planning 上
-       *   工作，它基于 planning」。现在它是一个如实的空目录工作区，
-       *   vcs 为 null，prompt 换一套说法。
+       *   What this used to build was { repoRef:'planning', branch:'planning' }
+       *   — a fake Git workspace, so the prompt told the agent "you are working
+       *   on branch planning, which is based on planning". It is now an honest
+       *   empty-directory workspace with a null vcs, and the prompt says
+       *   something else entirely.
        *
-       * ★ BRIEF.md 通过 seed 写入 —— 它必须算进**基线**。放在 acquire 之后
-       *   写的话，平台自己的输入文件会出现在变更集的 added 里，被当成
-       *   Agent 的产出。
+       * ★ BRIEF.md is written through `seed` — it has to count toward the
+       *   **baseline**. Written after acquire, the platform's own input file
+       *   turns up under `added` in the change set and gets counted as the
+       *   agent's output.
+       *
+       *   走统一的工作区通道，而不是自己捏一个假的 Git 工作区；BRIEF.md 必须
+       *   经 seed 写入才算进基线，否则平台自己的输入文件会被当成 Agent 的产出。
        */
       /**
-       * ★★ 规划 Run 的权限同样按**项目**求值，与执行 Run 走同一个函数。
+       * ★★ A planning run's permissions are evaluated **per project**, through
+       *   the same function execution runs go through.
        *
-       *   此前这里直接读 agents 表上那份组织级的 resourceScopes / allowedTools。
-       *   两条派发路径各读各的，意味着「这个 Agent 能读哪些仓库」在规划与
-       *   执行时可以是两个答案 —— 而规划恰恰是最贵、最影响后续所有产出的
-       *   那次调用。
+       *   This used to read the org-level resourceScopes / allowedTools straight
+       *   off the agents row. Two dispatch paths reading two different sources
+       *   means "which repositories may this agent read" can have two answers
+       *   depending on which path dispatched it — and planning is precisely the
+       *   most expensive call, the one every later artifact is built on.
        *
-       * Planning runs resolve access through the same evaluator as execution
-       * runs. Reading the org-level fields here meant "which repositories may
-       * this agent read" had two answers depending on which path dispatched it.
+       *   规划 Run 的权限同样按项目求值，与执行 Run 走同一个求值器 ——
+       *   各读各的会让「这个 Agent 能读哪些仓库」出现两个答案。
        */
       const access = await resolveAgentAccess(this.db, agent, {
         orgId: input.scope.orgId,
@@ -440,24 +517,35 @@ export class AgentPlanningProvider implements PlanningProvider {
         runId,
         path: dir,
         /**
-         * ★ 把任务书落成文件，而不是只塞进 prompt。
-         *   这些 CLI 的强项就是读写文件 —— 给它一个能反复回看的 BRIEF.md，
-         *   比把几千字塞进一次性的 prompt 更贴合它的工作方式，
-         *   也让这次规划事后可复查（目录留着不删）。
+         * ★ Land the brief as a file rather than stuffing it into the prompt.
+         *   Reading and writing files is what these CLIs are good at — a
+         *   BRIEF.md they can re-read as often as they like fits how they work
+         *   far better than a few thousand words in a one-shot prompt, and it
+         *   leaves this planning attempt reviewable afterward (the directory is
+         *   kept, not deleted).
+         *
+         *   把任务书落成文件而不是只塞进 prompt，既贴合 CLI 的工作方式，
+         *   也让这次规划事后可复查。
          */
         seed: async (path) => {
           await writeFile(join(path, 'BRIEF.md'), input.brief, 'utf8');
         },
         /**
-         * ★★ 把这个 Agent 被授权的项目资源**只读**挂进来。
+         * ★★ Mount the project resources this agent is granted, **read-only**.
          *
-         *   在此之前规划 Run 只有一个空目录：写一份 BRIEF.md 进去、
-         *   读一份 apos-output.json 出来。也就是说「分析这个项目的需求」时，
-         *   Agent 手上没有这个项目的任何代码 —— 它只能照着需求原文编，
-         *   而产出上写着「基于项目上下文」。
+         *   Before this, a planning run got a bare empty directory: write one
+         *   BRIEF.md in, read one apos-output.json out. Which meant that while
+         *   "analyzing this project's requirement" the agent held none of the
+         *   project's code — it could only invent from the requirement text,
+         *   while the artifact claimed to be "based on project context".
          *
-         * ★ 只读：规划不该改代码。产出仍写在可写的主挂载里，两者分开。
-         *   挂不上的资源不拖垮整次规划，但会在诊断里留痕（见 acquireLocal）。
+         * ★ Read-only: planning has no business changing code. Output still goes
+         *   to the writable main mount, keeping the two apart. A resource that
+         *   fails to mount does not sink the whole planning attempt, but it does
+         *   leave a trace in the diagnostics (see acquireLocal).
+         *
+         *   只读挂载被授权的项目资源：规划不该改代码，而没有代码的规划
+         *   只能照着需求原文编。挂不上的资源不拖垮整次规划，但会留痕。
          */
         readOnly: {
           orgId: input.scope.orgId,
@@ -511,9 +599,13 @@ export class AgentPlanningProvider implements PlanningProvider {
       return failRun('unexpected_error', describe(err));
     } finally {
       /**
-       * ★ keep: true —— 目录留着供人事后复查（这是现有行为，规划失败时
-       *   BRIEF.md 和 Agent 写了一半的东西是唯一的排查材料）。
-       *   收尾要做的是清掉基线快照并把变更集记进诊断，不是删目录。
+       * ★ keep: true — the directory stays for people to inspect afterward
+       *   (existing behavior: when planning fails, BRIEF.md and whatever the
+       *   agent half-wrote are the only troubleshooting material there is).
+       *   What the teardown does is clear the baseline snapshot and record the
+       *   change set in the diagnostics, not delete the directory.
+       *
+       *   规划失败时 BRIEF.md 与半成品是唯一的排查材料，所以目录留着不删。
        */
       if (acquired) {
         const released = await this.workspaces
@@ -538,67 +630,90 @@ export class AgentPlanningProvider implements PlanningProvider {
   }
 
   /**
-   * 这个 Agent 现在能不能干规划活；能就返回 null，不能就返回**一句能直接
-   * 念给用户听的原因**。
+   * Whether this agent can take planning work right now; null when it can,
+   * otherwise **a reason that can be read out to the user as-is**.
    *
-   * ★ 抽出来是因为「点名的那个」与「绑定的那些」要走**同一套**判据。
-   *   两处各写一遍的话，迟早出现「绑定路径拦得住、点名路径拦不住」——
-   *   而点名路径恰恰是用户输入直接决定的那一条。
+   * ★ Factored out because the explicitly named agent and the bound ones must
+   *   be judged by the **same** criteria. Written twice, the two drift, and
+   *   sooner or later the bound path blocks something the named path lets
+   *   through — and the named path is exactly the one the user's own input
+   *   drives.
    *
-   *   Whether this agent can take planning work right now; null when it can,
-   *   otherwise a reason phrased for the user. Shared deliberately: the
-   *   explicitly named agent and the bound ones must be judged identically.
+   *   点名的那个与绑定的那些必须走同一套判据，否则迟早出现
+   *   「绑定路径拦得住、点名路径拦不住」。
    */
   private unusableReason(agent: typeof agents.$inferSelect): string | null {
     if (agent.status !== 'active') return agent.status;
     /**
-     * ★ 这里**不再**卡 applicableTypes。理由见 PLANNING_TYPE 上的那段：
-     *   它是派工作项的判据，不是「能不能写 PRD」的判据。留在这里的话，
-     *   需求页上刚放开的选择会在分析这一刻被否掉 —— 校验从「选的时候」
-     *   推迟到「等结果的时候」，是这个功能最不该有的表现。
+     * ★ applicableTypes is deliberately **no longer** a gate here. The reason is
+     *   on PLANNING_TYPE: it decides work-item dispatch, not PRD authorship.
+     *   Left in, it would veto at analysis time the very pick the requirement
+     *   page had just accepted — moving validation from "when you choose" to
+     *   "when you are waiting for the result", which is the worst behavior this
+     *   feature could have.
      *
-     *   Deliberately no applicableTypes gate: it decides work-item dispatch,
-     *   not PRD authorship. Keeping it here would veto at analysis time the
-     *   very pick the requirement page just accepted.
+     *   这里不再卡 applicableTypes：它是派工作项的判据，留在这里等于把校验
+     *   从「选的时候」推迟到「等结果的时候」。
      */
     if (!this.registry.has(agent.id)) return '运行时未注册';
     return null;
   }
 
   /**
-   * 挑规划 Agent —— 先看项目**显式绑定**的那个。
+   * Pick the planning agent — the project's **explicit binding** first.
    *
-   * ★★ 在 project_agent_bindings 出现之前，这里是「组织里第一个
-   *   status=active 且 applicableTypes 含 requirement 的 Agent」，按 createdAt 排序。
-   *   三个后果：用户指定不了；想换只能去改另一个 Agent 的配置或建号顺序；
-   *   而且它**完全不看项目成员关系** —— 组织里任何一个 Agent 都可能被拉来
-   *   读这个项目的需求，而项目正是权限与上下文的边界。
+   * ★★ Before project_agent_bindings existed, this was "the first agent in the
+   *   org with status=active whose applicableTypes contains requirement",
+   *   ordered by createdAt. Three consequences: the user could not name one;
+   *   changing it meant editing some other agent's configuration or the order
+   *   accounts were created in; and it **ignored project membership entirely**
+   *   — any agent in the org could be pulled in to read this project's
+   *   requirement, when the project is precisely the boundary for permissions
+   *   and context.
    *
-   * ★★ 候选是**项目的 Agent 成员**，全体，不按适用类型筛。
-   *   写 PRD 不是派工作项，applicableTypes 在这一条路上只排先后
-   *   （见 PLANNING_TYPE）。授权边界仍然是成员关系，一道不减。
+   * ★★ The candidates are **the project's agent members**, all of them, not
+   *   filtered by applicable type. Authoring a PRD is not work-item dispatch,
+   *   so applicableTypes only orders this path (see PLANNING_TYPE). The
+   *   authorization boundary is still membership, undiminished.
    *
-   * ★ 绑定优先，没绑定才回退到旧的「组织内自动挑」，并且**在回退时说出来**
-   *   （reason 会一路进到 model 字段里，见类文档那条纪律）。直接报错的话，
-   *   所有还没来得及配绑定的既有项目会在下一次分析时全部失败。
+   * ★ Bindings win; only without one do we fall back to the old "auto-pick
+   *   within the org", and **the fallback says so** (the reason travels all the
+   *   way into the model field — see the discipline in the class doc). Erroring
+   *   outright instead would fail the next analysis in every existing project
+   *   that has not gotten around to configuring a binding.
    *
-   * ★ 回退挑出来的也必须是本项目成员 —— 这一条比绑定与否更靠前：
-   *   它是授权，不是偏好。
+   * ★ Whatever the fallback picks must also be a member of this project — this
+   *   rule outranks bindings: it is authorization, not preference.
+   *
+   *   先看项目显式绑定的那个；候选是项目的 Agent 成员全体，适用类型只排先后。
+   *   没绑定时回退到组织内自动挑，但必须说出来 —— 直接报错会让所有还没配
+   *   绑定的既有项目在下一次分析时全部失败。回退挑出来的也必须是本项目成员：
+   *   那是授权，不是偏好。
    */
   private async pickAgent(
     scope: PlanningScope,
   ): Promise<{ agent: typeof agents.$inferSelect | null; reason: string }> {
     /**
-     * ★★ 用户在需求页上点了名 —— 这一条压过项目绑定，而且**没有备选**。
+     * ★★ The user named an agent on the requirement page — this beats the
+     *   project binding, and there is **no substitute**.
      *
-     *   退到别人身上是这里唯一不能做的事：绑定路径退到备选是「系统替你
-     *   兜底」，而点名路径退到别人是「系统否决了你的选择还不告诉你」。
-     *   所以不可用时返回 null + 原因，让这次分析如实回退到规则占位，
-     *   原因一路写进 analysisModel，需求页上就摆在结果标题旁边。
+     *   Falling back to someone else is the one thing this path must never do:
+     *   on the binding path a fallback reads as "the system covered for you",
+     *   while on the named path it reads as "the system overruled your choice
+     *   and did not mention it". So when the named agent is unusable we return
+     *   null plus a reason, let this analysis fall back honestly to the
+     *   rule-based placeholder, and write the reason all the way into
+     *   analysisModel, where the requirement page shows it next to the result
+     *   heading.
      *
-     * ★ 授权检查一道不减，而且**排在可用性之前**：不是本项目成员的 Agent
-     *   连「不可用」都不该被谈论 —— 项目是权限与上下文的边界，
-     *   而这个 id 是从 HTTP 请求一路传下来的。
+     * ★ The authorization check is undiminished and comes **before** usability:
+     *   an agent that is not a member of this project should not even be
+     *   discussed in terms of "unavailable" — the project is the boundary for
+     *   permissions and context, and this id arrived straight from an HTTP
+     *   request.
+     *
+     *   点名压过项目绑定，而且没有备选：静默换人比如实失败更糟。
+     *   授权检查排在可用性之前 —— 这个 id 是从 HTTP 请求一路传下来的。
      */
     if (scope.agentId) {
       const [named] = await this.db
@@ -633,11 +748,16 @@ export class AgentPlanningProvider implements PlanningProvider {
     }
 
     /**
-     * ★★ 按 priority 顺着往下退，而不是只看主 Agent。
+     * ★★ Walk down the priority order rather than looking only at the primary
+     *   agent.
      *
-     *   只有主 Agent 时，它一停用整个项目的规划就断了，唯一补救是管理员
-     *   去改绑定 —— 而那通常发生在有人等着结果的时候。备选让它能自己
-     *   退一格继续跑，并把「为什么没用主的」说出来。
+     *   With only a primary, pausing it breaks planning for the entire project,
+     *   and the sole remedy is an admin editing the binding — which typically
+     *   happens while somebody is waiting for a result. Backups let it step down
+     *   one slot and keep going, while saying out loud why the primary was not
+     *   used.
+     *
+     *   按 priority 顺着往下退：只有主 Agent 时，它一停用整个项目的规划就断了。
      */
     const bound = await this.db
       .select({ agent: agents, priority: projectAgentBindings.priority })
@@ -660,8 +780,12 @@ export class AgentPlanningProvider implements PlanningProvider {
           continue;
         }
         /**
-         * ★ 退到备选时要说出来。不说的话，用户看到的产出来自一个他没指定的
-         *   Agent，而界面上一切正常 —— 规划质量突然变了却查不到原因。
+         * ★ Say so when stepping down to a backup. Silently, the user gets an
+         *   artifact from an agent they never chose while the UI looks entirely
+         *   normal — planning quality changes overnight with nothing to explain
+         *   it.
+         *
+         *   退到备选时要说出来，否则规划质量突然变了却查不到原因。
          */
         if (skipped.length > 0) {
           this.diag(
@@ -712,22 +836,23 @@ export class AgentPlanningProvider implements PlanningProvider {
     }
 
     /**
-     * ★★ 「适用类型含 requirement」在这里是**排序偏好**，不是过滤条件。
+     * ★★ "applicableTypes contains requirement" is a **sort preference** here,
+     *   not a filter.
      *
-     *   以前它是一条 SQL where：一个项目哪怕有五个 Agent 成员，只要没人
-     *   勾过 requirement，自动挑就返回空，分析直接退成规则占位 —— 而那
-     *   五个 Agent 里任何一个都写得了 PRD。现在勾过的排在前面，没勾过的
-     *   照样能被挑中。
+     *   It used to be a SQL where clause: a project could have five agent
+     *   members, and if none of them had ticked requirement the auto-pick
+     *   returned nothing and the analysis dropped to the rule-based placeholder
+     *   — while any one of those five could have authored the PRD. Now the ones
+     *   that ticked it sort first and the ones that did not are still eligible.
      *
-     * ★ 先按「现在可用」分层，再按偏好挑：反过来的话，会挑中一个勾了
-     *   requirement 但运行时没注册的，而旁边就站着一个跑得动的。
-     *   一个都不可用时退回整份名单，好让 run() 报出那条具体的原因，
-     *   而不是含混的「没有可用 Agent」。
+     * ★ Layer by "usable right now" first, then apply the preference. The other
+     *   way around picks an agent that declared requirement but has no
+     *   registered runtime while a runnable one stands right beside it. When
+     *   none is usable, fall back to the full list so run() can report the
+     *   specific reason instead of a vague "no agent available".
      *
-     *   Preference, not filter: agents declaring `requirement` sort first, but
-     *   any active project agent member can be picked. Usability is layered
-     *   ahead of preference so a declared-but-unregistered agent never beats a
-     *   runnable one.
+     *   适用类型是排序偏好不是过滤条件；先按「现在可用」分层再按偏好挑，
+     *   一个都不可用时退回整份名单，好让 run() 报出具体原因。
      */
     const usable = candidates.filter((a) => this.unusableReason(a) === null);
     const pool = usable.length > 0 ? usable : candidates;
@@ -737,15 +862,20 @@ export class AgentPlanningProvider implements PlanningProvider {
   }
 
   /**
-   * 开一条规划 Run 记录。
+   * Open a planning run row.
    *
-   * ★ 与执行 Run 走**同一张表**，靠 kind 区分 —— 而不是再建一张
-   *   planning_runs。Agent 视图上「这个 Agent 最近干了什么」要能同时看到
-   *   两类，分两张表的话每个消费点都得 union 一次。
+   * ★ **The same table** as execution runs, told apart by `kind` — rather than
+   *   a second planning_runs table. "What has this agent been doing lately" on
+   *   the agent view has to show both kinds, and two tables would mean a union
+   *   at every consumer.
    *
-   * ★ idempotencyKey 用 runId：规划不像派发那样会被网络重试打两次
-   *   （调用方是进程内的 await），但这一列是 NOT NULL 且唯一，
-   *   给一个天然唯一的值比留空更诚实。
+   * ★ idempotencyKey is the runId: planning is not hit twice by network retries
+   *   the way dispatch is (the caller is an in-process await), but the column is
+   *   NOT NULL and unique, and a naturally unique value is more honest than a
+   *   blank one.
+   *
+   *   与执行 Run 共用一张表，靠 kind 区分；idempotencyKey 用 runId ——
+   *   这一列 NOT NULL 且唯一，给个天然唯一的值比留空更诚实。
    */
   private async openRun(
     runId: string,
@@ -758,32 +888,37 @@ export class AgentPlanningProvider implements PlanningProvider {
       id: runId,
       orgId: scope.orgId,
       projectId: scope.projectId,
-      // ★ 工作项这会儿还不存在 —— 这正是 work_item_id 被放开成可空的原因
+      // ★ No work item exists yet — exactly why work_item_id was widened to nullable
       workItemId: null,
       kind: 'planning',
-      // ★ 没有它，这条 Run 查得到却找不回来 —— 需求页上没有任何入口指向它
+      // ★ Without this the run is findable but not reachable — no entry point on the requirement page leads to it
       requirementId,
       agentId: agent.id,
       status: 'dispatching',
       idempotencyKey: runId,
       /**
-       * ★★ 规划 Run 的 goal 存**码**，不存中文句子。
+       * ★★ A planning run's goal stores a **code**, not a Chinese sentence.
        *
-       *   这一行会出现在英文界面上（需求页的「Analysis runs」），而一句中文
-       *   在那里就是一段读不懂的字。规划 Run 的 goal 只有两种取值，正是
-       *   「该用码」的典型：句子只服务中文界面，码同时服务两种语言。
+       *   This line surfaces in the English UI ("Analysis runs" on the
+       *   requirement page), where a Chinese sentence is just an unreadable
+       *   blob. A planning run's goal has exactly two possible values, which
+       *   makes it the textbook case for a code: a sentence serves only the
+       *   Chinese UI, a code serves both languages.
        *
-       * ★ 为什么放在 `goal` 而不是另起一栏：这一栏的含义本来就是
-       *   「这次 Run 是要干什么」。执行 Run 往里放的是工作项标题（用户内容），
-       *   规划 Run 放平台自己的码 —— 界面按 `kind` 区分，两者不会撞。
+       * ★ Why `goal` rather than a new column: the column already means "what
+       *   is this run trying to do". Execution runs put the work item title
+       *   there (user content) and planning runs put the platform's own code —
+       *   the UI tells them apart by `kind`, so the two never collide.
        *
-       *   ★★ 特别不能放进 `inputContext`：那一栏是**数组**
-       *   （TaskDispatch['context']，每项有 kind/ref/title/priority），
-       *   Run 详情页对它做 `.length` 与 `.map()`。塞一个对象进去，
-       *   任何一次规划 Run 的详情页都会当场崩掉。
+       *   ★★ It especially must not go into `inputContext`: that column is an
+       *   **array** (TaskDispatch['context'], each entry carrying
+       *   kind/ref/title/priority) and the run detail page calls `.length` and
+       *   `.map()` on it. Put an object in there and the detail page of every
+       *   planning run crashes on sight.
        *
-       *   Planning runs store the code here; execution runs store the work item
-       *   title. The UI tells them apart by `kind`.
+       *   规划 Run 的 goal 存码不存中文句子 —— 这一行会出现在英文界面上。
+       *   放 `goal` 而不是另起一栏，是因为这一栏本来就是「这次 Run 要干什么」；
+       *   绝不能放进 `inputContext`，那一栏是数组，塞对象进去详情页当场崩。
        */
       goal: kind === 'structure' ? 'structure' : 'plan',
       model: agent.model,
@@ -791,7 +926,7 @@ export class AgentPlanningProvider implements PlanningProvider {
     });
   }
 
-  /** 收尾那一行。失败时把原因写进 errorSummary，事后查得到 */
+  /** Close out that row. On failure the reason goes into errorSummary so it can be looked up later. */
   private async closeRun(
     runId: string,
     status: 'completed' | 'failed',
@@ -803,9 +938,13 @@ export class AgentPlanningProvider implements PlanningProvider {
       .set({
         status,
         /**
-         * ★ agent_runs.cost 是 NOT NULL 的「参考值」列，这里只能落 0。
-         *   「没上报」这条信息由上层带走（plans.generation_cost 可空），
-         *   界面读的是那一列。要让 Run 详情也分得开，得先给这列做迁移。
+         * ★ agent_runs.cost is a NOT NULL "for reference" column, so 0 is all
+         *   that can land here. The "not reported" fact is carried by the layer
+         *   above instead (plans.generation_cost is nullable) and that is the
+         *   column the UI reads. Telling the two apart on the run detail page
+         *   too would need a migration on this column first.
+         *
+         *   这一列 NOT NULL，落不下「没上报」；那条信息由 plans.generation_cost 带走。
          */
         cost: String(costUsd ?? 0),
         endedAt: new Date(),
@@ -822,7 +961,7 @@ export class AgentPlanningProvider implements PlanningProvider {
     brief: string,
     access: EffectiveAgentAccess,
   ): TaskDispatch {
-    /** ★ 下发的是求值结果，不是 Agent 上那份组织级旧字段 */
+    /** ★ What goes out is the evaluated result, not the legacy org-level fields on the agent row. */
     const permissions: AgentPermissions = access.runtimePermissions;
 
     return {
@@ -835,9 +974,12 @@ export class AgentPlanningProvider implements PlanningProvider {
         skills: agent.skills,
       },
       /**
-       * ★ 一个空目录工作区，不是 git 工作树。
-       *   规划不需要仓库：它读的是需求原文，写的是一份 JSON。
-       *   真去 clone 一个仓库只会让规划多等几十秒。
+       * ★ An empty-directory workspace, not a git worktree.
+       *   Planning needs no repository: it reads the requirement text and writes
+       *   one JSON file. Actually cloning a repo would only add tens of seconds
+       *   of waiting to every planning attempt.
+       *
+       *   规划不需要仓库，clone 一次只会让它多等几十秒。
        */
       workspace,
       goal: {
@@ -851,16 +993,15 @@ export class AgentPlanningProvider implements PlanningProvider {
       context: [],
       permissions,
       /**
-       * ★ 规划 Run 没有 Policy 闸门，空数组是结论不是遗漏。
-       *   Policy 评估挂在 Work Item 的状态流转上，而规划跑在建出工作项**之前**
-       *   —— 它没有可流转的对象。规划产出的把关走的是另一条路：计划审批
-       *   （`plan.approved`）。在这里编一份警告只会让 Agent 去防一道
-       *   它这辈子都碰不到的闸门。
+       * ★ Planning runs have no policy gates; the empty array is a conclusion,
+       *   not an oversight. Policy is evaluated on work item transitions, and
+       *   planning runs **before** any work item exists — there is nothing to
+       *   transition. Planning output is gated on another path entirely: plan
+       *   approval (`plan.approved`). Inventing a warning here would only send
+       *   the agent guarding against a gate it will never meet.
        *
-       * Planning runs have no policy gates; the empty array is a conclusion,
-       * not an oversight. Policy is evaluated on work-item transitions, and
-       * planning runs before any work item exists. Planning output is gated by
-       * plan approval instead.
+       *   空数组是结论不是遗漏：Policy 挂在工作项的状态流转上，而规划跑在
+       *   建出工作项之前；规划产出的把关走计划审批那条路。
        */
       policyGates: [],
       limits: {
@@ -870,17 +1011,23 @@ export class AgentPlanningProvider implements PlanningProvider {
       },
       model: agent.model,
       /**
-       * ★ 回调地址是给执行 Run 用的 —— 规划 Run 不在 agent_runs 里，
-       *   那个端点会找不到它。这里靠 subscribe 直接收事件，
-       *   给一个明确无效的地址比给一个会 404 的真地址更清楚。
+       * ★ The callback URL is for execution runs — a planning run is not what
+       *   that endpoint looks up, so it would not find this one. Events are
+       *   collected here through subscribe instead, and an obviously invalid
+       *   address is clearer than a real one that 404s.
+       *
+       *   规划 Run 靠 subscribe 直接收事件，给个明确无效的地址比给一个会 404 的更清楚。
        */
-      /** ★ 规划的语言由 brief 自己钉（languageRule），这里给默认值即可 */
+      /** ★ The planning language is pinned by the brief itself (languageRule); a default suffices here. */
       outputLocale: 'en',
       callback: { eventsUrl: 'inline://planning', token: runId },
     };
   }
 
-  /** 订阅到 run_ended 为止，顺带累计成本。超时自己管 —— 没有 supervisor */
+  /**
+   * Subscribe until run_ended, accumulating cost along the way. The timeout is
+   * handled here — there is no supervisor for planning runs.
+   */
   private async awaitRun(
     adapter: ReturnType<RuntimeRegistry['get']>,
     runId: string,
@@ -892,14 +1039,17 @@ export class AgentPlanningProvider implements PlanningProvider {
     );
 
     /**
-     * ★★ null = 这个运行时**一次都没报过**成本，不是「花了 0 块」。
+     * ★★ null = this runtime **never once reported** cost, not "it cost $0".
      *
-     *   此前这里是 `let costUsd = 0`，而 opencode 这类运行时根本不发 cost
-     *   事件 —— 于是一次真实的 38 秒规划落库成 0.0000，计划页上写着 $0.00。
-     *   「不上报」和「免费」在数据里从此再也分不开，而下游每一层都有权
-     *   相信那个 0（问题记录：NEW-BUG-2）。tokens 那边早就是这个约定。
+     *   This used to be `let costUsd = 0`, and runtimes like opencode emit no
+     *   cost event at all — so a real 38-second planning run was stored as
+     *   0.0000 and the plan page said $0.00. "Not reported" and "free" became
+     *   indistinguishable in the data, while every layer downstream is entitled
+     *   to believe that zero (issue log: NEW-BUG-2). The tokens side has used
+     *   this convention all along.
      *
-     * null means the runtime never reported cost — not that it was free.
+     *   null 表示运行时一次都没上报成本，不是花了 0 块 —— 两者混起来的话，
+     *   一次真实的规划会在计划页上显示 $0.00。
      */
     let costUsd: number | null = null;
     let settle: (r: { ok: true; costUsd: number | null } | { ok: false; reason: string }) => void;
@@ -909,14 +1059,20 @@ export class AgentPlanningProvider implements PlanningProvider {
 
     const unsubscribe = await adapter.subscribe(runId, async (e: RunEvent) => {
       /**
-       * ★★ 事件要落库，不能只在内存里过一遍。
+       * ★★ Events have to be persisted, not merely passed through memory.
        *
-       *   规划 Run 现在是一条真的 agent_runs 记录，Run 详情页照着 run_events
-       *   渲染时间线与成本明细。事件不落库的话，那一页对规划 Run 是空的 ——
-       *   「这次分析到底做了什么」还是查不到，可审计只做了一半。
+       *   A planning run is now a real agent_runs row, and the run detail page
+       *   renders its timeline and cost breakdown from run_events. Without
+       *   persisting, that page is empty for planning runs — "what did this
+       *   analysis actually do" still cannot be answered, and auditability is
+       *   only half built.
        *
-       * ★ 落库失败不影响这次规划：进度是附加信息，为它中断一次已经跑起来的
-       *   分析不划算。
+       * ★ A failed insert does not affect this planning attempt: progress is
+       *   supplementary, and aborting an analysis that is already running for
+       *   its sake is a bad trade.
+       *
+       *   事件要落库，否则 Run 详情页对规划 Run 是空的；落库失败则不影响
+       *   这次规划本身。
        */
       await this.db
         .insert(runEvents)
@@ -933,7 +1089,7 @@ export class AgentPlanningProvider implements PlanningProvider {
         .onConflictDoNothing()
         .catch(() => undefined);
 
-      // ★ 心跳跟着走，Run 详情页才能显示「还活着」
+      // ★ Keep the heartbeat moving so the run detail page can show it is still alive
       await this.db
         .update(agentRuns)
         .set({ lastHeartbeatAt: new Date(), ...(e.type === 'cost' ? { cost: String(e.totalUsd) } : {}) })
@@ -960,11 +1116,14 @@ export class AgentPlanningProvider implements PlanningProvider {
       return await done;
     } finally {
       clearTimeout(timer);
-      // Unsubscribe 允许同步返回，不能直接 .catch
+      // Unsubscribe may return synchronously, so it cannot be `.catch`ed directly
       await Promise.resolve(unsubscribe()).catch(() => {});
       /**
-       * ★ 超时后要主动终止，否则那个 CLI 子进程会继续跑到自己的上限 ——
-       *   一次超时留下一个还在烧钱的孤儿进程，而没有任何地方看得到它。
+       * ★ Terminate explicitly after a timeout, or the CLI child process keeps
+       *   running to its own ceiling — one timeout leaves behind an orphan
+       *   process still burning money, with nowhere to see it.
+       *
+       *   不主动终止的话，一次超时会留下一个还在烧钱、又看不见的孤儿进程。
        */
       await adapter.control(runId, { action: 'terminate', reason: '规划超时' }).catch(() => {});
     }
@@ -984,8 +1143,9 @@ type Attempt<T> =
   | { ok: false; reason: string; code: PlanFallbackCode };
 
 /**
- * 单轮的结果。比 {@link Attempt} 多两样，都是给下一轮用的：
- * `raw`（上一版产物，修正轮照着它改）与 `costUsd`（废掉的那一轮照样花了钱）。
+ * The result of one round. It carries two things {@link Attempt} does not, both
+ * for the next round: `raw` (the previous artifact, which the repair round
+ * revises) and `costUsd` (the discarded round still spent money).
  */
 type Round<T> =
   | { ok: true; value: T; costUsd: number | null }
@@ -998,14 +1158,14 @@ type Round<T> =
     };
 
 /**
- * 跨轮累计成本。
+ * Accumulate cost across rounds.
  *
- * ★ `null` 的含义是「运行时没上报」，不是 0 —— 两者混起来的话，
- *   一个从不上报成本的运行时会让计划页上出现一个理直气壮的 `$0.00`。
- *   所以只要有任何一轮报了数，总数就是那几轮的和；一轮都没报才是 null。
+ * ★ `null` means "the runtime did not report", not zero — collapsing the two
+ *   puts a confident `$0.00` on the plan page for any runtime that never
+ *   reports. So as soon as one round reports a figure, the total is the sum of
+ *   the rounds that did; only when no round reported at all is it null.
  *
- * `null` means "the runtime did not report", not zero: collapsing the two puts
- * a confident `$0.00` on the plan page for runtimes that never report.
+ *   只要有任何一轮报了数，总数就是那几轮的和；一轮都没报才是 null。
  */
 function addCost(total: number | null, round: number | null): number | null {
   if (round === null) return total;
@@ -1013,35 +1173,46 @@ function addCost(total: number | null, round: number | null): number | null {
 }
 
 /**
- * ★ 每条失败路径都要带上码。
+ * ★ Every failure path has to carry a code.
  *
- *   码决定界面怎么做（禁掉自动化承诺、给哪个修复入口），
- *   reason 只是给日志和排查看的那句细节。少给码的代价是
- *   界面只能回落到「不知道为什么，反正不可信」那一档。
+ *   The code drives what the UI does — suppress the automation promise, offer
+ *   the right repair entry point — while the reason is only the detail line for
+ *   logs and troubleshooting. Omitting the code leaves the UI with nothing but
+ *   the "no idea why, just don't trust it" tier.
+ *
+ *   码决定界面怎么做，reason 只是给日志和排查看的那句细节。
  */
 function fail(code: PlanFallbackCode, reason: string): { ok: false; reason: string; code: PlanFallbackCode } {
   return { ok: false, reason, code };
 }
 
 /**
- * 回退时把原因编进 model 字段。
+ * Encode the reason into the model field when falling back.
  *
- * ★ 这个字符串会一路显示到计划页与需求页上。它是用户唯一能知道
- *   「这次不是真 Agent 干的」的渠道 —— 所以宁可难看，也要说清楚。
+ * ★ This string is displayed all the way through to the plan page and the
+ *   requirement page. It is the only channel by which the user learns that no
+ *   real agent produced this — so it says so plainly, even at the cost of
+ *   looking ugly.
+ *
+ *   这是用户唯一能知道「这次不是真 Agent 干的」的渠道，宁可难看也要说清楚。
  */
 function degraded(baseModel: string, reason: string): string {
   return `${baseModel}（规则占位，未走 Agent：${reason}）`;
 }
 
-/** LLM 爱把 JSON 包在 ```json 里。与其让它去改习惯，不如这里剥一层 */
+/** LLMs like to wrap JSON in a ```json fence. Cheaper to peel one layer off here than to break the habit. */
 function stripFence(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   return (fenced?.[1] ?? raw).trim();
 }
 
 /**
- * ★ ZodError 的 message 是一整坨 JSON。这个字符串会一路显示到需求页上，
- *   甩一段 issue 数组给用户等于什么都没说 —— 压成「字段路径: 原因」的短句。
+ * ★ A ZodError's message is one blob of JSON. This string is displayed all the
+ *   way through to the requirement page, and throwing an issue array at the
+ *   user says nothing at all — so it is compressed into short
+ *   "field path: reason" sentences.
+ *
+ *   ZodError 的 message 是一整坨 JSON，压成「字段路径: 原因」的短句才有意义。
  */
 function describe(err: unknown): string {
   if (err instanceof ZodError) {

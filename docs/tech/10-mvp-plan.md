@@ -1,269 +1,271 @@
-# 10 MVP 实施计划
+# 10 MVP Implementation Plan
 
-对应产品文档第十二、十三章。
+*[中文版本 / Chinese version](10-mvp-plan.zh.md)*
+
+Corresponds to chapters 12 and 13 of the product documentation.
 
 ---
 
-## 1. MVP 要验证的假设
+## 1. The hypothesis the MVP has to prove
 
-产品文档 12.1 的原话：
+Quoting product doc 12.1 verbatim:
 
-> 用户录入一个需求后，Project Agent 能够将其转化为可执行计划，分配给人或 Agent，并在关键节点请求人类决策，最终推动需求完成。
+> After a user enters a requirement, the Project Agent can turn it into an executable plan, assign the work to people or agents, request a human decision at the critical moments, and ultimately drive the requirement to completion.
 
-**技术上，这句话拆成四个必须跑通的闭环**：
+**Technically, that sentence decomposes into four loops that all have to close**:
 
-| 闭环 | 验证什么 | 失败意味着 |
+| Loop | What it proves | What failure means |
 | --- | --- | --- |
-| ① 需求 → 计划 | LLM 能否把模糊描述变成可执行的任务拆解 | 产品最上游不成立，后面全白搭 |
-| ② 计划 → 派发 → 执行 | Agent 能否真的完成任务并回传可验证的产物 | 只是个任务管理器 |
-| ③ 执行 → 决策 → 继续 | Policy 能否在正确时机拦下来找人，人处理后能否继续 | Human-in-the-Loop 不成立 |
-| ④ 失败 → 恢复 | 失败后能否自动或半自动恢复 | Agent 一失败项目就停摆，无法实用 |
+| ① Requirement → plan | Whether an LLM can turn a vague description into an executable task breakdown | The very top of the product doesn't hold, and nothing downstream matters |
+| ② Plan → dispatch → execution | Whether an agent can actually finish a task and hand back a verifiable artifact | We shipped a task manager |
+| ③ Execution → decision → resume | Whether Policy stops at the right moment to find a human, and whether work resumes once they act | Human-in-the-loop doesn't hold |
+| ④ Failure → recovery | Whether the system recovers automatically or semi-automatically after a failure | One agent failure stalls the project — not usable in practice |
 
-**④ 最容易被低估。** Demo 里 Agent 总是成功，真实使用中首次成功率可能只有 60–70%。恢复机制不做好，用户体验就是"每天都要手动救火"，比传统工具还累。
+**④ is the one that gets underestimated.** In a demo the agent always succeeds; in real use the first-attempt success rate may be only 60–70%. Without solid recovery, the user experience is "firefighting by hand every day" — more work than the traditional tools they left.
 
 ---
 
-## 2. 分阶段
+## 2. Phasing
 
-四个阶段，每阶段结束都有可运行的东西。
+Four phases; each one ends with something you can run.
 
 ```
-阶段 0  地基            3 周   领域模型 + 事件 + 状态机 + 认证
-阶段 1  单 Agent 闭环   4 周   需求→计划→单 Agent 执行→看板（无 Policy）
-阶段 2  治理闭环        4 周   Policy + 决策中心 + 恢复机制
-阶段 3  可用产品        4 周   集成 + Analytics + Agent 管理 + 打磨
-                      ─────
-                       15 周
+Phase 0  Foundation         3 wks   Domain model + events + state machine + auth
+Phase 1  Single-agent loop  4 wks   Requirement → plan → single-agent execution → board (no Policy)
+Phase 2  Governance loop    4 wks   Policy + Decision Center + recovery
+Phase 3  Usable product     4 wks   Integrations + Analytics + agent management + polish
+                           ─────
+                           15 wks
 ```
 
-按 3–4 人团队估算（2 后端 + 1 前端 + 1 全栈）。
+Estimated for a team of 3–4 (2 backend + 1 frontend + 1 full-stack).
 
 ---
 
-## 3. 阶段 0：地基（3 周）
+## 3. Phase 0: foundation (3 weeks)
 
-**目标**：把[02 领域模型](02-domain-model.md)、[03 事件模型](03-event-model.md)、[04 Flow Engine](04-flow-engine.md) §2–3 落地，之后所有功能都建在上面。
+**Goal**: land [02 Domain Model](02-domain-model.md), [03 Event Model](03-event-model.md), and [04 Flow Engine](04-flow-engine.md) §2–3. Everything built afterward sits on top of them.
 
-| 任务 | 产出 |
+| Task | Deliverable |
 | --- | --- |
-| 项目脚手架 | monorepo、CI、Docker Compose 本地环境 |
-| `packages/contracts` | 领域类型与 Zod schema |
-| 数据库 schema + 迁移 | 全部核心表（含分区） |
-| 事件写入与查询 | `emit()` / `query()` / 因果链追溯 |
-| **Transition 引擎** | 状态机、Guard、事务性、并发控制 |
-| 认证与授权骨架 | JWT、Actor 模型、`can()` |
-| SSE 基础设施 | 连接管理、Redis 扇出、断线续传 |
-| 前端骨架 | 路由、Query 配置、SSE client、通用组件（§5 组件规范） |
+| Project scaffolding | Monorepo, CI, Docker Compose local environment |
+| `packages/contracts` | Domain types and Zod schemas |
+| Database schema + migrations | All core tables (partitioning included) |
+| Event write and query | `emit()` / `query()` / causal-chain tracing |
+| **Transition engine** | State machine, guards, transactionality, concurrency control |
+| Auth and authorization skeleton | JWT, actor model, `can()` |
+| SSE infrastructure | Connection management, Redis fan-out, resume after disconnect |
+| Frontend skeleton | Routing, Query configuration, SSE client, shared components (§5 component spec) |
 
-**验收**：能通过 API 创建项目与 Work Item，手动触发状态流转，事件正确写入，前端通过 SSE 实时看到变化。
+**Acceptance**: you can create a project and a work item through the API, trigger a status transition by hand, see the events written correctly, and watch the change arrive in the frontend over SSE.
 
-**为什么值得花 3 周**：Transition 引擎与事件模型是所有功能的公共路径。这里偷工减料，后面每个功能都要绕。特别是"状态变更必须写事件"这条纪律，必须在第一天就用代码强制，而不是靠后续 review。
+**Why three weeks is worth it**: the transition engine and the event model are the common path under every feature. Cut corners here and every later feature has to route around the damage. In particular, the rule that *a status change must write an event* has to be enforced in code on day one, not by review afterward.
 
-**风险**：这个阶段没有用户可见的功能，容易被压缩。建议明确告知 stakeholder，并用阶段 1 的演示来补偿。
+**Risk**: this phase ships nothing a user can see, which makes it easy to compress. Tell stakeholders that explicitly, and pay them back with the Phase 1 demo.
 
 ---
 
-## 4. 阶段 1：单 Agent 闭环（4 周）
+## 4. Phase 1: single-agent loop (4 weeks)
 
-**目标**：验证假设①②。**这个阶段结束应该能做一次有说服力的演示。**
+**Goal**: prove hypotheses ① and ②. **This phase should end with a demo that convinces people.**
 
-| 任务 | 依赖文档 |
+| Task | Reference doc |
 | --- | --- |
-| 需求录入（文本 + 附件） | 页面 03 |
-| **AI 需求结构化**（LLM 流式） | 页面 03 §5.4 |
-| 澄清问题生成与回答 | 页面 03 §5.5 |
-| 需求确认 Human Gate | 页面 03 §5.7 |
-| **计划生成**（任务拆解 + 依赖） | 页面 04 |
-| 计划确认页（不含 auto-actions） | 页面 04 |
-| **Agent Protocol + Claude Code 适配器** | [06](06-agent-protocol.md) |
-| Run 派发、事件流、产物回传 | [06](06-agent-protocol.md) §4–5 |
-| Flow Scheduler（依赖检查 + 派发） | [04](04-flow-engine.md) §4 |
-| **看板**（六列 + 卡片自动移动） | 页面 05 |
-| Work Item 详情 + Run 详情 | 页面 06、09 |
-| GitHub 集成（最小：读仓库、创建 PR、CI 状态回传） | 页面 14 |
+| Requirement intake (text + attachments) | Page 03 |
+| **AI requirement structuring** (LLM streaming) | Page 03 §5.4 |
+| Clarifying-question generation and answers | Page 03 §5.5 |
+| Requirement-confirmation human gate | Page 03 §5.7 |
+| **Plan generation** (task breakdown + dependencies) | Page 04 |
+| Plan-confirmation page (no auto-actions) | Page 04 |
+| **Agent Protocol + Claude Code adapter** | [06](06-agent-protocol.md) |
+| Run dispatch, event stream, artifact return | [06](06-agent-protocol.md) §4–5 |
+| Flow Scheduler (dependency checks + dispatch) | [04](04-flow-engine.md) §4 |
+| **Board** (six columns + cards that move themselves) | Page 05 |
+| Work item detail + run detail | Pages 06, 09 |
+| GitHub integration (minimum: read repo, open PR, report CI status) | Page 14 |
 
-**不做**：Policy Engine（阶段 1 全部自动执行）、决策中心、多 Agent、Analytics。
+**Not in scope**: Policy Engine (Phase 1 executes everything automatically), Decision Center, multi-agent, Analytics.
 
-**验收（端到端演示脚本）**：
+**Acceptance (end-to-end demo script)**:
 
 ```
-1. 创建项目「订单查询优化」
-2. 粘贴一段口语化需求 → AI 结构化 → 回答 3 个澄清问题 → 确认
-3. 计划生成（约 2 分钟）→ 看到 8 个任务的拆解与依赖 → 批准
-4. 看板上任务自动从 Ready → Executing
-5. Claude Code Agent 真实修改代码、跑测试、创建 PR
-6. 卡片自动移到 Review，PR 链接可点开
-7. 全程无需手动拖动任何卡片
+1. Create the project "Order Lookup Optimization"
+2. Paste a conversational requirement → AI structures it → answer 3 clarifying questions → confirm
+3. Plan generation (about 2 minutes) → see the breakdown into 8 tasks with dependencies → approve
+4. Tasks move themselves from Ready to Executing on the board
+5. The Claude Code agent really edits code, runs tests, opens a PR
+6. The card moves itself to Review; the PR link opens
+7. Nobody dragged a single card at any point
 ```
 
-**这个演示是产品的核心价值证明。** 第 7 条尤其重要——它是与传统看板的分界线。
+**This demo is the product's core proof of value.** Line 7 matters most — it is the line that separates this from a traditional board.
 
-**技术风险**：
+**Technical risks**:
 
-| 风险 | 应对 |
+| Risk | Response |
 | --- | --- |
-| 计划生成质量差（任务拆解不合理） | 提前投入 prompt 工程；准备 3–5 个真实需求做基准测试 |
-| Agent 执行成功率低 | 阶段 1 先用简单任务类型验证；复杂任务放阶段 3 |
-| 依赖判定不准导致乱序执行 | Guard 的单元测试覆盖七种依赖类型 |
+| Poor plan-generation quality (unreasonable task breakdown) | Invest in prompt engineering early; assemble 3–5 real requirements as a benchmark set |
+| Low agent success rate | Prove the loop on simple task types in Phase 1; push complex tasks to Phase 3 |
+| Bad dependency judgment causing out-of-order execution | Unit tests for guards covering all seven dependency types |
 
 ---
 
-## 5. 阶段 2：治理闭环（4 周）
+## 5. Phase 2: governance loop (4 weeks)
 
-**目标**：验证假设③④。这是产品差异化的核心。
+**Goal**: prove hypotheses ③ and ④. This is the core of the product's differentiation.
 
-| 任务 | 依赖文档 |
+| Task | Reference doc |
 | --- | --- |
-| **Policy Engine**（条件 AST、评估、缓存） | [05](05-policy-engine.md) §2–3 |
-| Policy 模板化配置界面（不做自由编辑器） | 页面 13、[05](05-policy-engine.md) §10 |
-| **操作开关矩阵**（摘要即控制面板） | 页面 13 §5.1 |
-| 零规则时的首次引导向导 | 页面 13 §5.12 |
-| **Policy 模拟回放** | [05](05-policy-engine.md) §5 |
-| 自然语言解释 | [05](05-policy-engine.md) §6 |
-| 安全底线（删资源 / 改权限 / 执行付款硬编码在求值器里） | [09](09-security.md) §4.1 |
-| **决策创建与责任人解析** | 页面 11、[02](02-domain-model.md) §9 |
-| **决策中心**（收件箱、卡片、批量、键盘模式） | 页面 10 |
-| 决策详情（方案对比、约束附加） | 页面 11 |
-| 决策时限、提醒与三级升级 | 产品文档十一 |
-| **BlockerDetector**（九类阻塞） | [04](04-flow-engine.md) §5 |
-| **Recovery 策略**（按错误分类） | [04](04-flow-engine.md) §6 |
-| 人工接管与交还 | 页面 06 §5.2 |
-| 计划页的「批准后将自动发生」 | 页面 04 §5.3 |
-| 通知渠道（飞书或 Slack 二选一） | 页面 14 §5.5 |
+| **Policy Engine** (condition AST, evaluation, caching) | [05](05-policy-engine.md) §2–3 |
+| Template-based Policy configuration UI (no free-form editor) | Page 13, [05](05-policy-engine.md) §10 |
+| **Operation toggle matrix** (the summary *is* the control panel) | Page 13 §5.1 |
+| First-run wizard for the zero-rules state | Page 13 §5.12 |
+| **Policy simulation and replay** | [05](05-policy-engine.md) §5 |
+| Natural-language explanations | [05](05-policy-engine.md) §6 |
+| Safety floor (delete resource / change permissions / execute payment hard-coded in the evaluator) | [09](09-security.md) §4.1 |
+| **Decision creation and owner resolution** | Page 11, [02](02-domain-model.md) §9 |
+| **Decision Center** (inbox, cards, bulk actions, keyboard mode) | Page 10 |
+| Decision detail (option comparison, attached constraints) | Page 11 |
+| Decision deadlines, reminders, and three-level escalation | Product doc ch. 11 |
+| **BlockerDetector** (nine blocker classes) | [04](04-flow-engine.md) §5 |
+| **Recovery strategies** (by error class) | [04](04-flow-engine.md) §6 |
+| Human takeover and hand-back | Page 06 §5.2 |
+| "What will happen automatically once you approve" on the plan page | Page 04 §5.3 |
+| Notification channel (Feishu or Slack — pick one) | Page 14 §5.5 |
 
-**验收**：
+**Acceptance**:
 
 ```
-1. 配置规则：生产数据库变更需 DBA 审批
-2. Agent 执行到数据库变更任务 → 自动停下 → 决策中心出现待办
-3. DBA 收到飞书通知 → 点击直达决策详情
-4. 批准并附加约束「仅在低峰期执行」→ 约束写入任务
-5. 任务继续执行，约束被 Agent 遵守
-6. 制造一次 Agent 失败 → 系统按错误分类自动补充上下文重试 → 成功
-7. 制造连续 3 次失败 → 自动暂停并升级给技术负责人
-8. 用历史数据模拟一条新规则 → 看到"会自动处理 12 次，其中 2 次人类当时驳回"
+1. Configure a rule: production database changes require DBA approval
+2. The agent reaches the database-change task → stops on its own → an item appears in the Decision Center
+3. The DBA gets a Feishu notification → clicks straight through to the decision detail
+4. Approves and attaches the constraint "off-peak hours only" → the constraint is written onto the task
+5. The task resumes, and the agent honors the constraint
+6. Force an agent failure → the system adds context and retries automatically per the error class → succeeds
+7. Force 3 consecutive failures → the system pauses automatically and escalates to the tech lead
+8. Simulate a new rule against historical data → see "would have auto-handled 12 times, 2 of which a human rejected at the time"
 ```
 
-**第 8 条是本阶段最有说服力的功能**，也是让用户敢于放开自动化的关键。
+**Line 8 is the most persuasive feature in this phase**, and it is what makes users willing to loosen the reins on automation.
 
-**技术风险**：
+**Technical risks**:
 
-| 风险 | 应对 |
+| Risk | Response |
 | --- | --- |
-| 事件快照字段不全导致模拟不准 | **阶段 0 就要按 [05](05-policy-engine.md) §2.3 的 fact 清单记录快照**，不能等到阶段 2 |
-| 错误分类不可靠导致恢复策略失效 | Agent Protocol 强制错误分类；不支持的运行时用保守策略 |
-| 决策责任人解析错误（找错人） | 责任映射可配置；转交率作为监控指标 |
+| Incomplete event-snapshot fields making simulation inaccurate | **Record snapshots from Phase 0 against the fact list in [05](05-policy-engine.md) §2.3** — do not wait until Phase 2 |
+| Unreliable error classification defeating recovery strategies | The Agent Protocol requires an error class; runtimes that don't support it fall back to a conservative strategy |
+| Wrong decision owner resolved (the request reaches the wrong person) | Make the responsibility mapping configurable; track reassignment rate as a monitored metric |
 
-**⚠ 关键依赖**：Policy 模拟依赖阶段 0 就开始记录 `context_snapshot`。如果阶段 0 没做，阶段 2 时历史数据里没有快照，模拟功能等于无米之炊，且需要再等一个月积累数据。**这是整个计划中最容易踩的坑。**
+**⚠ Critical dependency**: Policy simulation depends on `context_snapshot` being recorded starting in Phase 0. Skip it there and by Phase 2 the historical data holds no snapshots — simulation has nothing to work with, and you have to wait another month for data to accumulate. **This is the easiest trap to fall into in the entire plan.**
 
 ---
 
-## 6. 阶段 3：可用产品（4 周）
+## 6. Phase 3: usable product (4 weeks)
 
-**目标**：从"能演示"到"能真用"。
+**Goal**: get from "demoable" to "actually usable."
 
-| 任务 | 依赖文档 |
+| Task | Reference doc |
 | --- | --- |
-| Agent 管理（注册、能力权限配置、试运行） | 页面 08 |
-| 多 Agent 支持（并行、Review Agent） | 页面 08 §5.4 |
-| 权限变更预演 | [09](09-security.md) §3.3 |
-| **Analytics**（Flow + Agent + 成本三块） | 页面 12、产品文档 12.2 |
-| 系统发现（洞察生成） | 页面 12 §5.1 |
-| Jira 或 Plane 集成（单向导入 + 状态回写） | 页面 14 §5.3 |
-| Execution Graph（只读） | 页面 07 |
-| 项目总览页完整版 | 页面 02 |
-| 项目列表 + 待我处理 | 页面 01 |
-| 延期预测 | [04](04-flow-engine.md) §7 |
-| 孤儿 Run 接管、优雅重启 | [01](01-architecture.md) §3.3 |
-| 性能优化（虚拟滚动、聚合端点、索引） | [08](08-frontend-architecture.md) §6 |
-| 安全加固（脱敏、审计视图、限流） | [09](09-security.md) |
+| Agent management (registration, capability/permission configuration, dry run) | Page 08 |
+| Multi-agent support (parallelism, Review Agent) | Page 08 §5.4 |
+| Permission-change preview | [09](09-security.md) §3.3 |
+| **Analytics** (Flow + Agent + cost) | Page 12, product doc 12.2 |
+| System findings (insight generation) | Page 12 §5.1 |
+| Jira or Plane integration (one-way import + status write-back) | Page 14 §5.3 |
+| Execution Graph (read-only) | Page 07 |
+| Full project-overview page | Page 02 |
+| Project list + "needs me" | Page 01 |
+| Delay prediction | [04](04-flow-engine.md) §7 |
+| Orphaned-run takeover, graceful restart | [01](01-architecture.md) §3.3 |
+| Performance work (virtual scrolling, aggregate endpoints, indexes) | [08](08-frontend-architecture.md) §6 |
+| Security hardening (redaction, audit views, rate limiting) | [09](09-security.md) |
 
-**验收**：内部真实使用两周，用它管理自己的开发工作。这是最诚实的验收标准——**如果团队自己都不愿意用，就不该发给客户。**
+**Acceptance**: two weeks of real internal use, running our own development work on it. That is the most honest bar there is — **if the team won't use it, we shouldn't ship it to customers.**
 
 ---
 
-## 7. MVP 明确不做
+## 7. Explicitly out of scope for the MVP
 
-产品文档第十三章的清单，加上技术侧的补充：
+The list from chapter 13 of the product documentation, plus the technical additions:
 
-| 不做 | 理由 |
+| Out of scope | Why |
 | --- | --- |
-| Agent Marketplace | 先验证单个 Agent 的价值 |
-| 复杂财务预算 | 单项目预算上限够用 |
-| 多层企业组织 | 单层组织 + 项目 |
-| 知识图谱 / Knowledge Center | 依赖足够的历史数据才有价值 |
-| 自定义 BI | 固定指标 + CSV 导出 |
-| 跨项目资源调度 | 单项目内调度已足够复杂 |
-| ERP / CRM 集成 | — |
-| 低代码 Workflow Designer | 六阶段固定 + 有限配置 |
-| 完全自治的生产发布 | 安全底线 |
-| Agent 修改 Policy | **安全底线，不只是范围问题**（[09](09-security.md) §7.2） |
-| **Policy 自由条件编辑器** | 模板 + 模拟比灵活性重要（[05](05-policy-engine.md) §10） |
-| **完整双向同步** | 只做导入 + 状态回写（页面 14 §12） |
-| **Execution Graph 编辑** | 只读；依赖调整走重新规划 |
-| **Timeline / Calendar / Risk / Delivery 视图** | 看板 + 列表 + Agent View + 决策视图够用 |
-| **Home 工作台独立页** | 项目列表兼任 |
-| 微服务拆分 | 模块化单体（[01](01-architecture.md) §2.4） |
-| Kafka / 事件流平台 | PostgreSQL + Redis 够用（[03](03-event-model.md) §6） |
-| 多区域部署 | — |
+| Agent Marketplace | Prove the value of a single agent first |
+| Complex financial budgeting | A per-project budget cap is enough |
+| Multi-level enterprise org structure | One org level + projects |
+| Knowledge graph / Knowledge Center | Only valuable once there is enough history |
+| Custom BI | Fixed metrics + CSV export |
+| Cross-project resource scheduling | Scheduling within one project is already hard enough |
+| ERP / CRM integration | — |
+| Low-code workflow designer | Six fixed stages + bounded configuration |
+| Fully autonomous production releases | Safety floor |
+| Agents editing Policy | **A safety floor, not merely a scope call** ([09](09-security.md) §7.2) |
+| **Free-form Policy condition editor** | Templates + simulation matter more than flexibility ([05](05-policy-engine.md) §10) |
+| **Full two-way sync** | Import + status write-back only (Page 14 §12) |
+| **Editing the Execution Graph** | Read-only; dependency changes go through replanning |
+| **Timeline / Calendar / Risk / Delivery views** | Board + list + Agent View + decision view cover it |
+| **A standalone Home workspace page** | The project list does that job |
+| Microservice decomposition | Modular monolith ([01](01-architecture.md) §2.4) |
+| Kafka / event-streaming platform | PostgreSQL + Redis is enough ([03](03-event-model.md) §6) |
+| Multi-region deployment | — |
 
 ---
 
-## 8. 跨阶段的持续工作
+## 8. Work that runs across all phases
 
-这几项不属于某个阶段，需要从阶段 0 开始持续投入：
+These don't belong to any one phase; they need sustained investment starting in Phase 0:
 
-### 8.1 Prompt 工程与基准测试
+### 8.1 Prompt engineering and benchmarking
 
-需求结构化、计划生成、澄清问题生成是产品质量的上限。建议：
+Requirement structuring, plan generation, and clarifying-question generation set the ceiling on product quality. Recommended practice:
 
-- 收集 10–20 个真实需求作为基准集
-- 每次 prompt 调整跑一遍，人工评分（结构化完整度、拆解合理性、澄清问题的针对性）
-- 记录成本与耗时基线
+- Collect 10–20 real requirements as a benchmark set
+- Run the whole set on every prompt change and score by hand (structuring completeness, breakdown soundness, how pointed the clarifying questions are)
+- Record a baseline for cost and latency
 
-**这项投入的回报最高**：计划生成质量差，后面所有功能都是在错误的基础上运转。
+**This is the highest-return investment on the list**: if plan generation is weak, every feature downstream is operating on a bad foundation.
 
-### 8.2 测试
+### 8.2 Testing
 
-| 类型 | 从哪个阶段开始 | 覆盖要求 |
+| Type | Starts in | Coverage requirement |
 | --- | --- | --- |
-| 状态机穷举测试 | 阶段 0 | 100% |
-| Policy 求值测试 | 阶段 2 | 100% |
-| 安全底线测试（九类高风险操作） | 阶段 2 | 100%，CI 阻断 |
-| Transition 事务性与并发 | 阶段 0 | 关键路径 |
-| SSE → 缓存同步 | 阶段 1 | 主要事件类型 |
-| E2E 三条核心路径 | 阶段 1 起 | — |
+| Exhaustive state-machine tests | Phase 0 | 100% |
+| Policy evaluation tests | Phase 2 | 100% |
+| Safety-floor tests (nine high-risk operations) | Phase 2 | 100%, blocking in CI |
+| Transition transactionality and concurrency | Phase 0 | Critical paths |
+| SSE → cache synchronization | Phase 1 | Major event types |
+| E2E on the three core paths | Phase 1 onward | — |
 
-### 8.3 可观测性
+### 8.3 Observability
 
-从阶段 0 就要有，否则阶段 2 之后排障会很痛苦：
+Needed from Phase 0, or debugging after Phase 2 becomes miserable:
 
-- 结构化日志（含 `correlationId`，与事件的 correlation 一致）
-- Trace（LLM 调用、Agent 派发、状态流转的耗时分解）
-- 关键指标：Policy 评估延迟、调度延迟、SSE 连接数、Run 成功率、LLM 成本
+- Structured logs (including `correlationId`, matching the correlation on events)
+- Traces (latency breakdown across LLM calls, agent dispatch, status transitions)
+- Key metrics: Policy evaluation latency, scheduling latency, SSE connection count, run success rate, LLM cost
 
 ---
 
-## 9. 里程碑与决策点
+## 9. Milestones and decision points
 
-| 时点 | 检查什么 | 不达标怎么办 |
+| Point in time | What to check | What to do if it misses |
 | --- | --- | --- |
-| 阶段 0 末 | Transition 引擎能否正确处理并发；事件快照字段是否齐全 | 快照字段不全必须补齐再往下走 |
-| 阶段 1 末 | **计划生成质量：任务拆解是否可直接执行** | 若拆解质量差，暂停后续开发，专注 prompt 与上下文工程 |
-| 阶段 1 末 | Agent 首次成功率 | < 50% 说明任务粒度或上下文有系统性问题 |
-| 阶段 2 末 | Policy 模拟是否可用；决策响应链路是否顺畅 | 模拟不可用则放宽类规则变更无法安全进行，需补齐 |
-| 阶段 3 中 | 内部试用的人工覆盖率（手动拖卡片比例） | > 30% 说明自动状态判断不准，需回头修 Flow |
-| 阶段 3 末 | 团队是否愿意继续用 | 不愿意就不要发布 |
+| End of Phase 0 | Whether the transition engine handles concurrency correctly; whether the event-snapshot fields are complete | Incomplete snapshot fields must be filled in before moving on |
+| End of Phase 1 | **Plan-generation quality: is the task breakdown directly executable?** | If the breakdown is weak, pause further development and focus on prompt and context engineering |
+| End of Phase 1 | Agent first-attempt success rate | Below 50% means task granularity or context has a systemic problem |
+| End of Phase 2 | Whether Policy simulation works; whether the decision-response path flows smoothly | Without working simulation, loosening a rule can't be done safely — fill the gap |
+| Mid Phase 3 | Manual-intervention rate in internal use (share of cards dragged by hand) | Above 30% means automatic status inference is off — go back and fix Flow |
+| End of Phase 3 | Whether the team wants to keep using it | If they don't, don't release |
 
-**阶段 1 末的检查点最关键**。计划生成质量决定产品天花板，如果那时候质量不行，继续往下做功能只是在放大问题。
+**The Phase 1 checkpoint matters most.** Plan-generation quality sets the product's ceiling; if it isn't there by then, building more features on top only amplifies the problem.
 
 ---
 
-## 10. 待确认问题
+## 10. Open questions
 
-1. **团队构成与语言选择**。本计划按 TypeScript 全栈估算。若团队是 Python 强项，改用 Python 后端，工期基本不变（[README](README.md) §2.3），但需要额外处理前端类型生成。
-2. **首个 Code Agent 用哪个？** 计划里假设 Claude Code（协议能力最完整，适配成本最低）。如果目标客户要求用其他 Agent，阶段 1 的适配器工作量会增加 1–2 周。
-3. **通知渠道选飞书还是 Slack？** 影响阶段 2 的集成工作。建议按首批目标客户定，只做一个。
-4. **是否需要私有化部署？** 影响架构（外部 LLM 调用、对象存储、密钥管理）。建议 MVP 只做 SaaS，私有化作为后续版本。
-5. **阶段 0 的 3 周是否会被压缩？** 这是最大的执行风险。建议把「事件快照字段齐全」作为不可妥协项写进阶段 0 的验收标准——它是阶段 2 的硬依赖。
-6. **基准需求集从哪来？** 需要产品同学提供 10–20 个真实的、有代表性的需求描述。这项工作应当在阶段 0 就启动，不能等到阶段 1 开发时才准备。
+1. **Team composition and language choice.** This plan is estimated for a TypeScript full stack. If the team's strength is Python, switching the backend to Python leaves the schedule roughly unchanged ([README](README.md) §2.3), but frontend type generation needs extra handling.
+2. **Which code agent goes first?** The plan assumes Claude Code (most complete protocol support, lowest adaptation cost). If the target customers require a different agent, Phase 1 adapter work grows by 1–2 weeks.
+3. **Feishu or Slack for notifications?** This drives the Phase 2 integration work. Decide by the first cohort of target customers, and build only one.
+4. **Do we need self-hosted deployment?** It affects architecture (outbound LLM calls, object storage, secret management). Recommendation: SaaS only for the MVP, self-hosting in a later release.
+5. **Will Phase 0's three weeks get compressed?** This is the biggest execution risk. Recommendation: write "event-snapshot fields are complete" into the Phase 0 acceptance criteria as non-negotiable — Phase 2 hard-depends on it.
+6. **Where does the benchmark requirement set come from?** We need product to supply 10–20 real, representative requirement descriptions. That work should start in Phase 0, not wait for Phase 1 development.

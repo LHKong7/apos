@@ -44,7 +44,7 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
 
     expect(run.status).toBe('failed');
     expect(run.errorClass).toBe('context_insufficient');
-    // Agent 自述比堆栈有用得多 —— 它直接告诉人类该补什么
+    // The Agent's own account beats a stack trace — it tells a human exactly what to supply
     expect(run.agentSelfReport).toContain('未找到 schema 文件');
 
     await waitFor(async () => {
@@ -68,7 +68,7 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
     }, { label: '未产生 agent_run.failed 事件' });
 
     const recovery = failedEvent.payload['recovery'] as { action: string; decisionType?: string };
-    // permission_denied 重试 100 次也不会成功，必须直接找人
+    // permission_denied will not succeed on the 100th retry either; go straight to a human
     expect(recovery.action).toBe('request_decision');
     expect(recovery.decisionType).toBe('permission_request');
     expect(failedEvent.payload['workItemId'] ?? item.id).toBeTruthy();
@@ -98,7 +98,7 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
       return w?.status === 'failed' ? w : null;
     });
 
-    // 人工补充上下文后重试
+    // Retry after a human supplies the missing context
     await db.update(workItems).set({ status: 'ready', stage: 'execution' }).where(eq(workItems.id, item.id));
     runtime.setScript('', {});
 
@@ -116,7 +116,7 @@ describe('★ 失败恢复 —— 阶段 1 最容易被低估的环节', () => {
     const [newRun] = await db.select().from(agentRuns).where(eq(agentRuns.id, retry.runId));
     const context = newRun!.inputContext as { kind: string; title: string; content?: string }[];
 
-    // 两类上下文都要在：人工补充的知识 + 上次失败的原因
+    // Both kinds of context must be present: the knowledge a human added, and why it failed last time
     expect(context.some((c) => c.title === 'orders 表结构说明')).toBe(true);
     const prev = context.find((c) => c.kind === 'previous_run');
     expect(prev).toBeTruthy();
@@ -152,7 +152,7 @@ describe('★ Agent 主动求助 —— 从执行流升级为人类待办', () =
     request: Parameters<typeof interventionEvent>[0],
   ) {
     const registry = new RuntimeRegistry();
-    // 保持 Run 处于活跃状态：终态之后到达的事件会被忽略
+    // Keep the Run active: events arriving after a terminal state are ignored
     const runtime = new MockRuntime({}, { steps: ['慢步骤'], stepDelayMs: 500 });
     const agent = await seedAgent(db, fx, { registry, runtime });
     const item = await createWorkItem(db, fx);
@@ -192,13 +192,15 @@ describe('★ Agent 主动求助 —— 从执行流升级为人类待办', () =
     expect(decision!.status).toBe('pending');
     expect(decision!.type).toBe('agent_intervention');
     expect(decision!.runId).toBe(runId);
-    // 不处理会怎样 —— 决策页靠它体现紧迫性
+    // What happens if nobody acts — the decision page uses this to convey urgency
     expect(decision!.consequence).toContain('无法继续');
 
     const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
     expect(after!.status).toBe('awaiting_decision');
     expect(after!.humanGate).toBe('waiting_for_decision');
-    // ★ 卡片留在执行列而不是跳到 Review —— 它不是「做完了在审核」
+    // ★ The card stays in the execution column instead of jumping to Review — this is not
+    //   "finished and under review"
+    //   卡片留在执行列而不是跳到 Review，它不是「做完了在审核」
     expect(after!.previousStatus).toBe('executing');
     expect(after!.stage).toBe('execution');
 
@@ -247,7 +249,8 @@ describe('★ Agent 主动求助 —— 从执行流升级为人类待办', () =
     expect(recommended!.name).toBe('自动续期');
     expect(recommended!.rationale).toContain('产品行为一致');
     expect(recommended!.attributes).toMatchObject({ optionId: 'renew' });
-    // 后果写进选项属性，决策页可以直接展示「选了会怎样」
+    // Consequences go into the option attributes so the decision page can show "what picking this
+    // means" directly
     expect(options.map((o) => (o.attributes as { consequence: string }).consequence)).toEqual([
       '用户不会被打断，但会话可能长期有效',
       '更安全，但用户可能丢失未保存内容',
@@ -284,7 +287,7 @@ describe('幂等与重复投递', () => {
 
     const before = await db.select().from(runEvents).where(eq(runEvents.runId, run.id));
 
-    // 重放整条事件流
+    // Replay the entire event stream
     const { ingestRunEvent } = await import('./ingest');
     for (const row of before) {
       await ingestRunEvent(db, {
@@ -299,7 +302,7 @@ describe('幂等与重复投递', () => {
   });
 
   it('★ 一个 Work Item 不能同时有两个活跃 Run', async () => {
-    // 用带延迟的运行时保证第二次派发时首个 Run 仍在执行
+    // A delayed runtime guarantees the first Run is still executing at the second dispatch
     const registry = new RuntimeRegistry();
     const runtime = new MockRuntime({}, { steps: ['慢步骤'], stepDelayMs: 300 });
     const agent = await seedAgent(db, fx, { registry, runtime });
@@ -325,7 +328,7 @@ describe('幂等与重复投递', () => {
     expect(second.reused).toBe(true);
     expect(second.runId).toBe(first.runId);
 
-    // 没有产生第二个 Run —— 否则两个 Agent 会同时改同一份代码
+    // No second Run was created — otherwise two Agents would be editing the same code at once
     expect(await db.select().from(agentRuns)).toHaveLength(1);
   });
 

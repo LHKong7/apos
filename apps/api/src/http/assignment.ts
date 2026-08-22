@@ -8,54 +8,58 @@ import { mergeTypeData } from '../modules/work-item/json-merge';
 import { fail, notFound } from './errors';
 
 /**
- * 执行者分配 —— 「谁来干」与「什么时候开干」分成两件事。
+ * Executor assignment — "who does it" and "when it starts" are two separate things.
  *
- * ★★ 为什么必须拆开。
+ * ★★ Why they had to be split.
  *
- *   此前只有 `POST /work-items/:id/assign`，它在保存执行者的同一次调用里
- *   就把 Run 派了出去。于是「我先把这张卡挂到某个 Agent 名下，回头再跑」
- *   这个再普通不过的动作做不到 —— 用户以为自己只是在下拉框里选了个人，
- *   实际上 Agent 立刻开始改文件、开始烧预算。一个「选择」不该有副作用，
- *   更不该有不可逆的副作用。
+ *   There used to be only `POST /work-items/:id/assign`, and it dispatched the Run in
+ *   the same call that saved the executor. That made the entirely ordinary act of
+ *   "park this card on an Agent now, run it later" impossible: the user believed they
+ *   had picked a name from a dropdown, while the Agent immediately started editing
+ *   files and burning budget. A *selection* should not have side effects, least of
+ *   all irreversible ones.
  *
- *   拆完之后：
- *     PATCH /work-items/:id/assignee   只写 executor，不动状态、不派发
- *     POST  /work-items/:id/start      真正开始执行（人工点，或调度器来点）
+ *   After the split:
+ *     PATCH /work-items/:id/assignee   writes the executor only; no status, no dispatch
+ *     POST  /work-items/:id/start      actually begins execution (a person, or the scheduler)
  *
- *   旧的 /assign 保留为「设置执行者并立刻开始」的组合语义（见 routes.ts），
- *   这样已经接了它的调用方不会断，但新界面一律走拆开的这两个。
+ *   The old /assign stays as the combined "set the executor and start right now"
+ *   (see routes.ts) so existing callers do not break, but new UI always uses the two
+ *   separate endpoints.
  */
 
 /**
- * 运行中的任务被改派时怎么处置那次执行。
+ * What to do with a running execution when the work item is reassigned.
  *
- * ★★ 没有这一档时，改派是**静默**的：Run 还在跑，卡片上却已经写着另一个人。
- *   那次执行继续改文件、继续花钱，产出最后挂在一张不属于它的卡上，
- *   而新执行者对此一无所知。三种处置都合理，但必须由人选一个 ——
- *   默认哪一个都会在某些场景下出错，所以不给默认值。
+ * ★★ Without this choice, a reassignment is **silent**: the Run keeps going while the
+ *   card already names somebody else. That execution goes on editing files and
+ *   spending money, its output ends up attached to a card that is no longer its own,
+ *   and the new executor knows nothing about any of it. All three dispositions are
+ *   reasonable, but a person has to pick one — every possible default is wrong in some
+ *   real scenario, so there is no default.
  */
 export const TakeoverMode = z.enum([
-  /** 终止当前 Run，立刻交给新执行者 */
+  /** Terminate the current Run and hand over to the new executor immediately */
   'terminate',
-  /** 让它跑完，改派只对**下一次**执行生效 */
+  /** Let it finish; the reassignment applies to the **next** execution only */
   'wait',
-  /** 转人工接管：终止 Run 并把卡片交给人 */
+  /** Hand over to a human: terminate the Run and give the card to a person */
   'handover',
 ]);
 export type TakeoverMode = z.infer<typeof TakeoverMode>;
 
 export const AssigneeInput = z
   .object({
-    /** 二选一；两个都不传表示清空执行者，回到「未指定」 */
+    /** One or the other; passing neither clears the executor back to "unassigned" */
     agentId: z.string().uuid().nullable().optional(),
     userId: z.string().uuid().nullable().optional(),
     /**
-     * 顺带改执行方式。不传就按传入的执行者推断：
-     * 指了 Agent 就是 agent，指了人就是 human，都清空就是 auto。
+     * Optionally change the execution mode too. Omitted, it is inferred from the
+     * executor: an Agent means agent, a person means human, clearing both means auto.
      */
     executionMode: ExecutionMode.optional(),
     /**
-     * 有 Run 在跑时必须给出处置方式。不给就拒 —— 见 TakeoverMode 的理由。
+     * Required while a Run is active. Omitting it is refused — see TakeoverMode for why.
      */
     takeover: TakeoverMode.optional(),
   })
@@ -66,12 +70,14 @@ export const AssigneeInput = z
 export type AssigneeInputType = z.infer<typeof AssigneeInput>;
 
 /**
- * 只保存执行者，不开始执行。
+ * Save the executor only; do not start executing.
  *
- * ★ 不走 transition()：这里没有状态流转 —— 一张 ready 的卡换个执行者之后
- *   还是 ready。硬套一次流转只会在事件流里制造出「进入 ready」这种
- *   根本没发生的事，而事件流是审计与 Analytics 的唯一数据源。
- *   执行者变更本身作为领域事件单独发（调用方负责，见 routes.ts）。
+ * ★ This does not go through transition(), because no status transition happens here —
+ *   a ready card is still ready after its executor changes. Forcing a transition would
+ *   manufacture an "entered ready" in the event stream that never actually occurred,
+ *   and the event stream is the only data source audit and Analytics have. The
+ *   executor change itself is emitted as its own domain event by the caller (see
+ *   routes.ts).
  */
 export async function setAssignee(
   db: Database,
@@ -83,11 +89,13 @@ export async function setAssignee(
   if (!item) throw notFound('work_item');
 
   /**
-   * ★★ 有 Run 在跑时不能静默改派。
+   * ★★ No silent reassignment while a Run is active.
    *
-   *   Run 还在执行，卡片却已经写着另一个人：那次执行继续改文件、继续花钱，
-   *   产出最后挂在一张不属于它的卡上，而新执行者对此一无所知。
-   *   拦下来要求调用方明确选一种处置 —— 三种都合理，但没有一个可以当默认。
+   *   The Run is still executing while the card already names somebody else: it keeps
+   *   editing files, keeps spending money, and its output lands on a card that is no
+   *   longer its own — with the new executor unaware of any of it. Stop here and make
+   *   the caller choose a disposition explicitly. All three are reasonable; none of
+   *   them can be the default.
    */
   const active = await db
     .select({ id: agentRuns.id, agentId: agentRuns.agentId })
@@ -115,17 +123,18 @@ export async function setAssignee(
   if (input.userId) await assertUserAssignable(db, item.projectId, input.userId);
 
   /**
-   * ★ handover 要求交给人。交给另一个 Agent 却说「转人工接管」，
-   *   两者会在事件流里对不上 —— 而事件流是审计的唯一依据。
+   * ★ handover requires a person to hand over to. Handing to another Agent while
+   *   calling it "human takeover" leaves the two disagreeing in the event stream — and
+   *   the event stream is the sole basis for audit.
    */
   if (input.takeover === 'handover' && !input.userId) {
     throw fail('VALIDATION_FAILED', 'work_item.takeover_needs_user', '转人工接管必须指定接手的人（userId）');
   }
 
   /**
-   * ★★ wait 语义下**不动**正在跑的 Run：改派只对下一次执行生效。
-   *   另外两种都要先把 Run 停掉，否则它会继续改文件、继续花钱，
-   *   而卡片已经不属于它了。
+   * ★★ Under `wait` the running Run is **left alone**: the reassignment applies to the
+   *   next execution. The other two must stop the Run first, or it keeps editing files
+   *   and spending money on a card that is no longer its own.
    */
   const terminated: string[] = [];
   if (active.length > 0 && (input.takeover === 'terminate' || input.takeover === 'handover')) {
@@ -147,10 +156,11 @@ export async function setAssignee(
       executorType,
       executorId,
       /**
-       * ★ executionMode 存在 typeData 里，与 requiredSkills / requiredTools 同处。
-       *   只合并这一个键，不把读到的整份 typeData 写回去 —— 从上面那次 SELECT
-       *   到这里之间，qualityGate 可能已经被 CI 或 Agent 收尾改过了，
-       *   整列覆盖会把它抹掉。见 work-item/json-merge.ts。
+       * ★ executionMode lives inside typeData, next to requiredSkills / requiredTools.
+       *   Merge that one key rather than writing the whole typeData we read back:
+       *   between the SELECT above and this point, qualityGate may have been updated by
+       *   CI or by an Agent finishing up, and a whole-column overwrite erases it. See
+       *   work-item/json-merge.ts.
        */
       typeData: mergeTypeData({ executionMode: mode }),
       updatedAt: new Date(),
@@ -163,19 +173,21 @@ export async function setAssignee(
     executorType,
     executorId,
     executionMode: mode,
-    /** ★ 明确回报终止了哪几个 Run —— 调用方要能把这件事显示给用户 */
+    /** ★ Report exactly which Runs were terminated — the caller has to be able to show this */
     terminatedRuns: terminated,
   };
 }
 
 /**
- * 改派时终止一次执行。
+ * Terminate one execution as part of a reassignment.
  *
- * ★ 先发控制指令再写库：库先写完而指令失败的话，Run 在库里是 terminated、
- *   在运行时里还在跑 —— 那种不一致没有任何地方能发现。
+ * ★ Send the control command before writing the database. Write first and let the
+ *   command fail, and the Run is terminated in the database while still running in the
+ *   runtime — an inconsistency nothing anywhere would ever detect.
  *
- * ★ 运行时不认识这个 Run（进程重启过、适配器没注册）不算失败：
- *   库里标成 terminated 之后，supervisor 那条心跳超时的路径本来就会兜底。
+ * ★ The runtime not recognizing the Run (the process restarted, the adapter is not
+ *   registered) is not a failure: once it is marked terminated in the database, the
+ *   supervisor's heartbeat-timeout path already covers the rest.
  */
 async function terminateRun(
   db: Database,
@@ -205,10 +217,11 @@ async function terminateRun(
 }
 
 /**
- * Agent 必须是**本项目成员**才能被指派。
+ * An Agent must be a **member of this project** to be assignable.
  *
- * ★★ 与调度器同一条判据（modules/agent/matching.ts）。两处各写一套的话，
- *   会出现「手动指派得上、调度器却说它不是候选」这种自相矛盾的状态。
+ * ★★ Same criterion the scheduler uses (modules/agent/matching.ts). Two independent
+ *   implementations produce the self-contradictory state where manual assignment
+ *   succeeds while the scheduler insists the Agent is not even a candidate.
  */
 async function assertAgentAssignable(db: Database, projectId: string, agentId: string) {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
@@ -267,14 +280,15 @@ async function assertUserAssignable(db: Database, projectId: string, userId: str
 }
 
 /**
- * 候选执行者清单 —— 能选谁、为什么不能选谁。
+ * Candidate executors — who can be picked, and why the others cannot.
  *
- * ★★ 不可选的也要返回，并带上原因。
+ * ★★ The ineligible ones are returned too, each with its reason.
  *
- *   只回可选项的话，用户看到的是一个空下拉框，然后无从下手：
- *   是没配 Agent？没加进项目？还是满载了？这四种原因的下一步动作
- *   完全不同。页面文档 04 §5.4 要求改派下拉展示匹配依据，
- *   这里把「不匹配的依据」一并给出来。
+ *   Return only the eligible ones and the user faces an empty dropdown with no way
+ *   forward: is no Agent configured? not added to the project? at capacity? Those
+ *   causes call for completely different next steps. Page doc 04 §5.4 requires the
+ *   reassignment dropdown to show the matching rationale; this returns the
+ *   *non*-matching rationale alongside it.
  */
 export async function listCandidates(
   db: Database,
@@ -319,12 +333,15 @@ export async function listCandidates(
         ...decorate(c.agentId),
       })),
       /**
-       * ★★ 码、层级、参数都要带出去，不能只给那句中文 `reason`。
+       * ★★ The code, scope, and params all travel — not just the Chinese `reason`
+       *   sentence.
        *
-       *   匹配器本来就算出了 `code` / `scope` / `params`（看板的「为什么阻塞」
-       *   就是照它们渲染的），这里却只把中文捞走了 —— 于是同一个原因，
-       *   看板上按语言显示，执行者下拉框里永远是中文。
-       *   `reason` 保留为兜底：界面认不出新码时还有一句能读的话。
+       *   The matcher already computes `code` / `scope` / `params` (the board's "why is
+       *   this blocked" renders from exactly those), but this endpoint used to pick up
+       *   only the Chinese string. The result: one and the same reason renders in the
+       *   viewer's language on the board and is permanently Chinese in the executor
+       *   dropdown. `reason` stays as the fallback, so an unrecognized new code still
+       *   has a readable sentence behind it.
        */
       ineligible: match.rejected.map((r) => ({
         agentId: r.agentId,

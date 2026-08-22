@@ -21,33 +21,40 @@ import { emitAndPublish } from '../modules/event/bus';
 import { fail, notFound } from './errors';
 
 /**
- * 角色管理（docs/tech/09-security.md §2.2）。
+ * Role management (docs/tech/09-security.md §2.2) / 角色管理。
  *
- * ★★ 超管在这里造出「研发」「运营」「测试」这些角色，每个角色可以由人担任、
- *   也可以由 Agent 担任。内置的六个是预置数据，不是全集。
+ * ★★ This is where an org admin creates roles like "Engineering", "Operations", or
+ *   "QA". Any role can be held by a person or by an Agent. The six built-in roles are
+ *   seeded data, not the complete set.
  *
- * ★ 定义角色就是定义权限本身，所以这一整个模块只对 `org.roles.manage`
- *   （组织管理员）开放，且每一次写操作都记审计。
+ *   内置的六个是预置数据，不是全集。
+ *
+ * ★ Defining a role *is* defining permissions, so this entire module is open only to
+ *   `org.roles.manage` (organization admins), and every write is audited.
  */
 
 /**
- * 把内置角色对齐到当前代码。
+ * Bring the built-in roles in line with the current code / 把内置角色对齐到当前代码。
  *
- * ★★ 内置角色的真相来源是**权限目录**，不是库里的行。
+ * ★★ The source of truth for a built-in role is the **permission catalog**, not the
+ *   row in the database.
  *
- *   目录里给 pm 加一条权限，如果库里那份拷贝不跟着变，就会出现
- *   「矩阵里写着 pm 能做，实际 pm 做不了」—— 没有任何报错，
- *   只有一个用户说「我这边点不动」。所以每次启动对齐一次，
- *   库里的行退化成一份缓存。
+ *   Add a permission to pm in the catalog and, if the copy in the database does not
+ *   follow, you get "the matrix says pm can do this and pm cannot" — with no error
+ *   anywhere, just one user reporting that the button does nothing. So the rows are
+ *   re-aligned on every startup and degrade into a cache.
  *
- * ★ 只覆盖 builtin=true 的行。管理员自定义的角色一个字都不碰，
- *   哪怕 key 撞车（撞不了，key 唯一，见下面 onConflict 的条件）。
+ * ★ Only rows with builtin=true are overwritten. Admin-defined roles are not touched
+ *   at all, even on a key collision (which cannot happen — keys are unique; see the
+ *   onConflict condition below).
  */
 export async function syncBuiltinRoles(
   /**
-   * ★ 接 `Database` 也接事务：建组织时这一步必须和「插组织」「设管理员」
-   *   在同一个事务里 —— 少了角色，这个组织里一个成员都加不进任何项目
-   *   （project_members.role 的外键指向 roles），而报错是一句外键冲突。
+   * ★ Accepts a `Database` or a transaction: when an organization is created, this
+   *   step has to run in the same transaction as inserting the org and setting its
+   *   admin. Without the roles, not a single member of that org can be added to any
+   *   project (project_members.role has a foreign key into roles), and the symptom is
+   *   a bare foreign-key violation.
    */
   db: Database | DbTransaction,
   orgId?: string,
@@ -80,8 +87,9 @@ export async function syncBuiltinRoles(
             updatedAt: new Date(),
           },
           /**
-           * ★ 只在 builtin 行上覆盖。一个组织如果在内置角色被引入之前
-           *   自己建过同名角色，那是他们的配置，不该被一次升级悄悄改掉。
+           * ★ Overwrite built-in rows only. If an organization created a role of the
+           *   same name before the built-ins existed, that is their configuration and
+           *   an upgrade has no business quietly rewriting it.
            */
           setWhere: eq(roles.builtin, true),
         });
@@ -91,7 +99,10 @@ export async function syncBuiltinRoles(
   return synced;
 }
 
-/** 组织的全部角色。前端建角色时要看有哪些权限可选，一并返回 */
+/**
+ * Every role in the organization. The assignable permission list rides along, because
+ * the client needs it while a role is being built.
+ */
 export async function listRoles(db: Database, orgId: string) {
   const rows = await db
     .select()
@@ -109,21 +120,22 @@ export async function listRoles(db: Database, orgId: string) {
       permissions: r.permissions as Permission[],
       appliesTo: r.appliesTo as ('human' | 'agent')[],
       builtin: r.builtin,
-      /** 有多少人 / 多少 Agent 正在担任 —— 删除前要知道会影响谁 */
+      /** How many people / Agents hold it — you need to know who is affected before deleting */
       memberCount: usage.get(r.key) ?? { human: 0, agent: 0 },
     })),
     /**
-     * 可选权限清单。
+     * The assignable permission list / 可选权限清单。
      *
-     * ★ 组织级权限不在里面（`assignablePermissions` 过滤掉了）：
-     *   允许下放的话，超管能造一个「能创建角色的角色」发出去，
-     *   拿到它的人再造一个更宽的 —— 一步走到组织管理员。
+     * ★ Organization-level permissions are excluded (`assignablePermissions` filters
+     *   them out). If they could be handed down, an admin could mint a "role that can
+     *   create roles" and give it away; whoever receives it mints a wider one — one
+     *   step from there to organization admin.
      */
     availablePermissions: assignablePermissions().map((p) => ({
       key: p,
       label: PERMISSION_SPECS[p].label,
       scope: PERMISSION_SPECS[p].scope,
-      /** 带这个标记的权限进不了 Agent 角色，界面要能直接说明白 */
+      /** Permissions carrying this flag cannot enter an Agent role; the UI has to say so plainly */
       humanOnly: Boolean(PERMISSION_SPECS[p].humanOnly),
       group: p.split('.')[0] ?? 'other',
     })),
@@ -206,9 +218,10 @@ export async function updateRole(
   const before = await load(db, ctx.orgId, key);
 
   /**
-   * ★ 内置角色改不了权限 —— 它们**就是**权限矩阵（§2.3）。
-   *   允许改的话，「tech_lead 能批准计划」这句话在每个组织里都可能不成立，
-   *   文档、审计、支持全部失去共同语言。要不一样就自定义一个新角色。
+   * ★ Built-in roles have immutable permissions — they **are** the permission matrix
+   *   (§2.3). Let them be edited and "a tech_lead can approve plans" stops being true
+   *   in some unknown subset of organizations, and docs, audit, and support all lose
+   *   their shared vocabulary. Anyone who needs something different creates a role.
    */
   if (before.builtin) {
     throw fail(
@@ -245,31 +258,31 @@ export async function updateRole(
 }
 
 /**
- * 「复制并改」—— 以某个角色为模板造一个新角色。
+ * Copy-and-customize: build a new role using an existing one as the template
+ * / 「复制并改」。
  *
- * ★★ 这是内置角色不可改（updateRole 里那条）的**另一半**。
+ * ★★ This is the **other half** of "built-in roles are not editable" (the check in
+ *   updateRole).
  *
- *   只说「内置角色改不了」，用户的下一步是从零勾一遍权限 —— 而从零勾出来的
- *   角色几乎一定和他想要的那个「tech_lead 再加一条」不一样，差在哪儿他自己
- *   也说不清。给一条复制路径，「和 tech_lead 一样但不能批准计划」
- *   就成了一次减法，而不是一次重新发明。
+ *   Say only "you cannot edit built-in roles" and the user's next move is ticking a
+ *   permission list from scratch — and a from-scratch role is almost certainly not
+ *   the "tech_lead plus one more thing" they had in mind, in ways they themselves
+ *   cannot articulate. Give them a copy path and "same as tech_lead but cannot
+ *   approve plans" becomes one subtraction instead of a reinvention.
  *
- * ★★ 复制的是**权限快照**，不是继承关系。
+ * ★★ What is copied is a **permission snapshot**, not an inheritance link.
  *
- *   `basedOn` 只是显示用的出处标签。做成动态继承的话，平台哪天调整内置角色，
- *   所有派生角色会跟着变 —— 而那正是「权限累积」（§7）的发生方式，
- *   与能力档案存展开结果是同一条理由。
- *
- * Copy-and-customize: the other half of "built-in roles are not editable".
- * Without it the user's next step is prospecting a permission list from
- * scratch. The copy is a snapshot, never dynamic inheritance — inheritance
- * would let a platform-side edit widen every derived role at once.
+ *   `basedOn` is a provenance label for display only. Make it dynamic inheritance and
+ *   the day the platform adjusts a built-in role, every derived role widens with it —
+ *   which is exactly how "permission creep" (§7) happens, the same reason capability
+ *   profiles are stored expanded.
  */
 export async function cloneRole(db: Database, ctx: RoleWriteContext, key: string, input: unknown) {
   const source = await load(db, ctx.orgId, key);
 
   const def = RoleDefinition.parse({
-    // ★ 权限与适用身份默认整份带过来；调用方给了就用它给的
+    // ★ Permissions and appliesTo are carried over wholesale by default; anything the
+    //   caller supplies wins
     permissions: source.permissions,
     appliesTo: source.appliesTo,
     description: source.description,
@@ -281,22 +294,24 @@ export async function cloneRole(db: Database, ctx: RoleWriteContext, key: string
 }
 
 /**
- * 保存前的影响预览。
+ * Impact preview, shown before saving / 保存前的影响预览。
  *
- * ★★ 与 Agent 权限那边同一条纪律：**预览与保存共用一份判定**。
- *   这里算的是「加了什么、减了什么、会影响几个人几个 Agent、
- *   是收紧还是放宽」，而 updateRole 拿同一批数字去要权限。
+ * ★★ Same discipline as the Agent permission side: **preview and save share one
+ *   evaluation**. This computes what was added, what was removed, how many people and
+ *   Agents are affected, and whether the change tightens or loosens — and updateRole
+ *   asks for its permission using those same numbers.
  *
- * ★ 「影响几个人」要在保存**之前**说。角色是组织级的，改一次可能同时改掉
- *   五个项目里十几个人的可做操作 —— 而那件事在保存之后没有任何界面会告诉他。
+ * ★ "How many people this affects" has to be said **before** the save. Roles are
+ *   organization-level, so one edit can change what a dozen people across five
+ *   projects are allowed to do — and after the save no screen anywhere tells them.
  */
 export async function previewRole(db: Database, orgId: string, key: string, input: unknown) {
   const before = await load(db, orgId, key);
   const def = RoleDefinition.parse({ ...(input as Record<string, unknown>), key });
   /**
-   * ★ 先校验再比对。跳过校验的话，一个敲错的权限名会一路走到
-   *   PERMISSION_SPECS 的索引上，预览面板显示 undefined ——
-   *   而用户会以为「这条权限存在，只是没有说明」。
+   * ★ Validate before diffing. Skip it and a mistyped permission name travels all the
+   *   way into the PERMISSION_SPECS lookup, the preview panel renders undefined, and
+   *   the user concludes "this permission exists, it just has no description".
    */
   assertValid(def);
   const next = def.permissions as Permission[];
@@ -310,10 +325,10 @@ export async function previewRole(db: Database, orgId: string, key: string, inpu
   const usage = (await roleUsage(db, orgId)).get(key) ?? { human: 0, agent: 0 };
 
   /**
-   * ★ 把 humanOnly 的不兼容单独摘出来。
-   *   给一个 Agent 也能担任的角色加一条 humanOnly 权限，保存时会被
-   *   validateRoleDefinition 拒掉 —— 但那条报错出现在点保存之后，
-   *   而用户此刻正盯着勾选框。
+   * ★ Pull the humanOnly incompatibilities out separately. Adding a humanOnly
+   *   permission to a role that Agents can also hold gets rejected on save by
+   *   validateRoleDefinition — but that error arrives after the save button, and the
+   *   user is looking at the checkboxes right now.
    */
   const humanOnlyConflicts = added.filter(
     (p) => PERMISSION_SPECS[p].humanOnly && def.appliesTo.includes('agent'),
@@ -329,7 +344,7 @@ export async function previewRole(db: Database, orgId: string, key: string, inpu
       key: p,
       label: PERMISSION_SPECS[p].label,
     })),
-    /** 内置角色只能被复制，不能被改 —— 预览要提前说，而不是等保存时报 403 */
+    /** Built-ins can be copied, not edited — say it in the preview instead of 403-ing on save */
     builtin: before.builtin,
     requiresReason: false,
   };
@@ -348,22 +363,23 @@ export async function deleteRole(db: Database, ctx: RoleWriteContext, key: strin
   }
 
   /**
-   * ★ 有人担任就不让删，并说清楚是几个人。
+   * ★ Refuse the delete while anyone holds the role, and say how many.
    *
-   *   外键其实已经会拦住（project_members_role_fk），但拦下来的是一条
-   *   数据库约束错误，用户看到的是「操作失败」。先查一遍，
-   *   才能说出「还有 3 个人 2 个 Agent 在担任这个角色」——
-   *   这句话直接告诉他下一步该做什么。
+   *   The foreign key would already stop it (project_members_role_fk), but what it
+   *   stops with is a database constraint error that reaches the user as "operation
+   *   failed". Counting first is what makes it possible to say "3 people and 2 Agents
+   *   still hold this role" — a sentence that tells them what to do next.
    */
   const usage = (await roleUsage(db, ctx.orgId)).get(key) ?? { human: 0, agent: 0 };
   if (usage.human + usage.agent > 0) {
     /**
-     * ★★ 三条码，不是一条码配一个拼出来的主语。
+     * ★★ Three reason codes, not one code with a stitched-together subject.
      *
-     *   原来是把「3 人」和「2 个 Agent」用「、」拼成 `who`，再塞进一句话。
-     *   英文侧要的是 "3 people and 2 Agents" —— 连接词不同、单复数不同、
-     *   而且零的那一边根本不该出现。拼出来的主语只在中文里成立。
-     *   所以「只有人」「只有 Agent」「两者都有」是三句独立的话。
+     *   This used to join "3 人" and "2 个 Agent" with "、" into a `who` string and
+     *   drop it into one sentence. English needs "3 people and 2 Agents" — different
+     *   conjunction, different pluralization, and the zero side should not appear at
+     *   all. A stitched subject only works in Chinese. So "humans only", "Agents
+     *   only", and "both" are three independent sentences.
      */
     const who = [
       usage.human > 0 ? `${usage.human} 人` : null,
@@ -395,12 +411,13 @@ export async function deleteRole(db: Database, ctx: RoleWriteContext, key: strin
 }
 
 /**
- * 改 appliesTo 时，已经在担任的人怎么办。
+ * What happens to current holders when appliesTo changes / 改 appliesTo 时已在担任的人怎么办。
  *
- * ★ 把「研发」从 [human, agent] 收窄成 [human]，而已经有 Agent 在担任它 ——
- *   那些 Agent 会立刻变成一个「不该存在」的状态：库里还挂着，
- *   判定上说不清算不算数。宁可现在拒绝并让管理员先处理，
- *   也不要留下一批状态不明的成员。
+ * ★ Narrow "Engineering" from [human, agent] to [human] while Agents already hold it
+ *   and those Agents land in a state that should not exist: still attached in the
+ *   database, but with no answer to whether their membership still counts. Better to
+ *   refuse now and make the admin deal with them than to leave a set of members whose
+ *   status nobody can determine.
  */
 async function assertAssigneesStillFit(
   db: Database,
@@ -431,9 +448,10 @@ function assertValid(def: RoleDefinition) {
   const errors = validateRoleDefinition(def);
   if (errors.length > 0) {
     /**
-     * ★ 校验明细留在 `details.errors` 里，界面按字段各自显示；
-     *   顶上的那句话只说「有几处不对」—— 用「；」把 N 条中文串成一行，
-     *   在英文界面上既不是英文，也不是能逐条对应到字段的东西。
+     * ★ The per-field validation detail stays in `details.errors` so the UI can show
+     *   each one against its field; the headline sentence only reports how many things
+     *   are wrong. Joining N Chinese messages with "；" into one line is neither
+     *   English on an English screen nor something that maps back to individual fields.
      */
     throw fail(
       'VALIDATION_FAILED',
@@ -484,9 +502,10 @@ async function audit(
 }
 
 /**
- * 角色 key → 权限集合，用于授权判定。
+ * Role key → permission set, used for authorization / 角色 key → 权限集合。
  *
- * ★ 一次请求只查一次，结果挂在 actor 上（见 rbac.ts 的 resolveActor）。
+ * ★ Queried once per request; the result hangs off the actor (see resolveActor in
+ *   rbac.ts).
  */
 export async function permissionsForRoles(
   db: Database,
@@ -504,10 +523,11 @@ export async function permissionsForRoles(
     rows.map((r) => [
       r.key,
       /**
-       * ★ 过滤掉不认识的权限名。角色是数据，可能是旧版本写进去的、
-       *   或者某条权限后来被删了 —— 原样带进判定的话，
-       *   `includes` 永远不会命中，等于静默失效，但更糟的是
-       *   它会出现在「这个角色有什么权限」的展示里，让人以为授权成功了。
+       * ★ Drop permission names the code does not recognize. Roles are data: a row may
+       *   have been written by an older version, or a permission may have been removed
+       *   since. Carried through as-is, `includes` would never match — silent failure
+       *   already — but worse, the unknown name would show up in "what can this role
+       *   do", leaving someone convinced the grant worked.
        */
       (r.permissions as string[]).filter((p): p is Permission => known.has(p)),
     ]),

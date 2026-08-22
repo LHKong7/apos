@@ -212,7 +212,7 @@ export interface AppDeps {
   registry: RuntimeRegistry;
   integrations: IntegrationRegistry;
   provider: PlanningProvider;
-  /** 工作区供给；不传则不为 Run 准备代码目录（仅测试用） */
+  /** Workspace provisioning; omit it and no code directory is prepared for a Run (tests only) */
   workspaces?: WorkspaceService;
 }
 
@@ -225,7 +225,7 @@ const LABELS: Record<string, string> = {
   add_constraint: '追加约束',
 };
 
-/** 能力不支持时的替代动作，直接告诉用户下一步能做什么 */
+/** Fallback action when the runtime lacks the capability — tells the user what to do instead */
 const FALLBACK: Record<string, string | null> = {
   pause: '该运行时只能终止。终止不可恢复，确认后请改用「终止」。',
   resume: '该运行时不支持恢复，请改用「重试」创建新 Run。',
@@ -234,6 +234,19 @@ const FALLBACK: Record<string, string | null> = {
 };
 
 /**
+ * Where identity comes from: `Authorization: Bearer <JWT>` (docs/tech/09-security.md §1.3).
+ *
+ * ★★ This used to read `X-User-Id` — a header that carries **no proof of anything**:
+ *   write someone else's uuid into it and you were them. The entire RBAC layer sat on
+ *   top of that header, so the entire RBAC layer was decoration. Identity must now be
+ *   proven by a server-signed token, and userId is read out of the signed claims —
+ *   the caller does not get a vote.
+ *
+ * ★ An invalid token and a missing token both answer 401, but with **different
+ *   messages**: "not signed in" and "your session expired" are two different situations
+ *   for a user. The first sends them to the login page; the second tells them they
+ *   really were signed in a moment ago and need not suspect their account.
+ *
  * 身份来源：`Authorization: Bearer <JWT>`（docs/tech/09-security.md §1.3）。
  *
  * ★★ 此前这里读的是 `X-User-Id` —— 一个**没有凭证**的头：任何人写上
@@ -268,6 +281,12 @@ function actorFrom(req: { headers: Record<string, unknown>; query?: unknown }) {
 }
 
 /**
+ * For endpoints where identity is optional (list filters, the board's "only what needs me").
+ *
+ * No token means null; a token that *is* present must be valid. "Present but invalid"
+ * can never be silently downgraded to "absent" — the user would be shown an empty
+ * "nothing waiting on me" page whose real cause is an expired token.
+ *
  * 身份可选的端点用这个（列表筛选、看板的「只看需我处理」）。
  *
  * 没带令牌就返回 null，带了就必须合法 —— 「带了但不合法」不能被当成
@@ -280,6 +299,13 @@ function optionalUserId(req: { headers: Record<string, unknown>; query?: unknown
 }
 
 /**
+ * Role key → built-in role; anything unrecognized becomes null.
+ *
+ * ★ The narrow integration-settings check (canIntegration) only speaks built-in roles.
+ *   A custom role degrades to "not built in" there, and that loosens nothing:
+ *   preHandler has already judged the caller by their permission set, so this is a
+ *   second gate that can only be stricter, never laxer.
+ *
  * 角色 key → 内置角色，认不出就是 null。
  *
  * ★ 集成设置那个窄接口（canIntegration）只按内置角色判。自定义角色
@@ -292,10 +318,29 @@ function asBuiltinRole(role: string | null): ProjectRole | null {
     : null;
 }
 
-/** RFC 4122 的 8-4-4-4-12。大小写都收，Postgres 的 uuid 输入也不区分 */
+/** RFC 4122's 8-4-4-4-12. Case-insensitive, exactly like Postgres's own uuid input */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * A caller can carry their own trace ID in via `X-Correlation-Id`, so that one
+ * cross-system operation lines up in the logs on both sides.
+ *
+ * ★★ Only uuid-shaped values are accepted — `events.correlation_id` is a uuid column.
+ *
+ *   This used to pass the header straight through. A client sending `trace-abc-123`
+ *   (W3C traceparent, a Jaeger span id… not one of them is a uuid) got all the way to
+ *   the INSERT before Postgres threw it back as 22P02, which the error layer then
+ *   rendered as a 400 reading "malformed path or query parameter".
+ *
+ *   ★ Misleading three ways over: the problem is in neither the path nor the query
+ *     (it is a header), the message never says the words "correlation id", and what the
+ *     caller experiences is "the register endpoint always 400s for me, and works fine
+ *     from a different client".
+ *
+ * ★ An unrecognized value is replaced with a fresh uuid rather than rejected: a
+ *   correlation id is a diagnostic aid, not a business contract. Blocking a real write
+ *   over a tracing header is a wildly lopsided trade.
+ *
  * 调用方可以用 `X-Correlation-Id` 把自己的追踪 ID 带进来，这样一次跨系统的
  * 操作在两边的日志里能对上。
  *
@@ -318,6 +363,14 @@ function corr(req: { headers: Record<string, unknown> }): string {
 }
 
 /**
+ * The caller's UI language — server-generated output has to be written in it.
+ *
+ * ★ An unrecognized value falls back to 'en' (the product default) rather than being
+ *   passed through as nothing. Passing nothing hands the choice of language back to
+ *   the model, and that is precisely the disease being treated: one project ending up
+ *   with an English PRD and a Chinese one side by side, with no setting anywhere in
+ *   the UI that governs which you get.
+ *
  * 调用方的界面语言 —— 服务端生成的产出要用它来写。
  *
  * ★ 认不出的取值回落到 'en'（产品默认语言），**不是**沉默地不传：
@@ -329,6 +382,17 @@ function localeOf(req: { headers: Record<string, unknown> }): 'en' | 'zh' {
 }
 
 /**
+ * Key-order-independent serialization for deep comparison — answering "did this field
+ * really change?".
+ *
+ * ★★ You cannot just `JSON.stringify` both sides and compare.
+ *
+ *   A submitted object keeps whatever key order the client code wrote, while jsonb read
+ *   back out of the database comes in Postgres's normalized order (by key length first,
+ *   then lexicographically). One round trip is enough to make an identical acceptance
+ *   criterion compare unequal, so every save looks like an edit — a person changes one
+ *   field and the whole panel gets stamped "👤 human".
+ *
  * 键序无关的深比较用序列化 —— 判断「这个字段真的变了吗」。
  *
  * ★★ 不能直接 `JSON.stringify` 两边比。
@@ -353,6 +417,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   const { db } = deps;
 
   /**
+   * ★★ Must be installed before any route is registered: it tallies routes one by one
+   *   through the onRoute hook, so installing it late silently skips everything already
+   *   registered — and a coverage checker with a hole in it looks exactly like "all
+   *   good". The actual assertion runs at the end of this function, once every route
+   *   is in place.
+   *
    * ★★ 必须在注册任何路由之前挂上：它靠 onRoute 钩子逐条清点，
    *   挂晚了就漏掉前面那些 —— 而「清点器自己漏了」的表现是「一切正常」。
    *   实际断言在函数末尾，那时路由才注册完。
@@ -381,13 +451,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         ),
       );
     }
-    // ★ 客户端错误不能被吞成 500 —— 那会让调用方以为是服务端故障
+    // ★ A client error must never be swallowed as a 500 — that tells the caller the
+    //   server is broken when the request was.
     if (fastifyErr.statusCode && fastifyErr.statusCode >= 400 && fastifyErr.statusCode < 500) {
       const code = fastifyErr.statusCode === 429 ? 'RATE_LIMITED' : 'VALIDATION_FAILED';
       return sendError(reply, fail(code, 'request.invalid', fastifyErr.message ?? '请求不合法'));
     }
-    // 同一条纪律的下半段：客户端输错的值要到 SQL 才被发现，
-    // 抛出来的是 PostgresError 而不是 fastify 的 4xx，得单独认一下
+    // The other half of the same rule: some bad client input is only caught down at the
+    // SQL layer, which throws a PostgresError rather than a fastify 4xx, so it has to be
+    // recognized separately.
     const inputErr = asClientInputError(error);
     if (inputErr) {
       app.log.warn({ err: error }, 'client input rejected by database');
@@ -397,8 +469,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return sendError(reply, fail('INTERNAL', 'internal', '服务器内部错误'));
   });
 
-  // 不少 POST 端点本就不需要 body（如 analyze / schedule），
-  // 客户端带着 content-type 但空 body 是常见写法，不该报错
+  // Plenty of POST endpoints need no body at all (analyze, schedule). Sending the
+  // content-type header with an empty body is a common client idiom and must not error.
   app.addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
@@ -414,8 +486,19 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   app.get('/health', async () => ({ ok: true }));
 
-  // ── 登录 ────────────────────────────────────────────────────────────
+  // ── Sign-in ─────────────────────────────────────────────────────────
   /**
+   * Trade an email and password for a JWT (docs/tech/09-security.md §1.3).
+   *
+   * ★★ The one write route that needs no identity, hence its place on the rbac exempt
+   *   list — "sign in before you may sign in" is not a coherent requirement. This route
+   *   *is* the source of identity.
+   *
+   * ★ Accounts have exactly three origins: the first one (the superuser) comes from
+   *   .env and is bootstrapped at startup (modules/auth/bootstrap.ts); accounts opened
+   *   by an organization admin (POST /api/v1/admin/users); and self-service signup
+   *   (the route just below).
+   *
    * 用邮箱与口令换一张 JWT（docs/tech/09-security.md §1.3）。
    *
    * ★★ 这是唯一一条不需要身份的写路由，所以它在 rbac 的豁免清单里 ——
@@ -430,6 +513,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * Self-service signup — every registration grows a **brand-new organization of its
+   * own**, with the registrant as its org_admin.
+   *
+   * ★★ This is not "put yourself into some existing organization".
+   *
+   *   The line in 09-security about deliberately having no self-service signup guards
+   *   against that second thing: the organization boundary *is* the tenant boundary, so
+   *   letting anyone walk into an existing organization means there is no boundary. What
+   *   happens here instead is an **empty new organization** each time; nobody lands
+   *   inside anybody else's boundary. Getting into someone else's organization still has
+   *   exactly one path: an admin of that organization adds you.
+   *
+   * ★ Unauthenticated, runs scrypt every time, and writes four tables — so it goes
+   *   through a throttle first (modules/auth/throttle.ts). That is a coarse in-process
+   *   gate and does not replace rate limiting at the edge.
+   *
+   * ★ The order of the two gates is deliberate: check the master switch first, record
+   *   the throttle second. Reversed, an instance with signup turned off would still burn
+   *   throttle budget on every attempt — and not one of those requests should have been
+   *   entertained at all.
+   *
    * 自助注册 —— 每次注册长出一个**自己的新组织**，注册者是它的 org_admin。
    *
    * ★★ 这不是「把自己放进某个已有组织」。
@@ -453,6 +557,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * The small amount of server configuration the sign-in page needs to know.
+   *
+   * ★★ Whether signup is open is a **server-side** fact, so the frontend has to ask;
+   *   it cannot be a build-time constant. One frontend bundle is served by many
+   *   instances (web-app.ts mounts it inside the API process), so baking the flag in
+   *   would mean shipping two separate bundles for a deployment with signup on and one
+   *   with signup off.
+   *
+   * ★ No identity required — the whole point is that it is read by people who have not
+   *   signed in yet. It returns one boolean and nothing that could be used for recon.
+   *
    * 登录页要知道的那点服务端配置。
    *
    * ★★ 注册开不开是**服务端**的事，前端必须来问，不能靠构建期变量。
@@ -464,7 +579,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    */
   app.get('/api/v1/auth/config', async () => ({ allowSignup: signupEnabled() }));
 
-  /** 当前登录者。前端拿它确认令牌还有效，以及显示"我是谁" */
+  /** Who is signed in. The frontend uses it to confirm the token is still good and to show "who am I" */
   app.get('/api/v1/auth/me', async (req) => {
     const { userId } = actorFrom(req);
     const [row] = await db
@@ -478,6 +593,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .from(users)
       .where(eq(users.id, userId));
     /**
+     * ★ The token verified but the person is gone (account deleted) — that is a 401,
+     *   not a 404. What the caller must conclude is "this token no longer stands for
+     *   anyone, go sign in again", whereas a 404 gets treated by the frontend as "some
+     *   resource is missing" and it carries on.
+     *
      * ★ 令牌验过了但人没了（被删号）——  这是 401 不是 404：
      *   对调用方而言结论是「这张令牌不再代表任何人，去重新登录」，
      *   而 404 会被前端当成"某个资源不存在"接着往下走。
@@ -485,6 +605,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     if (!row) throw fail('UNAUTHENTICATED', 'auth.account_gone', '账号不存在或已被删除，请重新登录');
 
     /**
+     * ★ Use the lenient resolver: this endpoint has to be able to answer "who am I"
+     *   even when the organization named in the request no longer exists. Reasoning is
+     *   at {@link resolveCurrentOrgLenient} in rbac.ts — the strict check would lock the
+     *   frontend out entirely.
+     *
      * ★ 用 lenient 版：这个端点必须能回答「我是谁」，
      *   哪怕请求里带的组织已经不存在了。理由见 rbac.ts 的
      *   {@link resolveCurrentOrgLenient} —— 严格判定会把前端锁死。
@@ -493,7 +618,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return { user: row, currentOrgId: current.orgId, orgRole: current.orgRole };
   });
 
-  /** 改自己的口令。超管的初始口令来自 .env，登录后应当第一时间改掉 */
+  /** Change your own password. The superuser's initial password comes from .env and should be changed on first sign-in */
   app.post('/api/v1/auth/password', async (req) => {
     const { userId } = actorFrom(req);
     const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
@@ -504,8 +629,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     );
   });
 
-  // ── 身份 ────────────────────────────────────────────────────────────
+  // ── Identity ────────────────────────────────────────────────────────
   /**
+   * The people in this organization. Assigning an owner and filtering by "whose task"
+   * both need it.
+   *
+   * ★★ Identity is mandatory, and only people in the **same organization** come back.
+   *   Without identity this used to return every user in the database — a bootstrap hole
+   *   left over from the X-User-Id era, when the identity switcher needed a roster
+   *   before anyone could be picked. Identity now comes from signing in, so the hole is
+   *   no longer needed, and without a purpose it reverts to what it always was: an
+   *   unauthenticated global address-book export.
+   *
    * 本组织的人。指派负责人、筛选「谁的任务」都要它。
    *
    * ★★ 必须带身份，而且只返回**同组织**的人。
@@ -519,6 +654,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { orgId } = await resolveCurrentOrg(db, userId, orgHeaderOf(req));
 
     /**
+     * ★ An org role belongs to a **membership**, so this roster has to be joined through
+     *   the current organization. Reading it off `users` the old way would show someone's
+     *   admin role from a *different* organization as their role here — and a reader
+     *   would reasonably conclude they can approve things.
+     *
      * ★ 组织角色跟着**归属**走，所以这份名单必须按当前组织 join 出来。
      *   照旧从 users 上读的话，同一个人在别的组织的管理员身份
      *   会被显示成他在这里的身份 —— 而那会让人以为他能批准东西。
@@ -540,6 +680,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * ★★ The authorization gate — layers ① and ② of docs/tech/09-security.md §2.1.
+   *
+   *   ② Project membership: the spec calls for four layers where any one of them can
+   *   deny, but layer ② used to exist only on the integration endpoints
+   *   (assertIntegration); every other piece of project data checked no membership at
+   *   all. Measured consequence: a user in organization A could read *and* write
+   *   organization B's board, execution graph, analytics, policies, and requirements —
+   *   cross-tenant data was wide open at the application layer.
+   *
+   *   ① Org/project role: membership only answers "is this one of us"; it cannot answer
+   *   "approving a plan takes tech_lead" or "loosening a policy takes a simulation".
+   *   The permission matrix (§2.3) is registered route by route in rbac.ts, and a write
+   *   route that forgets to register keeps the server from starting.
+   *
+   * ★ It is a preHandler rather than one line inside forty handlers because "somebody
+   *   forgot one" is the entire cause of this class of hole. The hook intercepts by URL
+   *   shape, so a /projects/:id/* route added later is closed by default and its author
+   *   does not have to remember anything.
+   *
    * ★★ 授权闸门 —— docs/tech/09-security.md §2.1 的 ①② 两层。
    *
    *   ② 项目成员：规格写的是四层判定「任一层拒绝即拒绝」，但②层此前只在
@@ -557,6 +716,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *   不需要作者记得加检查。
    */
   /**
+   * The project ids this caller can see.
+   *
+   * ★ List-shaped endpoints (the decision inbox, the agent roster) carry no project id
+   *   in their URL, so the URL-shaped gate cannot reach them — in practice a user who
+   *   belonged to exactly one project saw decisions from three projects across three
+   *   organizations in their inbox. Endpoints like these have to scope themselves.
+   *
    * 调用者能看见的项目 id。
    *
    * ★ 列表类端点（决策收件箱、Agent 花名册）的 URL 里没有项目 id，
@@ -572,6 +738,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   }
 
   /**
+   * Resource id → the project it belongs to.
+   *
+   * ★ A path like /work-items/:id shows no project, yet what it returns is project data
+   *   all the same and must pass layer ②. Every new resource route has to be registered
+   *   here — an unregistered route is an unguarded one.
+   *
    * 资源 id → 它属于哪个项目。
    *
    * ★ /work-items/:id 这类路径上看不出项目，但它们返回的同样是项目数据，
@@ -600,6 +772,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       case 'sync-conflicts':
         return one(await db.select({ projectId: syncConflicts.projectId }).from(syncConflicts).where(eq(syncConflicts.id, id)));
       /**
+       * ★★ Artifacts must be registered here, or the file gateway is **unguarded**.
+       *
+       *   `/api/v1/artifacts/:id/files` does not match PROJECT_SCOPED_URL, so this table
+       *   is the only way the gate learns which project it belongs to. Forgetting the
+       *   entry shows up as "any signed-in user can read any project's artifact files" —
+       *   the single property this gateway must never have.
+       *
        * ★★ 产物必须登记在这里，否则文件网关就是**不设防**的。
        *
        *   `/api/v1/artifacts/:id/files` 不落在 PROJECT_SCOPED_URL 上，
@@ -609,7 +788,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
        */
       case 'artifacts':
         return one(await db.select({ projectId: artifacts.projectId }).from(artifacts).where(eq(artifacts.id, id)));
-      /** ★ 同 artifacts：URL 上看不出项目，不登记就等于不设防 */
+      /** ★ Same as artifacts: the URL shows no project, so skipping the entry leaves it unguarded */
       case 'assumptions': {
         const rows = await db
           .select({ projectId: requirements.projectId })
@@ -641,14 +820,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     await rbac.guard(req);
   });
 
-  /** handler 里还要用的成员关系判定（角色本身是 preHandler 已经查过的缓存） */
+  /** Membership check for handlers that still need it (the role itself is cached by preHandler) */
   async function assertProjectMember(projectId: string, userId: string, req: FastifyRequest) {
     const actor = await rbac.assertProjectAccess(req, projectId, userId);
     return actor.projectRole;
   }
 
-  // ── 项目 ────────────────────────────────────────────────────────────
+  // ── Projects ────────────────────────────────────────────────────────
   /**
+   * ★ Returns only the projects the caller is a member of. This used to be an
+   *   unconditional `select * from projects`, so anyone — including requests with no
+   *   identity at all — could pull the project list of every organization.
+   *
    * ★ 只返回调用者是成员的项目。
    *   此前是无条件 `select * from projects`，任何人（含不带身份的请求）
    *   都能拿到全部组织的项目清单。
@@ -656,6 +839,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/projects', async (req) => {
     const { orgId, userId } = await callerOrg(req);
     /**
+     * ★★ Narrow by the **current organization** as well, not by membership alone.
+     *
+     *   Once an account can belong to several organizations, "projects I am a member of"
+     *   spans organizations — you switch to organization A and see organization B's
+     *   projects, with no error on either side. The organization is the tenant boundary,
+     *   so the list has to stop at it.
+     *
      * ★★ 必须同时按**当前组织**收窄，不能只按成员关系。
      *
      *   一个账号能属于多个组织之后，「我是成员的项目」会横跨组织 ——
@@ -703,8 +893,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     };
   });
 
-  // ── 组织（顶层容器；Plane 里叫 Workspace）────────────────────────────
+  // ── Organizations (the top-level container; Plane calls it a Workspace) ──
   /**
+   * ★★ Before this, an organization was just an `org_id` column: the table existed, the
+   *   foreign keys existed, the tenant checks existed — but **no endpoint could create,
+   *   rename, or switch one**, and the only source was the seed script. Multi-tenancy
+   *   held at the database layer while the product was a single-tenant instance.
+   *
    * ★★ 在此之前组织只是一列 `org_id`：表在、外键在、多租户判定也在，
    *   但**没有任何接口能创建、改名或切换它**，唯一的来源是 seed 脚本。
    *   于是「多租户」只在数据库层面成立，产品上是个单租户实例。
@@ -713,6 +908,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     const { userId } = actorFrom(req);
     const list = await listMyOrganizations(db, userId);
     /**
+     * ★ Ship "which one is current" alongside the list. The frontend must not guess the
+     *   default — guessing wrong looks like the switcher showing A while the data is B,
+     *   with no error on either side.
+     *
+     * ★★ This one **stays strict**: an org id that is passed but does not belong to the
+     *   caller gets a flat 404, never a confirmation that the organization exists (see
+     *   the matching case in organizations.test.ts). Self-healing from a stale orgId
+     *   happens in `/auth/me` — that endpoint needs no org scope at all, so letting it
+     *   alone be lenient is enough; there is no reason to open this one up too.
+     *
      * ★ 把「当前是哪个」一并回出去。前端不该自己猜缺省值 ——
      *   猜错的表现是切换器显示 A、实际数据是 B，而两边都没有报错。
      *
@@ -816,6 +1021,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * ★★ The organization in the URL must be the **current** organization.
+   *
+   *   The permission check (rbac's resolveActor) reads the orgRole of the current
+   *   organization, so if the handler then goes and modifies a *different* organization
+   *   named in the URL, that check bought nothing: sitting in organization A where you
+   *   are an admin, you send a request pointing at organization B and edit B with A's
+   *   admin rights. This is the textbook shape of privilege escalation.
+   *
    * ★★ URL 里的组织必须就是**当前**组织。
    *
    *   权限判定（rbac 的 resolveActor）拿的是当前组织的 orgRole，
@@ -844,14 +1057,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .default('agent_led_approval'),
     tokenBudget: z.number().int().positive().optional(),
     /**
-     * 工作项编号的前缀（`ORD` → `ORD-19`）。不传则从项目名推。
-     * 组织内唯一 —— 撞车时自动加序号。
+     * Prefix for work item numbers (`ORD` → `ORD-19`). Derived from the project name
+     * when omitted. Unique within the organization — collisions get a suffix.
      */
     identifier: z
       .string()
       .regex(IDENTIFIER_RE, '前缀只能用大写字母和数字，2–10 位，且以字母开头')
       .optional(),
-    /** ★ 不传就是当前组织。传了必须和当前组织一致（见下面的判定）*/
+    /** ★ Omitted means the current organization. If given, it must match it (checked below) */
     orgId: z.string().uuid().optional(),
   });
 
@@ -870,6 +1083,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const actor = await rbac.resolveActor(req, userId, null);
 
       /**
+       * ★ The orgId comes from the caller's current organization, never from the request
+       *   body. Trusting body.orgId would let anyone drop a project into somebody else's
+       *   organization, where it then lives in their project list and their cost totals.
+       *
+       * ★ Omitting it uses the current organization. Demanding the frontend know its own
+       *   orgId before it can create a project turns an implementation detail into its
+       *   burden — and the server already has the value.
+       *
        * ★ orgId 以调用者的当前组织为准，不听请求体的。
        *   照抄 body.orgId 的话，任何人都能往别的组织里塞一个项目 ——
        *   而那个项目从此挂在对方的项目列表、对方的成本统计里。
@@ -885,6 +1106,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       const { orgId: _ignored, identifier, ...fields } = body;
       /**
+       * ★ The prefix cannot be left to a default. If every project shares `TASK`, then
+       *   `TASK-19` points at several rows across the organization — and the entire
+       *   reason these numbers exist is that saying one out loud identifies exactly one
+       *   item.
+       *
        * ★ 前缀不能留给默认值。所有项目共用 `TASK` 的话，
        *   `TASK-19` 在组织里指向好几条 —— 而编号存在的全部理由
        *   就是"说出来能指到唯一一条"。
@@ -896,6 +1122,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .returning();
 
       /**
+       * ★★ The creator has to be written in as a member, or they cannot get into the
+       *   project they just created: the membership gate (§2.1.1) does not read the
+       *   techLeadId field, only project_members. Holes of this shape — the feature looks
+       *   finished but the very first step is impassable — only surface once permissions
+       *   are actually enforced.
+       *
        * ★★ 创建者必须落成成员，否则他建完就进不去自己的项目 ——
        *   成员关系闸门（§2.1.1）不认 techLeadId 这个字段，只认 project_members。
        *   这类「功能看起来完成了，实际第一步就走不通」的缺口，
@@ -924,8 +1156,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 成员与角色（09-security §2.2）────────────────────────────────────
+  // ── Members and roles (09-security §2.2) ─────────────────────────────
   /**
+   * ★ The permission verdict itself has to be visible.
+   *
+   *   The frontend should not have to guess which buttons work: one call returns every
+   *   permission the current identity holds in this project plus the reason behind each
+   *   denial, and the UI grays buttons out and says who to go ask. The server still
+   *   judges independently — sharing one rule set is not the same as trusting the client.
+   *
    * ★ 权限判定本身也要能被看见。
    *
    *   前端不该靠猜哪个按钮能点：一次拿全当前身份在这个项目里的
@@ -965,6 +1204,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * Assign a role.
+   *
+   * ★ The `:memberId` in the path is either a user id or an agent id, told apart by
+   *   `actorType`. Whether a seat is filled by a person or by an agent is, in this
+   *   product, two answers to one question — it should not be two APIs.
+   *
    * 指派角色。
    *
    * ★ 路径上的 `:memberId` 既可以是用户 id，也可以是 Agent id ——
@@ -973,6 +1218,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    */
   const MemberRoleBody = z.object({
     /**
+     * ★ Optional — omitting it means "join on the default profile". Only agents may call
+     *   it that way; a human is rejected inside setMemberRole (see the note there).
+     *
      * ★ 可选 —— 省略表示「按默认档加入」。只有 Agent 能这么调，
      *   人由 setMemberRole 挡回去（见那里的注释）。
      */
@@ -1031,13 +1279,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  /** 组织通讯录与身份管理（§2.2「org_admin：身份管理」）*/
+  /** Organization address book and identity management (§2.2, "org_admin: identity management") */
   app.get('/api/v1/admin/users', async (req) => {
     const { orgId } = await callerOrg(req);
     return listOrgUsers(db, orgId);
   });
 
   /**
+   * Open an account — an organization admin creates one for someone else and puts them
+   * straight into this organization.
+   *
+   * ★★ The **only** way an account enters the system, apart from the superuser, who
+   *   comes from .env. No self-service signup into an existing organization: in this
+   *   product the organization boundary is the tenant boundary, so self-service signup
+   *   would let anyone place themselves inside it.
+   *
+   * ★ The permission is `organization.members.manage`, not `org.members.manage`. The
+   *   catalog keeps those two apart: the former is "bring an account from outside the
+   *   boundary in", the latter is "change a role inside the organization". Creating an
+   *   account is plainly the former — and a step earlier still.
+   *
    * 开账号 —— 组织管理员给别人建号并直接加进本组织。
    *
    * ★★ 这是账号进入系统的**唯一**入口（超管那一个除外，他来自 .env）。
@@ -1054,6 +1315,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Creating an account is "bring someone from outside the boundary in", a
+           *   different tier from changing an org role (the next route): that one only
+           *   moves permissions around inside the organization, while getting this one
+           *   wrong puts data across a tenant line.
+           *
            * ★ 建账号是「把边界外的人放进来」，与改组织角色（下一条）是两档：
            *   后者只在组织内部移动权限，前者错了是数据出了租户。
            */
@@ -1093,8 +1359,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 角色定义（§2.2）─────────────────────────────────────────────────
+  // ── Role definitions (§2.2) ─────────────────────────────────────────
   /**
+   * ★★ This is where an admin creates roles such as "engineering", "operations", or
+   *   "QA".
+   *
+   *   The six built-in roles are seeded data, not the complete set: they cover "how a
+   *   project runs" and cannot cover "how this particular organization divides work".
+   *
    * ★★ 超管在这里造出「研发」「运营」「测试」这些角色。
    *
    *   内置的六个是预置数据，不是全集 —— 它们覆盖「项目怎么运转」，
@@ -1154,6 +1426,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * ★★ "Clone and edit" is the other half of "built-in roles are immutable". Say only
+   *   "you cannot change it" and the user's next move is to tick permissions from
+   *   scratch — and what they tick will almost certainly not equal what they wanted,
+   *   which was "exactly tech_lead, minus one line".
+   *
    * ★★ 「复制并改」是内置角色不可改的另一半。只说「改不了」的话，
    *   用户的下一步是从零勾一遍权限，而勾出来的东西和他想要的
    *   「跟 tech_lead 一样但少一条」几乎一定不同。
@@ -1163,7 +1440,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     {
       config: {
         auth: {
-          /** ★ 复制角色就是新建一个角色 —— 与 POST /admin/roles 同一条权限 */
+          /** ★ Cloning a role is creating a role — same permission as POST /admin/roles */
           permission: 'org.roles.manage',
         },
       },
@@ -1182,6 +1459,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * ★ Impact preview before saving. Roles are **organization-level**: one edit can change
+   *   what a dozen people across five projects are able to do, and after the save no
+   *   screen anywhere tells the editor that happened.
+   *
    * ★ 保存前的影响预览。角色是**组织级**的：改一次可能同时改掉五个项目里
    *   十几个人的可做操作，而那件事在保存之后没有任何界面会告诉他。
    */
@@ -1190,7 +1471,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     {
       config: {
         auth: {
-          /** 预览是只读的：它算「如果保存会影响谁」，不写任何东西 */
+          /** The preview is read-only: it computes who a save would affect and writes nothing */
           permission: 'project.view',
         },
       },
@@ -1202,7 +1483,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 需求 ────────────────────────────────────────────────────────────
+  // ── Requirements ────────────────────────────────────────────────────
   const CreateRequirement = z.object({
     rawInput: z.string().min(1),
     inputMethod: z.string().default('manual'),
@@ -1231,6 +1512,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .returning();
 
       /**
+       * ★★ requirement.created was **never actually emitted**: the event catalog declared
+       *   it, and the create route just inserted the row and returned.
+       *
+       *   The effect was that a requirement's life story started in the middle — the
+       *   first audit entry was `analyzed` or `approved`, and "who raised this, and
+       *   when" was unanswerable. A requirement is the head of the whole chain, and a
+       *   timeline missing its head reads as if an already-approved requirement
+       *   materialized out of nowhere.
+       *
        * ★★ requirement.created 此前**从没被发出来过** —— 事件类型目录里
        *   声明了它，而创建路由只是 insert 完就返回。
        *
@@ -1259,6 +1549,23 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * Manual editing of the structured fields (page doc 03 §5.4).
+   *
+   * ★★ This path runs **in parallel with** AI analysis; it is not a patch on top of it.
+   *
+   *   The structured fields can be filled in entirely by hand with no analysis run
+   *   first. A requirement that was already written clearly, a planning agent that was
+   *   never configured, an analysis that timed out (the "fall back to filling it in by
+   *   hand" escape hatch that product doc 03 §7 explicitly requires) are all legitimate
+   *   ways to arrive here. That is why **every** structured field is exposed, not just
+   *   the handful of AI outputs that look patchable: open half of them and the manual
+   *   path can never produce a complete requirement.
+   *
+   * ★ The original text is never overwritten — `rawInput` is not an editable field. A
+   *   user has to be able to check the structured result against what they wrote to
+   *   confirm the AI did not distort their meaning, and that check is worthless the
+   *   moment the structured result can write back over the original.
+   *
    * 人工编辑结构化字段（页面文档 03 §5.4）。
    *
    * ★★ 这条路与 AI 分析是**并行**的，不是它的补丁。
@@ -1289,12 +1596,28 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     successMetrics: z.array(z.string()).optional(),
     constraints: z.array(z.string()).optional(),
     /**
+     * ★ Risks on a requirement are plain strings, not objects. The planner runs
+     *   `risks.some(r => r.includes(...))`, so slipping an object in here does not fail
+     *   until plan generation, and then only as `r.includes is not a function`.
+     *
      * ★ 需求上的风险是一串字符串，不是对象。
      *   规划器会 `risks.some(r => r.includes('数据库'))` —— 放个对象进来，
      *   报错要等到生成计划那一步，而且是一句 `r.includes is not a function`。
      */
     risks: z.array(z.string()).optional(),
     /**
+     * ★★ Hand-written acceptance criteria have to be normalized into **exactly** the
+     *   shape the AI produces.
+     *
+     *   Downstream they drive verification dispatch in the Review stage (routed by
+     *   `verification`) and the acceptance checklist on work items. A missing `id` or
+     *   `status` shows up as that criterion never being verified by anyone, while on
+     *   screen it looks identical to every other criterion.
+     *
+     * ★ `verification` defaults to human: for a line of free text a person typed, the
+     *   platform has no basis for claiming it can be checked automatically. Defaulting
+     *   to auto makes a promise on the user's behalf that they never made.
+     *
      * ★★ 人工写的验收标准必须归一成和 AI 产出**完全一样**的形状。
      *
      *   它下游是 Review 阶段的核验调度（按 verification 分派）与工作项上的
@@ -1308,8 +1631,9 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .array(
         z.object({
           id: z.string().min(1).optional(),
-          // ★ 先 trim 再判空：`"   "` 是 3 个字符，min(1) 拦不住它，
-          //   而一条空白的验收标准在 Review 阶段是一行永远无法判定的活
+          // ★ Trim before the emptiness check: `"   "` is three characters, so min(1)
+          //   lets it through, and a blank acceptance criterion becomes a line of work
+          //   in the Review stage that can never be decided either way
           text: z.string().trim().min(1, '验收标准不能是空的'),
           verification: z.enum(['auto', 'agent', 'human']).default('human'),
           status: z.enum(['pending', 'passed', 'failed']).default('pending'),
@@ -1347,6 +1671,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const submitted = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
 
       /**
+       * Give newly written acceptance criteria an id — work items and verification
+       * records both point back here by id.
+       *
+       * ★ When no id arrives, recover the old one by matching the text. Minting a fresh
+       *   id every time would mean that saving the form unchanged hands every criterion
+       *   a new identity, and every work item and verification record pointing at them
+       *   becomes a dangling reference on the spot — with nothing visibly wrong on the
+       *   page.
+       *
        * 新写的验收标准补上 id —— 工作项与核验记录都按 id 指回这一条。
        *
        * ★ 没带 id 进来时先按原文找回旧的那一条。每次都新发一个 id 的话，
@@ -1364,6 +1697,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       }
 
       /**
+       * ★★ Only fields that **actually changed** count, not fields that were submitted.
+       *
+       *   The editor submits the whole structured requirement at once (it is one form,
+       *   the fields are interdependent, and splitting it into many PATCHes would leave
+       *   half a requirement behind whenever one failed midway). Recording provenance by
+       *   what was submitted looks like this: the AI drafts, a person edits only the
+       *   business goal, and the entire panel flips to "👤 human" — when the sole reason
+       *   those markers exist is to let someone tell, before approving, which sentences
+       *   they wrote themselves. Once one edit marks everything, the markers are worse
+       *   than absent: they lie.
+       *
        * ★★ 只认**真的变了**的字段，不认「提交了」的字段。
        *
        *   编辑器一次提交整份结构化需求（一份表单，字段之间互相关联，
@@ -1387,7 +1731,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .where(eq(requirements.id, id))
         .returning();
 
-      // 人类改过的字段要能与 AI 原值区分（§5.4「已由人类修改」）
+      // Fields a human edited must stay distinguishable from the AI's original values
+      // (§5.4, "edited by a human")
       const provenance = { ...(before.fieldProvenance as Record<string, unknown>) };
       for (const field of changed) {
         provenance[field] = { source: 'human', editedBy: userId, editedAt: new Date().toISOString() };
@@ -1406,6 +1751,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       });
 
       /**
+       * ★★ After a manual edit, recompute completeness and advance the status, down the
+       *   same path that answering a clarification takes.
+       *
+       *   Skip the recompute and someone can fill in the goal, the scope, and the
+       *   acceptance criteria only to find the six-axis score in the header still frozen
+       *   at whatever the analysis produced (zero, if no analysis ever ran) — and that
+       *   score is exactly what a user reads to decide whether the requirement is ready
+       *   to approve. The status has the same problem: a purely hand-written requirement
+       *   stays stuck in draft, the approve button never appears, and the manual path
+       *   simply has no end.
+       *
        * ★★ 人工改完要重算完整度并推进状态，和回答澄清问题走同一条路径。
        *
        *   不重算的话，一个人把目标、范围、验收标准全填好之后，头部的六维
@@ -1433,7 +1789,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const { id } = req.params as { id: string };
       const body = z
         .object({
-          // ★ 驳回必须填原因：提出人要知道为什么，否则只会原样再提一遍
+          // ★ A rejection must carry a reason: whoever raised the requirement needs to
+          //   know why, or they will simply raise the same thing again unchanged
           reason: z.string({ required_error: '驳回必须填写原因' }).min(1, '驳回必须填写原因'),
         })
         .parse(req.body);
@@ -1463,6 +1820,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * Delete a requirement.
+   *
+   * ★★ Deleting and rejecting are two different things and cannot substitute for each
+   *   other. Rejection says "this requirement does not hold" — a reasoned, traceable
+   *   conclusion whose record has to survive. Deletion says "this row should never have
+   *   existed" — a typo, a double submission, test data. With only rejection available,
+   *   people use it for the second case too, the "rejected" list fills up with noise,
+   *   and the real rejections stop being visible.
+   *
+   * ★ Only requirements with **nothing derived from them** can be deleted. Plans and
+   *   work items have lives of their own; once they exist, this requirement has already
+   *   affected something else and the correct move is to reject it. When the delete is
+   *   blocked, name what is blocking it: "cannot delete" alone leaves the user with
+   *   nothing to go act on.
+   *
+   * ★ Clarifications and assumptions are deleted along with the requirement — they
+   *   belong to this one requirement and have no independent life. The database demands
+   *   it too: `requirementId` is a NOT NULL foreign key in both tables.
+   *
    * 删除需求。
    *
    * ★★ 与驳回是两件事，不能互相替代。
@@ -1484,6 +1860,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Deletion does not reuse requirement.approve. Rejection is a conclusion (a
+           *   business judgment by a sponsor or PM); deletion is housekeeping on the
+           *   record itself (PM or tech_lead) — the people answerable for the two are
+           *   not the same set.
+           *
            * ★ 删除不复用 requirement.approve。驳回是结论（sponsor / pm 的业务判断），
            *   删除是对记录本身的处置（pm / tech_lead）—— 两者的责任人不是同一批。
            */
@@ -1529,6 +1910,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       });
 
       /**
+       * ★ Publish only after the transaction commits (the rule in modules/event/bus.ts).
+       *
+       * ★ The payload carries the title and a snippet of the original text: the entity is
+       *   gone, so this event is the only trace that it ever existed. Record just an id
+       *   and an auditor reading this line still has no idea what was deleted.
+       *
        * ★ 提交之后才发事件（modules/event/bus.ts 的纪律）。
        *
        * ★ payload 要带上标题与原文摘要：实体没了，这条事件是它存在过的
@@ -1564,22 +1951,31 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .where(eq(requirementClarifications.requirementId, id));
 
     /**
+     * ★★ The assigned author agent goes out with its **name**, not just its id.
+     *
+     *   The frontend dropdown only holds agents that are currently project members. Once
+     *   that agent is removed from the project (or paused), the dropdown cannot find it
+     *   and the UI renders "unset" — while the row still points at it, and the next
+     *   analysis still fails on it. A choice silently erased is precisely the failure
+     *   this feature exists to prevent.
+     *
      * ★★ 指定的编写 Agent 连**名字**一起给出去，不能只给 id。
      *
      *   前端的下拉框只装得下「本项目现有的 Agent 成员」。那个 Agent 后来被
      *   移出项目（或停用）的话，下拉框里找不到它，界面就会显示成「未指定」——
      *   而库里明明还指着它，下一次分析也会照着它失败。选择被静默抹掉，
      *   正是这个功能最该避免的那种表现。
-     *
-     *   The name ships alongside the id: the dropdown only holds agents that
-     *   are currently project members, so an agent later removed from the
-     *   project would render as "unset" while the row still points at it.
      */
     const [author] = requirement.authorAgentId
       ? await db
           .select({ id: agents.id, name: agents.name, status: agents.status })
           .from(agents)
           /**
+           * ★ Constrain by orgId as well. The write side already rejects cross-org ids;
+           *   repeating the constraint here means that if some future write path ever
+           *   forgets, the symptom is "renders as unset" rather than "reads out the name
+           *   of another organization's agent".
+           *
            * ★ 顺手带上 orgId：写入那一侧已经拦了跨组织的 id，这里再限一次，
            *   万一哪天有别的写入路径漏了，表现是「显示成未指定」而不是
            *   「把别的组织的 Agent 名字念出来」。
@@ -1612,6 +2008,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * Choose the agent that writes this requirement's PRD (page doc 03 §5.4).
+   *
+   * ★ A route of its own, deliberately not folded into PATCH /requirements/:id. That
+   *   route means "a human edited the structured fields": it stamps changed fields as
+   *   👤 human, recomputes completeness, and advances the status. Who writes the PRD is
+   *   not part of the requirement's content, so folding it in would make the "who wrote
+   *   this" markers start lying and would let a change of author push a state transition
+   *   out of thin air.
+   *
+   * ★ PUT rather than POST: setting the same value twice has the same result as once.
+   *
    * 指定这条需求的 PRD 编写 Agent（页面文档 03 §5.4）。
    *
    * ★ 单独一条路由，不并进 PATCH /requirements/:id。
@@ -1622,7 +2029,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ PUT 而不是 POST：设定同一个值两次的结果与一次相同。
    */
   const AuthorAgentInput = z.object({
-    /** null = 取消指定，回到「按项目绑定的规划 Agent 自动挑」 */
+    /** null = clear the assignment, back to picking automatically via the project's bound planning agent */
     agentId: z.string().uuid().nullable(),
   });
 
@@ -1632,6 +2039,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Same tier as analyze (requirement.edit), not project.settings.update. The
+           *   project-level binding changes the output of every requirement from here
+           *   on and earns a higher tier; this route changes who writes *one*
+           *   requirement — and whoever can press analyze already decides whether that
+           *   requirement runs through AI at all, and can hand-edit every field anyway.
+           *
            * ★ 与 analyze 同档（requirement.edit），不是 project.settings.update。
            *   项目级绑定改的是此后所有需求的产出，要更高一档；这一条只改这一条
            *   需求由谁写，而能点 analyze 的人本来就能决定这条需求要不要跑 AI，
@@ -1654,6 +2067,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       });
 
       /**
+       * ★ The three refusals each say their own thing; do not collapse them into one
+       *   "cannot assign this agent". "The requirement is settled" means go reopen it,
+       *   "not a member of this project" means go to the members page, and "no such
+       *   agent" usually means it was deleted elsewhere. The ways out are completely
+       *   different, and merged into one message the user can only try them in turn.
+       *
+       * ★ There used to be a fourth: "the agent's applicable types do not include
+       *   requirement". That check is gone — any agent member of the project can write a
+       *   PRD; see setRequirementAuthorAgent for why.
+       *
        * ★ 三种拒绝各说各的，不要合并成一句「不能指定这个 Agent」——
        *   「需求已结案」要去重新打开，「不在这个项目里」要去成员页，
        *   「这个 Agent 不存在」多半是别处删掉了。出路各不相同，
@@ -1713,6 +2136,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * Reopen a requirement that was approved or rejected.
+   *
+   * ★★ Without it, approving a requirement is a **one-way door**: approve the wrong
+   *   thing, or have the business change, and the only way out is to file a new
+   *   requirement — which detaches every existing plan, task, and discussion from the
+   *   original.
+   *
+   * ★ A reason is mandatory: reopening invalidates every plan already generated
+   *   downstream, and three weeks later nobody remembers why it happened.
+   *
    * 重新打开一条已确认 / 已驳回的需求。
    *
    * ★★ 缺了它，需求确认是一道**单向门**：批错了、或者业务变了，
@@ -1721,6 +2154,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    * ★ 原因必填：重新打开会让下游已生成的计划全部作废，三周后没人记得为什么。
    */
   /**
+   * Requirement assumptions — record, confirm, invalidate.
+   *
+   * ★★ Assumptions used to be producible only by AI analysis, so the hand-written
+   *   requirement path had nowhere to record one. Assumptions now travel to the planning
+   *   agent along with the requirement, which meant that path was permanently missing
+   *   the single input that most shapes the resulting plan.
+   *
    * 需求假设 —— 登记、确认、证伪。
    *
    * ★★ 此前假设只能由 AI 分析产生，手写需求的那条路根本没有地方记它 ——
@@ -1733,6 +2173,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * This requirement's past analysis and planning runs.
+   *
+   * ★★ Once planning runs are persisted, "what did that analysis actually do" is finally
+   *   answerable — but only if the requirement page has a way in. Without this route the
+   *   records sit in agent_runs with no screen able to reach them, and auditability is
+   *   half-built.
+   *
    * 这条需求的历次分析 / 规划 Run。
    *
    * ★★ 规划 Run 落库之后，「这次分析到底做了什么」终于查得到 —— 但前提是
@@ -1742,6 +2189,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   app.get('/api/v1/requirements/:id/runs', async (req) => {
     const { id } = req.params as { id: string };
     /**
+     * ★★ Carry **who ran it**, not only which model was used.
+     *
+     *   Now that the author agent can be chosen by a person, "who wrote this version of
+     *   the PRD" is the question this list most needs to answer. Showing only
+     *   `claude-code:sonnet` makes the rows before and after an agent switch look
+     *   identical, so the choice produces no visible feedback at all.
+     *
+     * ★ leftJoin rather than innerJoin: those runs still happened after the agent is
+     *   deleted, and erasing them from history is far worse than showing a blank name.
+     *
      * ★★ 带上**是谁跑的**，不只是用了什么模型。
      *
      *   既然编写 Agent 现在可以由人指定，「这一版 PRD 是谁写的」就是这张
@@ -1776,6 +2233,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       runs: rows.map((r) => {
         const total = r.tokensInput + r.tokensOutput + r.tokensCacheRead + r.tokensCacheWrite;
         /**
+         * ★ A planning run's `goal` stores the code itself ('structure' / 'plan'). A
+         *   recognized value is treated as a code; an unrecognized one means a **legacy
+         *   row** (back when a Chinese sentence was stored there) and falls back to
+         *   displaying it verbatim — a stray Chinese sentence in the UI beats a blank.
+         *
          * ★ 规划 Run 的 goal 存的就是码（'structure' / 'plan'）。
          *   认得就当码用，认不出说明是**存量行**（那时候存的是中文句子）——
          *   回落到原样显示，界面上宁可出现一句中文，也不要空白。
@@ -1784,17 +2246,25 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         return {
           ...r,
           /**
+           * ★★ All four counters at zero means **no usage was reported**, never "this run
+           *   spent no tokens".
+           *
+           *   Some runtimes declare tokenReporting false in their capability list (a CLI
+           *   that emits plain text has no structured usage to hand back). Collapsing
+           *   unknown into zero puts "this analysis cost nothing" on screen — a false
+           *   statement, and precisely the silent downgrade the capability list promises
+           *   never to make. A run that actually executed cannot have consumed zero
+           *   input tokens.
+           *
            * ★★ 四个计数器全为 0 表示**没收到用量**，不是「这次没花 token」。
            *
            *   有些运行时的能力清单里 tokenReporting 就是 false（纯文本输出的
            *   CLI 拿不到结构化用量）。把 unknown 折叠成 0 之后，界面上显示的是
            *   「这次分析没花 token」—— 一句假话，而且正好违反能力清单
            *   「不静默降级」那条承诺。真跑起来的 Run 不可能一个 input token 都不消耗。
-           *
-           *   All-zero means "no usage was reported", never "zero was used".
            */
           tokens: total > 0 ? total : null,
-          /** 界面读码；取不到（存量数据）时前端回落到 goal 那句中文 */
+          /** The UI reads the code; when it is absent (legacy rows) the frontend falls back to the Chinese sentence in `goal` */
           goalCode,
           startedAt: r.startedAt?.toISOString() ?? null,
           endedAt: r.endedAt?.toISOString() ?? null,
@@ -1835,6 +2305,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Assumptions live at /assumptions/:id, where the URL shows no project — so
+           *   `assumptions` has to be registered in both RESOURCE_SCOPED_URL and
+           *   projectOfResource (see that regex and routes.ts below). Without it the
+           *   membership gate cannot reach these two routes and they stand open to any
+           *   signed-in user. Same rule as artifacts.
+           *
            * ★ 假设走 /assumptions/:id，URL 上看不出项目 —— 所以 `assumptions` 必须
            *   登记进 RESOURCE_SCOPED_URL 与 projectOfResource（见下面那条正则与
            *   routes.ts），否则成员关系闸门够不着它，这两条路由对任何登录用户敞开。
@@ -1851,7 +2327,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  /** ★ 证伪必须写原因：它会让已生成的计划失去一块前提 */
+  /** ★ Invalidating requires a reason: it knocks a premise out from under plans already generated */
   app.post(
     '/api/v1/assumptions/:id/invalidate',
     {
@@ -1881,7 +2357,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     {
       config: {
         auth: {
-          /** ★ 重新打开等于撤销一次确认，与确认同档 */
+          /** ★ Reopening undoes an approval, so it sits at the same tier as approving */
           permission: 'requirement.approve',
         },
       },
@@ -1925,6 +2401,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       if (!result.ok) {
         /**
+         * ★ An empty requirement needs **two** ways out. Saying only "run AI analysis
+         *   first" is a dead end on a deployment with no planning agent configured — and
+         *   this page has always allowed a person to fill in the structured fields
+         *   themselves.
+         *
          * ★ 空需求要给出**两条**出路。
          *   只说「先做 AI 分析」的话，没配规划 Agent 的部署就成了死路 ——
          *   而这一页本来就允许人自己把结构化字段填出来。
@@ -1936,7 +2417,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
             '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
           );
         }
-        // 必答问题未回答 —— 返回具体是哪几个，前端可直接定位
+        // Required clarifications are still unanswered — return exactly which ones so the
+        // frontend can jump straight to them
         throw fail(
           'UNANSWERED_MUST_CONFIRM',
           'requirement.unanswered_must_confirm',
@@ -1948,8 +2430,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 计划 ────────────────────────────────────────────────────────────
+  // ── Plans ───────────────────────────────────────────────────────────
   /**
+   * Approve a requirement and generate its plan — in **one call**.
+   *
+   * ★★ This used to be two consecutive requests from the browser (approve, then plans).
+   *
+   *   Break anywhere in between — a network blip, the user closing the tab, an error
+   *   during generation — and what is left behind is "requirement approved, no plan":
+   *   the state already moved, while what the user saw was an error, so they believe
+   *   nothing happened. Pressing approve again then runs into "an approved requirement
+   *   cannot be approved".
+   *
+   * ★ The two steps cannot share one database transaction: generating a plan calls an
+   *   LLM and can run for minutes, and a transaction spanning that would pin a
+   *   connection the whole time. So the guarantee is a **different** one: the approval
+   *   either succeeds or does not happen, and whether the plan came out is reported
+   *   honestly and separately. If generation fails the requirement stays approved (that
+   *   step really did succeed) and the caller retries POST /requirements/:id/plans —
+   *   they need not, and must not, approve a second time.
+   *
    * 确认需求并立刻生成计划 —— **一次调用**。
    *
    * ★★ 此前这是浏览器里的两次连续请求（approve 然后 plans）。
@@ -1970,7 +2470,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     {
       config: {
         auth: {
-          /** ★ 组合命令要两个权限都有 —— 它确实同时做了这两件事 */
+          /** ★ A combined command needs both permissions — it really does both things */
           permission: () => [
               'requirement.approve',
               'plan.generate',
@@ -2015,6 +2515,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         return reply.status(201).send({ requirementId: id, plan: summary, planError: null });
       } catch (err) {
         /**
+         * ★ A failed generation does not roll the approval back. The approval was a
+         *   judgment a person made, and it really happened; undoing it leaves "but I
+         *   clicked approve" disagreeing with what the screen shows. Report honestly and
+         *   let the caller decide whether to retry generation or go look at the
+         *   requirement first.
+         *
          * ★ 生成失败不回滚确认 —— 确认是人做的判断，它真的发生了。
          *   把它撤掉会让「我明明点了确认」和界面状态对不上。
          *   如实回报，让调用方决定是重试生成还是先去看需求。
@@ -2055,6 +2561,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * Request changes (page doc 04 §5).
+   *
+   * ★ Generates a new version rather than editing in place: what a user approves is *a
+   *   particular version* of a plan, and quietly turning v1 into v2's contents makes it
+   *   impossible to say afterward what they approved. The old version is marked
+   *   superseded, both are kept, and the frontend can diff them.
+   *
    * 要求修改（页面文档 04 §5）。
    *
    * ★ 生成新版本而不是原地改：用户批准的是「某一版计划」，
@@ -2116,7 +2629,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = z
         .object({
           acknowledgedOverrun: z.boolean().optional(),
-          /** 确认「这几项人工任务先进待认领队列」 */
+          /** Acknowledges "let these human tasks go into the unclaimed queue for now" */
           acknowledgedUnassigned: z.boolean().optional(),
         })
         .parse(req.body ?? {});
@@ -2130,12 +2643,17 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
       if (!result.ok) {
         /**
+         * ★ The two blocks get their own error codes. Merged into one, the frontend
+         *   cannot tell which confirmation dialog to raise — one asks "accept going over
+         *   budget", the other asks "accept that these items have no owner yet", and the
+         *   judgment the user has to make is entirely different.
+         *
          * ★ 两种拦截各用各的错误码。合成一个的话前端分不清该弹哪个确认框 ——
          *   一个是「确认超支」，一个是「确认这几项先没人认领」，
          *   用户要做的判断完全不同。
          */
         if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
-          throw fail(/** ★ 不是校验失败 —— 请求是对的，只是要用户先确认一次（见 errors.ts） */
+          throw fail(/** ★ Not a validation failure — the request is fine, it just needs one confirmation from the user (see errors.ts) */
             'CONFIRMATION_REQUIRED', 'plan.unassigned_human_tasks', `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
               .map((t) => t.title)
               .join('、')}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。`, { params: { count: result.tasks.length, titles: result.tasks.map((t) => t.title).join(', ') }, details: result });
@@ -2151,7 +2669,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 看板 ────────────────────────────────────────────────────────────
+  // ── Board ───────────────────────────────────────────────────────────
   app.get('/api/v1/projects/:id/board', async (req) => {
     const { id } = req.params as { id: string };
     const q = req.query as Record<string, string | undefined>;
@@ -2169,6 +2687,22 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * The Agent swimlane view (page doc 05 §5.7).
+   *
+   * Returns each agent's load and the tasks it currently carries — the whole data source
+   * for the "swimlane per agent" view, fetched in one round trip so the frontend never
+   * has to pull tasks agent by agent.
+   *
+   * ★★ It lives at `/agent-workload`, not `/agents`: the latter belongs to the
+   *   project-agent *binding* pair (see the "Project agent bindings" section below).
+   *   Both were once registered on `/agents`, and Fastify rejects duplicate routes — so
+   *   the symptom was not a broken endpoint but `buildApp()` throwing, i.e. **the server
+   *   never starting at all**.
+   *
+   *   The two were never meant to share a URL anyway: this one answers "who is working
+   *   and how is it going", that one answers "which agent holds the planning /
+   *   coordination / review seat", and their response shapes have nothing in common.
+   *
    * Agent 视图（页面文档 05 §5.7）用。
    *
    * 返回负载与当前承担的任务 —— 这是「按 Agent 分泳道」视图的全部数据来源，
@@ -2181,12 +2715,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
    *
    *   两件事本来就不该共用一个 URL：这里回的是「谁在干活、干得怎么样」，
    *   那里回的是「哪个 Agent 担任规划 / 协调 / 评审」，响应结构毫无交集。
-   *
-   * The Agent swimlane view. It lives at `/agent-workload`, not `/agents`:
-   * the latter belongs to the project-agent *binding* pair below. Both were
-   * once registered on `/agents`, and Fastify rejects duplicate routes — so
-   * the symptom was not a broken endpoint but `buildApp()` throwing, i.e. the
-   * server never starting at all.
    */
   app.get('/api/v1/projects/:id/agent-workload', async (req) => {
     const { id } = req.params as { id: string };
@@ -2226,7 +2754,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       .orderBy(desc(agentRuns.attempt));
     const latestRun = new Map<string, (typeof runs)[number]>();
     for (const r of runs) {
-      // ★ 这条按 projectId 查，规划 Run 会混进来 —— 它没有工作项，跳过
+      // ★ This query is by projectId, so planning runs land in it too — they have no
+      //   work item, skip them
       if (!r.workItemId) continue;
       if (!latestRun.has(r.workItemId)) latestRun.set(r.workItemId, r);
     }
@@ -2262,7 +2791,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     };
   });
 
-  /** 执行图（页面文档 07）。布局在服务端算好，前端只负责渲染与交互 */
+  /** Execution graph (page doc 07). Layout is computed server-side; the frontend only renders and handles interaction */
   app.get('/api/v1/projects/:id/graph', async (req) => {
     const { id } = req.params as { id: string };
     const q = req.query as { layout?: string };
@@ -2273,18 +2802,23 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return getGraph(db, id, layout);
   });
 
-  // ── 项目总览（页面文档 02）──────────────────────────────────────────
+  // ── Project overview (page doc 02) ──────────────────────────────────
   app.get('/api/v1/projects/:id/overview', async (req) => {
     const { id } = req.params as { id: string };
     return getOverview(db, id, optionalUserId(req));
   });
 
-  // ── Agent Workspace（页面文档 08）───────────────────────────────────
+  // ── Agent Workspace (page doc 08) ───────────────────────────────────
   app.get('/api/v1/agents', async (req) => {
     const q = req.query as { projectId?: string };
     const projectId = q.projectId && UUID_RE.test(q.projectId) ? q.projectId : null;
 
     /**
+     * ★ Agents are organization-level resources (they can span projects), so narrow by
+     *   **organization** rather than by project. This used to narrow by nothing at all:
+     *   the roster listed other organizations' agents along with their costs, success
+     *   rates, and owners.
+     *
      * ★ Agent 是组织级资源（可跨项目），所以按**组织**收窄而不是按项目。
      *   此前完全不收窄：花名册会把别的组织的 Agent 一起列出来，
      *   连带它们的成本、成功率、负责人。
@@ -2302,6 +2836,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * Pause / resume an agent.
+   *
+   * ★ Pausing requires a reason, for the same reason disabling a policy does: three
+   *   weeks later nobody remembers why this agent has been paused, and a paused agent
+   *   quietly slows the whole project down.
+   *
    * 暂停 / 恢复 Agent。
    *
    * ★ 暂停必须填原因，和停用 Policy 同理：三周后没人记得
@@ -2360,16 +2900,26 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 运行时能力（页面文档 14 §5.4 —— 集成里唯一有真实后端的一块）──
+  // ── Runtime capabilities (page doc 14 §5.4 — the only integration with a real backend) ──
   app.get('/api/v1/runtimes', async () => listRuntimes(db, deps.registry));
 
   /**
-   * ── 配置：运行时接入 / Agent 档案 / 项目工程约定（页面文档 08 §5.5）──
+   * ── Configuration: runtime access / agent profiles / project conventions (page doc 08 §5.5) ──
+   *
+   * ★ Before this, the entire system had exactly one write operation (pausing an
+   *   agent), and agents and runtimes could only be loaded by the seed script — "a user
+   *   configures a code agent" was not possible for even one step.
    *
    * ★ 在此之前整个系统只有一个写操作（暂停 Agent），Agent 与运行时
    *   只能靠 seed 脚本灌进去 —— 「用户去配置 code agent」一步都做不了。
    */
   /**
+   * "Which organization does this request belong to."
+   *
+   * ★★ Once an account can belong to several organizations, that answer can no longer be
+   *   read off the account. It is carried explicitly in the `X-Org-Id` header, and
+   *   falls back to a deterministic default when absent (see resolveCurrentOrg).
+   *
    * 「这次请求属于哪个组织」。
    *
    * ★★ 账号可以属于多个组织之后，这个答案不再能从账号上读出来 ——
@@ -2384,6 +2934,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   }
 
   /**
+   * Agent profile management.
+   *
+   * ★ There is no separate "runtime connection" resource: the CLI kind, the credential,
+   *   and that CLI's own parameters all live inline on the agent. Creating N agents
+   *   means N independent configurations.
+   *
    * Agent 档案管理。
    *
    * ★ 没有单独的「运行时接入」资源：CLI 类型、凭证、该 CLI 的个性化参数
@@ -2395,6 +2951,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * ★ A read-only catalog of **platform constants**: it holds no organization or project
+   *   data, so it needs no scope. It declares `agent.view` to sit at the same tier as
+   *   the other admin read endpoints — `/api/v1/admin/…` matches neither of the gate's
+   *   two scope regexes, so declaring nothing would leave it readable anonymously.
+   *
    * ★ 只读的**平台常量**目录：没有任何组织或项目数据，因此不需要作用域。
    *   声明 `agent.view` 是为了让它和别的 admin 读接口一档 ——
    *   `/api/v1/admin/…` 不在闸门的两条作用域正则里，不声明就等于匿名可读。
@@ -2440,6 +3001,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Editing a profile and editing permissions are different acts, and the
+           *   second splits further into widening and narrowing. The route table can
+           *   only establish "at minimum, able to edit a profile"; the directional check
+           *   happens inside updateAgent (assertPermissionChange in agent-admin.ts).
+           *
            * ★ 改档案与改权限是两回事，后者还分扩大 / 收紧。
            *   路由表只能判出「至少要能改档案」，权限维度的方向判定
            *   在 updateAgent 里（见 agent-admin.ts 的 assertPermissionChange）。
@@ -2455,14 +3021,15 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const { id } = req.params as { id: string };
       const body = AgentInput.partial().extend({ reason: z.string().optional() }).parse(req.body);
 
-      // 扩大权限要 tech_lead，收紧只要 owner —— 方向要比过新旧才知道（§2.3）
+      // Widening permissions takes tech_lead, narrowing only takes the owner — and which
+      // direction it is only becomes known by comparing old against new (§2.3)
       const subject = await rbac.subjectForAgent(req, userId, id);
       const result = await updateAgent(db, deps.registry, orgId, id, body, userId, (permission) =>
         rbac.assertPermission(subject, permission, { agentId: id }),
       );
 
       if (result.permissionsChanged) {
-        // ★ 权限变更是审计事件（AUDIT_EVENTS），必须留痕
+        // ★ A permission change is an audit event (AUDIT_EVENTS) and must leave a trace
         await emitAndPublish(db, {
           orgId,
           projectId: null,
@@ -2471,7 +3038,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
           subjectType: 'agent',
           subjectId: id,
           payload: {
-            /** ★ 组织级改的是**上限**，不是「它能做什么」—— 后者按项目算 */
+            /** ★ The organization level sets the **ceiling**, not what the agent can do — that is computed per project */
             scope: 'organization',
             capabilityCeiling: body.capabilityCeiling ?? null,
             deniedCapabilities: body.deniedCapabilities ?? null,
@@ -2503,7 +3070,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  /** 能力探测：区分「没注册」「连不上」「缺能力」三种状态 */
+  /** Capability probe: tells "not registered", "cannot connect", and "missing capability" apart */
   app.post(
     '/api/v1/admin/agents/:id/probe',
     {
@@ -2522,7 +3089,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 代码仓库登记 ────────────────────────────────────────────────────
+  // ── Code repository registry ────────────────────────────────────────
   app.get('/api/v1/admin/repositories', async (req) => {
     const { orgId } = await callerOrg(req);
     const q = req.query as { projectId?: string };
@@ -2566,6 +3133,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
+   * Connectivity probe. ★ A misconfigured credential has to surface on the settings page,
+   *   not on the first dispatch — by then the error reads "failed to prepare workspace:
+   *   … 401", which points nowhere near the real cause.
+   *
    * 连通性探测。★ 凭证配错了要在配置页上知道，而不是等第一次派发 ——
    *   那时的错误是「准备工作区失败：… 401」，指不到真实原因。
    */
@@ -2601,7 +3172,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 存储目标登记（非 Git 的工作区来源）──────────────────────────────
+  // ── Storage target registry (non-Git workspace sources) ─────────────
   app.get('/api/v1/admin/storage-targets', async (req) => {
     const { orgId } = await callerOrg(req);
     const q = req.query as { projectId?: string };
@@ -2615,6 +3186,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ probe also takes storage_target.manage even though it reads nothing. It
+           *   connects to the remote using the registered credential, and being able to
+           *   trigger an outbound authenticated request is itself part of "managing a
+           *   storage target", not an ordinary query.
+           *
            * ★ probe 也要 storage_target.manage，虽然它是只读的。
            *   它会拿着登记里的凭证去连远端 —— 能触发一次带凭证的出网请求，
            *   本身就是「管理存储目标」的一部分，不是一次普通的查询。
@@ -2643,6 +3219,12 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const { orgId } = await callerOrg(req);
       const { id } = req.params as { id: string };
       /**
+       * ★ Use innerType().partial() rather than StorageTargetInput.partial():
+       *   StorageTargetInput is wrapped in a superRefine (ZodEffects), and ZodEffects has
+       *   no partial(). That cross-field validation only holds for **complete** input
+       *   anyway — on a partial update a missing bucket does not mean misconfigured, it
+       *   means this request did not touch it.
+       *
        * ★ 用 innerType().partial() 而不是 StorageTargetInput.partial()：
        *   StorageTargetInput 外面裹了一层 superRefine（ZodEffects），
        *   ZodEffects 上没有 partial()。而那层交叉校验本来也只对**完整**
@@ -2656,7 +3238,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  /** 连通性探测。★ 与仓库那边同理：配错了要在配置页上知道，而不是等第一次派发 */
+  /** Connectivity probe. ★ Same as for repositories: a misconfiguration has to surface on the settings page, not on the first dispatch */
   app.post(
     '/api/v1/admin/storage-targets/:id/probe',
     {
@@ -2689,8 +3271,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 产物文件 ────────────────────────────────────────────────────────
+  // ── Artifact files ──────────────────────────────────────────────────
   /**
+   * ★★ Project membership is judged centrally by the gate — provided `artifacts` is
+   *   registered in both projectOfResource and RESOURCE_SCOPED_URL (see the section
+   *   above and rbac.ts). Without those two entries these three routes stand open to
+   *   any signed-in user.
+   *
+   * ★ Read-only, and only for locally archived artifacts. Artifacts in git or object
+   *   storage have their own clickable addresses and do not come back through here.
+   *
    * ★★ 项目成员关系由闸门统一判过 —— 前提是 `artifacts` 已经登记进
    *   projectOfResource 与 RESOURCE_SCOPED_URL（见上面那段与 rbac.ts）。
    *   少了那两处登记，这三条路由对任何登录用户都是敞开的。
@@ -2704,6 +3294,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   });
 
   /**
+   * ★ The path arrives as a wildcard segment: a `/` inside the file name is the norm
+   *   (`src/app.ts`), and a query parameter would be encoded and decoded again by every
+   *   layer of middleware, whereas the wildcard is native to Fastify.
+   *
    * ★ 路径用通配符段接收：文件名里有 `/` 是常态（`src/app.ts`），
    *   用查询参数会被各层中间件反复编解码，而通配符是 Fastify 原生支持的。
    */
@@ -2720,14 +3314,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return reply
       .header('content-type', file.mime)
       .header('content-length', String(file.size))
-      // ★ 一律 attachment：产物内容是 Agent 写的，浏览器里内联渲染
-      //   等于让它在本站域下执行 —— 一个 HTML 产物就能拿到同源权限
+      // ★ Always attachment: artifact content is written by an agent, and rendering it
+      //   inline means executing it under this site's origin — one HTML artifact would
+      //   be enough to acquire same-origin privileges
       .header('content-disposition', `attachment; filename="${encodeURIComponent(file.name)}"`)
       .send(file.stream);
   });
 
-  // ── 项目 Agent 绑定 ─────────────────────────────────────────────────
+  // ── Project agent bindings ──────────────────────────────────────────
   /**
+   * ★ This layer answers only "which already-configured agent holds this seat". Choosing
+   *   a runtime belongs to the agent settings page and is settled before we get here.
+   *
    * ★ 这一层只回答「哪个已配置的 Agent 干这个角色」。
    *   选运行时是 Agent 配置页的事，到这里已经定好了。
    */
@@ -2742,6 +3340,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★ Merely setting an executor sits one tier below "start executing".
+           *
+           *   Hanging a card under someone's name is scheduling work, not spending
+           *   budget; demanding work_item.execute would mean only people who can
+           *   dispatch may schedule — and scheduling is exactly a PM's daily job. The
+           *   step that actually spends money is /start, and that one still requires
+           *   work_item.execute.
+           *
            * ★ 只设执行者要的权限比「开始执行」低一档。
            *
            *   把卡片挂到某人名下是排活，不是动预算；要求 work_item.execute
@@ -2774,7 +3380,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
   );
 
   /**
-   * ── 项目级 Agent 权限 ──────────────────────────────────────────────
+   * ── Project-level agent permissions ────────────────────────────────
+   *
+   * ★★ "What can this agent do **in this project**." The division of labor against the
+   *   binding routes above: binding answers "who holds this seat", this answers "what it
+   *   is authorized to do".
+   *
+   * ★ All three routes share one evaluator (see project-agent-access.ts). Preview and
+   *   save reaching different conclusions is the hardest failure to notice in a UI like
+   *   this, and the only reliable defense is leaving them no second implementation to
+   *   disagree with.
    *
    * ★★ 「这个 Agent 在**这个项目**里能做什么」。与上面那组绑定路由的分工是：
    *   绑定回答「谁干这个角色」，这里回答「它被授权做什么」。
@@ -2794,7 +3409,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     {
       config: {
         auth: {
-          /** 预览是只读的：它算「如果保存会怎样」，不写任何东西 */
+          /** The preview is read-only: it computes what a save would do and writes nothing */
           permission: 'agent.view',
           context: (req, ctx) =>
         agentContext(ctx, (req.params as { agentId: string }).agentId),
@@ -2821,6 +3436,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       config: {
         auth: {
           /**
+           * ★★ Project-level authorization can likewise only establish "at minimum, able
+           *   to tighten"; the directional check lives in the handler
+           *   (executeGovernedMutation: work out the direction first, then demand the
+           *   matching permission).
+           *
+           *   Does the route table have to register the **stricter** of the two? No.
+           *   `restrict` is registered because the gate is a coarse filter and the real
+           *   check happens inside, where it is guaranteed to run again. Registering
+           *   `expand` would instead shut out an owner who only wants to tighten, so
+           *   nobody tightens anything — the exact opposite of what §2.3's asymmetric
+           *   design is for.
+           *
            * ★★ 项目级授权同样只能判出「至少要能收紧」，方向判定在 handler 里
            *   （executeGovernedMutation：先算方向，再要对应那条权限）。
            *
@@ -2831,6 +3458,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
            */
           permission: 'agent.permissions.restrict',
           /**
+           * ★ Project-level authorization carries the agent_owner dimension too:
+           *   tightening an agent you own should be allowed inside a project just as it
+           *   is at the organization level.
+           *
            * ★ 项目级授权要带上 agent_owner 这一维：收紧自己名下的 Agent
            *   在项目里同样该放行，与组织级那条保持一致。
            */
@@ -2845,6 +3476,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
       const body = AgentAccessInput.parse(req.body);
 
       /**
+       * ★ The subject of the check is the same one preHandler used (subjectForAgent).
+       *   Computing different roles on the two sides produces the incomprehensible 403
+       *   where the gate lets a request through and the inner layer then rejects it.
+       *
        * ★ 判定主体与 preHandler 用同一个（subjectForAgent）——
        *   两边算出不同的角色会出现「闸门放行了、里层又拦下」这种
        *   没人看得懂的 403。
@@ -2865,6 +3500,10 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
               loosen: 'agent.permissions.expand',
               tighten: 'agent.permissions.restrict',
               /**
+               * ★ "Nothing changed" is still a write, and takes the tighten-tier
+               *   permission. Waved through, a neutral request becomes a write entry
+               *   point that requires no permission at all.
+               *
                * ★ 「什么都没变」也是一次写操作，按收紧那一档要权限。
                *   放行掉的话，一次 neutral 请求会成为无需任何权限的写入口。
                */
@@ -2899,7 +3538,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 项目工程约定 ────────────────────────────────────────────────────
+  // ── Project engineering conventions ─────────────────────────────────
   // 成员关系与 convention.manage 权限都由 preHandler 统一判过（见闸门那一节）
   app.get('/api/v1/projects/:id/conventions', async (req) => {
     const { id } = req.params as { id: string };
@@ -2955,7 +3594,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 决策中心（页面文档 10）──────────────────────────────────────────
+  // ── Decision center (page doc 10) ───────────────────────────────────
   app.get('/api/v1/decision-inbox', async (req) => {
     const q = req.query as { scope?: string; projectId?: string };
     const scope = (['mine', 'all', 'watching'] as const).find((s) => s === q.scope) ?? 'mine';
@@ -3147,7 +3786,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return comparePlans(db, id, against);
   });
 
-  // ── 集成设置（页面文档 14）────────────────────────────────────────────
+  // ── Integration settings (page doc 14) ────────────────────────────────
 
   /**
    * 项目角色 + 组织角色 → 权限判定。
@@ -3517,7 +4156,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     return getAnalyticsItems(db, id, kind, range);
   });
 
-  // ── Policy 配置 ─────────────────────────────────────────────────────
+  // ── Policy configuration ────────────────────────────────────────────
   // ★ 这些端点只认 X-User-Id（人类身份）。Agent 回调走 run-scoped token，
   //   到不了这里 —— Agent 不能修改约束自己的规则（产品文档 十）。
   app.get('/api/v1/projects/:id/policies', async (req) => {
@@ -4578,7 +5217,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 决策 ────────────────────────────────────────────────────────────
+  // ── Decisions ───────────────────────────────────────────────────────
   app.get('/api/v1/decisions', async (req) => {
     const userId = optionalUserId(req);
     const scope = (req.query as { scope?: string }).scope ?? 'mine';
@@ -4845,7 +5484,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── 调度 ────────────────────────────────────────────────────────────
+  // ── Scheduling ──────────────────────────────────────────────────────
   app.post(
     '/api/v1/projects/:id/schedule',
     {
@@ -4866,7 +5505,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
   );
 
-  // ── Agent 回调 ──────────────────────────────────────────────────────
+  // ── Agent callbacks ─────────────────────────────────────────────────
   app.post('/api/v1/agent-callback/runs/:id/events', async (req) => {
     const { id } = req.params as { id: string };
     const auth = req.headers['authorization'];

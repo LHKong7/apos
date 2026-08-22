@@ -15,24 +15,27 @@ import { fail, notFound } from './errors';
 import { assertNotLastAdmin } from './organizations';
 
 /**
- * 成员与角色指派 —— 让 RBAC 真的可用。
+ * Members and role assignment — what makes RBAC actually usable.
  *
- * ★ 没有这一组端点时，角色只能靠 seed 脚本写进去。一套改不了的权限体系
- *   在实践中的表现是「所有人都用同一个账号」——因为换个角色比换个人便宜。
- *   权限模型的落地程度，取决于调整它有多容易。
+ * ★ Without these endpoints, roles can only be written by the seed script. In practice
+ *   a permission system nobody can change shows up as "everyone shares one account",
+ *   because switching roles costs more than switching people. How far a permission
+ *   model gets adopted depends on how easy it is to adjust.
  *
- * ★★ 担任者可以是人，也可以是 Agent。这是这个产品的基本形状：
- *   「测试」这个岗位可能是一个人，也可能是一个跑测试的 Agent，还可能两者都有。
- *   两者走同一个函数 —— 分成两条路径的话，「Agent 不能担任带 Human Gate
- *   权限的角色」这条一定会有一边漏掉。
+ * ★★ A role holder can be a person or an Agent. That is the basic shape of this
+ *   product: the "QA" seat might be a person, might be an Agent that runs tests, might
+ *   be both. Both go through the same function — split into two paths and the rule
+ *   "an Agent cannot hold a role carrying Human Gate permissions" is guaranteed to be
+ *   missing from one of them.
  *
- * ★ 这里每一个写操作都记审计（§6.3）。「谁在什么时候把谁提成了 tech_lead」
- *   是提权路径上最关键的一步，查不到它，权限累积（§7）就无从追溯。
+ * ★ Every write here is audited (§6.3). "Who promoted whom to tech_lead, and when" is
+ *   the pivotal step of any privilege escalation; without it, permission creep (§7)
+ *   cannot be traced at all.
  */
 
 export type MemberActorType = 'human' | 'agent';
 
-/** 项目成员名册。Agent 与人类同表，也担任同一套角色 */
+/** The project roster. Agents and people share one table and one set of roles */
 export async function listMembers(db: Database, projectId: string, orgId: string) {
   const rows = await db
     .select({
@@ -51,9 +54,10 @@ export async function listMembers(db: Database, projectId: string, orgId: string
   const agentIds = rows.filter((r) => r.actorType === 'agent').map((r) => r.actorId);
 
   /**
-   * ★ 组织角色现在跟着**归属**走而不是账号，所以这里必须 join
-   *   organization_members 并按本组织过滤 —— 同一个人在别的组织
-   *   可能是管理员，那与这个项目无关，显示出来是误导。
+   * ★ An organization role now follows **membership**, not the account, so this has to
+   *   join organization_members and filter by this org. The same person may be an
+   *   admin somewhere else, which has nothing to do with this project — showing it here
+   *   would be misleading.
    */
   const humanRows = humanIds.length
     ? await db
@@ -83,7 +87,7 @@ export async function listMembers(db: Database, projectId: string, orgId: string
     byId.set(u.id, { name: u.name, email: u.email, orgRole: u.orgRole ?? undefined });
   for (const a of agentRows) byId.set(a.id, { name: a.name, sub: `${a.type} · ${a.status}` });
 
-  /** 可指派的角色，按担任者类型分开 —— 界面上人和 Agent 的下拉框内容不同 */
+  /** Assignable roles, separated by holder type — the dropdowns for people and Agents differ */
   const roleRows = await db.select().from(roles).where(eq(roles.orgId, orgId)).orderBy(roles.key);
 
   return {
@@ -91,7 +95,7 @@ export async function listMembers(db: Database, projectId: string, orgId: string
       actorId: r.actorId,
       actorType: r.actorType,
       role: r.role,
-      /** 角色被删掉时 leftJoin 会给 null —— 外键拦得住，但别让界面崩 */
+      /** The leftJoin yields null if the role was deleted — the FK prevents it, but do not crash the UI */
       roleLabel: r.roleName ?? r.role,
       permissionCount: (r.rolePermissions as string[] | null)?.length ?? 0,
       addedAt: r.addedAt,
@@ -113,24 +117,23 @@ export async function listMembers(db: Database, projectId: string, orgId: string
 
 export interface RoleChangeContext {
   projectId: string;
-  /** 被改的那一位：人或 Agent */
+  /** The one being changed: a person or an Agent */
   actorType: MemberActorType;
   targetId: string;
-  /** 操作者（永远是人 —— 改权限是 humanOnly） */
+  /** The actor — always a person, since changing permissions is humanOnly */
   actorId: string;
   correlationId: string;
 }
 
 /**
- * 指派 / 变更项目成员的角色。
- *
- * `roleKey` 为 null 表示「调用方没点名角色」—— 只有 Agent 加入项目这一个动作
- * 允许这样调，落到 {@link DEFAULT_AGENT_PROJECT_ROLE}。人必须点名：
- * 人类角色横跨 sponsor 到 viewer，没有一个默认档是安全的。
+ * Assign or change a project member's role.
  *
  * A null `roleKey` means the caller named no role. Only an agent joining a
- * project may do that; humans must always name one, because the human role
- * ladder runs from sponsor to viewer and no rung is a safe default.
+ * project may do that, and it lands on {@link DEFAULT_AGENT_PROJECT_ROLE};
+ * humans must always name one, because the human role ladder runs from
+ * sponsor to viewer and no rung is a safe default.
+ *
+ * `roleKey` 为 null 表示调用方没点名角色 —— 只有 Agent 加入项目允许这样调。
  */
 export async function setMemberRole(
   db: Database,
@@ -141,10 +144,10 @@ export async function setMemberRole(
   const target = await loadTarget(db, ctx.actorType, ctx.targetId, project.orgId);
 
   /**
-   * ★ 只能加本组织的人 / 本组织的 Agent。
-   *   不挡的话，一个 pm 就能把外组织的用户拉进项目 ——
-   *   成员关系闸门（§2.1.1）此后会如实放行他，
-   *   跨租户隔离从「查得严」变成「谁都能开个口子」。
+   * ★ Only people and Agents from this organization may be added. Without this check a
+   *   pm could pull a user from another org into the project — the membership gate
+   *   (§2.1.1) would then faithfully let them through, and cross-tenant isolation would
+   *   go from "strictly checked" to "anyone can open a hole in it".
    */
   if (target.orgId !== project.orgId) {
     throw fail(
@@ -158,20 +161,17 @@ export async function setMemberRole(
   const before = await currentRole(db, ctx);
 
   /**
-   * ★★ 没点名角色时的两条分支，顺序不能反。
+   * ★★ Two branches when no role was named, and their order cannot be swapped.
    *
-   *   已是成员 → **原样返回，什么都不改**。这一条比默认值本身更重要：
-   *   界面上「加入项目」和「改角色」共用这一个接口，一次误点如果落成
-   *   「重置为 executor」，管理员调过的自定义角色就被悄悄降权了 ——
-   *   而降完之后它和「本来就是 executor」在界面上完全一样，没人会发现。
+   *   Already a member → **return untouched, change nothing**. This matters more than
+   *   the default itself: the UI uses this one endpoint for both "add to project" and
+   *   "change role", so a misclick that landed as "reset to executor" would silently
+   *   demote a custom role an admin had tuned — and afterward it would look exactly
+   *   like an Agent that had always been an executor, so nobody would notice.
    *
-   *   还不是成员 → 落到最低档。加入项目这个动作本身已经是显式授权，
-   *   在这一刻补一个只执行、不决策的角色不扩大任何意图。
-   *
-   * Order matters. Already a member → return untouched: this endpoint backs
-   * both "add to project" and "change role", and a misclick that silently
-   * reset a tuned custom role to `executor` would be indistinguishable
-   * afterward from having always been `executor`.
+   *   Not a member yet → fall to the lowest level. Joining a project is already an
+   *   explicit grant, and filling in an execute-only, decide-nothing role at that
+   *   moment widens no one's intent.
    */
   if (roleKey === null) {
     if (before !== null) return { ok: true as const, role: before, changed: false };
@@ -190,15 +190,16 @@ export async function setMemberRole(
   const role = await loadRole(db, project.orgId, effectiveRole);
 
   /**
-   * ★★ 角色认不认这一类担任者。
+   * ★★ Does the role accept this kind of holder?
    *
-   *   `appliesTo` 在建角色时就校验过（带 humanOnly 权限的角色不能给 Agent），
-   *   这里再判一次是因为**指派**是另一个时刻：角色是先建好的，
-   *   「把处理决策塞进研发角色」和「把研发角色指派给 Agent」
-   *   是两次独立的操作，任何一次都可能是最后一步。
+   *   `appliesTo` was already validated when the role was created (a role carrying
+   *   humanOnly permissions cannot be given to Agents). It is checked again here
+   *   because **assignment** is a separate moment in time: the role was built earlier,
+   *   and "add decision handling to the Engineering role" and "assign the Engineering
+   *   role to an Agent" are two independent acts — either one can be the last one.
    */
   if (!roleAcceptsActor(role, ctx.actorType)) {
-    /** ★ 两条码。「人的角色给了 Agent」和「Agent 的角色给了人」是两回事 */
+    /** ★ Two codes. "A human role given to an Agent" and the reverse are different problems */
     throw ctx.actorType === 'agent'
       ? fail(
           'VALIDATION_FAILED',
@@ -244,7 +245,7 @@ export async function setMemberRole(
       to: effectiveRole,
       projectId: ctx.projectId,
       actorType: ctx.actorType,
-      /** ★ 记下这一档是默认补的还是人点的 —— 审计里这两者不该长得一样 */
+      /** ★ Record whether this level was defaulted or chosen — the audit must tell them apart */
       roleDefaulted: roleKey === null,
     },
     correlationId: ctx.correlationId,
@@ -277,13 +278,14 @@ export async function removeMember(db: Database, ctx: RoleChangeContext) {
 }
 
 /**
- * 组织角色变更（§2.2「org_admin：身份管理」）。
+ * Change an organization role (§2.2, "org_admin: identity management").
  *
- * ★★ 改的是**这个组织里的**角色，不是这个账号的属性。
+ * ★★ What changes is the role **within this organization**, not a property of the
+ *   account.
  *
- *   账号可以属于多个组织之后，「把张三降级」这句话必须带上「在哪个组织」——
- *   否则在 A 组织点一下会顺手把他在 B 组织的管理员身份也拿掉，
- *   而 B 组织的人完全不知道发生了什么。
+ *   Once an account can belong to several organizations, "demote this person" has to
+ *   name which organization — otherwise one click inside org A also strips their admin
+ *   standing in org B, and nobody in org B has any idea what happened.
  */
 export async function setOrgRole(
   db: Database,
@@ -300,7 +302,8 @@ export async function setOrgRole(
       ),
     );
 
-  // 组织管理员的「全部权限」以组织为界 —— 越界就是多租户隔离失效
+  // An org admin's "all permissions" stops at the organization boundary — crossing it
+  // is precisely what tenancy isolation failing looks like
   if (!target) {
     throw fail('NOT_FOUND', 'member.user_outside_org', '用户不存在，或不在你的组织内', { details: {
       targetUserId: ctx.targetUserId,
@@ -336,7 +339,7 @@ export async function setOrgRole(
   return { ok: true as const, orgRole: role, changed: true, previousRole: target.orgRole };
 }
 
-/** 组织通讯录，配角色选择器用 */
+/** The organization directory, for the role pickers */
 export async function listOrgUsers(db: Database, orgId: string) {
   const rows = await db
     .select({
@@ -363,7 +366,7 @@ export async function listOrgUsers(db: Database, orgId: string) {
       ...u,
       orgRoleLabel: ORG_ROLE_LABEL[u.orgRole as OrgRole] ?? u.orgRole,
     })),
-    /** Agent 也能被加进项目并担任角色，所以这份名单同样要给出去 */
+    /** Agents can join projects and hold roles too, so this list ships alongside the people */
     agents: agentRows,
     assignableOrgRoles: (['org_admin', 'member'] as OrgRole[]).map((role) => ({
       role,
@@ -373,15 +376,16 @@ export async function listOrgUsers(db: Database, orgId: string) {
 }
 
 /**
- * ★★ 项目里至少要留一个「能管成员的人」。
+ * ★★ A project must keep at least one person who can manage members.
  *
- *   判据是**权限**不是角色名（`project.members.manage`）：角色可自定义之后，
- *   「负责人」可能叫「运营主管」也可能叫「Tech Owner」。按名字判的话，
- *   一个把 pm 换成自定义角色的组织会突然失去这条保护 ——
- *   而失去它的表现是某天没人能改成员了，且只能改数据库来恢复。
+ *   The criterion is the **permission** (`project.members.manage`), not the role name.
+ *   Once roles are customizable, "the lead" might be called "Operations Manager" or
+ *   "Tech Owner". Judging by name means an organization that replaced pm with a custom
+ *   role loses this protection out of nowhere — and losing it shows up as the day
+ *   nobody can change members any more, recoverable only by editing the database.
  *
- * ★ 只数人不数 Agent：`project.members.manage` 是 humanOnly，
- *   Agent 拿不到它，数进来只会让这条保护形同虚设。
+ * ★ Count people only, never Agents: `project.members.manage` is humanOnly, so an
+ *   Agent can never hold it, and counting them would render this protection hollow.
  */
 async function assertProjectKeepsAManager(
   db: Database,
@@ -404,7 +408,7 @@ async function assertProjectKeepsAManager(
       and(
         eq(projectMembers.projectId, ctx.projectId),
         eq(projectMembers.actorType, 'human'),
-        // Postgres 数组包含运算
+        // Postgres array-containment operation
         inArray(projectMembers.role, await managerRoleKeys(db, orgId)),
       ),
     );
@@ -420,7 +424,7 @@ async function assertProjectKeepsAManager(
   }
 }
 
-/** 本组织里哪些角色带「管理项目成员」权限 */
+/** Which roles in this organization carry the "manage project members" permission */
 async function managerRoleKeys(db: Database, orgId: string): Promise<string[]> {
   const rows = await db
     .select({ key: roles.key, permissions: roles.permissions })
@@ -454,9 +458,10 @@ async function loadProject(db: Database, projectId: string) {
 }
 
 /**
- * ★ 账号是全局的，所以「这个人在哪个组织」不再能从 users 上读出来。
- *   项目成员判定要的是「他在**这个项目所属组织**里有没有位置」，
- *   所以带上 orgId 去查归属表。
+ * ★ Accounts are global, so "which organization is this person in" can no longer be
+ *   read off the users row. What project membership needs is whether they have a place
+ *   in **the organization this project belongs to**, so the membership table is queried
+ *   with that orgId.
  */
 async function loadUser(db: Database, userId: string, orgId: string) {
   const [row] = await db

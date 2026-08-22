@@ -19,21 +19,27 @@ import { Label } from '@/components/ui/label';
 import { WhatIsThis } from './primitives';
 
 /**
- * 角色定义（docs/tech/09-security.md §2.2）。
+ * Role definitions (docs/tech/09-security.md §2.2) / 角色定义。
  *
- * ★★ 超管在这里造出「研发」「运营」「测试」。内置的六个覆盖
- *   「项目怎么运转」，覆盖不了「这个组织怎么分工」—— 每家的切法都不一样。
+ * ★★ This is where an owner invents "engineering", "operations", "QA". The six
+ *   built-in roles cover **how a project runs**; they cannot cover **how this
+ *   organization divides its work** — every company cuts that differently.
  *
- * ★★ 每个角色都要回答一个问题：**谁来担任，人还是 Agent？**
+ * ★★ Every role has to answer one question: **who holds it, a human or an agent?**
  *
- *   这是 Human–Agent 混合团队的基本形状。而答案不是随便选的：
- *   带「确认需求 / 批准计划 / 处理决策」这类权限的角色永远不能给 Agent ——
- *   那几条是「人类始终掌握最终决策权」这句话的全部落点。
- *   界面上直接把这些权限标出来，勾了就自动锁掉 Agent 选项，
- *   而不是等提交后被服务端驳回。
+ *   That is the basic shape of a Human–Agent team, and the answer is not free-form: a
+ *   role carrying permissions like confirm-requirement / approve-plan / handle-decision
+ *   can never be given to an agent — those few permissions are the entirety of where
+ *   "humans always keep final decision authority" actually lands. The UI marks such
+ *   permissions inline and locks the agent option the moment one is checked, rather
+ *   than letting the server reject the submission afterward.
+ *
+ * ★★ 超管在这里造出「研发」「运营」「测试」。每个角色都要回答「谁来担任，
+ *   人还是 Agent」：带「确认需求 / 批准计划 / 处理决策」这类权限的角色永远不能
+ *   给 Agent，界面上勾了就当场锁掉，而不是等提交后被服务端驳回。
  */
 
-/** 权限前缀 → 词条键。模块级常量存键不存译文 */
+/** Permission prefix → message key. Module-level constants store keys, not translations */
 const GROUP_KEYS: Record<string, MessageKey> = {
   project: 'roles.group.project',
   requirement: 'roles.group.requirement',
@@ -46,7 +52,7 @@ const GROUP_KEYS: Record<string, MessageKey> = {
   integration: 'roles.group.integration',
 };
 
-/** 这几个前缀在两种语言里写法一样，不进词条表 */
+/** These prefixes read the same in both languages, so they get no catalog entry */
 const GROUP_LITERALS: Record<string, string> = { run: 'Agent Run', agent: 'Agent' };
 
 function groupLabel(prefix: string, tr: (k: MessageKey) => string): string {
@@ -62,12 +68,12 @@ interface Draft {
   agents: boolean;
   builtin: boolean;
   /**
-   * 复制自哪个角色。
+   * Which role this one was copied from / 复制自哪个角色。
    *
-   * ★★ **只是出处标签，不是继承关系。**
-   *   做成动态继承的话，平台哪天调整内置角色，所有派生角色会跟着变 ——
-   *   而那正是「权限累积」的发生方式。复制的是当时那份权限快照，
-   *   之后两者再无关系。
+   * ★★ **A provenance label, not an inheritance link.** Made dynamic, any later tweak
+   *   the platform makes to a built-in role would propagate into every derived role —
+   *   which is exactly how permission creep happens. What is copied is the permission
+   *   snapshot as of that moment; afterward the two have nothing to do with each other.
    */
   basedOn?: { key: string; name: string } | null;
 }
@@ -91,19 +97,21 @@ export function RolesPage() {
 
   const perms = usePermissions(projectId);
   /**
-   * ★ 读角色不设防（成员页要用它渲染下拉框），写才要 org.roles.manage。
-   *   但按钮要按写权限灰掉 —— 让人填完一整个表单再被 403 驳回，
-   *   他不会理解「为什么不行」，只会觉得这个功能坏了。
+   * ★ Reading roles is unguarded (the members page needs them to render its dropdown);
+   *   only writing requires org.roles.manage. But the buttons must gray out on the
+   *   write permission — let someone fill in a whole form and then hit a 403 and they
+   *   will not understand why it was refused, they will conclude the feature is broken.
    */
   const canManage = perms.can('org.roles.manage');
-  /** ★ 角色是组织级的 —— 缓存键必须带组织，否则切组织后先看到上一个组织的角色 */
+  /** ★ Roles are org-scoped — the cache key must carry the org, or switching orgs first
+   *  shows the previous org's roles */
   const orgId = useOrgStore((s) => s.orgId);
 
   const roles = useQuery({ queryKey: qk.roles(orgId), queryFn: () => api.roles() });
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.roles(orgId) });
-    // 角色权限变了，所有人的权限清单跟着变
+    // A role's permissions changed, so everyone's permission list changes with it
     void qc.invalidateQueries({ queryKey: ['permissions'] });
     void qc.invalidateQueries({ queryKey: ['members'] });
   };
@@ -118,9 +126,10 @@ export function RolesPage() {
       };
       if (editingKey) return api.updateRole(editingKey, body);
       /**
-       * ★ 从模板复制走 clone 端点：它把「以谁为模板」写进审计。
-       *   走 createRole 的话，一个和 tech_lead 一模一样的新角色出现在
-       *   审计里，而没有任何记录说明它是从哪儿来的。
+       * ★ Copying from a template goes through the clone endpoint: it records "modeled
+       *   on which role" in the audit trail. Via createRole, a new role identical to
+       *   tech_lead simply appears in the audit log with nothing saying where it came
+       *   from.
        */
       if (d.basedOn) {
         return api.cloneRole(d.basedOn.key, {
@@ -150,14 +159,16 @@ export function RolesPage() {
   });
 
   /**
-   * 「复制并改」。
+   * "Copy and edit" / 「复制并改」。
    *
-   * ★★ 它是内置角色不可改的另一半。只说「改不了」的话，用户的下一步是
-   *   从零勾一遍权限 —— 而勾出来的角色和他想要的「跟 tech_lead 一样但
-   *   少一条」几乎一定不同，差在哪儿他自己也说不清。
+   * ★★ It is the other half of built-in roles being immutable. Say only "you cannot
+   *   change it" and the user's next move is to tick 48 permissions from scratch — and
+   *   what they build almost certainly differs from the "same as tech_lead but one
+   *   fewer" they wanted, in ways they cannot themselves name.
    *
-   * ★ 前端只是把源角色的权限**预填**进草稿；真正的复制在服务端
-   *   （cloneRole），因为「以谁为模板」这件事要进审计。
+   * ★ The client only **prefills** the source role's permissions into the draft; the
+   *   real copy happens on the server (cloneRole), because "modeled on which role"
+   *   belongs in the audit trail.
    */
   const openClone = (r: RoleRow) => {
     setEditingKey(null);
@@ -231,9 +242,10 @@ export function RolesPage() {
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
           <div className="mx-auto max-w-3xl space-y-3">
             {/*
-              ★ 这一页说的是领域词汇（Policy / 角色 / 集成 / 成员与授权），
-                对写它的人是精确的，对项目经理是一堵墙。头一句先回答
-                「这跟我有关系吗」（问题记录 #42）。
+              ★ This page speaks in domain vocabulary (Policy / roles / integrations /
+                members and grants). Precise to whoever wrote it, a wall to a project
+                manager. The opening line answers "does this concern me at all" first
+                (issue log #42).
             */}
             <WhatIsThis storageKey="roles" title={t('whatIs.roles.title')}>
               <p>{t('whatIs.roles.p1')}</p>
@@ -274,8 +286,9 @@ export function RolesPage() {
       )}
 
       {editing && data && (
-        // ★ 宽度归 Modal 管：写在里层的 w-[560px] 超过弹层自己的 max-w-md，
-        //   结果是横向溢出，而调用方看到的现象是「我设了宽度但没变宽」。
+        // ★ Width belongs to Modal: a w-[560px] set on the inner element exceeds the
+        //   dialog's own max-w-md, so it overflows horizontally while the caller sees
+        //   only "I set a width and nothing got wider".
         <Modal onClose={() => setEditing(null)} title={t('roles.editor')} width="lg">
           <RoleEditor
             draft={editing}
@@ -332,9 +345,10 @@ function RoleSection({
                 <span className="font-medium text-slate-900">{r.name}</span>
                 <code className="text-[11px] text-slate-400">{r.key}</code>
                 {/*
-                  ★ 「谁能担任」是这一行最重要的信息，放在最显眼处。
-                    一个只写权限数不写担任者的角色列表，回答不了
-                    「我们的测试岗现在是人还是 Agent」这个问题。
+                  ★ "Who can hold it" is the most important thing on this row, so it goes
+                    where the eye lands first. A role list that shows a permission count
+                    and no holder cannot answer "is our QA seat a human or an agent right
+                    now".
                 */}
                 <span
                   className={clsx(
@@ -355,14 +369,15 @@ function RoleSection({
               <p className="mt-0.5 text-[11px] text-slate-500">{r.description}</p>
 
               <div className="mt-1 flex gap-1.5 text-[11px]">
-                {/* 查看权限谁都可以 —— 「我为什么做不了这个」的答案就在这里 */}
+                {/* Anyone may view permissions — this is where "why can't I do that" is answered */}
                 <Button variant="outline"
                   onClick={() => onEdit(r)}>
                   {r.builtin || !canManage ? t('roles.view') : t('common.edit')}
                 </Button>
                 {/*
-                  ★ 「复制并改」对内置角色尤其重要：它们的权限改不了，
-                    而这个按钮把「那我该怎么办」的答案放在了同一行上。
+                  ★ "Copy and edit" matters most for built-in roles: their permissions
+                    cannot be changed, and this button puts the answer to "so what do I do
+                    instead" on the very same row.
                 */}
                 <GatedButton
                   permission="org.roles.manage"
@@ -402,10 +417,10 @@ function RoleEditor({
 }: {
   draft: Draft;
   isNew: boolean;
-  /** 用来算差异：复制自哪个模板，或者改之前是什么样 */
+  /** Used to compute the diff: which template it was copied from, or what it looked like before */
   roles: RoleRow[];
   available: AvailablePermission[];
-  /** 内置角色、或调用者没有 org.roles.manage —— 表单变成一份可读的说明书 */
+  /** Built-in role, or the caller lacks org.roles.manage — the form becomes a readable spec sheet */
   readOnly: boolean;
   pending: boolean;
   onChange: (d: Draft) => void;
@@ -414,10 +429,11 @@ function RoleEditor({
 }) {
   const t = useT();
   /**
-   * ★ 按**原始前缀**分组，渲染时才译。用译文当 map 的键的话，切语言会
-   *   让分组重排（甚至因为两个前缀译成同一个词而合并）—— 那不是本意。
-   *   Group by the raw prefix and translate at render time: keying the map by
-   *   translated text would reorder (or merge) groups when the locale changes.
+   * ★ Group by the **raw prefix** and translate only at render time. Keying the map by
+   *   translated text would reorder the groups when the locale changes — and could even
+   *   merge two prefixes that translate to the same word, which is not the intent.
+   *
+   * ★ 按原始前缀分组，渲染时才译；用译文当 map 的键会让切语言时分组重排甚至合并。
    */
   const groups = useMemo(() => {
     const map = new Map<string, AvailablePermission[]>();
@@ -428,18 +444,20 @@ function RoleEditor({
   }, [available]);
 
   /**
-   * ★★ 勾了 Human Gate 权限就锁掉 Agent 选项，并说明是哪几条。
+   * ★★ Checking a Human Gate permission locks the agent option, and names which
+   *   permissions did it.
    *
-   *   服务端当然也会拒（roles.ts 的 validateRoleDefinition），但让人
-   *   填完一整个表单再被驳回是很差的体验 —— 更糟的是他不会理解
-   *   「为什么不行」，只会觉得这个功能有 bug。这里当场把因果摆出来。
+   *   The server refuses these too, of course (validateRoleDefinition in roles.ts), but
+   *   making someone fill in an entire form only to be rejected is a poor experience —
+   *   and worse, they will not understand why it was refused and will conclude the
+   *   feature is buggy. This lays the cause and effect out on the spot.
    */
   const blocking = [...draft.permissions].filter(
     (p) => available.find((a) => a.key === p)?.humanOnly,
   );
   const agentAllowed = blocking.length === 0;
 
-  /** 内置角色（或没有写权限时）表单只读 —— 它是一份可读的说明书 */
+  /** For a built-in role (or without write permission) the form is read-only — a readable spec sheet */
   const locked = readOnly || (!isNew && draft.builtin);
 
   const toggle = (p: Permission) => {
@@ -497,7 +515,7 @@ function RoleEditor({
           className="disabled:bg-slate-50 disabled:text-slate-500" />
       </Label>
 
-      {/* ── 谁来担任 ── */}
+      {/* ── Who holds it ── */}
       <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2">
         <p className="text-xs font-medium text-slate-700">{t('roles.whoHolds')}</p>
         <Label className="mt-1 flex items-start gap-2 text-xs">
@@ -524,19 +542,20 @@ function RoleEditor({
       </div>
 
       {/*
-        ── 差异与影响 ──
+        ── Diff and impact ──
 
-        ★★ 默认编辑器显示的是**差异**，不是一张 48 条权限的勾选表。
-          「跟项目成员比多了两条、少了一条」是用户脑子里的形状；
-          一张全量表让他自己去对比两遍，而对比错了没有任何提示。
+        ★★ By default the editor shows a **diff**, not a checklist of 48 permissions.
+          "Two more and one fewer than project member" is the shape already in the
+          user's head; a full table makes them compare it twice by hand, and a botched
+          comparison produces no warning at all.
 
-        ★★ 「影响几个人」必须在保存**之前**说。角色是组织级的，
-          改一次可能同时改掉五个项目里十几个人的可做操作 ——
-          而那件事在保存之后没有任何界面会告诉他。
+        ★★ "How many people this affects" must be stated **before** saving. Roles are
+          org-scoped, so one edit can change what a dozen people across five projects
+          are allowed to do — and after saving, no screen anywhere tells them that.
       */}
       <RoleDiff draft={draft} roles={roles} available={available} />
 
-      {/* ── 权限 ── */}
+      {/* ── Permissions ── */}
       <div className="mt-3">
         <p className="text-xs font-medium text-slate-700">
           {t('roles.permissionsSelected', { count: draft.permissions.size })}
@@ -593,13 +612,15 @@ function RoleEditor({
 }
 
 /**
- * 与模板（或改动前）的差异，外加保存前的影响。
+ * The diff against the template (or against the pre-edit state), plus the pre-save
+ * impact / 与模板（或改动前）的差异，外加保存前的影响。
  *
- * ★ 差异在前端算，影响向服务端要。
+ * ★ The diff is computed on the client, the impact is asked of the server.
  *
- *   差异是纯集合运算，两边算不出分歧；而「影响几个人几个 Agent」要查
- *   成员表，前端猜不出来 —— 更重要的是，`humanOnly` 那条不兼容必须由
- *   服务端说，它是保存时真正会拒的那条判定。
+ *   A diff is pure set arithmetic, so the two sides cannot disagree about it; but "how
+ *   many people and agents this affects" requires the membership tables and the client
+ *   cannot guess it. More importantly, the `humanOnly` incompatibility must come from
+ *   the server — that is the check which will actually refuse the save.
  */
 function RoleDiff({
   draft,
@@ -612,7 +633,7 @@ function RoleDiff({
 }) {
   const t = useT();
 
-  /** 比的对象：复制来的比模板，改已有的比它自己改之前 */
+  /** What it compares against: a copy against its template, an edit against its own prior state */
   const baseline = draft.basedOn
     ? roles.find((r) => r.key === draft.basedOn!.key)
     : roles.find((r) => r.key === draft.key);
@@ -621,7 +642,8 @@ function RoleDiff({
 
   const preview = useQuery({
     queryKey: ['rolePreview', draft.key, [...draft.permissions].sort().join(','), draft.agents],
-    /** ★ 只有改已有角色时才问服务端 —— 新建的角色还没有人担任，影响恒为 0 */
+    /** ★ Only ask the server when editing an existing role — nobody holds a brand-new role,
+   *  so the impact is always 0 */
     enabled: Boolean(baseline) && !draft.basedOn,
     queryFn: () =>
       api.previewRole(draft.key, {
@@ -684,8 +706,9 @@ function RoleDiff({
             })}
           </p>
           {/*
-            ★ 保存时真正会拒的那条判定，提前说出来。
-              等点了保存再报，用户此刻正盯着勾选框，那条报错指不回来。
+            ★ The check that will actually refuse the save, stated up front.
+              Reported only after the save button is pressed, the error has no way back
+              to the checkbox the user is staring at.
           */}
           {impact.humanOnlyConflicts.length > 0 && (
             <p className="mt-0.5 text-amber-800">

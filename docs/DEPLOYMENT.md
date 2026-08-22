@@ -1,170 +1,178 @@
-# 单机部署
+# Single-machine deployment
 
-*[English version / 英文版本](DEPLOYMENT.en.md)*
+*[中文版本 / Chinese version](DEPLOYMENT.zh.md)*
 
-把 APOS 完整跑在一台机器上：一条命令、一个对外端口。
+Run all of APOS on one host: one command, one exposed port.
 
-本机开发环境见[运行指南](RUNNING.md)。两者共用**同一个** `docker-compose.yml`：
-部署起全部服务，开发只起 `postgres redis` 两个依赖，其余在宿主机上跑。
+For a local development environment see the [Running guide](RUNNING.md). Both
+share the **same** `docker-compose.yml`: deployment starts every service, while
+development starts only `postgres redis` and runs the rest on the host.
 
 ---
 
-## 1. 部署了什么
+## 1. What gets deployed
 
 ```
-                        ┌──────────── 宿主机唯一对外端口 :8080 ────────────┐
-                        │                                                │
-  ┌──────────┐   ┌──────┴───────┐   ┌───────────────┐                     │
-  │ postgres │←──│ api          │   │ worker        │                     │
-  │ (仅本机)  │   │ HTTP + SSE   │   │ 调度循环       │                     │
-  ├──────────┤   │ + 前端静态资源 │   │ 通知投递       │                     │
-  │ redis    │←──│ PROCESS_ROLE │   │ PROCESS_ROLE  │                     │
-  │ (仅本机)  │   │  = api       │   │  = worker     │                     │
-  └──────────┘   └──────────────┘   └───────────────┘                     │
-                        ↑                   ↑                             │
-                        └── migrate（一次性，跑完退出）──┘                    │
+                        ┌────────── the host's only exposed port :8080 ──────────┐
+                        │                                                        │
+  ┌──────────┐   ┌──────┴───────┐   ┌───────────────┐                             │
+  │ postgres │←──│ api          │   │ worker        │                             │
+  │ (local)  │   │ HTTP + SSE   │   │ scheduling    │                             │
+  ├──────────┤   │ + static UI  │   │ notifications │                             │
+  │ redis    │←──│ PROCESS_ROLE │   │ PROCESS_ROLE  │                             │
+  │ (local)  │   │  = api       │   │  = worker     │                             │
+  └──────────┘   └──────────────┘   └───────────────┘                             │
+                        ↑                   ↑                                     │
+                        └── migrate (one-shot, exits when done) ──┘               │
 ```
 
-| 服务 | 说明 |
+| Service | What it is |
 | --- | --- |
-| `postgres` | 数据。命名卷持久化，端口**只绑 `127.0.0.1`**（见 [§6 安全](#6-安全)） |
-| `redis` | 预留给后续的队列与多实例扇出，当前没有代码读它。同样只绑 `127.0.0.1` |
-| `migrate` | 一次性容器，跑完迁移退出。api/worker 等它成功才启动 |
-| `api` | HTTP + SSE，**并托管前端构建产物**。唯一对外的服务 |
-| `worker` | Flow 调度与通知投递循环，不监听端口 |
+| `postgres` | The data. Persisted in a named volume; the port binds to **`127.0.0.1` only** (see [§6](#6-security)) |
+| `redis` | Reserved for the queue and multi-instance fan-out; no code reads it yet. Also `127.0.0.1` only |
+| `migrate` | One-shot container; runs the migrations and exits. api/worker wait for it to succeed |
+| `api` | HTTP + SSE, **and serves the frontend build**. The only externally reachable service |
+| `worker` | Flow scheduling and notification delivery loops; listens on no port |
 
-api 与 worker 是**同一个镜像**，靠 `PROCESS_ROLE` 区分
-（[架构文档 §3.1](tech/01-architecture.md)：API 要能随时重启，worker 承载长循环，
-混在一起会让部署时正在跑的调度被打断）。
+api and worker are the **same image**, told apart by `PROCESS_ROLE`
+([architecture §3.1](tech/01-architecture.md): the API must be restartable at
+any time while the worker carries long-running loops, and mixing them means a
+deployment interrupts scheduling that is mid-flight).
 
-### 为什么前端由 API 进程托管，而不是另起 nginx
+### Why the API process serves the frontend instead of a separate nginx
 
-因为 SSE。前端的 `EventSource` 不支持自定义请求头，认证只能靠同源 ——
-开发环境为此专门配了 Vite 代理。如果生产上把静态资源和 API 拆成两个 origin，
-同一个问题会原样回来，还要再配一遍反向代理与 CORS。同进程托管让「同源」
-不需要任何配置就成立，单机上也少一个容器。
+Because of SSE. The frontend's `EventSource` cannot send custom headers, so
+authentication depends on same-origin — development configures a Vite proxy
+purely for this. Splitting static assets and API into two origins in production
+brings the same problem straight back, plus a reverse proxy and CORS to
+configure. Serving both from one process makes "same origin" true with no
+configuration at all, and saves a container on a single host.
 
-代价是静态文件走 Node 的事件循环。单机规模下不是瓶颈；真要扩起来，
-前面本来就会有 CDN 或网关那一层。
-
----
-
-## 2. 前置要求
-
-- Docker（含 Compose v2）
-- 约 2GB 磁盘：镜像 683MB + 数据卷
-- 一个空闲端口，默认 `8080`
-
-不需要在宿主机装 Node、pnpm 或 Postgres —— 全在镜像里。
+The cost is that static files go through Node's event loop. At single-host scale
+that is not the bottleneck; anything larger already has a CDN or gateway in
+front.
 
 ---
 
-## 3. 起
+## 2. Prerequisites
+
+- Docker (with Compose v2)
+- Around 2GB of disk: a 683MB image plus the data volume
+- One free port, `8080` by default
+
+Node, pnpm and Postgres are not needed on the host — they are all in the image.
+
+---
+
+## 3. Starting it
 
 ```bash
 docker compose up -d --build
 ```
 
-不带服务名就是全套：postgres、redis、migrate、api、worker 都会起来。
-仓库里只有这**一个** compose 文件，不需要 `-f`。
+With no service names this is the full set: postgres, redis, migrate, api and
+worker all start. There is only **one** compose file in the repository, so no
+`-f` is needed.
 
-首次构建要几分钟（装依赖 + 构建前端）。完成后：
+The first build takes a few minutes (dependencies plus the frontend build).
+Then:
 
 ```bash
 curl localhost:8080/health          # {"ok":true}
 ```
 
-浏览器打开 <http://localhost:8080> 即是完整产品。
+Open <http://localhost:8080> for the complete product.
 
-### 灌一份演示数据（可选）
+### Load demo data (optional)
 
-空库的界面上什么都没有。想先看看产品长什么样：
+An empty database gives an empty UI. To see what the product looks like first:
 
 ```bash
 pnpm deploy:seed
 ```
 
-会打印看板链接与三个可切换身份。**生产环境不要跑这个** —— 它造的是演示数据。
+It prints a board link and three identities you can switch between. **Do not run
+this in production** — it creates demo data.
 
-### 常用命令
+### Everyday commands
 
 ```bash
 pnpm deploy:up        # = docker compose up -d --build
-pnpm deploy:logs      # 跟踪 api 与 worker 日志
-pnpm deploy:down      # 停止并删除容器（数据卷保留）
+pnpm deploy:logs      # follow the api and worker logs
+pnpm deploy:down      # stop and remove containers (volumes are kept)
 ```
 
 ---
 
-## 4. 配置
+## 4. Configuration
 
-所有配置走环境变量。Compose 会自动读项目根目录的 `.env`，也可以
-`docker compose --env-file <文件> up -d`。
+Everything is configured through environment variables. Compose reads `.env`
+from the repository root automatically, or use
+`docker compose --env-file <file> up -d`. The full table is in the
+[Chinese version](DEPLOYMENT.md#4-configuration); the entries worth calling out:
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `APOS_PUBLIC_PORT` | `8080` | 宿主机对外端口 |
-| `APOS_PUBLIC_URL` | `http://localhost:8080` | **用户实际访问的地址**，见下 |
-| `APOS_PGPORT` | `5433` | Postgres 在宿主机上的端口，只绑 `127.0.0.1` |
-| `APOS_REDIS_PORT` | `6379` | 同上 |
-| 模型凭证 | — | **不在这里配**：去 设置 → Agent 配置，登记在每个 Agent 的凭证栏上（密文入库，见 `APOS_SECRET_KEY`）。环境变量兜底与各运行时的变量名见 [RUNNING.md § 模型凭证](RUNNING.md#模型凭证在界面上配不在这里配) |
-| `AGENT_WORKSPACE_ROOT` | `/var/lib/apos/workspaces` | Agent 可写的目录根。compose 已给了默认值并挂在 `workspaces` 卷上，不配也能派发；要换位置得连着卷一起改 |
-| `GITHUB_INTEGRATION_TOKEN` | 空 | 不配时 GitHub 集成显示未连接 |
-| `INTEGRATION_MEMORY_ADAPTERS` | 空 | 设 `all` 则所有集成走进程内适配器，不发任何外部请求 |
-| `DATABASE_URL` | 容器内的 `postgres` | 指到外部托管 Postgres 就能去掉 `postgres` 服务，见 [接 Supabase](SUPABASE.md) |
-| `APOS_DB_POOL_MAX` | `10` | 单进程连接池大小。`api` 与 `worker` 各占一个，托管库连接数吃紧时往下调 |
+| `APOS_PUBLIC_PORT` | `8080` | The host port |
+| `APOS_PUBLIC_URL` | `http://localhost:8080` | **The address users actually visit** — see below |
+| `AGENT_WORKSPACE_ROOT` | `/var/lib/apos/workspaces` | The root Agents may write to. Compose supplies this default and backs it with the `workspaces` volume, so leaving it unset still dispatches; moving it means moving the volume too |
+| `APOS_DB_POOL_MAX` | `10` | Pool size per process. `api` and `worker` take one each; lower it when a managed database is short on connections |
 
-> **`APOS_PUBLIC_URL` 配错的表现很隐蔽**：产品跑得好好的，但飞书/Slack 通知里的
-> 链接点进去打不开 —— 因为通知链接是按这个变量拼的。部署到别的机器或加了域名，
-> 记得一起改。
+> **Getting `APOS_PUBLIC_URL` wrong fails quietly**: the product works fine, but
+> links in Feishu/Slack notifications do not open — those links are built from
+> this variable. Update it when you deploy to another host or add a domain.
 
-> **凭证为什么分两个**：产品文档 10.2 —— Agent 是独立身份，权限独立配置，
-> 不复用人类或平台的 token。缺 `APOS_AGENT_ANTHROPIC_API_KEY` 时适配器会
-> **明确拒绝派发**，而不是悄悄回退到平台那个 key。这是有意的。
+> **Model credentials are not configured here.** Register them per Agent under
+> Settings → Agent settings. An environment variable would be one key for the
+> whole deployment: no per-Agent rotation, no way to disable one key, and no
+> audit trail of which Agent used it. Product doc 10.2 — an Agent is an identity
+> of its own and does not reuse a human or platform token. See
+> [RUNNING.md § Model credentials](RUNNING.md#model-credentials-configured-in-the-ui-not-here).
 
 ---
 
-## 5. 运维
+## 5. Operations
 
-### 升级
+### Upgrading
 
 ```bash
 git pull
 docker compose up -d --build
 ```
 
-`migrate` 会先跑并等它成功，api/worker 才会用新镜像起来。迁移是幂等的，
-重复部署不会重复执行。
+`migrate` runs first and must succeed before api/worker come up on the new
+image. Migrations are idempotent, so redeploying does not re-run them.
 
-### 备份与恢复
+### Backup and restore
 
-数据全部在 `apos_pgdata` 卷里。
+All data lives in the `apos_pgdata` volume.
 
 ```bash
-# 备份
+# backup
 docker compose exec -T postgres pg_dump -U apos apos > apos-$(date +%F).sql
 
-# 恢复
+# restore
 docker compose exec -T postgres psql -U apos -d apos < apos-2026-08-09.sql
 ```
 
-### 看日志
+### Logs
 
 ```bash
-pnpm deploy:logs                                             # api + worker
-docker compose logs migrate            # 迁移这次做了什么
+pnpm deploy:logs                       # api + worker
+docker compose logs migrate            # what this migration run did
 ```
 
-### 连进数据库
+### Getting into the database
 
 ```bash
 docker compose exec postgres psql -U apos -d apos
 ```
 
-宿主机上装了 psql 的话，`psql -h 127.0.0.1 -p 5433 -U apos -d apos` 也通 ——
-端口发布在回环地址上，本机开发与 `pnpm test` 要靠它。
+With psql on the host, `psql -h 127.0.0.1 -p 5433 -U apos -d apos` also works —
+the port is published on the loopback address, which is what local development
+and `pnpm test` rely on.
 
-### 彻底清掉（含数据）
+### Wiping everything, data included
 
 ```bash
 docker compose down -v
@@ -172,65 +180,79 @@ docker compose down -v
 
 ---
 
-## 6. 安全
+## 6. Security
 
-这套配置的定位是**内网单机**，不是公网直接暴露。已经做到的：
+This configuration targets **a single machine on an internal network**, not
+direct exposure to the internet. What is already in place:
 
-- Postgres 与 Redis 的端口**只绑在 `127.0.0.1`**，网段内的其他机器连不上
-- 容器以非 root 的 `node` 用户运行
-- `.dockerignore` 排除了 `.env`，本机凭证不会被打进镜像
+- Postgres and Redis ports bind to **`127.0.0.1` only**, so other machines on
+  the segment cannot reach them
+- Containers run as the non-root `node` user
+- `.dockerignore` excludes `.env`, so local credentials never enter the image
 
-> **为什么数据库要发布端口。** 开发与 `pnpm test` 都从宿主机直连它，
-> 一个 compose 文件要同时服务这两种用法就绕不开。代价是本机上任何进程都能
-> 免密连上（`trust` 认证）—— 所以绑的是回环地址而不是 `0.0.0.0`：
-> 写成后者等于把一个免密数据库摆给整个网段。
+> **Why the database publishes a port at all.** Development and `pnpm test`
+> connect to it directly from the host, and one compose file serving both uses
+> cannot avoid it. The cost is that any process on the host can connect without
+> a password (`trust` authentication) — which is exactly why it binds to
+> loopback rather than `0.0.0.0`. The latter would hand a password-free database
+> to the entire network segment.
 
-公网暴露前**至少**还要处理：
+Before exposing this publicly you need **at least**:
 
-1. **认证。** 身份走邮箱 + 口令换 JWT（见
-   [09 身份、权限与安全 §1.0](tech/09-security.md#10-人类凭证与账号来源)）。
-   上公网前必须做到这三件事：
-   - **设 `APOS_JWT_SECRET`**。不设置就每进程随机生成，多副本部署下
-     A 副本签的令牌 B 副本验不过，表现是「随机掉线」。
-   - **改掉 `.env` 里的超管初始口令**，或登录后在界面上改。
-   - 知道令牌是**无状态**的：改口令、停用账号都不会让已签发的令牌立刻失效，
-     最长要等 `APOS_JWT_TTL_SECONDS`（默认 12 小时）。要立刻踢人只能换
-     `APOS_JWT_SECRET` 重启，那会把所有人一起踢下线。
-   还没有的：MFA、SSO、登录限流、会话撤销。
-2. **HTTPS。** 前面放一层 Caddy / nginx / Traefik 终止 TLS，
-   并给 api 设 `TRUST_PROXY=true`，否则日志里的客户端 IP 是反代的地址。
-3. Postgres 目前是 `trust` 认证。若要把它绑到回环地址以外，先改成密码认证。
+1. **Authentication.** Identity is email + password exchanged for a JWT (see
+   [09 Identity, permissions & security §1.0](tech/09-security.md#10-human-credentials-and-where-accounts-come-from)).
+   Three things are mandatory before going public:
+   - **Set `APOS_JWT_SECRET`.** Unset, each process generates a random key, so
+     in a multi-replica deployment a token signed by replica A fails on replica
+     B — which presents as random disconnects.
+   - **Change the super administrator's initial password** in `.env`, or change
+     it in the UI after signing in.
+   - Understand that tokens are **stateless**: changing a password or disabling
+     an account does not invalidate already-issued tokens; that takes up to
+     `APOS_JWT_TTL_SECONDS` (12 hours by default). Forcing everyone out
+     immediately means rotating `APOS_JWT_SECRET` and restarting, which signs
+     out every user at once.
+
+   Not yet present: MFA, SSO, login rate limiting, session revocation.
+2. **HTTPS.** Terminate TLS with Caddy / nginx / Traefik in front, and set
+   `TRUST_PROXY=true` on the api, otherwise the client IP in the logs is the
+   proxy's.
+3. Postgres currently uses `trust` authentication. Switch it to password
+   authentication before binding it anywhere beyond loopback.
 
 ---
 
-## 7. 排错
+## 7. Troubleshooting
 
-### 起来了但页面白屏，控制台报找不到 `/assets/xxx.js`
+### It starts but the page is blank, console cannot find `/assets/xxx.js`
 
-浏览器缓存了旧版 `index.html`。正常情况下不该发生 —— `index.html` 是
-`no-cache` 而带 hash 的资源才长缓存。如果你在前面加了反代，检查它有没有
-自作主张给 HTML 加缓存头。
+The browser cached an old `index.html`. This should not normally happen —
+`index.html` is `no-cache` while hashed assets are cached long-term. If you put
+a reverse proxy in front, check whether it is adding cache headers to HTML on
+its own initiative.
 
-### 打 API 返回的是一段 HTML
+### Hitting the API returns HTML
 
-路径写错了。`/api/` 开头的路径永远返回 JSON，包括 404；
-返回 HTML 说明请求没走到 `/api/` 前缀（比如少了 `/v1`）。
+Wrong path. Anything under `/api/` always returns JSON, including 404s; getting
+HTML back means the request never matched the `/api/` prefix (a missing `/v1`,
+for instance).
 
-### api 反复重启
+### api restarts in a loop
 
 ```bash
 docker compose logs api | tail -30
 ```
 
-先确认 `migrate` 是 `Exited (0)`。迁移没成功时 api 不会启动，
-`docker compose ps -a` 里会看到它卡在 `Created`。
+First check that `migrate` shows `Exited (0)`. api does not start until the
+migration succeeds; `docker compose ps -a` shows it stuck at `Created`.
 
-### Agent 页面显示「适配器没有在当前进程注册」
+### "Adapter not registered in this process" on the Agent page
 
-运行时注册表与数据库对不上。api/worker 每 15 秒会自动重扫补注册
-（日志里出现 `[runtime] 新注册 N 个运行时`），等一下即可，不必重启。
+The runtime registry disagrees with the database. api/worker rescan and
+re-register every 15 seconds (the log shows `[runtime] 新注册 N 个运行时`). Wait
+a moment; no restart is needed.
 
-### 端口被占
+### Port already in use
 
 ```bash
 APOS_PUBLIC_PORT=9090 docker compose up -d
@@ -238,11 +260,10 @@ APOS_PUBLIC_PORT=9090 docker compose up -d
 
 ---
 
-## 8. 已知取舍
+## 8. Known trade-offs
 
-| 取舍 | 说明 |
+| Trade-off | Why |
 | --- | --- |
-| 后端跑 TS 源码（tsx）而非 tsc 产物 | 仓库的 workspace 包全部以 `"main": "./src/index.ts"` 暴露，要出 dist 得改 5 个包的入口与互相引用。tsx 底层是 esbuild，加载时剥类型，运行时开销可忽略；代价是镜像里带着源码，冷启动略慢 |
-| 镜像 683MB | 装了完整依赖（含构建期用到的）。可以再做一层 `--prod` 裁剪，但单机场景收益有限 |
-| 单实例，无高可用 | 符合架构文档的判断：本系统挂掉时正在运行的 Agent Run **不会**停止（它们在外部运行时里），所以关键不是「快速重启」而是「重启后正确接管」 |
-| Redis 已起但没被使用 | 留给后续 BullMQ 队列与多实例 SSE 扇出。当前事件扇出走进程内 EventBus |
+| The backend runs TypeScript source via tsx rather than compiled output | Every workspace package exposes `"main": "./src/index.ts"`; producing a `dist` would mean changing the entry point and cross-references of five packages. tsx is esbuild underneath and strips types at load, so runtime overhead is negligible; the cost is source in the image and a slightly slower cold start |
+| 683MB image | Full dependencies, including build-time ones. A `--prod` pruning layer is possible but buys little at single-host scale |
+| Single instance, no HA | Consistent with the architecture doc: when this system goes down, in-flight Agent runs **do not** stop (they live in external runtimes), so what matters is not "restart fast" but "take over correctly after restarting" |

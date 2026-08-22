@@ -13,10 +13,19 @@ import {
 } from './policies';
 
 /**
- * 操作开关矩阵。
+ * The operation switch matrix / 操作开关矩阵。
  *
- * ★★ 这一组盯的是三件事，每一件都是「开关」这个形态本身带来的风险：
+ * ★★ This group watches three things, each of them a risk the switch shape itself introduces:
  *
+ *   1. One row, one rule. Flipping twice must not leave two rules behind — otherwise the
+ *      promise "delete that rule and you are back where you started" is void, and that promise
+ *      is the entire basis for trusting a one-click control.
+ *   2. Hand-written rules are untouched. The switch only adds its own rule at the front; not
+ *      one rule somebody else wrote is modified.
+ *   3. A flip may not take effect, and when it does not, say so. An existing rule or the safety
+ *      floor can still stand in front of it; reporting "saved" instead of reporting the outcome
+ *      leaves the user believing they opened something up when they did not.
+ *   这一组盯的是三件事，每一件都是「开关」这个形态本身带来的风险：
  *   1. 一行一条规则。切两次不该留下两条 —— 否则「删掉那条规则即还原」
  *      这个承诺当场作废，而它是一键操作能被信任的全部依据。
  *   2. 不碰手写规则。开关只在最前面加自己那一条，别人写的一条不动。
@@ -59,7 +68,10 @@ describe('操作开关矩阵', () => {
   });
 
   /**
-   * ★★ 再切一次是**改这一条**，不是叠一条新的。
+   * ★★ Flipping again **edits that same rule**; it does not stack a new one on top.
+   *   Stacking would leave "deploy → auto → human → auto" as three rules, and the user can
+   *   neither tell which one to delete nor see which one is still in force.
+   *   再切一次是**改这一条**，不是叠一条新的。
    *   叠加的话「部署 → 自动 → 需人 → 自动」会留下三条规则，
    *   用户不知道该删哪一条，也看不出哪一条还在生效。
    */
@@ -87,7 +99,10 @@ describe('操作开关矩阵', () => {
     ]);
   });
 
-  /** ★ 用户手写的规则是他表达过的意图，一次点击不该把它悄悄改写 */
+  /**
+   * ★ A hand-written rule is intent the user has already expressed; one click must not quietly
+   *   rewrite it / 用户手写的规则是他表达过的意图，一次点击不该把它悄悄改写
+   */
   it('★ 不改也不删手写规则', async () => {
     const authored = await savePolicy(
       db,
@@ -109,7 +124,8 @@ describe('操作开关矩阵', () => {
     expect(await projectRules()).toHaveLength(2);
   });
 
-  /** 适用范围选了某个环境时，条件里就多这一项 —— 其余环境仍走原来的规则 */
+  /** Picking an environment as the scope adds that one term to the condition; every other
+   *  environment keeps following whatever rule it followed before */
   it('限定环境时条件里带上 environment', async () => {
     await setOperationSwitch(
       db,
@@ -125,13 +141,18 @@ describe('操作开关矩阵', () => {
         { fact: 'environment', op: 'eq', value: 'production' },
       ],
     });
-    // 只管住了生产，其余环境仍由别的规则/默认策略决定 → 这一行是「视情况」
+    // Only production is governed here; other environments are still decided by other rules or
+    // the default policy, so this row reads as "it depends"
     const { summary } = await getPolicies(db, fx.projectId);
     expect(summary.depends.map((o) => o.operationType)).toContain('deploy');
   });
 
   /**
-   * ★★ 切换可能不生效，而不生效必须说出来。
+   * ★★ A flip may not take effect, and when it does not, say so.
+   *   Deleting a resource is never auto-approved (a safety floor, hard-coded in the evaluator) —
+   *   the switch still stores the rule, but the row's real state remains "needs a human".
+   *   Reporting "saved" instead of reporting the outcome is exactly the lie this page must avoid.
+   *   切换可能不生效，而不生效必须说出来。
    *   删除资源永远不自动放行（安全底线，硬编码在求值器里）——
    *   开关照样存下了那条规则，但这一行的实际状态仍然是「需人」。
    *   报「已保存」而不报结果，正是这一页最该避免的那种谎。
@@ -149,7 +170,11 @@ describe('操作开关矩阵', () => {
     expect(result.blockedBy).toBe('safety_floor');
   });
 
-  /** ★ 被别的规则挡住时要说出是哪一条，只报「没生效」等于把排查退回给用户 */
+  /**
+   * ★ When another rule stands in the way, name it — reporting only "did not take effect" hands
+   *   the investigation back to the user /
+   *   被别的规则挡住时要说出是哪一条，只报「没生效」等于把排查退回给用户
+   */
   it('★ 被组织规则挡住时报出挡路的规则', async () => {
     await db.insert(policies).values({
       orgId: fx.orgId,
@@ -168,6 +193,10 @@ describe('操作开关矩阵', () => {
     });
 
     /**
+     * The switch wants to open up production deploys — the org rule sorts ahead of it
+     * (10 < 100), so it wins. The "a project rule may not loosen an org rule" gate only fires
+     * when the **outcome actually gets looser**; here the outcome is unchanged, so the rule
+     * saves fine — it simply never matches a single scenario.
      * 开关想放开生产部署 —— 组织规则排在前面（10 < 100），拦得住。
      * 「项目规则不能放宽组织规则」那道闸只在**结果变松**时才拦，
      * 这里结果没变，所以规则存得下来，但它一条场景都命不中。
@@ -197,7 +226,10 @@ describe('操作开关矩阵', () => {
     expect(await projectRules()).toHaveLength(0);
 
     /**
-     * ★★ 删除本身留在变更历史里。
+     * ★★ The deletion itself stays in the change history.
+     *   Delete without recording it and, when someone later asks "was there once a rule
+     *   blocking this?", a deletion looks exactly like nothing ever having happened.
+     *   删除本身留在变更历史里。
      *   只删不记的话，事后查「这里以前是不是有条规则拦着」时，
      *   一次删除在历史上长得和「什么都没发生」一样。
      */
@@ -217,7 +249,10 @@ describe('操作开关矩阵', () => {
   });
 
   /**
-   * ★★ 开关走的是和手写规则完全一样的保存路径 —— 权限判定一起。
+   * ★★ The switch takes exactly the same save path as a hand-written rule — permission check
+   *   included. Giving it a looser path would route around the asymmetric design of §2.3
+   *   through the back door.
+   *   开关走的是和手写规则完全一样的保存路径 —— 权限判定一起。
    *   给它一条更松的路径，等于把 §2.3 的不对称设计从后门绕过去。
    */
   it('★ 放开一类操作要 policy.loosen，不是 policy.tighten', async () => {
@@ -262,9 +297,14 @@ describe('操作开关矩阵', () => {
 });
 
 /**
- * 优先级自动分配（P3）。
+ * Automatic priority assignment (P3) / 优先级自动分配（P3）。
  *
- * ★★ 优先级从编辑界面消失了，由服务端往后追加。这里钉住两件事：
+ * ★★ Priority disappeared from the editing UI; the server now appends. Two things are pinned
+ *   here: a new rule lands **behind** the existing ones (it never quietly cuts the line), and
+ *   slot 100 stays reserved for the switch matrix — a switch is a stance the user took moments
+ *   ago, and having it silently overridden by a rule written six months back is the hardest
+ *   kind of problem to track down.
+ *   优先级从编辑界面消失了，由服务端往后追加。这里钉住两件事：
  *   新规则排在已有规则**后面**（不会悄悄插队），
  *   以及 100 那一格始终留给开关矩阵 —— 开关是用户刚刚做出的表态，
  *   被一条半年前写的规则默默盖掉是最难查的一类问题。
@@ -293,7 +333,11 @@ describe('优先级自动分配', () => {
   });
 
   /**
-   * ★★ 开关那一格不参与追加。
+   * ★★ The switch's slot takes no part in the append.
+   *   Count it in and the next hand-written rule lands **behind** the switch while looking, by
+   *   number, as if it sits right next to it — and which of the two comes first is the whole
+   *   of the verdict.
+   *   开关那一格不参与追加。
    *   把它算进去的话，下一条手写规则会排到开关**后面**、
    *   却在编号上看起来紧挨着它 —— 而两者的先后正是判定结果的全部。
    */
@@ -304,7 +348,7 @@ describe('优先级自动分配', () => {
     expect(await authored()).toBe(AUTHORED_PRIORITY_MIN);
   });
 
-  /** 组织规则不参与 —— 它们占的是 1–99，那一段项目改不着 */
+  /** Org rules take no part — they occupy 1-99, a band no project can touch */
   it('组织规则不参与追加', async () => {
     await db.insert(policies).values({
       orgId: fx.orgId,

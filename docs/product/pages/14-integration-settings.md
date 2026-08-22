@@ -1,317 +1,320 @@
-# 14 项目集成设置
+# 14 Project Integration Settings
 
-## 1. 页面信息
+*[中文版本 / Chinese version](14-integration-settings.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Item | Value |
 | --- | --- |
-| 路由 | `/projects/:projectId/settings/integrations`（项目级）<br>`/admin/integrations`（组织级连接管理） |
-| 层级 | 三级页面 |
-| 主要角色 | `pm` / `tech_lead` / `org_admin` |
-| 优先级 | P1（MVP 只需支持文档 12.2 的第一批集成） |
-| 对应产品文档 | 九 集成能力、9.1 Source of Truth、9.3 Agent Protocol、十 权限与安全 |
+| Route | `/projects/:projectId/settings/integrations` (project level)<br>`/admin/integrations` (org-level connection management) |
+| Level | Third-level page |
+| Primary roles | `pm` / `tech_lead` / `org_admin` |
+| Priority | P1 (the MVP only needs the first wave of integrations from product doc 12.2) |
+| Product docs | Chapter 9 Integration Capabilities, 9.1 Source of Truth, 9.3 Agent Protocol, Chapter 10 Permissions and Security |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-把项目连接到它真正运行的地方——代码仓库、项目管理系统、协同工具、Agent 运行时。
+Connect the project to the places where it actually runs — the code repository, the project management system, the collaboration tools, the Agent runtimes.
 
-要回答：
+Questions to answer:
 
-1. 这个项目连了哪些系统？连接是否正常？
-2. 数据往哪个方向同步？冲突了听谁的？
-3. 通知发到哪里？发什么？
-4. 连接授予了什么权限？会不会太宽？
+1. Which systems is this project connected to? Are the connections healthy?
+2. Which way does data flow? When the two sides disagree, who wins?
+3. Where do notifications go, and what gets sent?
+4. What did the connection grant? Is it too broad?
 
-**MVP 集成范围**（文档 12.2）：GitHub、一个 Code Agent、Slack 或飞书、Jira 或 Plane。本页按这四类设计，其余类型预留位置。
+**MVP integration scope** (product doc 12.2): GitHub, one code agent, Slack or Feishu, Jira or Plane. This page is designed around those four categories and leaves slots for the rest.
 
 ---
 
-## 3. 入口与出口
+## 3. Entry Points and Exits
 
-**入口**：项目设置；新建项目引导流程；需求录入页的「从外部系统导入」；Agent 注册流程；连接异常告警。
+**In**: project settings; the new-project onboarding flow; "import from an external system" on the requirement intake page; the Agent registration flow; a connection-failure alert.
 
-**出口**：
+**Out**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| Agent 配置 | `08 Agent Workspace` |
-| 同步冲突处理 | 冲突详情弹窗 |
-| 组织级连接管理 | `/admin/integrations` |
-| 通知规则调整 | 本页通知区 / 用户决策偏好 |
+| Agent configuration | `08 Agent Workspace` |
+| Resolving a sync conflict | Conflict detail dialog |
+| Org-level connection management | `/admin/integrations` |
+| Adjusting notification rules | The notification region on this page / user decision preferences |
 
 ---
 
-## 4. 页面结构
+## 4. Page Structure
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 订单系统重构 / 设置 / 集成                                                 │
+│ Order System Refactor / Settings / Integrations                            │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ 已连接 4 · ⚠ 异常 1                                        [+ 添加集成]    │
+│ 4 connected · ⚠ 1 failing                            [+ Add integration]   │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ 💻 代码与研发                                                              │
+│ 💻 Code and Engineering                                                    │
 │ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ [GitHub]  ● 正常   最后同步 2 分钟前                    [配置] [断开]  │ │
-│ │ 仓库    order-service (读写) · shared-lib (只读)                       │ │
-│ │ 同步    PR 状态 → Work Item · Commit → 执行记录 · CI 结果 → 验收       │ │
-│ │ 权限    ✓读代码 ✓创建分支 ✓创建PR ✗合并PR ✗修改设置                   │ │
-│ │ 今日    12 次 API 调用 · 3 个 PR 创建                                  │ │
+│ │ [GitHub]  ● Healthy   Synced 2 min ago        [Configure] [Disconnect] │ │
+│ │ Repos    order-service (read/write) · shared-lib (read-only)           │ │
+│ │ Sync     PR state → Work Item · Commit → runs · CI → acceptance        │ │
+│ │ Grants   ✓read code ✓create branch ✓open PR ✗merge PR ✗change settings │ │
+│ │ Today    12 API calls · 3 PRs created                                  │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                            │
-│ 📋 项目管理系统                                                            │
+│ 📋 Project Management                                                      │
 │ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ [Jira]  ⚠ 同步冲突 2   最后同步 15 分钟前              [配置] [断开]  │ │
-│ │ 项目    ORDER (Scrum Board)                                            │ │
-│ │ 方向    ⇄ 双向同步                                                     │ │
+│ │ [Jira]  ⚠ 2 conflicts   Synced 15 min ago     [Configure] [Disconnect] │ │
+│ │ Project   ORDER (Scrum Board)                                          │ │
+│ │ Direction ⇄ two-way sync                                               │ │
 │ │ ─────────────────────────────────────────────────────────────────────  │ │
-│ │ Source of Truth 设置                                    ⚠ 关键配置     │ │
-│ │  需求内容    [APOS ▾]      状态      [APOS ▾]                          │ │
-│ │  负责人      [Jira ▾]      截止时间  [Jira ▾]                          │ │
-│ │  评论        [双向合并 ▾]  产物链接  [APOS ▾]                          │ │
+│ │ Source of Truth settings                       ⚠ critical config       │ │
+│ │  Requirement body [APOS ▾]     Status     [APOS ▾]                     │ │
+│ │  Owner            [Jira ▾]     Due date   [Jira ▾]                     │ │
+│ │  Comments         [Merge ▾]    Artifacts  [APOS ▾]                     │ │
 │ │ ─────────────────────────────────────────────────────────────────────  │ │
-│ │ ⚠ 2 个冲突待处理                                        [处理冲突 →]  │ │
-│ │   · ORDER-142 状态在两端同时变更（APOS: Review / Jira: Done）          │ │
-│ │   · ORDER-156 负责人不一致                                             │ │
+│ │ ⚠ 2 conflicts pending                          [Resolve conflicts →]   │ │
+│ │   · ORDER-142 status changed on both sides (APOS: Review / Jira: Done) │ │
+│ │   · ORDER-156 owner does not match                                     │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                            │
-│ 🤖 Agent 与模型                                                            │
+│ 🤖 Agents and Models                                                       │
 │ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ [Claude Code (MCP)]  ● 正常                            [配置] [断开]  │ │
-│ │ 已接入 Agent   [🤖 code-agent-1] [🤖 code-agent-2]     [管理 Agent →] │ │
-│ │ 协议           Agent Protocol v1 · 支持流式事件/产物回传/人工介入请求  │ │
-│ │ 本月           128 次 Run · $278                                       │ │
+│ │ [Claude Code (MCP)]  ● Healthy                [Configure] [Disconnect] │ │
+│ │ Agents     [🤖 code-agent-1] [🤖 code-agent-2]  [Manage agents →]      │ │
+│ │ Protocol   Agent Protocol v1 · events, artifacts, human-help requests  │ │
+│ │ This month 128 runs · $278                                             │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                            │
-│ 💬 协同与通知                                                              │
+│ 💬 Collaboration and Notifications                                         │
 │ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ [飞书]  ● 正常                                          [配置] [断开]  │ │
-│ │ 群组    #order-refactor                                                │ │
+│ │ [Feishu]  ● Healthy                           [Configure] [Disconnect] │ │
+│ │ Group    #order-refactor                                               │ │
 │ │ ─────────────────────────────────────────────────────────────────────  │ │
-│ │ 发送什么（默认只发"需要行动"的事）                                      │ │
-│ │  ☑ 需要决策          ☑ 决策即将超时      ☑ 项目风险升高               │ │
-│ │  ☑ Agent 连续失败    ☑ 任务长期阻塞      ☑ 成本即将超限               │ │
-│ │  ☑ 里程碑完成        ☑ 发布异常          ☑ 人工接管请求               │ │
-│ │  ☐ 每个任务状态变化  ☐ 每次 Agent 执行   ← 默认关闭，避免刷屏          │ │
-│ │ 每日摘要  [09:00 ▾] 发送到群组                                         │ │
-│ │ 免打扰    [22:00 - 08:00]  高风险决策除外                              │ │
+│ │ What to send (by default, only things that need action)                │ │
+│ │  ☑ Decision needed     ☑ Decision timing out ☑ Project risk rising     │ │
+│ │  ☑ Agent keeps failing ☑ Task blocked long   ☑ Cost nearing cap        │ │
+│ │  ☑ Milestone reached   ☑ Release trouble     ☑ Human takeover asked    │ │
+│ │  ☐ Every status change ☐ Every agent run     ← off by default, no spam │ │
+│ │ Daily digest  [09:00 ▾] to the group                                   │ │
+│ │ Quiet hours   [22:00 - 08:00]  except high-risk decisions              │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                            │
-│ 🗄 企业数据系统                                              未连接         │
+│ 🗄 Enterprise Data Systems                                  not connected   │
 │ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 通过受控连接器接入数据库、数据仓库、CRM 等                              │ │
-│ │ ℹ 需组织管理员先在组织级配置连接器                        [了解更多]   │ │
+│ │ Reach databases, warehouses, and CRMs through governed connectors      │ │
+│ │ ℹ An org admin must configure the connector first     [Learn more]     │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 集成卡片通用结构
+### 5.1 The Shared Shape of an Integration Card
 
-| 元素 | 说明 |
+| Element | Notes |
 | --- | --- |
-| 服务图标 + 名称 | — |
-| 连接状态 | ● 正常 / ⚠ 异常 / ○ 未连接 |
-| 最后同步时间 | 超过阈值标黄 |
-| 连接对象 | 仓库 / 项目 / 群组 |
-| 同步内容 | 明确列出同步哪些字段、什么方向 |
-| **授予的权限** | 允许项与**禁止项都要列出** |
-| 使用统计 | API 调用量、产生的对象数、成本 |
+| Service icon + name | — |
+| Connection status | ● healthy / ⚠ failing / ○ not connected |
+| Last sync time | Turns amber past a threshold |
+| What it is connected to | Repository / project / group |
+| What is synced | Spell out which fields move, and in which direction |
+| **Granted permissions** | List what is allowed **and what is denied** |
+| Usage stats | API call volume, objects created, cost |
 
-**权限展示要显式包含禁止项**——与 `08 Agent Workspace` 一致的原则。用户需要确认"这个连接不能合并我的代码"。
+**The permission display has to name the denials explicitly** — the same principle as `08 Agent Workspace`. What the user needs to confirm is "this connection cannot merge my code."
 
-### 5.2 GitHub 集成（MVP 必需）
+### 5.2 GitHub Integration (required for the MVP)
 
-**连接流程**：
+**Connection flow**:
 
 ```
-[+ 添加集成] → GitHub → OAuth 授权（或 GitHub App 安装）
-→ 选择组织 → 选择仓库（可多选，逐个设置读/写）
-→ 配置同步项 → [测试连接] → 完成
+[+ Add integration] → GitHub → OAuth authorization (or GitHub App install)
+→ pick an organization → pick repositories (several, each set to read or write)
+→ configure what syncs → [Test connection] → done
 ```
 
-**同步内容**：
+**What is synced**:
 
-| 方向 | 内容 |
+| Direction | Content |
 | --- | --- |
-| GitHub → APOS | PR 状态、CI 结果、Commit、Review 评论、Issue（可选） |
-| APOS → GitHub | 创建分支、创建 PR、PR 描述（含 Work Item 链接）、Review 评论 |
+| GitHub → APOS | PR state, CI results, commits, review comments, issues (optional) |
+| APOS → GitHub | Create branches, open PRs, PR descriptions (with Work Item links), review comments |
 
-**权限最小化**：默认不授予 `merge` 权限——合并代码应当经过 Policy 判定，而不是让集成层直接放开。
+**Least privilege**: `merge` is not granted by default — merging code should go through a Policy decision, not be handed out at the integration layer.
 
-**Webhook 配置**：自动创建，用于接收 PR/CI 事件驱动 Work Item 状态流转（文档 8.4.4）。显示 Webhook 健康状态。
+**Webhook setup**: created automatically, used to receive PR/CI events that drive Work Item transitions (product doc 8.4.4). The webhook's health is shown.
 
-### 5.3 项目管理系统集成与 Source of Truth（文档 9.1）
+### 5.3 Project Management Integration and Source of Truth (product doc 9.1)
 
-**这是本页最关键也最容易出问题的配置。**
+**This is the most critical configuration on the page, and the one most likely to go wrong.**
 
-文档明确要求「需要定义 Source of Truth，避免多个系统互相覆盖」。本页按字段粒度配置：
+The product doc is explicit: "a Source of Truth must be defined so that systems do not overwrite each other." This page configures it per field:
 
-| 字段 | 可选 SoT | 默认 | 理由 |
+| Field | SoT options | Default | Why |
 | --- | --- | --- | --- |
-| 需求内容 | APOS / Jira | APOS | AI 结构化的需求更完整 |
-| 状态 | APOS / Jira | APOS | 状态由 Flow Engine 事件驱动，外部手改会打乱 |
-| 负责人 | APOS / Jira | Jira | 人员分配通常在原系统管理 |
-| 截止时间 | APOS / Jira | Jira | 同上 |
-| 评论 | APOS / Jira / 双向合并 | 双向合并 | 讨论应两边都看得到 |
-| 产物链接 | APOS | APOS | APOS 是产物的产生方 |
+| Requirement body | APOS / Jira | APOS | The AI-structured requirement is the more complete one |
+| Status | APOS / Jira | APOS | Status is driven by Flow Engine events; editing it externally derails them |
+| Owner | APOS / Jira | Jira | Staffing is usually managed in the system of record |
+| Due date | APOS / Jira | Jira | Same as above |
+| Comments | APOS / Jira / two-way merge | two-way merge | Discussion should be visible on both sides |
+| Artifact links | APOS | APOS | APOS is where the artifacts are produced |
 
-**非 SoT 端的修改处理**三种策略（可配置）：
+**Edits on the non-SoT side** get one of three strategies (configurable):
 
-1. **忽略并回写**（默认）：以 SoT 为准，把 SoT 的值写回另一端
-2. **记录冲突待人工处理**：生成冲突条目
-3. **接受并告警**：接受修改但通知负责人
+1. **Ignore and write back** (default): the SoT wins, and its value is pushed back to the other side
+2. **Record a conflict for a human**: create a conflict entry
+3. **Accept and alert**: take the edit but notify the owner
 
-**冲突处理界面**：
-
-```
-冲突：ORDER-142 状态
-
-  APOS      Review          08-05 14:32  🔧 系统（自动测试通过）
-  Jira      Done            08-05 14:45  👤 李娜 手动修改
-
-  ℹ 状态字段的 Source of Truth 是 APOS
-
-  [以 APOS 为准（回写 Jira）]  [以 Jira 为准（本次例外）]
-  [查看完整变更历史]
-
-  ☐ 以后同类冲突自动按此处理
-```
-
-### 5.4 Agent 与模型集成（文档 9.3）
-
-支持接入：Claude Code、Codex、OpenHands、Cursor Agent、Browser Agent、Data Agent、企业内部 Agent、MCP Server、自定义 Agent Runtime。
-
-**统一 Agent Protocol** 的能力协商在此展示：
+**Conflict resolution UI**:
 
 ```
-协议兼容性检查
-  ✓ 任务输入（结构化目标 + 上下文）
-  ✓ 执行状态上报
-  ✓ 流式事件
-  ✓ 产物回传
-  ✓ 成本上报
-  ✓ 错误分类
-  ⚠ 人工介入请求        该运行时不支持，将降级为超时后转人工
-  ✓ 权限声明
+Conflict: ORDER-142 status
+
+  APOS      Review          08-05 14:32  🔧 System (automated tests passed)
+  Jira      Done            08-05 14:45  👤 Li Na, edited by hand
+
+  ℹ The Source of Truth for status is APOS
+
+  [Keep APOS (write back to Jira)]  [Keep Jira (one-time exception)]
+  [View full change history]
+
+  ☐ Resolve conflicts like this automatically from now on
 ```
 
-**降级说明很重要**：不是所有 Agent 运行时都支持全部协议能力，页面必须明确告知缺失能力的影响，而不是静默降级。
+### 5.4 Agent and Model Integration (product doc 9.3)
 
-连接方式：
+Supported: Claude Code, Codex, OpenHands, Cursor Agent, browser agents, data agents, in-house enterprise agents, MCP servers, custom Agent runtimes.
 
-| 类型 | 配置 |
+The capability negotiation of the **unified Agent Protocol** is surfaced here:
+
+```
+Protocol compatibility check
+  ✓ Task input (structured goal + context)
+  ✓ Execution status reporting
+  ✓ Streaming events
+  ✓ Artifact return
+  ✓ Cost reporting
+  ✓ Error classification
+  ⚠ Human-intervention requests   Not supported by this runtime; degrades to
+                                  handing off to a human after a timeout
+  ✓ Permission declaration
+```
+
+**Saying what the degradation costs matters**: not every Agent runtime supports every protocol capability, and the page has to state what the missing ones imply instead of degrading silently.
+
+Connection methods:
+
+| Type | Configuration |
 | --- | --- |
-| MCP Server | Server URL、认证方式、工具白名单 |
-| HTTP API | Endpoint、认证、协议版本 |
-| 内置运行时 | 一键启用 |
+| MCP server | Server URL, auth method, tool allowlist |
+| HTTP API | Endpoint, auth, protocol version |
+| Built-in runtime | One-click enable |
 
-### 5.5 协同与通知（文档十一）
+### 5.5 Collaboration and Notifications (product doc Chapter 11)
 
-**通知设计原则（文档十一开篇）**：围绕"需要行动"设计，而不是发送大量 Agent 日志。
+**The notification design principle** (opening of Chapter 11): build around *things that need action*, not around shipping a firehose of Agent logs.
 
-因此默认配置中，"每个任务状态变化""每次 Agent 执行"是**关闭**的。这是刻意的产品判断——如果默认全开，用户会在两天内屏蔽这个机器人，之后连真正需要行动的通知也收不到了。
+That is why "every task status change" and "every Agent run" are **off** in the default configuration. This is a deliberate product judgment — turn everything on by default and the user mutes the bot within two days, after which the notifications that genuinely need action do not reach them either.
 
-**通知内容模板**（发到群里的样子）：
-
-```
-⚠ 需要你决策 · 订单系统重构
-生产数据库索引变更审批
-责任人：@王强   截止：14:36（还有 2h）
-不处理将阻塞 5 个下游任务
-
-Agent 推荐：在线创建复合索引（置信度 82%）
-[查看详情] [直接批准]
-```
-
-**关键**：通知里带**可直接操作的按钮**（在支持交互卡片的平台上），让用户不用切换应用就能批准低风险决策。这对"5 分钟清空决策队列"的目标贡献很大。
-
-**升级规则**（文档十一）在此配置：
+**Notification template** (what lands in the group chat):
 
 ```
-决策等待 [4] 小时 → 提醒责任人
-等待     [8] 小时 → 提醒项目负责人
-等待    [24] 小时 → 提醒上级 并 [☑ 暂停关键路径]
+⚠ Needs your decision · Order System Refactor
+Approve the production database index change
+Owner: @Wang Qiang   Due: 14:36 (2h left)
+Leaving it blocks 5 downstream tasks
+
+Agent recommends: build the composite index online (confidence 82%)
+[View details] [Approve]
 ```
 
-### 5.6 企业数据系统
+**The key part**: the notification carries **buttons that act directly** (on platforms that support interactive cards), so a low-risk decision can be approved without switching apps. That contributes a lot to the "clear the decision queue in five minutes" goal.
 
-通过受控连接器接入数据库、数据仓库、CRM、ERP、工单系统、知识库、BI。
+**Escalation rules** (Chapter 11) are configured here:
 
-**MVP 不实现**（文档十三「全量 ERP / CRM 集成」暂不实现），本页只做占位说明与组织级配置引导。
+```
+Decision waiting  [4] hours → nudge the owner
+Waiting           [8] hours → nudge the project lead
+Waiting          [24] hours → nudge their manager and [☑ pause the critical path]
+```
 
-**安全约束**（当实现时）：数据连接器必须在组织级配置，项目只能使用已授权的连接器，且访问范围需在 Agent 权限中单独授予（文档 10.3、10.4）。
+### 5.6 Enterprise Data Systems
+
+Reach databases, warehouses, CRMs, ERPs, ticketing systems, knowledge bases, and BI tools through governed connectors.
+
+**Not in the MVP** (product doc Chapter 13 defers "full ERP / CRM integration"). This page carries only a placeholder explanation and a pointer to the org-level configuration.
+
+**Security constraints** (once it is built): data connectors must be configured at the organization level, a project may only use connectors it has been authorized for, and the access scope has to be granted separately in the Agent's permissions (product docs 10.3, 10.4).
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**新项目初始化**
-
-```
-新建项目 → 引导「连接你的代码仓库」→ GitHub OAuth
-→ 选仓库 → 权限默认最小集 → 测试连接 ✓
-→ 「连接通知渠道」→ 飞书 → 选群 → 默认通知配置
-→ 完成（Jira 与更多 Agent 可稍后添加）
-```
-
-**处理同步冲突**
+**Setting up a new project**
 
 ```
-卡片显示 ⚠ 同步冲突 2 → [处理冲突]
-→ 逐条查看双方值与修改人
-→ 按 SoT 规则处理，勾选"以后自动处理"
-→ 若冲突频繁 → 反思 SoT 配置是否合理 → 调整
+Create project → prompt "connect your code repository" → GitHub OAuth
+→ pick repositories → permissions default to the minimum set → test connection ✓
+→ "connect a notification channel" → Feishu → pick a group → default notification config
+→ done (Jira and more agents can come later)
 ```
 
-**接入新 Agent 运行时**
+**Resolving a sync conflict**
 
 ```
-[+ 添加集成] → Agent 运行时 → 选择类型（MCP Server）
-→ 填 URL 与认证 → [测试连接]
-→ 协议兼容性检查 → 发现不支持"人工介入请求"
-→ 确认降级方案 → 完成 → 跳转 08 注册具体 Agent
+The card shows ⚠ 2 conflicts → [Resolve conflicts]
+→ walk through each one, seeing both values and who changed them
+→ resolve per the SoT rule, tick "handle this automatically from now on"
+→ if conflicts are frequent → reconsider whether the SoT config is right → adjust
+```
+
+**Wiring up a new Agent runtime**
+
+```
+[+ Add integration] → Agent runtime → pick a type (MCP server)
+→ fill in URL and auth → [Test connection]
+→ protocol compatibility check → "human-intervention requests" is unsupported
+→ confirm the fallback → done → jump to 08 to register the actual agents
 ```
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| 未连接任何集成 | 引导卡片，按 MVP 四类推荐优先级排列 |
-| 连接异常 | 卡片红边 + 具体原因（token 过期 / 权限不足 / 服务不可达）+ [重新授权] |
-| Token 即将过期 | 提前 7 天提示 |
-| 同步暂停 | 显示暂停原因与恢复方式；期间的变更会在恢复后补同步 |
-| 冲突积压 > 10 | 顶部警告「同步冲突较多，建议检查 Source of Truth 配置」 |
-| 断开连接确认 | 明确说明影响：「断开 GitHub 后，3 个 Agent 将无法执行代码任务，PR 状态不再同步」 |
-| 权限不足 | 显示需要的权限与申请方式 |
+| No integrations at all | Onboarding cards, ordered by the priority of the four MVP categories |
+| Connection failing | Red border on the card + the actual cause (token expired / insufficient permissions / service unreachable) + [Reauthorize] |
+| Token about to expire | Warned 7 days ahead |
+| Sync paused | Show why it paused and how to resume; changes made in the meantime are synced once it comes back |
+| Conflict backlog > 10 | Banner at the top: "a lot of sync conflicts — worth checking the Source of Truth configuration" |
+| Disconnect confirmation | State the impact plainly: "after disconnecting GitHub, 3 agents will be unable to run code tasks and PR state will stop syncing" |
+| Insufficient permissions | Show which permission is needed and how to request it |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看集成状态 | 项目成员 |
-| 添加 / 配置集成 | `pm` / `tech_lead` |
-| **授予写权限**（代码写入、Jira 写入） | `tech_lead` + 记审计 |
-| 修改 Source of Truth | `pm` / `tech_lead`（影响数据一致性，需二次确认） |
-| 断开集成 | `pm` 及以上，需确认影响 |
-| 配置数据系统连接器 | `org_admin` |
-| 处理同步冲突 | 项目成员 |
-| 配置通知 | `pm`（群组级）；个人偏好由用户自己配置 |
+| View integration status | Project member |
+| Add / configure an integration | `pm` / `tech_lead` |
+| **Grant write access** (code writes, Jira writes) | `tech_lead` + audit record |
+| Change the Source of Truth | `pm` / `tech_lead` (affects data consistency, needs a second confirmation) |
+| Disconnect an integration | `pm` and above, with the impact confirmed |
+| Configure data-system connectors | `org_admin` |
+| Resolve sync conflicts | Project member |
+| Configure notifications | `pm` (group level); personal preferences are set by the user |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Integration`（连接配置）、`SyncMapping`（字段映射与 SoT）、`SyncConflict`、`Agent`、`Project`、`Event`（同步记录）
+**Domain objects**: `Integration` (connection config), `SyncMapping` (field mapping and SoT), `SyncConflict`, `Agent`, `Project`, `Event` (sync records)
 
-**接口**
+**Endpoints**
 
 ```
 GET  /api/projects/{id}/integrations
@@ -327,51 +330,51 @@ DELETE /api/integrations/{id}               { confirm_impact: true }
 GET  /api/projects/{id}/sync-conflicts
 POST /api/sync-conflicts/{id}/resolve       { winner: 'apos'|'external', apply_to_similar? }
 
-GET  /api/integrations/{id}/protocol-check   Agent 运行时协议兼容性
+GET  /api/integrations/{id}/protocol-check   Agent runtime protocol compatibility
 PATCH /api/projects/{id}/notification-config
 ```
 
-**凭证安全**：OAuth token 与 API key 加密存储，页面永不回显（只显示 `****1234` 后四位）。凭证使用记入审计日志。
+**Credential security**: OAuth tokens and API keys are stored encrypted and never echoed back to the page (only the last four digits, `****1234`). Every use of a credential is written to the audit log.
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| `integration_connected{provider}` | 各集成的真实使用分布，决定后续投入优先级 |
-| `integration_connect_failed{provider, reason}` | 接入流程的卡点 |
-| **`sync_conflict_created{field}`** | **哪些字段的 SoT 配置有问题——冲突集中的字段说明默认配置不合理** |
-| `sot_changed{field, from, to}` | 用户对默认 SoT 的修正倾向 |
-| `notification_disabled{type}` | 哪些通知被用户关掉了（说明这类通知没价值） |
-| `notification_action_clicked` | 通知内直接操作的使用率 |
-| `integration_disconnected{provider, reason}` | 流失原因 |
+| `integration_connected{provider}` | The real distribution of usage across integrations, which decides where to invest next |
+| `integration_connect_failed{provider, reason}` | Where the setup flow stalls |
+| **`sync_conflict_created{field}`** | **Which fields have a bad SoT setting — conflicts clustering on one field means the default is wrong** |
+| `sot_changed{field, from, to}` | Which way users correct our defaults |
+| `notification_disabled{type}` | Which notifications people turn off (i.e. which ones have no value) |
+| `notification_action_clicked` | How often the in-notification actions get used |
+| `integration_disconnected{provider, reason}` | Why connections are abandoned |
 
-**页面成功标准**：新项目 80% 在 24h 内至少连接一个代码仓库与一个通知渠道；同步冲突率 < 5%；通知关闭率 < 20%（关闭率高说明通知策略有问题）。
+**Success criteria for this page**: 80% of new projects connect at least one code repository and one notification channel within 24 hours; sync conflict rate < 5%; notification opt-out rate < 20% (a high opt-out rate means the notification strategy is wrong).
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases and Exceptions
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 外部服务 API 限流 | 自动退避重试；页面显示「同步降速中」；持续限流时提示调整同步频率 |
-| 外部服务不可用 | 标记异常并暂停同步，恢复后补同步；期间 Agent 任务按 Policy 处理（文档 8.6.4「外部服务不可用」） |
-| Jira 中删除了已同步的 Issue | 本地 Work Item 标注「外部对象已删除」，不自动删除本地数据 |
-| 同一 Work Item 映射到多个外部对象 | 不允许，配置时校验 |
-| 双向同步造成循环更新 | 同步引擎打标记跳过自身触发的变更；页面显示「已阻止 N 次循环同步」 |
-| 权限被外部系统管理员回收 | 检测到 403 后标记异常并通知，不静默失败 |
-| 大批量导入（Jira 几百条 Issue） | 异步任务 + 进度显示；导入前预览映射结果 |
-| 组织级连接器被停用 | 使用该连接器的项目集成自动暂停并通知 |
-| 通知渠道群组被解散 | 检测失败后降级到邮件并提示重新配置 |
+| The external service rate-limits us | Back off and retry automatically; the page shows "syncing slowly"; if the throttling persists, suggest lowering the sync frequency |
+| The external service is down | Mark it as failing and pause syncing, catching up once it recovers; in the meantime Agent tasks are handled per Policy (product doc 8.6.4, "external service unavailable") |
+| A synced issue is deleted in Jira | The local Work Item is labeled "external object deleted"; local data is never deleted automatically |
+| One Work Item mapped to several external objects | Not allowed; validated at configuration time |
+| Two-way sync causing an update loop | The sync engine tags its own writes and skips changes it triggered; the page shows "blocked N sync loops" |
+| An external admin revokes our access | On a 403, mark the integration as failing and notify — never fail silently |
+| Bulk import (hundreds of Jira issues) | Async job with a progress indicator; the mapping result is previewed before the import runs |
+| An org-level connector is disabled | Project integrations using it are paused automatically and the project is notified |
+| The notification group is dissolved | Once delivery fails, fall back to email and prompt for reconfiguration |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. Source of Truth 的字段粒度配置对普通用户偏复杂。是否应提供三种预设模式（「APOS 主导」「外部系统主导」「APOS 管执行、外部管计划」）+ 高级自定义？倾向于是。
-2. 双向同步的实现复杂度高且容易出问题。MVP 是否先做单向（外部 → APOS 导入 + APOS → 外部状态回写）？倾向于 MVP 只做这两个方向的有限同步，完整双向放 P1。
-3. 通知中的交互按钮（直接批准）涉及在第三方平台的身份验证，各平台机制不同。MVP 是否只做深链跳转，不做平台内直接操作？
-4. Agent Protocol 的具体规范需要单独文档定义。本页的协议兼容性检查依赖它。
-5. 企业数据系统连接器的安全模型（受控连接器 + Agent 权限双重授权）需要与安全团队确认，尤其是数据脱敏与访问审计的实现方式。
-6. 集成的组织级 vs 项目级边界：GitHub 应用安装通常在组织级，但仓库选择在项目级。这个分层需要在实现前理清。
+1. Per-field Source of Truth configuration is on the complex side for an ordinary user. Should we offer three presets ("APOS leads", "the external system leads", "APOS owns execution, the external system owns planning") plus an advanced custom mode? Leaning yes.
+2. Two-way sync is expensive to build and easy to get wrong. Should the MVP start one-way (external → APOS import, plus APOS → external status write-back)? Leaning toward limiting the MVP to those two directions and deferring full two-way sync to P1.
+3. The interactive buttons in a notification (approve directly) require authenticating the user on a third-party platform, and every platform does it differently. Should the MVP ship deep links only, with no in-platform actions?
+4. The Agent Protocol needs its own specification document. The protocol compatibility check on this page depends on it.
+5. The security model for enterprise data connectors (governed connector + Agent permission, both required) needs sign-off from the security team, particularly how data masking and access auditing are implemented.
+6. The org-level vs project-level boundary for integrations: a GitHub App is usually installed at the organization level, but repository selection happens at the project level. This layering needs to be settled before implementation.

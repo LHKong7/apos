@@ -4,39 +4,47 @@ import { agents, type Database } from '@apos/db';
 import type { RequestActor } from './rbac';
 
 /**
+ * Per-channel authorization for the SSE stream (docs/tech/07-api-design.md §5, item 1) /
  * SSE 频道的逐条鉴权（docs/tech/07-api-design.md §5 的第 1 条）。
  *
- * ★★ 这条流此前只验令牌不验频道：任何登录账号带上
+ * ★★ This stream used to verify the token and never the channels: any logged-in account could
+ *   pass `?channels=project:<someone else's project>:board` and receive every domain event
+ *   that project pushes — status transitions, decisions, policy verdicts, run output. The same
+ *   person hitting REST's `/projects/:id/board` gets a 404, while the realtime side stood wide
+ *   open. A multi-tenant boundary cannot exist on the REST half alone.
+ *
+ * ★ Drop channels rather than refusing the whole request: one connection carries a dozen
+ *   channels (the board, several cards, several runs), and one of them being out of bounds
+ *   must not disconnect the other nine. The out-of-bounds ones are discarded, and the set that
+ *   **actually took effect** is echoed to the client in the `ready` event — so the frontend
+ *   knows which subscriptions did not land instead of waiting forever on a channel that will
+ *   never push.
+ *
+ * ★ When nothing survives, return null and let the caller refuse the connection outright.
+ *   Opening an empty stream is worse than an error: the UI looks connected and simply never
+ *   moves.
+ *   这条流此前只验令牌不验频道：任何登录账号带上
  *   `?channels=project:<别人的项目>:board` 就能拿到那个项目推送的全部
  *   领域事件 —— 状态流转、决策、Policy 判定、Run 产出。同一个人去打
  *   REST 的 `/projects/:id/board` 会拿到 404，实时流这一侧却是敞开的。
  *   多租户边界不能只建立在 REST 那一半上。
- *
- * ★ 剔除而不是整体拒绝：一次连接会带上十来个频道（看板 + 若干卡片 +
+ *   剔除而不是整体拒绝：一次连接会带上十来个频道（看板 + 若干卡片 +
  *   若干 Run），其中一个越界不该让另外九个也断掉。越界的那些原样丢弃，
  *   并把**实际生效的频道**在 `ready` 事件里回给客户端 —— 前端据此知道
  *   哪些没订上，而不是对着一条永远不推数据的频道干等。
- *
- * ★ 一条都不剩时回 null，由调用方拒掉整条连接。开一条空流比报错更糟：
+ *   一条都不剩时回 null，由调用方拒掉整条连接。开一条空流比报错更糟：
  *   界面看起来连上了，只是永远不动。
- *
- * Per-channel authorization for the SSE stream. The stream previously
- * verified only the bearer token, never the channels — so any logged-in
- * account could subscribe to another organization's project and receive its
- * entire realtime event feed, while the equivalent REST call returned 404.
- * Unauthorized channels are dropped rather than failing the whole connection,
- * and the surviving set is echoed back in the `ready` event.
  */
 
 export interface ChannelAuthDeps {
   db: Database;
-  /** 不抛版本的成员关系判定 / the non-throwing membership check */
+  /** The non-throwing membership check / 不抛版本的成员关系判定 */
   projectAccess: (
     req: FastifyRequest,
     projectId: string,
     userId: string,
   ) => Promise<RequestActor | null>;
-  /** 资源 id → 所属项目，与闸门共用同一张表 / same resolver the gate uses */
+  /** Resource id → owning project; the same resolver the gate uses / 资源 id → 所属项目，与闸门共用同一张表 */
   projectOfResource: (kind: string, id: string) => Promise<string | null>;
 }
 
@@ -46,9 +54,12 @@ export interface ChannelAuthResult {
 }
 
 /**
- * 频道名 → 它归谁管。
+ * Channel name → who governs it / 频道名 → 它归谁管。
  *
- * ★ 认不出来的频道一律拒。默认放行的话，新增一种频道时忘了登记
+ * ★ An unrecognized channel is always refused. Defaulting to allow means that forgetting to
+ *   register a newly added channel kind opens an undefended hole, and nothing in the UI would
+ *   show it — the same discipline as ROUTE_PERMISSIONS in rbac.ts: closed by default.
+ *   认不出来的频道一律拒。默认放行的话，新增一种频道时忘了登记
  *   就等于开了一个不设防的口子，而这件事从界面上完全看不出来 ——
  *   与 rbac.ts 的 ROUTE_PERMISSIONS 是同一条纪律：默认关着。
  */
@@ -90,7 +101,7 @@ export async function authorizeChannels(
   const allowed: string[] = [];
   const denied: string[] = [];
 
-  /** 同一个项目在一次连接里会被多个频道命中，判过的记下来 */
+  /** Several channels in one connection hit the same project, so remember what was decided */
   const decided = new Map<string, boolean>();
   const mayReadProject = async (projectId: string): Promise<boolean> => {
     const cached = decided.get(projectId);
@@ -111,7 +122,10 @@ export async function authorizeChannels(
       case 'resource': {
         const projectId = await deps.projectOfResource(scope.resource, scope.id);
         /**
-         * ★ 查不到所属项目就拒。资源不存在与「存在但不属于你」在这里
+         * ★ No resolvable owning project means refuse. "The resource does not exist" and "it
+         *   exists but is not yours" take the same path here — letting a nonexistent id through
+         *   would turn this stream into a probe for "does this id exist".
+         *   查不到所属项目就拒。资源不存在与「存在但不属于你」在这里
          *   走同一条路 —— 放行不存在的资源 id 会让这条流变成一个
          *   「这个 id 存不存在」的探针。
          */
@@ -120,7 +134,10 @@ export async function authorizeChannels(
       }
       case 'agent': {
         /**
-         * ★ Agent 是组织级资源，URL 上没有项目 —— 判到组织为止。
+         * ★ Agents are org-level resources with no project in the URL, so the check stops at
+         *   the organization. Everyone in the same organization can watch an agent's activity
+         *   (the agent detail page is org-level to begin with); across organizations, never.
+         *   Agent 是组织级资源，URL 上没有项目 —— 判到组织为止。
          *   同组织的成员都看得到 Agent 的动态（Agent 详情页本来就是
          *   组织级的），跨组织一律不行。
          */
@@ -132,7 +149,7 @@ export async function authorizeChannels(
         break;
       }
       case 'self':
-        // 「派给我的决策」只能是自己的
+        // "Decisions assigned to me" can only ever mean your own
         ok = scope.userId === actor.userId;
         break;
       case 'unknown':

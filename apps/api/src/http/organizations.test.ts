@@ -25,9 +25,14 @@ import {
 } from '../test/db';
 
 /**
+ * Organizations — the top-level container for every piece of data (Plane calls it a Workspace) /
  * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace）。
  *
- * ★★ 在此之前组织只是一列 `org_id`：表在、外键在、多租户判定也在，
+ * ★★ Until now an organization was nothing but an `org_id` column: the table was there, the
+ *   foreign keys were there, the multi-tenant checks were there — but no endpoint could create
+ *   one, rename one, or switch between them. So "multi-tenant" held at the database layer only;
+ *   as a product this was a single-tenant instance, and the endpoint list said nothing about it.
+ *   在此之前组织只是一列 `org_id`：表在、外键在、多租户判定也在，
  *   但没有任何接口能创建、改名或切换它。于是「多租户」只在数据库层面成立，
  *   产品上是个单租户实例 —— 而这件事从接口清单上完全看不出来。
  */
@@ -87,7 +92,11 @@ describe('建组织', () => {
   });
 
   /**
-   * ★★ 少了内置角色，这个组织里**一个成员都加不进任何项目** ——
+   * ★★ Without the built-in roles, **not one member can be added to any project** in this
+   *   organization — project_members.role carries a foreign key onto roles(org_id, key), and
+   *   what surfaces is a bare FK violation, which reads nothing like "the organization was
+   *   created wrong".
+   *   少了内置角色，这个组织里**一个成员都加不进任何项目** ——
    *   project_members.role 有指向 roles(org_id, key) 的外键，
    *   而报错是一句外键冲突，跟「组织建歪了」看不出关系。
    */
@@ -122,10 +131,13 @@ describe('建组织', () => {
 
 describe('账号属于多个组织', () => {
   /**
-   * ★★ 这是这次改动的全部理由。
+   * ★★ This is the entire reason for the change.
    *
-   *   在此之前 `users.org_id` 把账号和归属焊死成一对一：一个人要参与
-   *   第二个组织只能再注册一个账号，而那两个账号在审计里是两个不同的人。
+   *   `users.org_id` used to weld an account to exactly one organization: to take part in a
+   *   second one you had to register a second account — and in the audit trail those two
+   *   accounts are two different people.
+   *   这是这次改动的全部理由。在此之前 `users.org_id` 把账号和归属焊死成一对一：
+   *   一个人要参与第二个组织只能再注册一个账号，而那两个账号在审计里是两个不同的人。
    */
   it('★ 同一个账号能同时属于两个组织，并在各自里有独立的组织角色', async () => {
     const second = (await create({ name: 'Second Co' })).json().organization.id;
@@ -158,9 +170,11 @@ describe('账号属于多个组织', () => {
   });
 
   /**
-   * ★★ 没带 X-Org-Id 不能报错。
+   * ★★ A missing X-Org-Id must not be an error.
    *
-   *   老客户端、curl 脚本、seed 之后第一次打开的页面都不会带，
+   *   Old clients, curl scripts, and the first page load after a seed all arrive without it, and
+   *   answering 400 there shows up as "the entire site is a blank screen".
+   *   没带 X-Org-Id 不能报错。老客户端、curl 脚本、seed 之后第一次打开的页面都不会带，
    *   而那时报 400 的表现是「整个站点白屏」。
    */
   it('★ 不带 X-Org-Id 时回落到确定的缺省，而不是报错', async () => {
@@ -172,7 +186,7 @@ describe('账号属于多个组织', () => {
       headers: auth(fx.userId),
     });
     expect(res.statusCode).toBe(200);
-    // 按加入时间排，夹具那个组织在前
+    // Ordered by join time, so the fixture's organization comes first
     expect(res.json().currentOrgId).toBe(fx.orgId);
   });
 
@@ -191,8 +205,9 @@ describe('账号属于多个组织', () => {
   });
 
   /**
-   * ★★ 切换组织之后看到的必须是那个组织的数据。
-   *   这一条不成立的话，切换器就只是个装饰。
+   * ★★ After switching organizations you must be looking at that organization's data.
+   *   If this does not hold, the switcher is decoration.
+   *   切换组织之后看到的必须是那个组织的数据。这一条不成立的话，切换器就只是个装饰。
    */
   it('★ 切换组织后项目列表跟着换', async () => {
     const second = (await create({ name: 'Second Co' })).json().organization.id;
@@ -225,10 +240,15 @@ describe('账号属于多个组织', () => {
 
 describe('身份列表', () => {
   /**
-   * ★★ 未认证的调用者拿不到通讯录。
+   * ★★ An unauthenticated caller does not get the address book.
    *
-   *   这个端点此前在不带身份时返回**全库**用户 —— 那是 X-User-Id 时代
-   *   身份切换器的自举缺口（第一次打开时得先有一份名单才选得出人）。
+   *   With no identity attached, this endpoint used to return **every user in the database** —
+   *   a bootstrap hole left over from the X-User-Id era, when the identity switcher needed a
+   *   list before anyone could be picked out of it. Once identity started coming from login the
+   *   hole was no longer needed, and leaving it in place meant shipping an unauthenticated
+   *   global address-book export: names and email addresses, across every tenant.
+   *   未认证的调用者拿不到通讯录。这个端点此前在不带身份时返回**全库**用户 ——
+   *   那是 X-User-Id 时代身份切换器的自举缺口（第一次打开时得先有一份名单才选得出人）。
    *   身份改由登录签发之后缺口不再需要，而它留在那里就是一个
    *   不需要认证的全局通讯录导出接口：姓名与邮箱，跨所有租户。
    */
@@ -239,7 +259,10 @@ describe('身份列表', () => {
   });
 
   /**
-   * ★ 一个人属于两个组织时，名单里也只该出现一次 —— 按当前组织过滤，
+   * ★ Someone who belongs to two organizations still appears exactly once — filter by the
+   *   current organization instead of joining the whole membership table. The frontend keys on
+   *   id, so a duplicate surfaces as a React duplicate-key warning plus a repeated dropdown row.
+   *   一个人属于两个组织时，名单里也只该出现一次 —— 按当前组织过滤，
    *   而不是把归属表整个 join 出来。前端按 id 做 key，
    *   重复的表现是一句 React 重复 key 警告加一个重复的下拉项。
    */
@@ -309,7 +332,10 @@ describe('组织成员', () => {
   });
 
   /**
-   * ★★ 「把自己锁在门外」是权限系统最常见的自伤方式：
+   * ★★ Locking yourself out is the most common way a permission system injures its own owner:
+   *   once the last admin is gone, nobody can manage identities, define roles, or change
+   *   organization-level policy — and getting it back takes direct surgery on the database.
+   *   「把自己锁在门外」是权限系统最常见的自伤方式：
    *   移除最后一个管理员之后，没有人能管身份、定义角色、改组织级 Policy，
    *   而恢复它需要直接改数据库。
    */
@@ -359,7 +385,10 @@ describe('改与删', () => {
   });
 
   /**
-   * ★★ 在自己是管理员的 A 组织里，发一个指向 B 组织的请求 ——
+   * ★★ Sitting in organization A, where you are an admin, and firing a request that points at
+   *   organization B — the permission check reads your role in A, so if the handler follows the
+   *   URL and mutates B, that check bought nothing. This is the textbook privilege escalation.
+   *   在自己是管理员的 A 组织里，发一个指向 B 组织的请求 ——
    *   权限判定拿的是 A 的角色，handler 如果照着 URL 去改 B，
    *   那次判定就白判了。这是最典型的一类越权。
    */
@@ -368,7 +397,7 @@ describe('改与删', () => {
 
     const res = await app.inject({
       method: 'PATCH',
-      // 身份停留在第一个组织，URL 指向第二个
+      // Identity stays in the first organization while the URL points at the second
       url: `/api/v1/organizations/${second}`,
       headers: as(fx.userId, fx.orgId),
       payload: { name: '越权改名' },
@@ -378,7 +407,11 @@ describe('改与删', () => {
   });
 
   /**
-   * ★★ 组织下面挂着项目、工作项、Agent、仓库、Run 与审计事件。
+   * ★★ An organization has projects, work items, agents, repositories, runs, and audit events
+   *   hanging off it. Cascading the delete would wipe a whole tenant's history in one click —
+   *   and the event stream is itself part of what gets wiped, so not even "who deleted it"
+   *   survives.
+   *   组织下面挂着项目、工作项、Agent、仓库、Run 与审计事件。
    *   级联删掉它们等于一次点击抹掉整个租户的历史，而且事件流本身
    *   也在里面 —— 连「谁删的」都留不下。
    */
@@ -393,7 +426,7 @@ describe('改与删', () => {
   });
 
   it('★ 不能删掉自己唯一的组织 —— 删完之后界面整个用不了', async () => {
-    // 成员行对项目有外键，先清它
+    // Member rows carry a foreign key onto projects, so clear them first
     await db.delete(projectMembers).where(eq(projectMembers.orgId, fx.orgId));
     await db.delete(projects).where(eq(projects.orgId, fx.orgId));
 

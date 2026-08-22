@@ -1,185 +1,187 @@
 # CLAUDE.md
 
+*[中文版本 / Chinese version](CLAUDE.zh.md)*
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-APOS（Autonomous Project OS）—— 面向 Human–Agent 混合团队的项目操作系统。pnpm workspace 单体仓库，Node 22 + TypeScript，模块化单体架构。
+APOS (Autonomous Project OS) — a project operating system for mixed human–agent teams. A pnpm workspace monorepo, Node 22 + TypeScript, modular monolith.
 
-## 语言约定（双语）
+## Language Conventions (Bilingual)
 
-这个仓库是**中英双语**的。写东西时按下面这张表来，别凭直觉：
+This repository is **bilingual, English and Chinese**. Follow the table below when you write anything — don't go by instinct:
 
-| 内容 | 规则 |
+| Content | Rule |
 | --- | --- |
-| 代码注释 | 中英并行。中文在前、英文在后，**不是逐字翻译** —— 英文要能独立读懂 |
-| 文档（`docs/`、README） | 每篇一份英文对照：`X.md` 配 `X.en.md`，互相在开头链接 |
-| 界面文案 | 一律走 i18n，**不许写字面量**。词条按区域分文件在 `apps/web/src/lib/i18n/messages/{en,zh}/` |
-| 提交信息 | 中文，正文里可以补一句英文摘要 |
-| 用户可见的服务端文案 | 走**原因码 + 参数**，不是拼好的句子（见下）。中文句子保留为日志与存量数据的兜底 |
+| Code comments | Both languages in parallel. **English first, Chinese after**, and **not a literal translation** — each side has to read on its own |
+| Docs (`docs/`, README) | English is canonical: `X.md` is the English document, `X.zh.md` is the Chinese mirror, and the two link to each other at the top |
+| UI copy | Always through i18n, **never a literal string**. Messages are split by area under `apps/web/src/lib/i18n/messages/{en,zh}/` |
+| Commit messages | English, with an optional Chinese line in the body |
+| User-visible server copy | A **reason code plus params**, not a pre-assembled sentence (see below). The Chinese sentence stays as the fallback for logs and existing rows |
 
-**短注释可以只写一种语言**（`/** 只在测试里用 */` 这类），判据是「一个不懂中文的人会不会因此读不懂这段代码」。解释「为什么这么写」的 ★ 注释一律双语 —— 那些正是外部读者最需要的。
+**A short comment may be written in one language only** (things like `/** Test-only helper */`); the test is whether someone who doesn't read Chinese would fail to understand the code because of it. ★ comments — the ones that explain *why* the code is written this way — are always bilingual, because those are exactly what an outside reader needs most.
 
-前端 i18n 的三条硬约束：
+Three hard constraints on frontend i18n:
 
-1. **英文是默认语言**，中文是显式选择（`apps/web/src/lib/i18n/locale.ts` 里写了理由：看不懂中文的人也看不懂那个写着「切换语言」的按钮）。
-2. **英文侧是键的唯一真相来源**，中文侧的类型钉死在它上面 —— 漏一个键是编译错误，不是运行时的空标签。逐模块钉死（`messages/zh/board.ts` 钉在 `messages/en/board.ts` 上），所以报错指到具体是哪一块少了，而不是指着一个 2600 条的对象。
-3. **不许拼句子**。两种语言语序不同，`{'共 '}{n}{' 条'}` 这种写法只在中文里成立。用 `t('x', { count: n })` 带占位符的整句。
+1. **English is the default language**, Chinese is an explicit choice (the reason is written down in `apps/web/src/lib/i18n/locale.ts`: someone who can't read Chinese also can't read the button labeled 「切换语言」, "Switch language").
+2. **The English side is the single source of truth for keys**, and the Chinese side's types are pinned to it — a missing key is a compile error, not an empty label at runtime. The pinning is per module (`messages/zh/board.ts` is pinned to `messages/en/board.ts`), so the error points at the specific chunk that's short a key instead of at one 2,600-entry object.
+3. **Never assemble a sentence from fragments.** The two languages order words differently; `{'共 '}{n}{' 条'}` only works in Chinese. Use a whole sentence with placeholders: `t('x', { count: n })`.
 
-模块级常量存**词条键**不存译文（`Record<string, MessageKey>`）：常量取不到 hook，而且切语言时不会重算，译好的字符串会停在第一次渲染的那个语言。
+Module-level constants store **message keys**, not translated text (`Record<string, MessageKey>`): a constant can't reach a hook, and it isn't recomputed when the locale changes, so a translated string freezes in whatever language was active at first render.
 
-**服务端产生的用户可见文案走原因码**，不是拼好的句子。全站统一是这个形态：
+**User-visible copy produced by the server travels as a reason code**, not as a finished sentence. The shape is the same everywhere:
 
-- **所有 HTTP 报错**（`ErrorReason`，`packages/contracts/src/common/error-reason.ts`）—— 抛错走 `fail(code, reason, 中文句子, { params })`（`apps/api/src/http/errors.ts`），信封里 `reason` / `params` 与 `message` 同时给
-- 「找不到」单列（`NotFoundEntity`）—— `notFound('project')` 传的是**实体键**不是中文。中文里名词在前、英文里 `not found` 在后，`${what}不存在` 这种拼法只在中文里成立
-- 调度拒绝原因（`RejectionCode` / `RejectionScope`，`work-item/blocked.ts`）—— 落在 `work_items.blocked_detail`
-- 决策的「为什么需要你 / 不处理会怎样」（`DecisionReason`，`decision-reason.ts`）—— 落在 `decisions.reason_detail`
-- Analytics 的发现与指标（`Insight.code` / `Contribution.key` / `QualityMetric.key` / `BenefitLine.key`）、Policy 体检结论（`PolicyIssue.type`）、凭证故障（`CredentialProblemCode`）
+- **Every HTTP error** (`ErrorReason`, `packages/contracts/src/common/error-reason.ts`) — throw through `fail(code, reason, <Chinese sentence>, { params })` (`apps/api/src/http/errors.ts`); the envelope carries `reason` / `params` alongside `message`
+- "Not found" is its own axis (`NotFoundEntity`) — `notFound('project')` passes an **entity key**, not Chinese. Chinese puts the noun first and English puts `not found` last, so `${what}不存在` only composes in Chinese
+- Scheduling rejection reasons (`RejectionCode` / `RejectionScope`, `work-item/blocked.ts`) — stored in `work_items.blocked_detail`
+- A decision's "why you're needed / what happens if you don't act" (`DecisionReason`, `decision-reason.ts`) — stored in `decisions.reason_detail`
+- Analytics findings and metrics (`Insight.code` / `Contribution.key` / `QualityMetric.key` / `BenefitLine.key`), policy health-check conclusions (`PolicyIssue.type`), and credential failures (`CredentialProblemCode`)
 
-各处都保留了原来的中文句子作为兜底：存量数据里只有它，而日志与通知拼一句现成的话仍然更省事。**界面读码，日志读句子。**
+Each of these keeps the original Chinese sentence as a fallback: existing rows have nothing else, and for logs and notifications a ready-made sentence is still less work. **The UI reads the code; the log reads the sentence.**
 
-**枚举的说法归界面**。任务类型、错误分类、决策类型、Policy 的 fact / 操作 / 环境、运行时能力项这些都是**码**，词条在 `apps/web/src/lib/format/index.ts` 的那组 `xxxLabel()` 里。domain 里那些 `XXX_LABELS` 中文表留给服务端拼日志 —— 前端 `import` 一张中文表，等于把服务端的语言硬编进界面，切了语言也换不掉。
+**Enum wording belongs to the UI.** Task types, error classifications, decision types, policy facts / actions / environments, runtime capability items — all of these are **codes**, and their messages live in the `xxxLabel()` functions in `apps/web/src/lib/format/index.ts`. The `XXX_LABELS` Chinese tables in domain are there for the server to build log lines; a frontend that `import`s a Chinese table has hard-coded the server's language into the interface, and switching locale won't change it.
 
-判据是「这句话有几个消费者」：只要中文界面、英文界面、和某个按钮（「一键修复」「去授权」）三者中占了两个，就必须是码。拼好的句子只服务第一种，另外两种只能反过来正则匹配它 —— 而匹配一句随时会改的话是定时炸弹。
+The test is "how many consumers does this sentence have": the moment it serves two out of the three — the Chinese UI, the English UI, and some button (「一键修复」 "Fix it", 「去授权」 "Grant access") — it has to be a code. A finished sentence serves only the first; the other two are left regex-matching it, and matching a sentence that can be reworded at any time is a time bomb.
 
-新增一条服务端文案时：平台自己写的词（基线 Policy 名、恢复策略的说法）走词条；用户写的词（自建 Policy 名、Agent 的求助理由）作为 `params` 原样带过去 —— 把用户起的名「翻译」一遍等于给它改名。
+When you add a new piece of server copy: words the platform wrote itself (baseline policy names, the wording of a recovery strategy) become message keys; words the user wrote (their own policy names, an agent's reason for asking for help) are passed through verbatim as `params` — "translating" a name the user chose is renaming it.
 
-**剩余缺口**（都是**有意**留着的，不是漏了）：
+**Remaining gaps** (all of them **deliberate**, not oversights):
 
-- **Guard 失败原因与 Policy 拒绝说明**仍然把 domain 那句中文原样透出（码是 `guard.failed` / `policy.denied`，**故意没有词条**）。它们带的是「哪几条前置条件没过」「那条规则自己怎么说」—— 换成一句通用译文就丢了全部信息量。名单与理由写在 `apps/web/src/lib/api/errors.ts` 的 `REASONS_WITHOUT_CATALOG`，i18n 的测试认这份名单，所以「故意没翻」和「忘了翻」在测试里是分得开的。要真修好，得让 `flow/guards.ts` 那几条理由各自带码。
-- `analysisModel` 这类字符串消费者只有一个，按上面那条判据还不到必须拆的程度。
+- **Guard failure reasons and policy denial explanations** still surface the domain's Chinese sentence as-is (the codes are `guard.failed` / `policy.denied`, and they **intentionally have no message entry**). What they carry is "which preconditions didn't pass" and "what that rule says about itself" — collapsing that into one generic translated sentence throws away every bit of the information. The list and the reasoning live in `REASONS_WITHOUT_CATALOG` in `apps/web/src/lib/api/errors.ts`, and the i18n tests honor that list, so "deliberately untranslated" and "forgot to translate" stay distinguishable in the test suite. A real fix means giving each of those reasons in `flow/guards.ts` a code of its own.
+- Strings like `analysisModel` have exactly one consumer, which by the test above doesn't yet justify splitting them out.
 
-守门的测试有四处：
+Four tests stand guard:
 
-| 测试 | 守什么 |
+| Test | What it guards |
 | --- | --- |
-| `lib/i18n/i18n.test.ts` | 两张表键一一对应、无空词条、占位符两语言一致 |
-| `lib/api/errors.test.ts` | 每个 `ErrorReason` 都有词条（除非在上面那份名单里）、无孤儿词条、认不出的码回落到原句而不是空白 |
-| `lib/i18n/no-literals.test.ts` | 界面代码里没有中文字面量，例外要写明理由 |
-| `lib/i18n/messages/structure.test.ts` | 键住在它前缀该住的文件里；中英两侧同构；归属表里没有过期前缀 |
+| `lib/i18n/i18n.test.ts` | The two tables' keys correspond one to one; no empty messages; placeholders match across both languages |
+| `lib/api/errors.test.ts` | Every `ErrorReason` has a message (unless it's on the list above); no orphan messages; an unrecognized code falls back to the original sentence instead of a blank |
+| `lib/i18n/no-literals.test.ts` | No Chinese literals in UI code; exceptions must state a reason |
+| `lib/i18n/messages/structure.test.ts` | Every key lives in the file its prefix says it should; the English and Chinese sides are structurally identical; no stale prefixes in the ownership table |
 
-四条盯的都是**沉默失效** —— 破坏它们在中文界面上看不出任何问题。完整说明见 [docs/tech/12-i18n.md](docs/tech/12-i18n.md)。
+All four are watching for **silent failure** — breaking any of them looks perfectly fine in the Chinese UI. Full write-up in [docs/tech/12-i18n.md](docs/tech/12-i18n.md).
 
-## 常用命令
+## Common Commands
 
 ```bash
 pnpm install
-bash scripts/dev-up.sh          # 一键：容器 → 建两个库 → 迁移 → 空库时灌种子 → API → Vite
-                                # 端口被占时换：APOS_API_PORT=3001 bash scripts/dev-up.sh
+bash scripts/dev-up.sh          # One shot: containers → create both databases → migrate → seed if empty → API → Vite
+                                # If the port is taken: APOS_API_PORT=3001 bash scripts/dev-up.sh
 
-pnpm test                       # 全部测试（含集成测试，需要 Postgres）
-pnpm test apps/api/src/http/routes.test.ts     # 单个文件
-pnpm test -t "viewer 不能改状态"                # 按用例名
+pnpm test                       # Everything, integration tests included (needs Postgres)
+pnpm test apps/api/src/http/routes.test.ts     # A single file
+pnpm test -t "viewer 不能改状态"                # By test name
 pnpm typecheck                  # pnpm -r typecheck
-pnpm lint                       # 只开会变成 bug 的规则，不管格式（理由写在 eslint.config.js）
+pnpm lint                       # Only rules that catch real bugs, nothing about formatting (reasoning in eslint.config.js)
 
-pnpm dev:api                    # tsx watch，改后端自动重启
-pnpm --filter @apos/web dev     # 前端；API 换了端口要跟上：API_URL=http://localhost:3001 …
-pnpm --filter @apos/web smoke <projectId>   # Playwright 冒烟，需要 API + dev server 都起着
+pnpm dev:api                    # tsx watch; the backend restarts on change
+pnpm --filter @apos/web dev     # Frontend; if the API moved ports, follow it: API_URL=http://localhost:3001 …
+pnpm --filter @apos/web smoke <projectId>   # Playwright smoke test; needs both the API and the dev server running
 
-pnpm db:generate                # 改了 schema/core.ts 之后生成迁移
+pnpm db:generate                # Generate a migration after editing schema/core.ts
 DATABASE_URL=postgres://apos@localhost:5433/apos pnpm db:migrate
 DATABASE_URL=postgres://apos@localhost:5433/apos pnpm --filter @apos/api seed
 ```
 
-只起依赖容器要**点名**：`docker compose up -d postgres redis`。不点名的 `docker compose up -d` 起的是完整产品（api / worker / migrate），会和本机 dev 进程抢同一个库里的任务，出现两套调度循环重复派发。完整部署是 `docker compose up -d --build`，对外只有一个端口（默认 8080，同时提供前端与 API）。
+To bring up only the dependency containers you have to **name them**: `docker compose up -d postgres redis`. A bare `docker compose up -d` starts the full product (api / worker / migrate), which then competes with your local dev processes over work in the same database — two scheduler loops dispatching the same items twice. The full deployment is `docker compose up -d --build`, which exposes a single port (8080 by default, serving both the frontend and the API).
 
-集成测试连 `TEST_DATABASE_URL`（默认 `postgres://apos@localhost:5433/apos_test`），每个文件 `beforeEach` 里 TRUNCATE 全表 —— **不能指到开发库**。vitest 关掉了文件级并行（共用一个测试库）。
+Integration tests connect to `TEST_DATABASE_URL` (default `postgres://apos@localhost:5433/apos_test`) and TRUNCATE every table in each file's `beforeEach` — so it **must not point at your dev database**. vitest has file-level parallelism turned off (all files share one test database).
 
-Postgres 用 **5433** 不是 5432：5432 上常蹲着系统自带的实例，Docker 端口冲突不报错，连接会静默落到那个实例上，症状是 `role "apos" does not exist`。全仓库默认值都是 5433。
+Postgres runs on **5433**, not 5432: a system-installed instance is often already squatting on 5432, Docker doesn't complain about the port conflict, and the connection silently lands on that instance instead — the symptom is `role "apos" does not exist`. Every default in the repo is 5433.
 
-## 三条不可违反的约束
+## The Three Inviolable Constraints
 
-细节与理由见 [CONTRIBUTING.md](CONTRIBUTING.md)，这里是给改代码前的提醒：
+Details and reasoning in [CONTRIBUTING.md](CONTRIBUTING.md); this is the reminder to read before you touch code:
 
-1. **状态变更必须产生事件**。不允许任何代码路径直接 `UPDATE work_items SET status = ...`，统一走 `apps/api/src/modules/flow/transition.ts` 的 `transition()`，它在同一事务里写状态 + 写事件。这是审计、Policy 模拟、Analytics 的全部数据来源。
-2. **Agent 是独立身份**。涉及操作者的字段一律是 `(actorType, actorId)` 而非 `userId`，Agent 有自己的凭证与权限集，绝不复用人类 token。
-3. **Policy 评估必须携带上下文快照**。`policy.evaluated` 事件的 `contextSnapshot` 事后补不了。新增 Policy fact 时同步改 `buildPolicyContext()`（`modules/flow/context.ts`）。
+1. **A status change must produce an event.** No code path may `UPDATE work_items SET status = ...` directly; everything goes through `transition()` in `apps/api/src/modules/flow/transition.ts`, which writes the status and the event in the same transaction. This is the entire data source for auditing, policy simulation, and analytics.
+2. **An agent is an identity of its own.** Any field that refers to an actor is `(actorType, actorId)`, never `userId`. Agents have their own credentials and their own permission sets, and never reuse a human's token.
+3. **Policy evaluation must carry a context snapshot.** The `contextSnapshot` on a `policy.evaluated` event cannot be reconstructed after the fact. When you add a policy fact, update `buildPolicyContext()` (`modules/flow/context.ts`) in the same change.
 
-`packages/domain/src/policy/evaluate.test.ts` 里的安全底线测试是阻断性的：它穷举各自治等级，断言 `NEVER_AUTO_APPROVE` 的操作永远不被自动放行。它红了说明治理体系被绕过。
+The safety-floor test in `packages/domain/src/policy/evaluate.test.ts` is a blocker: it enumerates every autonomy level and asserts that `NEVER_AUTO_APPROVE` actions are never let through automatically. If it goes red, the governance system has been bypassed.
 
-## 仓库结构与依赖方向
+## Repository Layout and Dependency Direction
 
 ```
-packages/contracts/            前后端共享的类型与 Zod schema —— 唯一真相来源，零依赖
-packages/domain/               纯逻辑：状态机、Guard、Policy 求值、RBAC 目录、Agent 能力目录与档案、
-                               Analytics、恢复策略。零 IO，能脱离数据库单测。
-                               改判定规则改这里，不是改 http/
-packages/db/                   Drizzle schema、迁移、连接串形态推断、RLS 审计
-packages/agent-runtimes/       Agent 运行时适配器（claude-code / codex / cli / mock）
-packages/workspace-providers/  工作区来源与交货（git / local / object-storage / empty）
-packages/integrations/         外部系统适配（GitHub 真实 HTTP、内存适配器、Slack/飞书 webhook）
-apps/api/src/http/             接入层：路由、鉴权闸门、SSE、幂等键、错误信封
-apps/api/src/modules/          应用层，按领域分目录，模块间只经导出接口互调
-apps/api/src/workers/          定时循环（scheduler / supervisor / recovery / review / stats / notify）
+packages/contracts/            Types and Zod schemas shared by frontend and backend — the single source of truth, zero deps
+packages/domain/               Pure logic: state machine, guards, policy evaluation, RBAC catalog, agent capability
+                               catalog and profiles, analytics, recovery strategies. Zero IO, unit-testable
+                               without a database. Decision rules change here, not in http/
+packages/db/                   Drizzle schema, migrations, connection-shape inference, RLS auditing
+packages/agent-runtimes/       Agent runtime adapters (claude-code / codex / cli / mock)
+packages/workspace-providers/  Workspace sources and delivery (git / local / object-storage / empty)
+packages/integrations/         External system adapters (real GitHub HTTP, in-memory adapters, Slack/Feishu webhooks)
+apps/api/src/http/             Entry layer: routes, auth gates, SSE, idempotency keys, error envelopes
+apps/api/src/modules/          Application layer, one directory per domain; modules call each other only through exported interfaces
+apps/api/src/workers/          Periodic loops (scheduler / supervisor / recovery / review / stats / notify)
 apps/web/                      React 18 + Vite + TanStack Query + zustand + shadcn
 ```
 
-依赖只能往下：`http → modules → domain → contracts`。domain 里出现 `import ... from '@apos/db'` 就是走错方向了。
+Dependencies only point downward: `http → modules → domain → contracts`. An `import ... from '@apos/db'` inside domain means you've gone the wrong way.
 
-路径别名 `@apos/*` 与 `@/*` 必须在**三处**保持一致：`vitest.config.ts`、`apps/web/vite.config.ts`、各 tsconfig。缺一处的表现是「类型检查过了但浏览器里解析失败」或「测试跑不起来」。
+The path aliases `@apos/*` and `@/*` must agree in **three places**: `vitest.config.ts`, `apps/web/vite.config.ts`, and the tsconfigs. Missing one shows up as either "typecheck passes but the browser can't resolve it" or "the tests won't run at all".
 
-## 必须知道的机制
+## Mechanisms You Have to Know About
 
-**Fastify 启动顺序有硬约束**（`apps/api/src/app.ts`）：幂等钩子要在路由之前注册（钩子按注册顺序跑，重放要抢在业务逻辑前短路），静态前端托管要在路由之后（notFound 兜底得等 API 路由注册完）。
+**Fastify's startup order is a hard constraint** (`apps/api/src/app.ts`): the idempotency hook has to be registered before the routes (hooks run in registration order, and a replay has to short-circuit ahead of the business logic), and static frontend hosting has to come after them (the notFound fallback can't be installed until the API routes exist).
 
-**写路由不声明权限则进程起不来**。权限写在路由自己身上：`{ config: { auth: { permission: 'plan.approve' } } }`。`guardRouteCoverage()` 用 `onRoute` 钩子逐条清点，发现未声明的写路由就在启动时抛错。确实不需要鉴权的（Agent 回调、探针、登录）加进 `rbac.ts` 的 `EXEMPT` 并写明理由；跨项目、必须逐个资源判的用 `deferred('理由')`。权限判定本身在 `@apos/domain` 的权限目录里，rbac.ts 只负责查「谁在调用」。
+**A write route with no declared permission won't let the process start.** The permission lives on the route itself: `{ config: { auth: { permission: 'plan.approve' } } }`. `guardRouteCoverage()` counts every route through an `onRoute` hook and throws at startup the moment it finds an undeclared write route. Routes that genuinely need no auth (agent callbacks, probes, login) go into `EXEMPT` in `rbac.ts` with a stated reason; cross-project routes that must be judged one resource at a time use `deferred('reason')`. The permission decision itself lives in the permission catalog in `@apos/domain`; rbac.ts only answers "who is calling".
 
-**作用域仍由 URL 形状推断，不跟着权限一起挪**。`PROJECT_SCOPED_URL` / `RESOURCE_SCOPED_URL` 决定成员关系闸门在哪一层拦 —— URL 形状**忘不掉**，而声明可以忘，而且读路由没有启动检查兜底。路由 → 权限的全景对照表在 `rbac.test.ts` 里作为**断言**保留：声明搬了家，「哪条路要哪条权限」仍然要有人整体看一眼。
+**Scope is still inferred from URL shape — it did not move along with the permission declarations.** `PROJECT_SCOPED_URL` / `RESOURCE_SCOPED_URL` decide which layer the membership gate stops a request at. A URL shape **can't be forgotten**; a declaration can, and read routes have no startup check to catch them. The full route → permission table is kept in `rbac.test.ts` as **assertions**: now that the declarations have moved onto the routes, someone still has to be able to look at "which route needs which permission" all in one place.
 
-**事件总线只能在事务提交后 publish**（`modules/event/bus.ts`）。事务内发布会把「已进入 Review」推给浏览器而事务随后回滚。`transition()` 自己管 outbox；不涉及状态流转的事件用 `emitAndPublish()`。频道映射由 `channelsFor()` 统一算出（`project:{id}:board`、`work_item:{id}`、`run:{id}`、`agent:{id}`、`user:{id}:decisions`）。
+**The event bus may only publish after the transaction commits** (`modules/event/bus.ts`). Publishing inside the transaction pushes "moved into Review" to the browser and then rolls the transaction back. `transition()` manages its own outbox; events that aren't state transitions use `emitAndPublish()`. Channel mapping is computed in one place by `channelsFor()` (`project:{id}:board`, `work_item:{id}`, `run:{id}`, `agent:{id}`, `user:{id}:decisions`).
 
-**两类事件不要混**：`run_events` 是 Agent 执行的细粒度日志（单 Run 数千条，只喂 Run 详情页），`events` 是领域事件（唯一写入者是 Flow Engine，喂审计 / Analytics / 通知）。少数关键 run_event 会被提升为领域事件。
+**Don't mix the two kinds of events**: `run_events` is fine-grained logging of agent execution (thousands of rows per run, feeding only the run detail page), while `events` is domain events (the Flow Engine is the sole writer, feeding audit / analytics / notifications). A few key run_events get promoted into domain events.
 
-**PROCESS_ROLE 决定启动哪些组件**（`apps/api/src/main.ts`）。同一份代码：`api` 只起 HTTP，`worker` 只起循环，`all` 都起（本机默认）。循环之间不重叠 —— 上一轮没跑完就跳过本次 tick，否则慢查询会堆积成重复派发。
+**PROCESS_ROLE decides which components start** (`apps/api/src/main.ts`). One codebase, three modes: `api` runs HTTP only, `worker` runs the loops only, `all` runs both (the local default). Loops never overlap themselves — if the previous round hasn't finished, this tick is skipped; otherwise a slow query piles up into duplicate dispatches.
 
-**周期性循环写库前先判「变了没有」**。调度器每轮都会重新推出同一个结论（这个 Agent 还是没被加进项目），无条件写的代价有两处：事件表里堆出几十条一模一样的记录，把真正的状态变更淹掉；以及 `blockedSince` 这类「从什么时候开始」的字段每轮被刷新，于是界面上的时长恒等于 0。判等函数与原因码放在一起（`sameBlockedDetail`），改原因码时跟着改。
+**A periodic loop checks "did anything change?" before it writes.** The scheduler re-derives the same conclusion every round (this agent still hasn't been added to the project), and writing unconditionally costs you twice over: the event table fills with dozens of identical rows that bury the real state changes, and "since when" fields like `blockedSince` get refreshed every round, so the duration shown in the UI is permanently 0. The equality function lives next to the reason codes (`sameBlockedDetail`) — when you change a reason code, change it too.
 
-**Run 的状态活在库里不在内存**。进程重启后由 run-supervisor 按心跳超时接管孤儿 Run（`modules/agent/supervisor.ts`）。`dispatching` 这个中间态是必要的：没有它无法区分「还没派发」和「派发了但不知道结果」。
+**A run's state lives in the database, not in memory.** After a process restart, the run supervisor takes over orphaned runs by heartbeat timeout (`modules/agent/supervisor.ts`). The intermediate `dispatching` state is necessary: without it there is no way to tell "not dispatched yet" from "dispatched, outcome unknown".
 
-**运行时与工作区都是接口**：新增 Agent 运行时实现 `AgentRuntimeAdapter`（`packages/agent-runtimes/src/adapter.ts`），新增工作区后端实现 `packages/workspace-providers/src/ports.ts` 里那几个口子（该包不 import `@apos/db`，宿主注入凭证解析与远端回查）。调用方不区分具体运行时。**新增运行时还要实现 `CapabilityTranslator`**（`capability-translators.ts`）—— 认不出来的运行时回落到最粗那一档，而不是「不知道 = 都支持」。
+**Runtimes and workspaces are both interfaces**: a new agent runtime implements `AgentRuntimeAdapter` (`packages/agent-runtimes/src/adapter.ts`); a new workspace backend implements the ports in `packages/workspace-providers/src/ports.ts` (that package does not import `@apos/db` — the host injects credential resolution and remote lookups). Callers don't care which runtime they're talking to. **A new runtime also has to implement `CapabilityTranslator`** (`capability-translators.ts`) — an unrecognized runtime falls back to the coarsest tier, rather than reading "unknown" as "supports everything".
 
-**Agent 权限说的是能力，不是工具名**。用户配的是 `workspace.write` / `repository.push` / `pull_request.merge` 这类语义能力（`AGENT_CAPABILITIES`），翻译成 `Read` / `Edit` / `Bash(npm test:*)` 是适配器的事。这三个词此前是一个 `repo:write`，而它们的风险差两个数量级 —— 「让 Agent 能改代码」顺手把「让 Agent 能合并代码」也授了出去。翻译不出来的部分必须作为降级警告显示，不能吞。
+**Agent permissions are about capabilities, not tool names.** What the user configures are semantic capabilities like `workspace.write` / `repository.push` / `pull_request.merge` (`AGENT_CAPABILITIES`); translating those into `Read` / `Edit` / `Bash(npm test:*)` is the adapter's job. These three used to be a single `repo:write`, and the risk between them differs by two orders of magnitude — "let the agent edit code" was quietly handing out "let the agent merge code" as well. Whatever the translator can't express must be shown as a downgrade warning; it must never be swallowed.
 
-**授权是项目级的，没配置 ≠ 没权限**。权限在 `project_agent_permissions(project_id, agent_id)`，同一个 Agent 在两个项目里可以是两套。组织级的 `agents` 只留**上限**（`capability_ceiling`，NULL = 不设上限，与空数组含义相反）与硬拒绝；`allowed_tools` / `denied_tools` / `resource_scopes` 三列已退役（不写不读，留列是因为它们是迁移前配置的唯一记录）。没配过时落到默认档案 `standard_executor`（工作区里能干活，出不去），而不是空数组 —— 默认值不可用的系统里，真正的默认值是用户从别处抄来的那份配置。档案**展开后落库**：只存指针的话，平台改一次档案会让所有在跑的 Agent 一起变宽。
+**Grants are per project, and "not configured" ≠ "no permission".** Permissions live in `project_agent_permissions(project_id, agent_id)`, so the same agent can have two different sets in two projects. The org-level `agents` row keeps only the **ceiling** (`capability_ceiling`; NULL = no ceiling, which means the opposite of an empty array) plus hard denials. The `allowed_tools` / `denied_tools` / `resource_scopes` columns are retired — never written, never read; they survive only because they are the sole record of pre-migration configuration. With nothing configured, an agent falls back to the `standard_executor` default profile (can get work done inside the workspace, can't get out), not to an empty array — in a system whose default is unusable, the real default becomes whatever config the user copied from somewhere else. Profiles are **expanded before they're stored**: store just a pointer and one platform-side edit to a profile widens every running agent at once.
 
-**生效权限只有一个求值器**（`resolveEffectiveAgentAccess`）。调度器选候选、派发冻结快照、界面显示、保存前预览四处全走它。两份实现的代价不是重复代码，是两个对不上的答案 —— 「调度器说没有候选，手动派下去其实能跑」这种问题极难复现。改权限走 `executeGovernedMutation`：读状态 → 判方向 → 授权 → 校验原因 → 事务 → 审计，顺序不能换（先授权就不知道该要哪条权限，实现只能挑宽的那条，§2.3 的不对称设计当场作废）。
+**Effective permissions have exactly one evaluator** (`resolveEffectiveAgentAccess`). The scheduler picking candidates, dispatch freezing a snapshot, the UI display, and the pre-save preview all go through it. The cost of a second implementation isn't duplicated code, it's two answers that disagree — "the scheduler says there are no candidates, but dispatching by hand works fine" is close to impossible to reproduce. Permission changes go through `executeGovernedMutation`: read state → determine direction → authorize → validate the reason → transaction → audit, and the order can't be rearranged (authorize first and you don't yet know which permission to require, so the implementation has to demand the broader one, which voids §2.3's asymmetric design on the spot).
 
-**前端 SSE 补丁靠 query key 精确命中**。所有 key 走 `apps/web/src/lib/query/keys.ts` 的 `qk` 工厂，手写字符串数组迟早和读取处对不上，症状是「后端推了但界面不动」。切换身份或组织时整体作废缓存 —— 组织是多租户边界。React Hook 依赖漏项在 SSE 驱动的界面上是同一种症状，所以 `react-hooks/exhaustive-deps` 开着。
+**Frontend SSE patching depends on hitting query keys exactly.** Every key comes from the `qk` factory in `apps/web/src/lib/query/keys.ts`; hand-written string arrays eventually drift from the read sites, and the symptom is "the backend pushed but the UI doesn't move". Switching identity or organization invalidates the whole cache — the organization is the multi-tenant boundary. A missing React hook dependency produces the same symptom in an SSE-driven UI, which is why `react-hooks/exhaustive-deps` is on.
 
-**数据库连接形态是从连接串推断的**（`packages/db/src/connection.ts`）。Transaction Pooler（:6543）下不能用预编译语句，认错了的表现是上线后随机报 `prepared statement does not exist`。迁移不要走 Transaction Pooler，用 `DATABASE_DIRECT_URL`。启动日志里那行 `[db] …` 就是给对这个用的。
+**The database connection shape is inferred from the connection string** (`packages/db/src/connection.ts`). Prepared statements can't be used behind the Transaction Pooler (:6543), and guessing wrong shows up in production as random `prepared statement does not exist` errors. Don't run migrations through the Transaction Pooler — use `DATABASE_DIRECT_URL`. The `[db] …` line in the startup log is there so you can check this.
 
-**账号来源只有三条**：`.env` 里的超管（启动时自举，幂等，不会覆盖改过的口令）、组织管理员开的号、自助注册（`APOS_ALLOW_SIGNUP`，**默认开**，每次注册长出一个**新的空组织**）。种子脚本不造账号，且是追加不是重置。
+**There are exactly three sources of accounts**: the superadmin from `.env` (bootstrapped at startup, idempotent, and it never overwrites a password that has been changed), accounts opened by an org admin, and self-service signup (`APOS_ALLOW_SIGNUP`, **on by default**, where every signup grows a **new empty organization**). The seed script creates no accounts, and it appends rather than resets.
 
-## 约定
+## Conventions
 
-- 事件类型：`{subject}.{过去式动词}`，如 `work_item.status_changed`
-- 数据库 snake_case（Drizzle `casing: 'snake_case'` 自动转），API 与前端 camelCase
-- 金额一律字符串形式的十进制，不用浮点
-- `any` 要带理由（eslint 里是 error），有意不用的变量用 `_` 前缀
-- 环境变量认不出来的取值要在启动时喊出来，不要静默回退 —— 配置没生效而现场毫无迹象是这个仓库反复吃过的亏
+- Event types: `{subject}.{past tense verb}`, e.g. `work_item.status_changed`
+- snake_case in the database (Drizzle's `casing: 'snake_case'` converts automatically), camelCase in the API and the frontend
+- Money is always a decimal in string form, never a float
+- `any` needs a stated reason (it's an error in eslint); deliberately unused variables take a `_` prefix
+- An unrecognized environment variable value has to be shouted about at startup, never silently defaulted — configuration that didn't take effect with no sign of it anywhere is a mistake this repo has made more than once
 
-## 测试要求
+## Testing Requirements
 
-| 变更内容 | 必须补的测试 |
+| What you changed | Tests you must add |
 | --- | --- |
-| 状态机流转规则 | `machine.test.ts` 的穷举与可达性断言 |
-| Agent 能力目录 / 档案 | 展开的确定性、拒绝压过允许、项目授予不超上限、A 项目不渗进 B 项目 |
-| 新增运行时 | 翻译器要报出它兜不住的限制（降级警告），不能静默 |
-| Guard | 通过与失败两条路径，失败时 reason 要可读 |
-| Policy 条件/动作 | 求值测试；高风险操作补安全底线测试 |
-| 恢复策略 | 每个错误分类都要有明确决策 |
-| 任何写状态的路径 | 集成测试断言「状态变了 → 有对应事件」 |
-| 新增服务端原因码 | 每个码都要有修复入口的说法（含「没得修」）；界面认不出码时回落到兜底句而不是空白。`ErrorReason` 的词条完整性由 `errors.test.ts` 兜底，加码不加词条会红 |
-| 新增界面文案 | 走词条，放进 `messages/{en,zh}/<区域>.ts`。写死中文会被 `no-literals.test.ts` 逮住，放错文件会被 `structure.test.ts` 逮住（它会告诉你该放哪个文件）|
-| 服务端新增一句用户可见的话 | 断言的是**码与参数**，不是那句中文 —— 盯着中文写断言的话，改一个标点都会红，而码错了才是 bug |
-| 反复推同一结论的循环 | 断言「原因没变 → 不重复写事件、不重置起点」与「原因变了 → 重新记一条」两条都成立 |
+| State machine transition rules | The exhaustive and reachability assertions in `machine.test.ts` |
+| Agent capability catalog / profiles | Expansion is deterministic; denial beats allowance; a project grant never exceeds the ceiling; project A never leaks into project B |
+| A new runtime | The translator has to report the limits it can't cover (downgrade warnings) rather than staying silent |
+| Guards | Both the passing and the failing path; on failure the reason has to be readable |
+| Policy conditions/actions | Evaluation tests; high-risk actions get a safety-floor test as well |
+| Recovery strategies | Every error classification needs an explicit decision |
+| Any path that writes status | An integration test asserting "status changed → the matching event exists" |
+| A new server reason code | Every code needs wording for how to fix it (including "nothing to fix"); when the UI doesn't recognize a code it falls back to the fallback sentence, not a blank. `ErrorReason` message coverage is backstopped by `errors.test.ts`, so adding a code without a message goes red |
+| New UI copy | Use a message key, in `messages/{en,zh}/<area>.ts`. Hard-coded Chinese gets caught by `no-literals.test.ts`; the wrong file gets caught by `structure.test.ts` (which tells you which file it belongs in) |
+| A new user-visible sentence from the server | Assert on the **code and the params**, not on the Chinese sentence — an assertion written against the Chinese goes red when you change a comma, while a wrong code is the actual bug |
+| A loop that keeps re-deriving the same conclusion | Assert both "reason unchanged → no duplicate event, start time not reset" and "reason changed → a new row recorded" |
 
-测试夹具（`apps/api/src/test/db.ts`）走**真实认证路径**（`signToken` 签真令牌），没有测试模式旁路。夹具身份是组织管理员 + tech_lead，功能测试用它；**权限断言一律用 `createMember()` 造明确角色的人**，用夹具身份去测「viewer 不能改」永远是绿的。夹具也不能比真实数据宽松 —— 它一旦宽松就会把漏洞焊死。
+The test fixture (`apps/api/src/test/db.ts`) goes through the **real auth path** (`signToken` signs a real token); there is no test-mode bypass. The fixture identity is an org admin + tech_lead, and functional tests use it; **permission assertions always build a person with an explicit role via `createMember()`**, because testing "a viewer can't change this" with the fixture identity is green forever. The fixture must also never be more permissive than real data — the moment it is, it welds the hole permanently open.
 
-## 文档
+## Docs
 
-改动前先看对应的设计文档，它们解释了「为什么是这样」：
+Read the matching design doc before you change anything; they explain *why* it is the way it is:
 
-- [docs/RUNNING.md](docs/RUNNING.md)：本机怎么跑、环境变量、排错
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)、[docs/SUPABASE.md](docs/SUPABASE.md)：单机部署、换托管 Postgres
-- [docs/tech/](docs/tech/README.md)：01 架构 / 02 领域模型 / 03 事件模型 / 04 Flow Engine / 05 Policy Engine / 06 Agent Protocol / 07 API 设计 / 08 前端架构 / 09 安全 / 10 MVP 计划 / 11 工作区抽象
-- [docs/product/pages/](docs/product/pages/README.md)：14 个页面的结构、交互、状态、权限与数据依赖
+- [docs/RUNNING.md](docs/RUNNING.md): running it locally, environment variables, troubleshooting
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [docs/SUPABASE.md](docs/SUPABASE.md): single-host deployment, moving to a hosted Postgres
+- [docs/tech/](docs/tech/README.md): 01 Architecture / 02 Domain Model / 03 Event Model / 04 Flow Engine / 05 Policy Engine / 06 Agent Protocol / 07 API Design / 08 Frontend Architecture / 09 Security / 10 MVP Plan / 11 Workspace Abstraction
+- [docs/product/pages/](docs/product/pages/README.md): structure, interaction, state, permissions, and data dependencies across all 14 pages

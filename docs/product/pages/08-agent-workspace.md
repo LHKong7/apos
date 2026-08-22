@@ -1,291 +1,294 @@
 # 08 Agent Workspace
 
-## 1. 页面信息
+*[中文版本 / Chinese version](08-agent-workspace.zh.md)*
 
-| 项 | 值 |
+## 1. Page Information
+
+| Field | Value |
 | --- | --- |
-| 路由 | `/agents`（列表）<br>`/agents/:agentId`（工作区） |
-| 层级 | 一级 / 二级页面 |
-| 主要角色 | `agent_owner` / `tech_lead`（配置）；全部成员（查看） |
-| 优先级 | P0 |
-| 对应产品文档 | 6.4 Agent、8.5 Agent Workspace、9.3 Agent 与模型、10.3 Agent 权限 |
+| Route | `/agents` (list)<br>`/agents/:agentId` (workspace) |
+| Level | Level-1 / level-2 page |
+| Primary roles | `agent_owner` / `tech_lead` (configuration); all members (viewing) |
+| Priority | P0 |
+| Related product docs | 6.4 Agent, 8.5 Agent Workspace, 9.3 Agents and models, 10.3 Agent permissions |
 
 ---
 
-## 2. 页面目标
+## 2. Page Goals
 
-把 Agent 当作**团队成员**来管理，而不是当作一个配置项。
+Manage an agent as a **team member**, not as a configuration entry.
 
-要回答：
+It has to answer:
 
-1. 这个 Agent 是干什么的？能力边界在哪？
-2. 它现在在做什么？做得怎么样？
-3. 它被允许做什么、不被允许做什么？
-4. 它花了多少钱？值不值？
-5. 出问题时我怎么干预？
+1. What does this agent do? Where does its capability end?
+2. What is it working on right now, and how is that going?
+3. What is it allowed to do, and what is it not allowed to do?
+4. How much has it cost? Is it worth it?
+5. When something goes wrong, how do I step in?
 
-**设计基调**：页面结构应当接近"员工档案 + 工作台"，而不是"服务配置页"。这是产品把 Agent 作为一等执行主体的具体体现。
+**Design tone**: the page should read like an "employee file + workbench", not a "service settings page". This is where the product's claim that agents are first-class executors becomes concrete.
 
 ---
 
-## 3. 入口与出口
+## 3. Entry and Exit
 
-**入口**：全局导航 `Agents`；项目总览 Agent 团队区；看板卡片的 Agent Chip；Work Item 详情的执行主体；Agent View。
+**Entry points**: the global `Agents` nav; the Agent Team panel on the project overview; the agent chip on a board card; the executor on a work item detail; Agent View.
 
-**出口**：
+**Exits**:
 
-| 操作 | 去向 |
+| Action | Destination |
 | --- | --- |
-| 任务队列条目 | `06 Work Item 详情` |
-| Run 记录 | `09 Agent Run 详情` |
-| 权限项的 Policy 链接 | `13 Policy 配置` |
-| 「查看效能分析」 | `12 项目 Analytics`（Agent 维度） |
+| A task queue entry | `06 Work Item Detail` |
+| A run record | `09 Agent Run Detail` |
+| The Policy link on a permission item | `13 Policy Configuration` |
+| "View performance analytics" | `12 Project Analytics` (agent dimension) |
 
 ---
 
-## 4. 页面结构
+## 4. Layout
 
-### 4.1 Agent 列表 `/agents`
+### 4.1 Agent list `/agents`
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Agents                          [全部项目 ▾] [类型 ▾] [状态 ▾]  [+ 注册]  │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 本月总成本 $486  ·  任务 342  ·  平均成功率 89%  ·  人工接管率 7%          │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 名称              类型     状态    负载   成功率  接管率  本月成本  负责人  │
-│ ────────────────────────────────────────────────────────────────────────── │
-│ [🤖 code-agent-1] Code    ●执行中  2/5   92% ▲   4%      $186     张伟    │
-│ [🤖 code-agent-2] Code    ●空闲    0/5   96%     2%      $92      张伟    │
-│ [🤖 test-agent-1] Test    ●失败    1/3   71% ▼   18% ⚠   $58      张伟    │
-│ [🤖 review-agent] Review  ●空闲    0/8   94%     3%      $104     李娜    │
-│ [🤖 research-1]   Research●空闲    0/2   88%     9%      $46      李娜    │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Agents                                   [All projects ▾] [Type ▾] [Status ▾]  [+ Register]│
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Cost this month $486  ·  Tasks 342  ·  Avg success 89%  ·  Takeover rate 7%                │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Name              Type     Status    Load  Success  Takeover  Cost MTD  Owner              │
+│ ────────────────────────────────────────────────────────────────────────────────────────── │
+│ [🤖 code-agent-1] Code     ● Running 2/5   92% ▲    4%        $186      Zhang Wei          │
+│ [🤖 code-agent-2] Code     ● Idle    0/5   96%      2%        $92       Zhang Wei          │
+│ [🤖 test-agent-1] Test     ● Failed  1/3   71% ▼    18% ⚠     $58       Zhang Wei          │
+│ [🤖 review-agent] Review   ● Idle    0/8   94%      3%        $104      Li Na              │
+│ [🤖 research-1]   Research ● Idle    0/2   88%      9%        $46       Li Na              │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**异常凸显**：成功率下降、接管率超阈值、成本异常的 Agent 用橙/红标注并排在前面。`test-agent-1` 这样的行是运维者最需要看到的。
+**Anomalies come first**: agents with a falling success rate, a takeover rate over threshold, or abnormal cost are marked orange/red and sorted to the top. A row like `test-agent-1` is exactly what whoever is on operations most needs to see.
 
 ### 4.2 Agent Workspace `/agents/:agentId`
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ ← Agents   [🤖 code-agent-1]  ● 执行中          [⏸ 暂停调度] [⚙ 配置]     │
-│ Code Agent · claude-opus-5 · 负责人 👤 张伟 · 接入于 2026-06-12            │
-├────────────────────────────────────────────────────────────────────────────┤
-│ ┌──────────┐┌──────────┐┌──────────┐┌──────────┐┌──────────┐┌───────────┐ │
-│ │ 当前负载  ││ 成功率    ││ 首次成功  ││ 接管率    ││ 平均成本  ││ 平均耗时   │ │
-│ │  2 / 5   ││ 92% ▲3   ││  78%     ││  4%      ││ $5.20    ││  14m      │ │
-│ │ ▓▓░░░    ││ 23/25    ││          ││ 1/25     ││ 本月$186 ││           │ │
-│ └──────────┘└──────────┘└──────────┘└──────────┘└──────────┘└───────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ [任务队列] [运行记录] [能力与权限] [成本] [评估]                            │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 执行中 (2)                                                                  │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ 🔵 实现多条件查询 API           订单系统重构    12m  $8.20  ▓▓▓▓▓▓░65% │ │
-│ │    最新: 正在实现索引查询逻辑                    [详情][暂停][终止]     │ │
-│ ├────────────────────────────────────────────────────────────────────────┤ │
-│ │ 🔵 修复导出编码问题             数据平台         3m   $1.10  ▓▓░░░░░22%│ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-│ 待执行 (3)      等待依赖 (2)      等待人类决策 (1)      失败 (0)            │
-│ ┌────────────────────────────────────────────────────────────────────────┐ │
-│ │ ⏸ 查询结果缓存        订单系统重构   等待「实现多条件查询 API」完成      │ │
-│ │ ⏳ 索引方案设计        订单系统重构   等待 DBA 审批 ⏰超时 2h  [催办]   │ │
-│ │ ⚪ 优化商品搜索        商城重构       排队中 · 预计 25m 后开始           │ │
-│ └────────────────────────────────────────────────────────────────────────┘ │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 近 30 天表现                                                                │
-│  成功率  ▁▃▄▅▆▇▇▆▇▇█▇  92%      成本/任务  ▅▄▄▃▃▄▃▂▃▂▂▃  $5.20 ▼          │
-│  ⚠ 08-03 出现 3 次连续失败，原因集中在「上下文不足」        [查看分析 →]   │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ← Agents   [🤖 code-agent-1]  ● Running                    [⏸ Pause dispatch] [⚙ Configure]│
+│ Code Agent · claude-opus-5 · Owner 👤 Zhang Wei · Onboarded 2026-06-12                     │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────┐┌─────────────┐┌─────────────┐┌─────────────┐┌─────────────┐┌─────────────┐ │
+│ │ Current load││ Success     ││ First-try   ││ Takeover    ││ Avg cost    ││ Avg time    │ │
+│ │  2 / 5      ││  92% ▲3     ││  78%        ││  4%         ││  $5.20      ││  14m        │ │
+│ │ ▓▓░░░       ││ 23/25       ││             ││ 1/25        ││ MTD $186    ││             │ │
+│ └─────────────┘└─────────────┘└─────────────┘└─────────────┘└─────────────┘└─────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Task Queue] [Runs] [Capabilities & Permissions] [Cost] [Evaluation]                       │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Running (2)                                                                                │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ 🔵 Implement multi-filter query API   Order System Refactor   12m   $8.20   ▓▓▓▓▓▓░65% │ │
+│ │    Latest: implementing the index query logic                [Details] [Pause] [Abort] │ │
+│ ├────────────────────────────────────────────────────────────────────────────────────────┤ │
+│ │ 🔵 Fix the export encoding bug        Data Platform           3m    $1.10   ▓▓░░░░░22% │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+│ Pending (3)      Blocked (2)      Awaiting human (1)      Failed (0)                       │
+│ ┌────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ ⏸ Query result cache      Order System Refactor   blocked by "Multi-filter query API"  │ │
+│ │ ⏳ Index design spec      Order System Refactor   awaiting DBA approval ⏰2h  [Nudge]  │ │
+│ │ ⚪ Improve product search Storefront Refactor     queued · starts in ~25m              │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Last 30 days                                                                               │
+│  Success rate  ▁▃▄▅▆▇▇▆▇▇█▇  92%          Cost/task  ▅▄▄▃▃▄▃▂▃▂▂▃  $5.20 ▼                 │
+│  ⚠ 08-03 saw 3 failures in a row, all "context missing"                   [View analysis →]│
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. 区域详解
+## 5. Regions in Detail
 
-### 5.1 头部
+### 5.1 Header
 
-Agent 名称、类型、模型、负责人、接入时间、当前状态。
+Agent name, type, model, owner, onboarding date, current status.
 
-**[⏸ 暂停调度]**：停止分配新任务，执行中的可选择等待完成或立即终止。暂停原因必填，并通知受影响项目的负责人——因为这会直接影响多个项目的交付。
+**[⏸ Pause dispatch]**: stop handing it new tasks; anything already running can either be left to finish or aborted immediately. A reason is required, and the owners of the affected projects are notified — pausing an agent directly changes what several projects can deliver.
 
-### 5.2 六个指标卡（文档 8.13.2）
+### 5.2 The six metric cards (product doc 8.13.2)
 
-| 指标 | 含义 | 异常阈值（建议） |
+| Metric | Meaning | Suggested alert threshold |
 | --- | --- | --- |
-| 当前负载 | 执行中 / 最大并发 | 持续满载 → 提示扩容 |
-| 成功率 | 完成 / 总任务 | < 80% 橙，< 70% 红 |
-| 首次成功率 | 无重试即成功的比例 | < 60% 提示任务描述质量或能力不匹配 |
-| 接管率 | 被人工接管 / 总任务 | > 15% 红 |
-| 平均成本 | 每任务成本 | 环比 +50% 告警 |
-| 平均耗时 | 每任务耗时 | 环比 +100% 告警 |
+| Current load | Running / max concurrency | Permanently maxed out → suggest scaling up |
+| Success rate | Completed / total tasks | < 80% orange, < 70% red |
+| First-try success rate | Share that succeeded with no retry | < 60% points at task-description quality or a capability mismatch |
+| Takeover rate | Taken over by a human / total tasks | > 15% red |
+| Average cost | Cost per task | +50% period over period → alert |
+| Average duration | Time per task | +100% period over period → alert |
 
-每个卡片显示环比趋势箭头。点击进入 `12 Analytics` 的对应明细。
+Each card carries a period-over-period trend arrow. Clicking one opens the matching breakdown in `12 Analytics`.
 
-### 5.3 Tab：任务队列（文档 8.5.2）
+### 5.3 Tab: Task Queue (product doc 8.5.2)
 
-六个分组：执行中、待执行、等待依赖、等待人类决策、失败、已完成。
+Six groups: running, pending, blocked on dependencies, awaiting a human decision, failed, completed.
 
-**执行中**的条目实时更新进度、耗时、成本、最新事件摘要，并提供 [详情][暂停][终止]。
+**Running** entries update progress, elapsed time, cost, and the latest event summary live, and offer [Details][Pause][Abort].
 
-**等待人类决策**的条目要显示等在谁那里、等了多久——这让 Agent 的空闲原因变得可见：**Agent 闲着不一定是没活，可能是人没批**。这个洞察对优化 Flow 很重要。
+**Awaiting a human decision** entries have to show who is being waited on and for how long — which is what makes the reason an agent is idle visible: **an idle agent doesn't necessarily mean there is no work, it may mean nobody approved it**. That insight matters a great deal for tuning the flow.
 
-**失败**的条目显示失败原因分类与 Policy 下一步动作。
+**Failed** entries show the failure-reason category and what Policy does next.
 
-### 5.4 Tab：运行记录（文档 8.5.3）
+### 5.4 Tab: Runs (product doc 8.5.3)
 
-Run 列表，支持按项目、状态、时间、成本筛选：
-
-```
-Run ID     任务                  项目        状态    耗时  成本   人工干预
-#1284      实现多条件查询 API     订单重构    执行中  12m   $8.20  —
-#1283      修复导出编码问题       数据平台    ✓完成   8m    $3.10  —
-#1281      实现订单状态机         订单重构    ❌失败  4m    $2.10  已重试
-#1279      重构支付回调           订单重构    ✓完成   22m   $11.40 👤接管
-```
-
-点击进 `09 Agent Run 详情`。
-
-### 5.5 Tab：能力与权限（文档 6.4、10.3）
-
-这是本页最重要的治理界面。
+A run list, filterable by project, status, time, and cost:
 
 ```
-基础配置
-  名称        code-agent-1
-  类型        Code Agent
-  模型        claude-opus-5              [切换模型 ▾]
-  运行时      Claude Code (MCP)          [连接状态 ✓]
-  负责人      👤 张伟                     ← 该 Agent 出问题时的责任人
+Run ID   Task                                Project          Status     Time  Cost    Human
+#1284    Implement multi-filter query API    Order Refactor   Running    12m   $8.20   —
+#1283    Fix the export encoding bug         Data Platform    ✓ Done     8m    $3.10   —
+#1281    Implement the order state machine   Order Refactor   ❌ Failed  4m    $2.10   retried
+#1279    Refactor the payment callback       Order Refactor   ✓ Done     22m   $11.40  👤 taken over
+```
 
-能力
-  能力描述    负责后端代码实现、重构与单元测试编写
-  Skills      [SQL 优化] [TypeScript] [REST API 设计] [单元测试]  [+ 添加]
-              └ 来自组织 Skill 库，可复用（文档 8.12.2）
-  适用任务    Backend / Bugfix / Refactor / Unit Test
+Clicking a row opens `09 Agent Run Detail`.
 
-可调用工具
+### 5.5 Tab: Capabilities & Permissions (product docs 6.4, 10.3)
+
+This is the most important governance surface on the page.
+
+```
+Basics
+  Name          code-agent-1
+  Type          Code Agent
+  Model         claude-opus-5              [Switch model ▾]
+  Runtime       Claude Code (MCP)          [Connection ✓]
+  Owner         👤 Zhang Wei                ← who answers for this agent when it misbehaves
+
+Capabilities
+  Description   Backend implementation, refactoring, and writing unit tests
+  Skills        [SQL tuning] [TypeScript] [REST API design] [Unit tests]  [+ Add]
+                └ from the organization Skill library, reusable (product doc 8.12.2)
+  Task types    Backend / Bugfix / Refactor / Unit Test
+
+Callable tools
   ☑ read_file        ☑ write_file       ☑ run_tests
-  ☑ git_commit       ☑ create_pr        ☐ merge_pr        ← 禁止合并
+  ☑ git_commit       ☑ create_pr        ☐ merge_pr        ← merging is denied
   ☑ search_codebase  ☐ run_migration    ☐ deploy
   ☐ query_prod_db    ☐ send_email
-                                              [从模板应用 ▾] [查看变更历史]
+                                              [Apply a template ▾] [Change history]
 
-权限范围
-  代码仓库    ✓ order-service (读写)   ✓ shared-lib (只读)   ✗ payment-core
-  环境        ✓ dev  ✓ test  ✗ staging  ✗ production
-  数据        ✗ 生产数据库   ✓ 测试数据库   ✗ 客户 PII
-  外部通信    ✗ 对外发送邮件/消息
+Permission scope
+  Repositories  ✓ order-service (read/write)   ✓ shared-lib (read-only)   ✗ payment-core
+  Environments  ✓ dev  ✓ test  ✗ staging  ✗ production
+  Data          ✗ production database   ✓ test database   ✗ customer PII
+  Outbound      ✗ sending email or messages to the outside world
 
-  ⚠ 权限变更将触发所有关联 Policy 重新评估              [模拟影响]
+  ⚠ A permission change re-evaluates every Policy that touches it       [Simulate impact]
 
-成本与限制
-  单任务成本上限   $15      超出后 [暂停并请求人类 ▾]
-  日成本上限       $80      当前 $18.40  ▓▓░░░░░
-  最大并发         5
-  单任务超时       30 min
-  重试策略         最多 2 次，间隔 1min / 5min
-  连续失败 3 次    → 暂停并通知 👤 张伟         [编辑 Policy →]
+Cost and limits
+  Per-task cost ceiling  $15      On breach, [Pause and ask a human ▾]
+  Daily cost ceiling     $80      So far today $18.40  ▓▓░░░░░
+  Max concurrency        5
+  Per-task timeout       30 min
+  Retry policy           at most 2 retries, 1 min / 5 min apart
+  3 failures in a row    → pause and notify 👤 Zhang Wei      [Edit Policy →]
 ```
 
-**关键设计点**：
+**Key design points**:
 
-1. **Agent 权限独立于人类用户配置**（文档 10.3 明确要求）。页面不提供"继承某人权限"的选项，避免权限借用导致的越权。
-2. **禁止项要显式展示**，不能只列允许项。用户需要一眼确认"它不能合并代码""它碰不到生产库"。
-3. **权限变更需要影响预演**：[模拟影响] 显示"此变更将使 3 个 Policy 的判定结果改变，2 个正在排队的任务将转为需要审批"。
-4. **变更历史可审计**：谁在什么时候给这个 Agent 加了什么权限，必须可查。
+1. **An agent's permissions are configured independently of any human user's** (product doc 10.3 requires this explicitly). The page deliberately offers no "inherit person X's permissions" option, so nobody can escalate by borrowing someone else's access.
+2. **Denials are shown explicitly**, not just grants. The user needs to confirm at a glance that "it cannot merge code" and "it cannot reach the production database".
+3. **A permission change gets a dry run first**: [Simulate impact] reports something like "this change flips the outcome of 3 Policies; 2 queued tasks will now need approval."
+4. **The change history is auditable**: who gave this agent which permission, and when, has to be answerable.
 
-### 5.6 Tab：成本
+### 5.6 Tab: Cost
 
-按项目、按时间、按任务类型的成本分解。显示：
+Cost broken down by project, by time, and by task type. It shows:
 
-- 成本趋势折线 + 预算线
-- Top 5 高成本任务（可下钻到 Run）
-- 成本构成（输入 token / 输出 token / 缓存命中率 / 工具调用）
-- **成本效率**：每成功任务成本，与同类型其他 Agent 横向对比
+- A cost trend line with the budget line drawn on it
+- The top 5 most expensive tasks (drill down into the run)
+- Cost composition (input tokens / output tokens / cache hit rate / tool calls)
+- **Cost efficiency**: cost per *successful* task, side by side with other agents of the same type
 
-对比是关键——单看 `$5.20/任务` 无意义，看到 `code-agent-2 是 $3.80/任务且成功率更高` 才能驱动决策。
+The comparison is what makes it useful — `$5.20/task` on its own means nothing; `code-agent-2 runs $3.80/task and succeeds more often` is what actually drives a decision.
 
-### 5.7 Tab：评估（文档 8.13.2、Agent 评估）
+### 5.7 Tab: Evaluation (product doc 8.13.2, agent evaluation)
 
-- 成功率 / 首次成功率 / 接管率的时间序列
-- **失败原因分布**：上下文不足 / 能力不匹配 / 工具调用失败 / 超时 / 权限不足 / 外部服务异常
-- **按任务类型的表现**：哪类任务它擅长、哪类不擅长（用于优化 8.3.4 调度匹配）
-- 人类反馈汇总（来自 Review 与接管原因）
-- 系统建议：如「该 Agent 在『数据库迁移』类任务成功率仅 52%，建议从适用任务中移除」
+- Time series for success rate / first-try success rate / takeover rate
+- **Failure-reason distribution**: missing context / capability mismatch / tool call failed / timeout / insufficient permissions / external service error
+- **Performance by task type**: which kinds of task it is good at and which it is not (feeds the dispatch matching in 8.3.4)
+- Human feedback rollup (from reviews and from takeover reasons)
+- System suggestions, e.g. "this agent succeeds on only 52% of 'database migration' tasks — consider dropping that from its task types"
 
 ---
 
-## 6. 核心交互流程
+## 6. Core Interaction Flows
 
-**日常运维**
-
-```
-Agent 列表 → 看到 test-agent-1 接管率 18% 标红
-→ 进入 Workspace → 评估 Tab → 失败原因 62% 是「上下文不足」
-→ 判断：不是 Agent 的问题，是任务描述质量问题
-→ 去 03 需求页 / 04 计划页优化拆解粒度
-```
-
-**收紧权限（治理场景）**
+**Day-to-day operations**
 
 ```
-安全审计要求 → 能力与权限 Tab
-→ 取消 write_file 对 shared-lib 的权限
-→ [模拟影响] → 提示影响 2 个排队任务
-→ 保存 → 变更记入审计日志并通知项目负责人
+Agent list → test-agent-1's takeover rate is flagged red at 18%
+→ open its workspace → Evaluation tab → 62% of the failures are "missing context"
+→ conclusion: this is not the agent's problem, it is the quality of the task descriptions
+→ go to 03 Requirement Intake / 04 Plan Approval and tighten the breakdown granularity
 ```
 
-**注册新 Agent（文档 9.3）**
+**Tightening permissions (a governance scenario)**
 
 ```
-[+ 注册] → 选择接入方式（Claude Code / Codex / OpenHands / MCP Server / 自定义 HTTP）
-→ 填写连接信息 → [测试连接]
-→ 系统自动探测其声明的能力与工具
-→ 人类确认能力描述、收窄权限、设置成本上限、指定负责人
-→ [试运行]：在沙箱项目跑一个样例任务验证
-→ 启用
+A security audit requires it → Capabilities & Permissions tab
+→ revoke write_file on shared-lib
+→ [Simulate impact] → warns that 2 queued tasks are affected
+→ Save → the change lands in the audit log and the project owners are notified
 ```
 
-**试运行环节不能省**——直接把未验证的 Agent 放进真实项目风险太大。
+**Registering a new agent (product doc 9.3)**
+
+```
+[+ Register] → pick the integration (Claude Code / Codex / OpenHands / MCP Server / custom HTTP)
+→ fill in the connection details → [Test connection]
+→ the system probes the capabilities and tools the runtime declares
+→ a human confirms the capability description, narrows the permissions,
+  sets the cost ceilings, and names an owner
+→ [Trial run]: run one sample task in a sandbox project to verify it
+→ Enable
+```
+
+**The trial run is not optional** — dropping an unverified agent straight into a real project is too big a risk.
 
 ---
 
-## 7. 状态设计
+## 7. State Design
 
-| 状态 | 处理 |
+| State | Handling |
 | --- | --- |
-| Agent 离线 / 连接失败 | 头部红条「运行时连接失败，最后成功连接 12 分钟前」+ [重试连接][查看诊断]；队列中的任务自动转为等待或改派（按 Policy） |
-| 无任务（新注册） | 队列区显示「尚未分配任务」+ [分配一个试运行任务] |
-| 指标样本不足（< 10 任务） | 显示「样本不足」而非误导性的百分比 |
-| 暂停调度中 | 全页黄色顶条 + 显示暂停原因与操作人 |
-| 配置保存中 | 保存按钮 loading，权限项禁止编辑 |
-| 达到日成本上限 | 红条「已达日成本上限 $80，调度已暂停」+ [提升上限（需审批）] |
+| Agent offline / connection failed | Red bar in the header: "Runtime connection failed, last connected 12 minutes ago" + [Retry connection][View diagnostics]; queued tasks automatically go back to waiting or get reassigned (per Policy) |
+| No tasks (freshly registered) | The queue area shows "No tasks assigned yet" + [Assign a trial task] |
+| Not enough samples for a metric (< 10 tasks) | Show "not enough data" rather than a misleading percentage |
+| Dispatch paused | Yellow bar across the top of the page, with the pause reason and who paused it |
+| Configuration saving | The save button goes into loading; permission fields are locked |
+| Daily cost ceiling reached | Red bar: "Daily cost ceiling $80 reached, dispatch paused" + [Raise the ceiling (needs approval)] |
 
 ---
 
-## 8. 权限
+## 8. Permissions
 
-| 操作 | 要求 |
+| Action | Requirement |
 | --- | --- |
-| 查看 Agent 列表与工作区 | 全部成员 |
-| 查看能力与权限配置 | 项目成员（只读）；`agent_owner` / `tech_lead`（可编辑） |
-| 修改工具与权限范围 | `agent_owner` / `tech_lead` |
-| **扩大权限**（新增工具、新增环境） | `tech_lead` + 记审计；生产环境权限需 `org_admin` |
-| 收窄权限 | `agent_owner` 即可（收紧总是安全的） |
-| 修改成本上限 | `agent_owner`；超出项目预算需 `sponsor` |
-| 暂停 / 终止 Run | `agent_owner` / `tech_lead` / 相关项目 `pm` |
-| 注册新 Agent | `org_admin` / `tech_lead` |
-| 删除 Agent | `org_admin`，且需先解除所有项目关联 |
+| View the agent list and workspace | All members |
+| View the capability and permission configuration | Project members (read-only); `agent_owner` / `tech_lead` (editable) |
+| Change tools and permission scope | `agent_owner` / `tech_lead` |
+| **Widening permissions** (a new tool, a new environment) | `tech_lead` + an audit entry; production access needs `org_admin` |
+| Narrowing permissions | `agent_owner` alone (tightening is always safe) |
+| Change cost ceilings | `agent_owner`; going past the project budget needs `sponsor` |
+| Pause / abort a run | `agent_owner` / `tech_lead` / the `pm` of the project involved |
+| Register a new agent | `org_admin` / `tech_lead` |
+| Delete an agent | `org_admin`, and only once every project association has been removed |
 
 ---
 
-## 9. 数据依赖
+## 9. Data Dependencies
 
-**领域对象**：`Agent`（全字段）、`AgentRun`、`WorkItem`（队列）、`Skill`、`Tool`、`Policy`、`Event`（配置变更审计）
+**Domain objects**: `Agent` (all fields), `AgentRun`, `WorkItem` (the queue), `Skill`, `Tool`, `Policy`, `Event` (configuration-change audit)
 
-**接口**
+**Endpoints**
 
 ```
 GET   /api/agents?scope=&type=&status=
@@ -297,53 +300,53 @@ GET   /api/agents/{id}/evaluation
       → { success_by_task_type[], failure_reasons[], human_feedback[], suggestions[] }
 GET   /api/agents/{id}/cost?group_by=project|day|task_type
 
-PATCH /api/agents/{id}                      配置变更（记审计）
-POST  /api/agents/{id}/permissions/simulate  权限变更影响预演
-POST  /api/agents/{id}/pause                { reason, running_run_handling }
+PATCH /api/agents/{id}                       configuration change (audited)
+POST  /api/agents/{id}/permissions/simulate  dry run of a permission change
+POST  /api/agents/{id}/pause                 { reason, running_run_handling }
 POST  /api/agents/{id}/resume
-POST  /api/agents                           注册
+POST  /api/agents                            register
 POST  /api/agents/{id}/test-connection
-POST  /api/agents/{id}/trial-run            { sample_task_id }
+POST  /api/agents/{id}/trial-run             { sample_task_id }
 
 SSE   /api/stream?channels=agent:{id}
 ```
 
 ---
 
-## 10. 埋点与指标
+## 10. Instrumentation and Metrics
 
-| 埋点 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| `agent_workspace_viewed{entry_from}` | 用户什么时候会关心 Agent（应集中在异常时） |
-| **`permission_changed{direction, field}`** | **权限收紧 vs 放宽的比例——治理成熟度信号** |
-| `agent_paused{reason}` | Agent 稳定性问题的真实分布 |
-| `trial_run_before_enable` | 试运行流程的执行率（应接近 100%） |
-| `evaluation_tab_viewed` | 用户是否真的会用评估数据做决策 |
-| `cost_comparison_viewed` | 横向成本对比的使用率 |
+| `agent_workspace_viewed{entry_from}` | When users actually start caring about an agent (it should cluster around trouble) |
+| **`permission_changed{direction, field}`** | **The ratio of tightening to loosening — a governance-maturity signal** |
+| `agent_paused{reason}` | The real distribution of agent stability problems |
+| `trial_run_before_enable` | How often the trial-run step is actually performed (should be near 100%) |
+| `evaluation_tab_viewed` | Whether users really make decisions off the evaluation data |
+| `cost_comparison_viewed` | Uptake of the side-by-side cost comparison |
 
-**页面成功标准**：新 Agent 100% 经过试运行才启用；接管率超阈值的 Agent 在 7 天内被处理（调参、限制适用任务或下线）的比例 > 80%。
+**Success criteria for this page**: 100% of new agents go through a trial run before being enabled; more than 80% of agents whose takeover rate crosses the threshold are dealt with within 7 days (retuned, restricted to fewer task types, or retired).
 
 ---
 
-## 11. 边界与异常
+## 11. Edge Cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| Agent 声明能力与实际不符 | 评估 Tab 标注「声明能力 X 的实际成功率 41%」+ 建议移除 |
-| 同一 Agent 服务多个项目 | 队列按项目分组；成本按项目分摊；暂停时明确列出受影响项目 |
-| Agent 运行时版本升级 | 显示版本变更并在评估中标记分界线（升级前后指标分开统计） |
-| 权限被收紧导致执行中任务失败 | 变更前预演提示；已在执行的 Run 使用变更前的权限快照直到结束 |
-| 成本上限触发时有任务执行到一半 | 允许当前 Run 完成（避免半成品），但不再调度新任务 |
-| 多人同时改配置 | 乐观锁 + 冲突提示，权限类字段冲突时强制刷新重来 |
-| Agent 被删除但历史 Run 需保留 | 软删除，Run 与审计记录永久保留，Agent 标记为 `已下线` |
-| 恶意/异常行为（大量越权尝试） | 自动暂停 + 高优先级告警给 `org_admin` 与 `agent_owner` |
+| Declared capabilities don't match reality | The Evaluation tab flags "declared capability X has an actual success rate of 41%" and suggests removing it |
+| One agent serving several projects | The queue groups by project; cost is apportioned by project; pausing spells out which projects are affected |
+| Agent runtime version upgrade | Show the version change and mark the boundary in the evaluation (metrics before and after are counted separately) |
+| A running task fails because permissions were tightened | The pre-change dry run warns about it; runs already in flight keep the permission snapshot they started with until they end |
+| The cost ceiling trips while a task is halfway through | Let the current run finish (no half-built artifacts), but dispatch nothing new |
+| Several people editing the configuration at once | Optimistic locking + a conflict prompt; a conflict on a permission field forces a refresh and a redo |
+| An agent is deleted but its run history has to be kept | Soft delete: runs and audit records are kept forever, the agent is marked `已下线` (retired) |
+| Malicious or anomalous behavior (a flood of denied attempts) | Automatic pause + a high-priority alert to `org_admin` and `agent_owner` |
 
 ---
 
-## 12. 待确认问题
+## 12. Open Questions
 
-1. Agent 的 Skill 与组织 Skill 库的关系需要明确（文档 8.12.2 提到 Skill 候选）。MVP 是否只做 Agent 级 Skill 标签，不做复用库？
-2. 「负责人」的责任边界：Agent 造成生产事故时，负责人承担什么？这需要与企业合规一起定义，但产品上至少要保证责任人明确且可追溯。
-3. 多项目共用 Agent 时的成本分摊规则（按 Run 归属项目直接计入 vs 按比例分摊固定成本）。
-4. 试运行的样例任务从哪来？是否需要内置一套标准评测任务集？这对 Agent 横向对比很有价值。
-5. Agent 权限的最小粒度：工具级够不够？是否需要到"某工具的某参数范围"（如 `write_file` 仅限某目录）？倾向于 MVP 做到工具 + 资源范围两层。
+1. The relationship between an agent's Skills and the organization Skill library needs to be pinned down (product doc 8.12.2 mentions Skill candidates). For MVP, do we do agent-level Skill tags only and skip the reusable library?
+2. Where the "owner's" responsibility ends: when an agent causes a production incident, what does the owner carry? That has to be settled together with corporate compliance, but the product must at minimum guarantee that the responsible person is unambiguous and traceable.
+3. Cost apportionment rules when several projects share an agent (charge each run to the project it belongs to vs. spreading fixed costs proportionally).
+4. Where do the trial run's sample tasks come from? Do we need a built-in standard evaluation task set? That would be very valuable for comparing agents against each other.
+5. The finest granularity for agent permissions: is tool-level enough, or do we need "a particular parameter range of a particular tool" (e.g. `write_file` restricted to one directory)? Leaning toward two layers for MVP: tool + resource scope.
