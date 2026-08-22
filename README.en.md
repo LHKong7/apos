@@ -81,7 +81,7 @@ the [page documentation overview](docs/product/pages/README.md).
 | Backend | Node.js 22 + TypeScript (Fastify) |
 | Database | PostgreSQL 16 (swappable for managed Postgres such as Supabase — see [Using Supabase](docs/SUPABASE.en.md)) |
 | Cache / queue | Redis 7 + BullMQ |
-| Deployment | Modular monolith, containerised |
+| Deployment | Modular monolith, containerized |
 
 The reasoning behind these choices, including the comparison against a Python
 stack, is in [technology choices](docs/tech/README.md#二技术选型).

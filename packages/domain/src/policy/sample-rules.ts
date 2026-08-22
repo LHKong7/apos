@@ -16,7 +16,7 @@ import type { Policy } from '@apos/contracts';
  *
  * A realistic set of governance rules used **only by tests**; deliberately not
  * exported from the package index. This data used to be `BASELINE_POLICIES` —
- * ten organisation-level rules hard-coded into the product. Those are gone: the
+ * ten organization-level rules hard-coded into the product. Those are gone: the
  * rules in force are exactly the ones a user has entered, and none means none.
  * As a fixture it is still worth keeping, because priority shadowing, conflict
  * detection and gate selection only show up against rules whose conditions

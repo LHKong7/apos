@@ -146,7 +146,7 @@ describe('★★ 写路由必须登记权限，否则服务起不来', () => {
  * The route-to-permission table, kept as an assertion rather than as runtime
  * state. Declarations now live on each route, which is what makes them visible
  * when you add one — but it scatters the overview, and a permission copied
- * from the neighbouring route looks fine in isolation. This table pins every
+ * from the neighboring route looks fine in isolation. This table pins every
  * value across the move.
  */
 const EXPECTED_PERMISSIONS: Record<string, string | string[]> = {

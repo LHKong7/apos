@@ -128,7 +128,7 @@ export function PoliciesPage() {
    *   The outcome summary is expanded by default: the first screen should answer
    *   "what can an Agent do on its own", not "how is the rule written". Deriving
    *   the former from a list of expressions requires mentally running the
-   *   evaluator, and that derivation errs towards "I thought that was gated".
+   *   evaluator, and that derivation errs toward "I thought that was gated".
    */
   const [expandSummary, setExpandSummary] = useState(true);
   const [editing, setEditing] = useState<PolicyRow | null>(null);

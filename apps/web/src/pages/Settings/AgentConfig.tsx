@@ -102,7 +102,7 @@ function credentialProblemText(agent: CredentialProblemFields): string {
 function envProblemText(p: {
   key: string;
   problem: string;
-  problemCode: 'env_not_set' | 'no_master_key' | 'master_key_mismatch' | 'legacy_fingerprint' | 'unrecognised_format' | null;
+  problemCode: 'env_not_set' | 'no_master_key' | 'master_key_mismatch' | 'legacy_fingerprint' | 'unrecognized_format' | null;
   problemParams?: Record<string, string | number>;
 }): string {
   const key = `credential.problem.${p.problemCode}` as MessageKey;

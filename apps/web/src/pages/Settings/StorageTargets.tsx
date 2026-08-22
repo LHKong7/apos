@@ -38,7 +38,7 @@ import {
  *
  * Components only; the page lives in WorkspaceSources.tsx. Same page as
  * repositories, separate forms — the two kinds share no fields, and a
- * greyed-out placeholder reads as real configuration.
+ * grayed-out placeholder reads as real configuration.
  */
 
 

@@ -100,7 +100,7 @@ export type AgentStructuredOutput = z.infer<typeof AgentStructuredOutput>;
  * An explicit `null` means exactly what omitting the key means — "I don't
  * know" — so accepting one while rejecting the other polices a writing habit,
  * not a risk. (The habit is taught two fields up, where `estimatedTokens`
- * documents "write null if you cannot estimate".) An unrecognised *string*
+ * documents "write null if you cannot estimate".) An unrecognized *string*
  * is still rejected outright: that is the value that looks like an answer
  * while silently matching no governance rule.
  */
@@ -171,7 +171,7 @@ export const AgentPlanOutput = z.object({
          *
          *   拒收换来的是一次修正轮（agent-provider 的重试循环），代价小得多。
          *
-         * Strict enums: an unrecognised value is rejected rather than quietly
+         * Strict enums: an unrecognized value is rejected rather than quietly
          * defaulted. Defaulting `operationType` to `code_change` means one
          * typo — "delete_resrouce" — walks straight past the safety floor,
          * leaving no trace: the task simply runs and no rule matches.

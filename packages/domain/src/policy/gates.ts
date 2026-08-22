@@ -18,7 +18,7 @@ import { explainPolicy } from './explain';
  * for a human. Agents cannot see the policy engine — evaluation happens on
  * state transitions, platform-side — so without this an agent can spend its
  * whole budget building toward an action that freezes the moment it reports
- * done. This is disclosure, not authorisation: `transition()` still does the
+ * done. This is disclosure, not authorization: `transition()` still does the
  * actual gating whether or not the agent read this.
  */
 

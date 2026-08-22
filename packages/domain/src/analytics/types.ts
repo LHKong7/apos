@@ -86,7 +86,7 @@ export interface RunRow {
    *   token 减小时数是没有意义的。除这一处之外，任何判定都不该读它。
    *
    * The runtime's settled USD figure, used **only by ROI**: ROI subtracts
-   * agent spend from labour cost, and labour has no denomination other than
+   * agent spend from labor cost, and labor has no denomination other than
    * money — tokens minus hours is not a quantity. Nothing else may read it.
    */
   costUsd: number;

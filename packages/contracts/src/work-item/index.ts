@@ -167,7 +167,7 @@ export const STATUS_LABELS_EN: Record<WorkItemStatus, string> = {
   released: 'Released',
   acceptance: 'Acceptance',
   done: 'Done',
-  cancelled: 'Cancelled',
+  cancelled: 'Canceled',
 };
 
 /**

@@ -33,9 +33,9 @@ import {
  *
  * Confirming a switch. A one-click control's real danger is looking like it did
  * nothing, so this answers three questions: what rule gets written, whether
- * loosening contradicts past human judgement (the same simulation gate a
+ * loosening contradicts past human judgment (the same simulation gate a
  * hand-written rule goes through), and — crucially — whether the row actually
- * changed afterwards. A saved rule is not the same as a changed row.
+ * changed afterward. A saved rule is not the same as a changed row.
  */
 const TEMPLATES = {
   auto: 'auto_approve_for_operation',
@@ -120,7 +120,7 @@ export function OperationSwitchDialog({
     onError: (e) => {
       if (
         e instanceof ApiError &&
-        (e.details as { requiresAcknowledgement?: boolean })?.requiresAcknowledgement
+        (e.details as { requiresAcknowledgment?: boolean })?.requiresAcknowledgment
       ) {
         setSimulation((e.details as { simulation: SimulationResponse }).simulation);
         setNeedsAck(true);

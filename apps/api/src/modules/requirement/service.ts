@@ -699,9 +699,9 @@ export type SetAuthorAgentResult =
  *   规划 Agent 会把这个项目的资源只读挂进它的工作区 —— 放一个非成员进来，
  *   等于用一个下拉框把项目资源交给了没被授权的身份。
  *
- *   Membership is authorisation, not ergonomics: the planning agent gets this
+ *   Membership is authorization, not ergonomics: the planning agent gets this
  *   project's resources mounted read-only into its workspace, so letting a
- *   non-member through would hand project data to an unauthorised identity via
+ *   non-member through would hand project data to an unauthorized identity via
  *   a dropdown.
  *
  * ★ null 是合法输入，表示回到「按项目绑定自动挑」。「取消指定」和「从没指定过」

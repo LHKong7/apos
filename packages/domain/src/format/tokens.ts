@@ -13,7 +13,7 @@
  * A readable rendering of a token count, for explanatory text generated
  * inside the domain layer. Abbreviated because these strings appear inline
  * in one-line reasons where the extra digits change nothing about the
- * judgement being explained. Localisation lives in the web formatter: the
+ * judgment being explained. Localization lives in the web formatter: the
  * domain layer has no locale.
  */
 export function formatTokens(v: number): string {

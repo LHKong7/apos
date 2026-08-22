@@ -50,7 +50,7 @@ function pluralKey(locale: Locale, key: MessageKey, params?: Params): MessageKey
 }
 
 /**
- * 这个键存在吗 / Does this catalogue entry exist?
+ * 这个键存在吗 / Does this catalog entry exist?
  *
  * ★★ 专给「服务端原因码 → 词条」这类拼出来的键用。
  *   translate 认不出键时返回**键本身**，于是界面上会出现
@@ -59,7 +59,7 @@ function pluralKey(locale: Locale, key: MessageKey, params?: Params): MessageKey
  *   先问一句「有没有」，没有就回落到兜底句。
  *
  * Server reason codes are turned into keys by string concatenation, so the
- * catalogue can legitimately lag behind. Ask first, fall back to prose.
+ * catalog can legitimately lag behind. Ask first, fall back to prose.
  */
 export function hasMessage(key: string): key is MessageKey {
   return CATALOGS.en[key as MessageKey] !== undefined;

@@ -1,7 +1,7 @@
 import { useLocaleStore } from './locale';
 
 /**
- * 运行时配置规格的取词 / Reading localised copy off runtime specs.
+ * 运行时配置规格的取词 / Reading localized copy off runtime specs.
  *
  * ★★ 这些文案不在词条表里，而是长在 `@apos/contracts` 的
  *   `RUNTIME_KIND_SPECS` 上 —— 因为它们是**数据**：加第七个 CLI 等于加一条

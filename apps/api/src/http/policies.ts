@@ -201,7 +201,7 @@ export async function savePolicy(
         'POLICY_DENIED',
         'policy.loosening_contradicts_history',
         `这条规则会自动放行 ${simulation.wouldAutoHandle} 次评估，` + `而其中 ${simulation.mismatches.length} 个任务，人类当时是驳回或要求修改的。请先看看这些案例。`,
-        { params: { approvals: simulation.wouldAutoHandle, mismatches: simulation.mismatches.length }, details: { simulation, loosenedScenarios: loosened, requiresAcknowledgement: true } },
+        { params: { approvals: simulation.wouldAutoHandle, mismatches: simulation.mismatches.length }, details: { simulation, loosenedScenarios: loosened, requiresAcknowledgment: true } },
       );
     }
   }

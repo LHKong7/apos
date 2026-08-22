@@ -11,7 +11,7 @@ export type CredentialProblemCode =
   | 'no_master_key'
   | 'master_key_mismatch'
   | 'legacy_fingerprint'
-  | 'unrecognised_format';
+  | 'unrecognized_format';
 
 export interface CredentialProblemFields {
   credentialProblem: string | null;

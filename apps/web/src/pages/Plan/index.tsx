@@ -521,7 +521,7 @@ function useConsequenceText() {
  * ★ 横幅本身不阻止批准 —— 有时用户确实想拿模板往下走。
  *   它要做的是让「这不是你的计划」无法被略过，并给出重新生成的入口。
  *
- * Replaces a grey subtitle that sat above the very claims it contradicted.
+ * Replaces a gray subtitle that sat above the very claims it contradicted.
  */
 function FallbackBanner({ detail: d, projectId }: { detail: PlanDetail; projectId: string }) {
   const t = useT();

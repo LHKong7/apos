@@ -17,7 +17,7 @@ import { PERMISSIONS, PERMISSION_SPECS, type Permission } from './catalog';
  * ★ 判定是纯函数，不碰数据库。调用方负责把角色查出来传进来 ——
  *   这样同一份判定前端也能用（灰按钮）而不必把成员表暴露出去。
  *
- * Authorisation — layers ① and ② of the four in docs/tech/09-security.md §2.1.
+ * Authorization — layers ① and ② of the four in docs/tech/09-security.md §2.1.
  *
  * ★ This answers only "are you entitled to do it". Whether it *should happen
  *   automatically* is layer ③, answered by the Policy Engine
@@ -27,7 +27,7 @@ import { PERMISSIONS, PERMISSION_SPECS, type Permission } from './catalog';
  *
  * ★ The check is a pure function and never touches the database. The caller
  *   looks the roles up and passes them in, which is what lets the frontend run
- *   the same check (to grey out a button) without exposing the member table.
+ *   the same check (to gray out a button) without exposing the member table.
  */
 
 export interface RbacActor {
@@ -42,7 +42,7 @@ export interface RbacActor {
   actorType?: ActorType;
   /**
    * 组织角色。跨组织的调用方不该走到这里，由成员关系闸门先挡掉。
-   * Organisation role. A cross-organisation caller should never reach here —
+   * Organization role. A cross-organization caller should never reach here —
    * the membership gate stops them first.
    */
   orgRole: OrgRole;
@@ -55,7 +55,7 @@ export interface RbacActor {
    * The role key inside the **target project**; null when not a member.
    *
    * ★ Typed as string rather than the built-in enum: roles are data and an
-   *   organisation defines its own (engineering, ops, QA…). The built-in five
+   *   organization defines its own (engineering, ops, QA…). The built-in five
    *   are seeded data, not the complete set.
    */
   projectRole: ProjectRole | string | null;
@@ -64,7 +64,7 @@ export interface RbacActor {
    * 目录里的 `projectRoles` 会兜住（见 {@link check} 的④⑤两步）。
    *
    * The permissions this role grants. Custom roles are decided by it; built-in
-   * roles may omit it, since `projectRoles` in the catalogue covers them (see
+   * roles may omit it, since `projectRoles` in the catalog covers them (see
    * steps ④ and ⑤ of {@link check}).
    */
   grantedPermissions?: readonly Permission[];
@@ -99,11 +99,11 @@ export interface PermissionCheck {
  *   （apps/api/src/http/rbac.ts 的 assertProjectAccess）另有判定，
  *   且限定在同一组织内。这里放行的是**能力**，不是**范围**。
  *
- * ★ An organisation administrator always passes — §2.2, "org_admin: all".
+ * ★ An organization administrator always passes — §2.2, "org_admin: all".
  *
  *   Note this is **not** "org_admin can see every project": the project
  *   membership gate (`assertProjectAccess` in apps/api/src/http/rbac.ts) makes
- *   its own decision and stays within one organisation. What passes here is
+ *   its own decision and stays within one organization. What passes here is
  *   **capability**, not **scope**.
  *
  *   两个例外，都在别处硬编码，不由角色决定：

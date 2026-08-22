@@ -17,7 +17,7 @@ import * as zh from './zh';
  *
  *   Splitting the catalog fixed one 2,900-line file; it does not stop a key
  *   from landing in the wrong module. Misplacement accumulates, and a year
- *   later "organised by area" is true only on paper.
+ *   later "organized by area" is true only on paper.
  */
 
 const MODULES: Record<Bucket, Record<string, string>> = {

@@ -14,7 +14,7 @@ export const graph = {
   'event.project.budget_threshold_reached': 'Budget threshold reached',
   'event.project.completed': 'Project completed',
   'event.requirement.created': 'Requirement captured',
-  'event.requirement.analyzed': 'Requirement analysed',
+  'event.requirement.analyzed': 'Requirement analyzed',
   'event.requirement.clarification_answered': 'Clarification answered',
   'event.requirement.field_edited': 'Requirement field edited',
   'event.requirement.author_agent_set': 'PRD author agent changed',

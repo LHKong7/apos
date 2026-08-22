@@ -33,7 +33,7 @@ import {
  *
  * A repeatable editor fed from registered resources. The form it replaces had
  * exactly two slots, so editing an agent with three repository grants silently
- * dropped two of them on save — turning "revoke an authorisation", which should
+ * dropped two of them on save — turning "revoke an authorization", which should
  * be a decision, into a side effect of opening a form.
  */
 

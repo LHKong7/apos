@@ -178,7 +178,7 @@ export type CredentialProblemCode =
   | 'no_master_key'
   | 'master_key_mismatch'
   | 'legacy_fingerprint'
-  | 'unrecognised_format';
+  | 'unrecognized_format';
 
 export interface RefDescription {
   usable: boolean;
@@ -248,7 +248,7 @@ export function describeRef(ref: string | null): RefDescription {
     usable: false,
     kind: 'fingerprint',
     problem: '无法识别的凭证引用格式',
-    problemCode: 'unrecognised_format',
+    problemCode: 'unrecognized_format',
   };
 }
 

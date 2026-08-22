@@ -14,7 +14,7 @@ export const agent: Record<keyof typeof en, string> = {
   'credential.problem.no_master_key': '未配置 APOS_SECRET_KEY，无法解密。',
   'credential.problem.master_key_mismatch': 'APOS_SECRET_KEY 与保存时不一致，需要重新录入凭证。',
   'credential.problem.legacy_fingerprint': '这是仅用于识别的旧式指纹引用，取不回原值，需要重新录入凭证。',
-  'credential.problem.unrecognised_format': '无法识别的凭证引用格式。',
+  'credential.problem.unrecognized_format': '无法识别的凭证引用格式。',
   'artifact.reason.archive_gone': '归档目录已不存在，可能随工作区一起被回收了。',
   'artifact.reason.binary': '二进制文件，用下载打开。',
   'artifact.reason.too_large': '文件超过 {kb}KB，用下载打开。',

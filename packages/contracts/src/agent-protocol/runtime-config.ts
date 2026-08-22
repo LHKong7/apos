@@ -33,7 +33,7 @@ import { z } from 'zod';
  * ─────────────────────────────────────────────────────────────────────────
  *
  * Runtime configuration for a headless CLI — a **free-form JSON document**
- * where the platform only describes which keys it recognises.
+ * where the platform only describes which keys it recognizes.
  *
  * ★★ The document as a whole is free JSON: write or paste one in the UI and
  *   **keys the platform does not know are stored and kept verbatim**. A schema
@@ -42,12 +42,12 @@ import { z } from 'zod';
  *   runtime upgrade wait for a platform release — which is precisely what this
  *   escape hatch exists to avoid.
  *
- * ★ But **recognised keys are still validated**. Letting `effort: 'ultra'`
+ * ★ But **recognized keys are still validated**. Letting `effort: 'ultra'`
  *   through means dispatch succeeds and the CLI reports a parameter error
  *   nobody reads; the right moment to refuse is the moment of saving.
  *   Validation covers only the keys the platform defines, never the user's own.
  *
- * ★ Unrecognised keys must be **reported** (`unknownKeys`) rather than quietly
+ * ★ Unrecognized keys must be **reported** (`unknownKeys`) rather than quietly
  *   accepted: a typo (`modle`) and a deliberately forward-compatible key look
  *   identical once stored, and the former will never take effect. The caller
  *   is responsible for surfacing them.
@@ -301,7 +301,7 @@ const PASSTHROUGH_ENV: ConfigField = {
  * ★ Two forms of value, both supported:
  *   - a literal: `"https://gw.example.com"`. A literal under a sensitive key
  *     (see isSecretEnvKey) is encrypted at rest and the API returns only a
- *     placeholder afterwards — the same discipline as the credential field.
+ *     placeholder afterward — the same discipline as the credential field.
  *   - `env:VARIABLE_NAME`: the value is read from APOS's process environment
  *     and nothing is stored.
  *

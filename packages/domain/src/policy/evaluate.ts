@@ -128,7 +128,7 @@ export function matchCondition(cond: Condition, ctx: PolicyContext): ConditionMa
  *   平局倒向**更严**的那一条：并列意味着用户没有表态哪条更重要，
  *   而在治理配置上，没表态时选安全的那一侧是唯一说得过去的默认。
  *
- * Ties in priority resolve towards the stricter action. Since evaluation stops
+ * Ties in priority resolve toward the stricter action. Since evaluation stops
  * at the first match, an unbroken tie lets row order decide the verdict — the
  * same configuration could rule differently on two machines, and that class of
  * bug is close to unreproducible. A tie means the user never said which rule
@@ -253,7 +253,7 @@ export function evaluate(ctx: PolicyContext, rules: CompiledRule[]): PolicyVerdi
 /**
  * 动作严格程度比较，用于「项目规则只能收紧」的静态检查。
  * Compares how strict two actions are, for the static check that a project
- * rule may only tighten an organisation rule.
+ * rule may only tighten an organization rule.
  */
 export function isStricterOrEqual(a: Action, b: Action): boolean {
   return ACTION_STRICTNESS[a.type] >= ACTION_STRICTNESS[b.type];

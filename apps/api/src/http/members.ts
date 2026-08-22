@@ -171,7 +171,7 @@ export async function setMemberRole(
    * Order matters. Already a member → return untouched: this endpoint backs
    * both "add to project" and "change role", and a misclick that silently
    * reset a tuned custom role to `executor` would be indistinguishable
-   * afterwards from having always been `executor`.
+   * afterward from having always been `executor`.
    */
   if (roleKey === null) {
     if (before !== null) return { ok: true as const, role: before, changed: false };

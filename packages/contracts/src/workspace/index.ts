@@ -26,7 +26,7 @@ import { z } from 'zod';
  *   What the platform dispatches are headless CLI Agents — claude-code,
  *   codex, aider, goose. Every one of them `cd`s into a directory and then
  *   `open()`s files. **The local POSIX directory is the part with no
- *   alternatives**; modelling it as "one backend among several" turns the
+ *   alternatives**; modeling it as "one backend among several" turns the
  *   constant into a variable.
  *
  *   What actually varies is the two ends:
@@ -41,7 +41,7 @@ import { z } from 'zod';
  */
 
 /**
- * 铺料后端种类 / Materialisation backends.
+ * 铺料后端种类 / Materialization backends.
  *
  * | 种类 Kind | 内容从哪来 Contents from | 基线 Baseline |
  * | --- | --- | --- |
@@ -97,7 +97,7 @@ export const SourceRef = z.object({
    * named after it), bucket name, or directory path.
    *
    * ★ Kept apart from `label` because "what a machine looks something up by"
-   *   and "what a person recognises it by" are different needs: an
+   *   and "what a person recognizes it by" are different needs: an
    *   administrator can rename a repository's ref (order-service), but the
    *   mirror directory must not follow — one rename would otherwise throw away
    *   the entire local object store.
@@ -123,7 +123,7 @@ export type SourceRef = z.infer<typeof SourceRef>;
  *
  * ★ Plural, because a single run already mounts the main repository (writable)
  *   alongside several reference repositories (read-only) — see
- *   `RunWorkspace.additionalPaths`. Modelling the resource reference as a
+ *   `RunWorkspace.additionalPaths`. Modeling the resource reference as a
  *   singular field would lose that at the abstraction's very first step.
  */
 export const Mount = z.object({
@@ -245,7 +245,7 @@ export type PublishResult =
       pushed: boolean;
       /**
    * 认不出 host 时为 null —— 不编一个打不开的链接。
-   * null when the host is unrecognised — we do not invent a link that fails
+   * null when the host is unrecognized — we do not invent a link that fails
    * to open.
    */
       url: string | null;
@@ -318,7 +318,7 @@ export function isPersisted(result: PublishResult): boolean {
  *   （'passed' | 'failed' | 'not_run'，Policy 门禁用的枚举）区分开。
  *   两者是不同层面的东西：那个是门禁的判定，这个是一次执行的记录。
  *
- * The quality-check result — **orthogonal** to the materialise/publish
+ * The quality-check result — **orthogonal** to the materialize/publish
  * backends: it is simply "run a command in a local directory".
  *
  * ★ The Workspace prefix distinguishes it from `CheckResult` in common/enums

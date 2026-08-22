@@ -5,7 +5,7 @@ import { PolicyContext } from '../policy/index';
 export const SubjectType = z.enum([
   /**
    * 组织 —— 一切数据的顶层容器（Plane 里叫 Workspace，这里不用那个词，见 db schema）。
-   * The organisation: top-level container for everything. Plane calls this a
+   * The organization: top-level container for everything. Plane calls this a
    * Workspace; we deliberately do not — see the db schema.
    */
   'organization',
@@ -21,7 +21,7 @@ export const SubjectType = z.enum([
   'integration',
   /**
    * 身份与授权的变更以「被改的那个人」为主体（docs/tech/09-security.md §6.3）。
-   * Identity and authorisation changes take the person being changed as the
+   * Identity and authorization changes take the person being changed as the
    * subject (docs/tech/09-security.md §6.3).
    */
   'user',
@@ -67,7 +67,7 @@ export interface DomainEvent {
   /**
    * Policy 模拟回放所需。仅在会触发 Policy 评估的事件上记录。
    * What policy simulation replays from. Recorded only on events that trigger
-   * a policy evaluation — and it cannot be filled in afterwards.
+   * a policy evaluation — and it cannot be filled in afterward.
    */
   contextSnapshot: PolicyContext | null;
 
@@ -87,7 +87,7 @@ export interface DomainEvent {
 
 /**
  * 事件类型目录 —— docs/tech/03-event-model.md §7。命名规范 {subject}.{过去式动词}
- * The event type catalogue — docs/tech/03-event-model.md §7.
+ * The event type catalog — docs/tech/03-event-model.md §7.
  * Naming convention: {subject}.{past-tense verb}
  */
 export const DOMAIN_EVENT_TYPES = [
@@ -100,7 +100,7 @@ export const DOMAIN_EVENT_TYPES = [
    * organization — lifecycle and membership changes of the top-level container.
    *
    * ★ Membership changes must be audited: "who added whom to which
-   *   organisation" is the first step of a privilege-escalation path, and
+   *   organization" is the first step of a privilege-escalation path, and
    *   without it cross-tenant accumulation of permissions cannot be traced.
    */
   'organization.created',
@@ -118,7 +118,7 @@ export const DOMAIN_EVENT_TYPES = [
   'project.completed',
   /**
    * 授权变更（09-security §6.3 强制记审计）。
-   * Authorisation changes — auditing is mandatory per 09-security §6.3.
+   * Authorization changes — auditing is mandatory per 09-security §6.3.
    */
   'project.member_added',
   'project.member_role_changed',

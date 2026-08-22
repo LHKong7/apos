@@ -159,7 +159,7 @@ export const requirement = {
   'sot.deviated': 'Deviates from the default',
   'sot.confirmTitle': 'Confirm the Source of Truth change',
   'sot.autoRules': 'Automatic rules: {rules}',
-  'sot.autoRule': 'conflicts on {field} always resolve in favour of {winner}',
+  'sot.autoRule': 'conflicts on {field} always resolve in favor of {winner}',
   'sot.saveCount': 'Save {count} changes',
   'sot.saveCount_one': 'Save {count} change',
   'sot.saveCount_other': 'Save {count} changes',

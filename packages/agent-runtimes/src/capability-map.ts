@@ -23,7 +23,7 @@ import type {
  * runtime tool names: they are the runtime's vocabulary, and the runtime is a
  * property of the Agent rather than a choice the user makes. One base table
  * that adapters narrow, not one table per adapter — copies drift, and they
- * drift towards granting more.
+ * drift toward granting more.
  */
 
 /**

@@ -3,7 +3,7 @@ import { statusLabel } from '@/lib/format';
 import { useT, type MessageKey } from '@/lib/i18n';
 
 /**
- * 决策理由的本地化 / Localised decision rationale.
+ * 决策理由的本地化 / Localized decision rationale.
  *
  * ★★ 英文界面上这两句话此前长成「If ignored: 任务无法进入「待执行」」——
  *   英文前缀套中文正文，中间夹着中文引号。半句翻译比不翻译更糟：

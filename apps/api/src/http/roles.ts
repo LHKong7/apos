@@ -260,7 +260,7 @@ export async function updateRole(
  *   所有派生角色会跟着变 —— 而那正是「权限累积」（§7）的发生方式，
  *   与能力档案存展开结果是同一条理由。
  *
- * Copy-and-customise: the other half of "built-in roles are not editable".
+ * Copy-and-customize: the other half of "built-in roles are not editable".
  * Without it the user's next step is prospecting a permission list from
  * scratch. The copy is a snapshot, never dynamic inheritance — inheritance
  * would let a platform-side edit widen every derived role at once.

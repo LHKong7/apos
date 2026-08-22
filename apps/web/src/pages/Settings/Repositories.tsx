@@ -34,7 +34,7 @@ import { Label } from '@/components/ui/label';
  * Repositories are a project-level resource registry, not a property of any
  * one agent — so they live next to storage targets on the workspace-sources
  * page. Same page, separate forms: the two kinds share almost no fields, and
- * greyed-out placeholders read as real configuration.
+ * grayed-out placeholders read as real configuration.
  */
 export function RepositoriesSection({ projectId }: { projectId: string }) {
   const t = useT();

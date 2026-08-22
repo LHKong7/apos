@@ -28,7 +28,7 @@ import { z } from 'zod';
  *   而不是 `=== 'org_admin'` —— 直接比较会把老数据里的 admin 判成普通成员，
  *   表现为「管理员突然什么都做不了了」。
  *
- * Organisation roles.
+ * Organization roles.
  *
  * ★ `admin` is a historical alias of `org_admin` (early seed data used it) and
  *   the two are equivalent. New code writes `org_admin`, and checks go through
@@ -53,10 +53,10 @@ export type OrgRole = z.infer<typeof OrgRole>;
  *
  * Built-in project roles; the hierarchy is the role table in 09-security §2.2.
  *
- * ★★ This is not the complete set. Roles are data: an organisation defines its
+ * ★★ This is not the complete set. Roles are data: an organization defines its
  *   own (engineering, ops, QA…) — see the `roles` table and
  *   `validateRoleDefinition` in @apos/domain. These six are **seeded data**,
- *   copied into every new organisation. The enum survives in code only because
+ *   copied into every new organization. The enum survives in code only because
  *   the permission matrix (§2.3) is written in terms of them.
  *
  * ★ `executor` is the one built-in role meant for Agents: it does the work but
@@ -101,8 +101,8 @@ export const PROJECT_ROLE_LABEL: Record<ProjectRole, string> = {
 /** 英文对照；类型同为 Record，新增角色时两边一起编译不过 */
 /** English counterparts; the same Record types break both on a new role */
 export const ORG_ROLE_LABEL_EN: Record<OrgRole, string> = {
-  org_admin: 'Organisation administrator',
-  admin: 'Organisation administrator',
+  org_admin: 'Organization administrator',
+  admin: 'Organization administrator',
   member: 'Member',
 };
 

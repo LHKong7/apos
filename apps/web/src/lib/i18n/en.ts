@@ -42,7 +42,7 @@ import { settings } from './messages/en/settings';
  *   按内容，那正是「新键只能往末尾加」的必然结果。
  *
  *   Splitting by area does not nest the keys: `t('board.empty')` is still one
- *   grep away. The file a key lives in is an organisational fact, not part of
+ *   grep away. The file a key lives in is an organizational fact, not part of
  *   its name.
  *   按区域分文件不改变键的形态：`t('board.empty')` 照样一搜就到。
  *   键住在哪个文件是组织方式，不是它名字的一部分。

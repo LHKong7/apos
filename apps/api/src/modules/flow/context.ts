@@ -132,8 +132,8 @@ export async function buildGuardContext(
  * Reads an enum fact out of `typeData`, throwing on a value it cannot parse
  * rather than defaulting. This used to be a bare `as` cast: a typo like
  * "delete_resrouce" passed straight through, `NEVER_AUTO_APPROVE` did not
- * recognise it, and the safety floor was bypassed without a trace. Defaulting
- * to `code_change` is no better — it guesses towards the permissive side. An
+ * recognize it, and the safety floor was bypassed without a trace. Defaulting
+ * to `code_change` is no better — it guesses toward the permissive side. An
  * operation type we cannot read means this item cannot be governed right now,
  * and the only defensible response to that is to stop and say so.
  */

@@ -113,7 +113,7 @@ export function RuleEditor({
     },
     onSuccess: onSaved,
     onError: (e) => {
-      if (e instanceof ApiError && (e.details as { requiresAcknowledgement?: boolean })?.requiresAcknowledgement) {
+      if (e instanceof ApiError && (e.details as { requiresAcknowledgment?: boolean })?.requiresAcknowledgment) {
         // ★ 后端在保存时自己跑了模拟并拦下了 —— 把结果摊开给用户看，
         //   而不是简单地说「保存失败」
         setSimulation((e.details as { simulation: SimulationResponse }).simulation);

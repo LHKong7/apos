@@ -17,7 +17,7 @@ import { t } from './i18n';
  *   就会条件反射地点确认 —— 而那正好训练掉了这道防线本身的作用。
  *   所以 `dirty` 必须是真的「和初始值不一样」，不能是「碰过这个表单」。
  *
- * Two lines of defence: beforeunload for tab close/reload, and confirmClose
+ * Two lines of defense: beforeunload for tab close/reload, and confirmClose
  * for dismissing a dialog (which never fires beforeunload). Guarding when
  * nothing changed trains the user to dismiss the guard.
  */

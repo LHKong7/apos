@@ -81,7 +81,7 @@ longer be tightened on their own.
 ### 3. Policy evaluation must carry a context snapshot
 
 The `contextSnapshot` on a `policy.evaluated` event is the only data policy
-simulation can replay from. **This field cannot be filled in afterwards** —
+simulation can replay from. **This field cannot be filled in afterward** —
 omitting it means the history from that period can never be used to validate a
 new rule.
 

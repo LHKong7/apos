@@ -27,7 +27,7 @@ import { ResourceScope } from './index';
  *   才能翻译。带解释的目录（风险等级、人话标签）在
  *   `@apos/domain/src/capabilities/catalog.ts`，那一层前后端共用。
  *
- * The semantic capability catalogue: what an Agent may do, stated once in a
+ * The semantic capability catalog: what an Agent may do, stated once in a
  * runtime-independent vocabulary. It exists because tool names conflated three
  * operations whose risk differs by orders of magnitude — editing files in an
  * isolated workspace, pushing to a remote, and merging — under one `repo:write`.
@@ -167,7 +167,7 @@ export interface CapabilityTranslator {
  *   改写它等于伪造证据 —— 读取侧靠 `version` 分辨（缺省即 v1）。
  *
  * The dispatch-time snapshot. v1 recorded only runtime tool names, which answer
- * "what could it call" but not "what was it authorised to do" — and the latter
+ * "what could it call" but not "what was it authorized to do" — and the latter
  * is what an audit six months later asks. Old snapshots are never rewritten:
  * they are the evidence of that run, and `version` tells them apart.
  */

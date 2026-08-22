@@ -189,7 +189,7 @@ export type PermissionResolver = (req: FastifyRequest) => Permission | Permissio
  *
  * The auth declaration lives on the route itself. Moving it out of a central
  * table buys proximity: the table could not be forgotten (startup fails), but
- * it could be filled in wrong, and a permission copied onto the neighbouring
+ * it could be filled in wrong, and a permission copied onto the neighboring
  * route looks perfectly normal in both places. Scope stays URL-derived on
  * purpose — URL shape cannot be forgotten, and the membership gate has to hold
  * for read routes too, which no startup check covers.

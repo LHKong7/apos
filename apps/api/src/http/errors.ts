@@ -20,7 +20,7 @@ export type ErrorCode =
    *   功能照常——而在**日志与监控**里：一条正常的人机交互和一次真正的
    *   客户端错误长得一模一样，于是 4xx 率再也不能当告警指标用。
    *
-   * Well-formed but needs an explicit acknowledgement first. Kept apart from
+   * Well-formed but needs an explicit acknowledgment first. Kept apart from
    * VALIDATION_FAILED so a normal confirmation round-trip does not read as a
    * client error in the logs.
    */

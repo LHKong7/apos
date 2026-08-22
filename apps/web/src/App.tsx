@@ -372,7 +372,7 @@ function ThemeToggle() {
  *   （见 lib/i18n/locale.ts）。
  *
  *   The button always shows the language you'd switch **to**, written in
- *   that language. Labelling it "Switch language" in the current language
+ *   that language. Labeling it "Switch language" in the current language
  *   assumes you can read the current language — which is exactly what a
  *   person reaching for this button cannot do.
  */

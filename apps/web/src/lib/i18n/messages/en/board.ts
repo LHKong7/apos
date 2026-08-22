@@ -78,7 +78,7 @@ export const board = {
   'workItemStatus.released': 'Released',
   'workItemStatus.acceptance': 'Acceptance',
   'workItemStatus.done': 'Done',
-  'workItemStatus.cancelled': 'Cancelled',
+  'workItemStatus.cancelled': 'Canceled',
   'createItem.title': 'New work item',
   'createItem.titleField': 'Title',
   'createItem.titlePlaceholder': 'Order export API times out intermittently',

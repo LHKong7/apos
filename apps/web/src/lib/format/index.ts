@@ -53,7 +53,7 @@ function trimUnit(v: number): string {
  *   任何新的成本展示都该用 `tokens()` —— 用了这个就意味着那个数会随
  *   官方调价漂移。
  *
- * Only ROI (which must share a unit with labour cost) and the run detail's
+ * Only ROI (which must share a unit with labor cost) and the run detail's
  * reference figure still use this. Anything new should use `tokens()`.
  */
 export function money(value: string | number | null | undefined): string {
@@ -150,7 +150,7 @@ export function absoluteTime(iso: string | null | undefined): string {
    * ★ 跟着界面语言走，不跟着浏览器走：整页已经是用户选定的那种语言，
    *   时间戳突然换一种格式会让人以为它来自别处。
    */
-  return d.toLocaleString(currentLocale() === 'zh' ? 'zh-CN' : 'en-GB');
+  return d.toLocaleString(currentLocale() === 'zh' ? 'zh-CN' : 'en-US');
 }
 
 const TYPE_ICONS: Record<string, string> = {

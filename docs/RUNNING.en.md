@@ -47,7 +47,7 @@ Paste that link into a browser and sign in with the super administrator.
 
 > **Configure the super administrator before the first run.** After
 > `cp .env.example .env`, at least these two lines need changing. Self-service
-> registration creates a **new empty organisation belonging to the registrant**
+> registration creates a **new empty organization belonging to the registrant**
 > and cannot join an existing one, so the first account that can actually
 > administer anything has to come from here:
 >
@@ -124,7 +124,7 @@ DATABASE_URL=postgres://apos@localhost:5433/apos pnpm --filter @apos/api seed
 **The seed no longer creates accounts.** Every role in the demo data is held by
 the super administrator from `.env`. A seed script that can grow ownerless
 accounts in the database — no password, nobody responsible, yet a real member of
-an organisation — is far worse than having no demo data.
+an organization — is far worse than having no demo data.
 
 The cost is that the demo contains only one person, so "only what needs me",
 "decisions cannot be made on someone's behalf" and "what a viewer can see" are
@@ -351,9 +351,9 @@ else goes into the single **Runtime configuration (JSON)** box:
 - **`env`** → any other variables, passed through to the child process,
   overriding platform defaults of the same name
 
-Keys the platform does not recognise are **stored and passed through unchanged**
+Keys the platform does not recognize are **stored and passed through unchanged**
 rather than dropped, so a new runtime switch does not have to wait for a
-platform release. After saving, the UI lists the unrecognised keys so you can
+platform release. After saving, the UI lists the unrecognized keys so you can
 confirm none of them is a typo. The "Configurable options" reference below the
 box lists the keys the platform knows, with ranges and defaults.
 
@@ -378,7 +378,7 @@ therefore never fire.
 ### An integration cannot connect, but `curl` works
 
 This happens when outbound traffic goes through a proxy: Node's built-in `fetch`
-**does not honour `HTTPS_PROXY`**. The code already handles it via
+**does not honor `HTTPS_PROXY`**. The code already handles it via
 `proxyAwareFetch()`; just make sure the process can see the proxy environment
 variables.
 

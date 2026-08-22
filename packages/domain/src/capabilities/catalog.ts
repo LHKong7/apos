@@ -39,7 +39,7 @@ export interface CapabilitySpec {
    *   这里不依赖「当前没有 Agent 令牌」这个事实 —— 口子现在就是关着的。
    *
    *   Never grantable to an Agent, for the same reason `humanOnly` exists in the
-   *   RBAC catalogue: an Agent that can widen its own constraints makes the
+   *   RBAC catalog: an Agent that can widen its own constraints makes the
    *   whole governance model decorative.
    */
   neverAutoGrant?: boolean;

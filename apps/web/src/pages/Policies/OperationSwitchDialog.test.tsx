@@ -181,7 +181,7 @@ describe('操作开关的确认弹窗', () => {
         'POLICY_DENIED',
         '这条规则会自动放行 12 次评估…',
         {
-          requiresAcknowledgement: true,
+          requiresAcknowledgment: true,
           simulation: {
             totalSamples: 12,
             wouldAutoHandle: 12,

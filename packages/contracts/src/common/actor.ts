@@ -12,7 +12,7 @@ import { z } from 'zod';
  *
  * `system` and `agent` have to stay apart: when the Flow Engine advances a
  * status by the state machine, the operator is `system`. That is what lets an
- * audit tell "deterministic, rule-driven behaviour" from "a decision an AI
+ * audit tell "deterministic, rule-driven behavior" from "a decision an AI
  * made" — see docs/tech/09-security.md §1.
  */
 export const ActorType = z.enum(['human', 'agent', 'service', 'external', 'system']);

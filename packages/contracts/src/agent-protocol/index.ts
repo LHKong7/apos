@@ -76,7 +76,7 @@ export const DEGRADATION_MATRIX: Record<FeatureKey, Degradation> = {
     behavior: '不记录推理过程',
     behaviorEn: 'Reasoning is not recorded',
     userImpact: '无法查看 Agent 的判断依据',
-    userImpactEn: 'You cannot see what the Agent based its judgement on',
+    userImpactEn: 'You cannot see what the Agent based its judgment on',
     severity: 'info',
   },
   /**
@@ -88,7 +88,7 @@ export const DEGRADATION_MATRIX: Record<FeatureKey, Degradation> = {
     behavior: '按 token × 单价估算美元参考值',
     behaviorEn: 'Derives the USD reference figure as tokens × unit price',
     userImpact: '美元金额标注为「估算值」；token 计量不受影响',
-    userImpactEn: 'The USD figure is labelled "estimated"; token accounting is unaffected',
+    userImpactEn: 'The USD figure is labeled "estimated"; token accounting is unaffected',
     severity: 'info',
   },
   tokenReporting: {

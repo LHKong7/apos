@@ -375,7 +375,7 @@ POLICY_TEMPLATES.push(...SWITCH_TEMPLATES);
  *
  * Identifies a switch-matrix rule by the shape of its condition rather than by
  * a marker in its name or description: names are editable and hidden markers do
- * not survive copy or export, and a rule the matrix fails to recognise becomes
+ * not survive copy or export, and a rule the matrix fails to recognize becomes
  * a second switch for the same operation — at which point "one row, one rule"
  * is no longer true.
  */

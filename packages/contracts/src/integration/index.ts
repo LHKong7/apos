@@ -242,13 +242,13 @@ export const FIELD_DEFAULTS: Record<
  *   SoT 是会决定「谁的修改被丢掉」的配置，用户有权看到每个字段的归属。
  *   所以做法是：预设一键铺满，铺完之后每一格仍然摆在明面上可改。
  *
- * Three presets (page doc 14 §12.1, "leaning towards yes").
+ * Three presets (page doc 14 §12.1, "leaning toward yes").
  *
  * ★ Per-field configuration is complex for an ordinary user, but hiding it
  *   behind presets alone is equally wrong: SoT decides *whose edits get
  *   discarded*, and the user is entitled to see where each field sits. So a
  *   preset fills every cell in one click, and every cell stays visible and
- *   editable afterwards.
+ *   editable afterward.
  */
 export const SOT_PRESETS = {
   apos_led: {

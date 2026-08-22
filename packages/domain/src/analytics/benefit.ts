@@ -99,8 +99,8 @@ export function computeBenefit(input: AnalyticsInput, config: BenefitInput): Ben
    *   指标区分开：漂移是可以接受的，把漂移说成精确不行。
    *
    * This is the only place left that measures in currency, necessarily so.
-   * ROI subtracts agent spend from labour value, and both sides must share a
-   * unit. The labour side is denominated by the user's hourly rate, so money
+   * ROI subtracts agent spend from labor value, and both sides must share a
+   * unit. The labor side is denominated by the user's hourly rate, so money
    * is the only option — tokens minus hours is not a quantity. The cost is
    * that this figure drifts with vendor repricing, which is exactly what
    * token accounting avoids elsewhere; the page therefore labels it as a USD

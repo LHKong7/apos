@@ -121,7 +121,7 @@ export const Condition: z.ZodType<Condition> = z.lazy(() =>
 export const Recipient = z.union([
   /**
    * 按组织角色，如 dba / security_lead —— 人员变动时规则不用改。
-   * By organisation role, e.g. dba / security_lead — the rule survives people
+   * By organization role, e.g. dba / security_lead — the rule survives people
    * joining and leaving.
    */
   z.object({ kind: z.literal('role'), role: z.string() }),
@@ -137,9 +137,9 @@ export const Recipient = z.union([
    * By project role.
    *
    * ★ The value is a **role key**, not limited to the built-in ones: a
-   *   custom organisation role (engineering, ops, QA…) can equally be an
+   *   custom organization role (engineering, ops, QA…) can equally be an
    *   approver or a notification target. Hard-coding the enum would mean an
-   *   organisation that created a "security" role could not write the rule
+   *   organization that created a "security" role could not write the rule
    *   "send security policy changes to security" — leaving the custom role as
    *   nothing but a label.
    */
@@ -217,7 +217,7 @@ export function actionLabel(type: string): string {
 /**
  * 动作的严格程度序，用于「项目规则只能收紧不能放宽」的静态检查。
  * Strictness ordering, used by the static check that a project rule may only
- * tighten an organisation rule, never loosen it.
+ * tighten an organization rule, never loosen it.
  * （docs/tech/05-policy-engine.md §4.2）
  */
 export const ACTION_STRICTNESS: Record<ActionType, number> = {
@@ -244,14 +244,14 @@ export const Policy = z.object({
   orgId: z.string().uuid(),
   /**
    * null = 组织级规则，项目不可删除、不可放宽。
-   * null means an organisation rule: a project can neither delete nor loosen it.
+   * null means an organization rule: a project can neither delete nor loosen it.
    */
   projectId: z.string().uuid().nullable(),
   name: z.string().min(1),
   description: z.string().default(''),
   /**
    * 越小越先评估。组织级 1–99，项目级 100+。
-   * Lower evaluates first. Organisation rules use 1–99, project rules 100+.
+   * Lower evaluates first. Organization rules use 1–99, project rules 100+.
    */
   priority: z.number().int().min(1),
   enabled: z.boolean(),

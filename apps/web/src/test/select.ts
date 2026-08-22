@@ -13,7 +13,7 @@ import type { UserEvent } from '@testing-library/user-event';
  *   原来断言的 `'write'` 是内部取值，用户永远看不到；现在断言的是
  *   界面上那三个字，测试跟着用户看到的东西走。
  *
- * A Radix dropdown is a combobox button plus a portalled option list that does
+ * A Radix dropdown is a combobox button plus a portaled option list that does
  * not exist until it is opened, so `user.selectOptions` (native-only) no longer
  * applies. Matching moves from the option's value to its visible text.
  */
