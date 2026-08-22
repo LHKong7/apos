@@ -29,6 +29,7 @@ export const graph: Record<keyof typeof en, string> = {
   'event.plan.approved': '计划确认',
   'event.plan.revision_requested': '计划要求修改',
   'event.plan.superseded': '计划被替换',
+  'event.requirement.acceptance_updated': '需求验收标准已更新',
   'event.work_item.created': '任务创建',
   'event.work_item.status_changed': '任务状态变更',
   'event.work_item.assigned': '任务分派',

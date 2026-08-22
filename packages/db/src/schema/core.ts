@@ -1179,6 +1179,8 @@ export const agentRuns = pgTable(
         path: string;
         role: 'primary' | 'reference';
         writable?: boolean;
+        /** 本地来源的宿主机原始目录；可写挂载收尾时据此写回 */
+        originPath?: string;
         /** 挂载点的来源描述；旧结构没有，按 git 解释 */
         source?: {
           kind: 'git' | 'empty' | 'local' | 'object_storage';

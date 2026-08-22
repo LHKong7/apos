@@ -62,6 +62,11 @@ export interface TransitionInput {
   causationId?: bigint | null;
   /** 覆盖 Policy 上下文中由调用方才知道的字段（如本次操作类型） */
   contextOverrides?: Partial<PolicyContext>;
+  /**
+   * 已批准的 Policy 决策。仅当数据库中的决策属于同一任务、状态为 approved，
+   * 且它记录的 intendedStatus 与本次目标一致时，才满足这一次人工审批门。
+   */
+  approvedDecisionId?: string;
 }
 
 export type TransitionResult =
@@ -151,6 +156,23 @@ export async function transition(
     const policyCtx = await buildPolicyContext(tx, item, input.contextOverrides);
     const rules = await loadCompiledPolicies(tx, item.orgId, item.projectId);
     const verdict = evaluate(policyCtx, rules);
+    const approvalSatisfied = input.approvedDecisionId
+      ? await approvedDecisionMatches(
+          tx,
+          item.id,
+          input.approvedDecisionId,
+          target,
+          item.riskLevel,
+          verdict.matchedPolicyId,
+        )
+      : verdict.requiresHuman
+        ? await approvedPolicyMatches(
+            tx,
+            item.id,
+            item.riskLevel,
+            verdict.matchedPolicyId,
+          )
+        : false;
 
     if (verdict.action.type === 'deny') {
       return { ok: false, code: 'POLICY_DENIED', from, message: verdict.action.message, verdict } as const;
@@ -174,7 +196,7 @@ export async function transition(
      */
     if (target === 'awaiting_decision') intendedStatus = from;
 
-    if (verdict.requiresHuman) {
+    if (verdict.requiresHuman && !approvalSatisfied) {
       finalStatus = verdict.action.type === 'pause' ? 'blocked' : 'awaiting_decision';
       // Policy 把流转拦下来了：本来要去的地方才是批准后的目的地
       if (target !== 'awaiting_decision') intendedStatus = target;
@@ -238,6 +260,7 @@ export async function transition(
         matchedPolicyName: verdict.matchedPolicyName,
         action: verdict.action,
         trace: verdict.trace,
+        ...(approvalSatisfied ? { approvedDecisionId: input.approvedDecisionId } : {}),
       },
       // ★ 上下文快照：Policy 模拟回放的唯一数据来源，事后无法补
       contextSnapshot: verdict.contextSnapshot,
@@ -306,6 +329,68 @@ export async function transition(
   if (outbox.length > 0) defaultBus.publish(outbox);
 
   return result as TransitionResult;
+}
+
+async function approvedDecisionMatches(
+  tx: Tx,
+  workItemId: string,
+  decisionId: string,
+  target: WorkItemStatus,
+  riskLevel: (typeof workItems.$inferSelect)['riskLevel'],
+  matchedPolicyId: string | null,
+): Promise<boolean> {
+  const [decision] = await tx
+    .select({
+      status: decisions.status,
+      workItemId: decisions.workItemId,
+      impact: decisions.impact,
+      riskLevel: decisions.riskLevel,
+      triggeredByPolicy: decisions.triggeredByPolicy,
+    })
+    .from(decisions)
+    .where(eq(decisions.id, decisionId));
+
+  if (
+    !decision ||
+    decision.status !== 'approved' ||
+    decision.workItemId !== workItemId ||
+    decision.riskLevel !== riskLevel ||
+    decision.triggeredByPolicy !== matchedPolicyId
+  ) {
+    return false;
+  }
+
+  const impact = decision.impact;
+  if (!impact || typeof impact !== 'object' || Array.isArray(impact)) return false;
+  return (impact as Record<string, unknown>)['intendedStatus'] === target;
+}
+
+/**
+ * A Policy approval authorizes the governed operation, not just one edge of
+ * the state machine. Without this persisted check the same production task is
+ * gated again at ready → executing, executing → reviewing, and every release
+ * edge. `humanGate` is only display state and may legitimately become
+ * `human_took_over`; the durable authorization is the approved Decision,
+ * which still has to match this work item, risk level, and exact Policy.
+ */
+async function approvedPolicyMatches(
+  tx: Tx,
+  workItemId: string,
+  riskLevel: (typeof workItems.$inferSelect)['riskLevel'],
+  matchedPolicyId: string | null,
+): Promise<boolean> {
+  const approved = await tx
+    .select({
+      riskLevel: decisions.riskLevel,
+      triggeredByPolicy: decisions.triggeredByPolicy,
+    })
+    .from(decisions)
+    .where(and(eq(decisions.workItemId, workItemId), eq(decisions.status, 'approved')));
+
+  return approved.some(
+    (decision) =>
+      decision.riskLevel === riskLevel && decision.triggeredByPolicy === matchedPolicyId,
+  );
 }
 
 export class VersionConflictError extends Error {

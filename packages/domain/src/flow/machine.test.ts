@@ -88,6 +88,14 @@ describe('resolveTransition', () => {
     expect(t?.guards).toEqual(['dependenciesSatisfied', 'wipAvailable', 'executorAssigned']);
   });
 
+  it('人工开始执行时同时切换执行主体，避免被监督器误判为孤儿 Run', () => {
+    const t = resolveTransition(WORK_ITEM_MACHINE, 'ready', 'human_work_started');
+    expect(t?.to).toBe('executing');
+    expect(t?.effects).toEqual(
+      expect.arrayContaining(['recordActualStart', 'switchExecutorToHuman']),
+    );
+  });
+
   it('review_passed 受验收标准与质量门禁双重把关', () => {
     const t = resolveTransition(WORK_ITEM_MACHINE, 'reviewing', 'review_passed');
     expect(t?.guards).toContain('acceptanceCriteriaMet');

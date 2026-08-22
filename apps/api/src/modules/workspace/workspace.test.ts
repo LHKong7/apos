@@ -601,7 +601,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
    *   一个本地目录塞进那张表要给 remoteUrl / defaultBranch 填占位符，
    *   而占位符会一路流到界面和 prompt 里 —— 这正是规划任务曾经踩过的坑。
    */
-  it('本地目录登记为存储目标后能被挂载，产出归档到工作区之外', async () => {
+  it('可写本地目录登记为存储目标后，产出写回源目录', async () => {
     const hostDir = join(root, 'host', 'sales');
     await mkdir(hostDir, { recursive: true });
     await writeFile(join(hostDir, 'input.csv'), 'a,b\n1,2\n');
@@ -640,18 +640,16 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(release.published.kind).toBe('local');
     if (release.published.kind !== 'local') return;
     expect(release.published.persisted).toBe(true);
-    // 归档在工作区之外，工作区目录已被回收
-    expect(await readFile(join(archive, runId, 'report.md'), 'utf8')).toContain('分析结果');
+    // 可写本地来源直接写回源目录，工作区目录随后回收
+    expect(await readFile(join(hostDir, 'report.md'), 'utf8')).toContain('分析结果');
     await expect(stat(ws.path)).rejects.toThrow();
-    // 源目录没被 Agent 改动
-    await expect(stat(join(hostDir, 'report.md'))).rejects.toThrow();
+    await expect(stat(join(archive, runId, 'report.md'))).rejects.toThrow();
   });
 
   /**
-   * ★ 没配归档目录时退回「不交货」并如实说明 —— LocalPublisher 的全部价值
-   *   就是把东西搬到工作区之外，没有归档目录它搬不到任何地方。
+   * ★ 可写本地来源不依赖归档目录：它的持久化位置就是来源本身。
    */
-  it('没配归档目录时不谎报已持久化', async () => {
+  it('没配归档目录时，可写本地来源仍然写回并持久化', async () => {
     const hostDir = join(root, 'host2');
     await mkdir(hostDir, { recursive: true });
     await writeFile(join(hostDir, 'a.txt'), 'a\n');
@@ -676,9 +674,10 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     await writeFile(join(result.workspace!.path, 'out.txt'), 'x\n');
 
     const release = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
-    expect(release.published.kind).toBe('none');
-    if (release.published.kind !== 'none') return;
-    expect(release.published.persisted).toBe(false);
+    expect(release.published.kind).toBe('local');
+    if (release.published.kind !== 'local') return;
+    expect(release.published.persisted).toBe(true);
+    expect(await readFile(join(hostDir, 'out.txt'), 'utf8')).toBe('x\n');
   });
 
   it('数据集没登记时报错指向「存储目标」而不是「代码仓库」', async () => {

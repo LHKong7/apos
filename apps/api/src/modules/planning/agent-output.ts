@@ -216,6 +216,8 @@ export const AgentPlanOutput = z.object({
           .array(
             z.object({
               text: z.string().min(1),
+              /** ID copied from the requirement criterion this task verifies. */
+              requirementCriterionId: z.string().nullish().transform((v) => v ?? undefined),
               verification: z.enum(['auto', 'agent', 'human']).default('agent'),
             }),
           )

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
   agentRuns,
   decisions,
   events,
+  plans,
   policies,
   projectMembers,
   requirementClarifications,
@@ -30,6 +31,8 @@ import {
 import { signToken } from '../modules/auth';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { dispatchRun } from '../modules/agent/dispatch';
+import { scheduleRound } from '../modules/flow/scheduler';
+import { reviewRound } from '../modules/flow/review';
 
 const db = testDb();
 let app: FastifyInstance;
@@ -1339,6 +1342,83 @@ describe('★ 手动状态调整必须留痕', () => {
     expect(res.json().error.details.failures[0].overridable).toBe(true);
     expect(res.json().error.details.failures[0].overrideRole).toBe('tech_lead');
   });
+
+  it('★ 人工强制通过验收时写入证据，并在任务完成后汇总到需求', async () => {
+    const [requirement] = await db
+      .insert(requirements)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        rawInput: '人工核验交付物',
+        status: 'approved',
+        acceptanceCriteria: [
+          {
+            id: 'requirement-ac-manual',
+            text: '交付物经人工核验通过',
+            verification: 'human',
+            status: 'pending',
+            evidenceRef: null,
+            verifiedAt: null,
+          },
+        ],
+      })
+      .returning();
+    const item = await createWorkItem(db, fx, {
+      status: 'reviewing',
+      requirementId: requirement!.id,
+      acceptanceCriteria: [
+        {
+          id: 'task-ac-manual',
+          text: '交付物经人工核验通过',
+          requirementCriterionId: 'requirement-ac-manual',
+          verification: 'human',
+          status: 'pending',
+          evidenceRef: null,
+          verifiedAt: null,
+        },
+      ],
+    });
+
+    const reviewed = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/work-items/${item.id}/status`,
+      headers: auth(),
+      payload: {
+        toStatus: 'waiting_for_release',
+        reason: '已人工核对交付物与验收标准',
+        overrideGuards: ['acceptanceCriteriaMet', 'qualityGatePassed'],
+      },
+    });
+    expect(reviewed.statusCode).toBe(200);
+
+    for (const toStatus of ['releasing', 'acceptance', 'done']) {
+      const advanced = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/work-items/${item.id}/status`,
+        headers: auth(),
+        payload: { toStatus, reason: '继续完成发布与验收流程' },
+      });
+      expect(advanced.statusCode, toStatus).toBe(200);
+    }
+
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      verification: 'human',
+    });
+    expect(after!.acceptanceCriteria[0]?.evidenceRef).toMatch(/^manual-review:/);
+    expect(after!.acceptanceCriteria[0]?.verifiedAt).toBeTruthy();
+
+    const [requirementAfter] = await db
+      .select()
+      .from(requirements)
+      .where(eq(requirements.id, requirement!.id));
+    expect(requirementAfter!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      evidenceRef: after!.acceptanceCriteria[0]?.evidenceRef,
+    });
+    expect(requirementAfter!.acceptanceCriteria[0]?.verifiedAt).toBeTruthy();
+  });
 });
 
 /**
@@ -1590,7 +1670,246 @@ describe('★ Idempotency-Key', () => {
   });
 });
 
+describe('★ 验收证据回填', () => {
+  it('自动评审把 Agent Run 证据写回任务并汇总到需求', async () => {
+    const [requirement] = await db
+      .insert(requirements)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        rawInput: '自动核验功能',
+        status: 'approved',
+        acceptanceCriteria: [
+          {
+            id: 'requirement-ac-auto',
+            text: '核心功能通过自动核验',
+            verification: 'auto',
+            status: 'pending',
+            evidenceRef: null,
+            verifiedAt: null,
+          },
+        ],
+      })
+      .returning();
+    const [oldPlan, activePlan] = await db
+      .insert(plans)
+      .values([
+        {
+          projectId: fx.projectId,
+          requirementId: requirement!.id,
+          version: 1,
+          status: 'approved',
+        },
+        {
+          projectId: fx.projectId,
+          requirementId: requirement!.id,
+          version: 2,
+          status: 'approved',
+        },
+      ])
+      .returning();
+    await createWorkItem(db, fx, {
+      status: 'ready',
+      requirementId: requirement!.id,
+      planId: oldPlan!.id,
+      acceptanceCriteria: [
+        {
+          id: 'requirement-ac-auto',
+          text: '旧计划里的同名验收项',
+          verification: 'auto',
+          status: 'pending',
+          evidenceRef: null,
+          verifiedAt: null,
+        },
+      ],
+    });
+    const agent = await seedAgent(db, fx, { registry });
+    const item = await createWorkItem(db, fx, {
+      status: 'reviewing',
+      requirementId: requirement!.id,
+      planId: activePlan!.id,
+      typeData: {
+        qualityGate: {
+          testSource: 'workspace_check',
+          testCommand: 'pnpm test',
+          testsPassed: true,
+          securityScanPassed: true,
+        },
+      },
+      acceptanceCriteria: [
+        {
+          id: 'task-ac-auto',
+          text: '核心功能通过自动核验',
+          requirementCriterionId: 'requirement-ac-auto',
+          verification: 'agent',
+          status: 'pending',
+          evidenceRef: null,
+          verifiedAt: null,
+        },
+      ],
+    });
+    const [run] = await db
+      .insert(agentRuns)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        agentId: agent.agentId,
+        status: 'completed',
+        idempotencyKey: `acceptance-${randomUUID()}`,
+        goal: item.title,
+        agentSelfReport: '- [task-ac-auto] passed: automated verification succeeded',
+      })
+      .returning();
+
+    const outcomes = await reviewRound(db, {
+      projectId: fx.projectId,
+      correlationId: randomUUID(),
+    });
+
+    expect(outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workItemId: item.id, action: 'advanced', finalStatus: 'done' }),
+      ]),
+    );
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      verification: 'agent',
+      evidenceRef: `agent-run:${run!.id}`,
+    });
+    const [requirementAfter] = await db
+      .select()
+      .from(requirements)
+      .where(eq(requirements.id, requirement!.id));
+    expect(requirementAfter!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      evidenceRef: `agent-run:${run!.id}`,
+    });
+  });
+});
+
 describe('★ 决策责任不可代行', () => {
+  it('★ 批准人工评审后完成发布链，不把任务卡在 reviewing', async () => {
+    const [requirement] = await db
+      .insert(requirements)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        rawInput: '人工核验交付物',
+        status: 'approved',
+        acceptanceCriteria: [
+          {
+            id: 'requirement-ac-1',
+            text: '交付物已人工核验',
+            verification: 'human',
+            status: 'pending',
+            evidenceRef: null,
+            verifiedAt: null,
+          },
+        ],
+      })
+      .returning();
+    const item = await createWorkItem(db, fx, {
+      status: 'reviewing',
+      requirementId: requirement!.id,
+      acceptanceCriteria: [
+        {
+          id: 'review-ac-1',
+          text: '人工核验交付物',
+          requirementCriterionId: 'requirement-ac-1',
+          verification: 'human',
+          status: 'pending',
+          evidenceRef: null,
+          verifiedAt: null,
+        },
+      ],
+    });
+    const [decision] = await db
+      .insert(decisions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        type: 'review_approval',
+        riskLevel: 'low',
+        reversible: true,
+        title: '评审：人工核验交付物',
+        whyHuman: '仓库没有自动质量核验命令',
+        assigneeId: fx.userId,
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${decision!.id}/approve`,
+      headers: auth(),
+      payload: { note: '交付物已人工核验通过' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('done');
+    expect(after!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      verification: 'human',
+      evidenceRef: `decision:${decision!.id}`,
+    });
+    expect(after!.acceptanceCriteria[0]?.verifiedAt).toBeTruthy();
+
+    const [requirementAfter] = await db
+      .select()
+      .from(requirements)
+      .where(eq(requirements.id, requirement!.id));
+    expect(requirementAfter!.acceptanceCriteria[0]).toMatchObject({
+      status: 'passed',
+      evidenceRef: `decision:${decision!.id}`,
+    });
+    expect(requirementAfter!.acceptanceCriteria[0]?.verifiedAt).toBeTruthy();
+
+    const itemEvents = await db.select().from(events).where(eq(events.subjectId, item.id));
+    expect(itemEvents.some((event) => event.type === 'work_item.force_passed')).toBe(true);
+    expect(itemEvents.some((event) => event.type === 'work_item.acceptance_updated')).toBe(true);
+    const requirementEvents = await db
+      .select()
+      .from(events)
+      .where(eq(events.subjectId, requirement!.id));
+    expect(requirementEvents.some((event) => event.type === 'requirement.acceptance_updated')).toBe(
+      true,
+    );
+  });
+
+  it('★ 驳回人工评审后进入返工，不错误调用 decision_rejected', async () => {
+    const item = await createWorkItem(db, fx, { status: 'reviewing' });
+    const [decision] = await db
+      .insert(decisions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        type: 'review_approval',
+        riskLevel: 'low',
+        reversible: true,
+        title: '评审：需要返工',
+        whyHuman: '需要人工核验',
+        assigneeId: fx.userId,
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${decision!.id}/reject`,
+      headers: auth(),
+      payload: { reason: '执行报告明确说明没有写出任何文件' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(after!.status).toBe('changes_requested');
+  });
+
   it('非责任人无法批准，提示用改派', async () => {
     const item = await createWorkItem(db, fx);
 
@@ -2107,6 +2426,92 @@ describe('★ 等待审批的任务留在原阶段，不假装「已做完在审
     expect(execution.items.map((i) => i.id)).toContain(item.id);
     expect(review.items.map((i) => i.id)).not.toContain(item.id);
     expect(res.json().summary.pendingDecisions).toBe(1);
+  });
+
+  it('批准 Policy 决策后进入目标状态，不重复创建同一审批', async () => {
+    await seedProdDbRule();
+    const item = await createWorkItem(db, fx, {
+      status: 'draft',
+      stage: 'intake',
+      title: '数据库索引变更',
+      typeData: { environment: 'production', operationType: 'db_ddl' },
+    });
+
+    const { transition } = await import('../modules/flow/transition');
+    const gated = await transition(db, {
+      workItemId: item.id,
+      trigger: 'plan_approved',
+      actor: { type: 'human', id: fx.userId },
+      correlationId: randomUUID(),
+    });
+
+    expect(gated.ok).toBe(true);
+    if (!gated.ok || !gated.createdDecisionId) return;
+
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${gated.createdDecisionId}/approve`,
+      headers: auth(),
+      payload: { note: 'DBA approved' },
+    });
+
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json().workItem.to).toBe('ready');
+    expect(approved.json().workItem.createdDecisionId).toBeNull();
+
+    const [updated] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(updated?.status).toBe('ready');
+
+    const pending = await db
+      .select()
+      .from(decisions)
+      .where(
+        and(
+          eq(decisions.workItemId, item.id),
+          eq(decisions.status, 'pending'),
+        ),
+      );
+    expect(pending).toHaveLength(0);
+  });
+
+  it('批准派发边界的 Policy 决策后真正恢复 queued Run', async () => {
+    await seedProdDbRule();
+    const runtime = new MockRuntime({}, { steps: ['执行批准后的任务'], stepDelayMs: 100 });
+    await seedAgent(db, fx, { registry, runtime });
+    const item = await createWorkItem(db, fx, {
+      status: 'ready',
+      title: '数据库索引变更',
+      riskLevel: 'high',
+      typeData: { environment: 'production', operationType: 'db_ddl' },
+    });
+
+    await scheduleRound(db, registry, {
+      projectId: fx.projectId,
+      correlationId: randomUUID(),
+    });
+
+    const [queued] = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.workItemId, item.id));
+    const [decision] = await db
+      .select()
+      .from(decisions)
+      .where(and(eq(decisions.workItemId, item.id), eq(decisions.status, 'pending')));
+    expect(queued?.status).toBe('queued');
+    expect(decision).toBeTruthy();
+
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${decision!.id}/approve`,
+      headers: auth(),
+      payload: { note: 'DBA approved' },
+    });
+
+    expect(approved.statusCode).toBe(200);
+    expect(runtime.dispatchedTask(queued!.id)).toBeTruthy();
+    const [resumed] = await db.select().from(agentRuns).where(eq(agentRuns.id, queued!.id));
+    expect(resumed?.status).not.toBe('queued');
   });
 
   it('执行后审批的任务留在 Review 列', async () => {

@@ -70,7 +70,11 @@ import {
 import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
 import { transition } from '../modules/flow/transition';
-import { dispatchRun } from '../modules/agent/dispatch';
+import {
+  recordHumanAcceptance,
+  rollUpRequirementAcceptance,
+} from '../modules/flow/review';
+import { dispatchRun, resumeQueuedRun } from '../modules/agent/dispatch';
 import type { WorkspaceService } from '../modules/workspace';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
@@ -4671,6 +4675,20 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         );
       }
 
+      const correlationId = corr(req);
+      if (
+        trigger === 'review_passed' &&
+        body.overrideGuards?.includes('acceptanceCriteriaMet')
+      ) {
+        await recordHumanAcceptance(db, {
+          workItemId: id,
+          evidenceRef: `manual-review:${correlationId}`,
+          actor,
+          reason: body.reason,
+          correlationId,
+        });
+      }
+
       const result = await transition(db, {
         workItemId: id,
         trigger,
@@ -4679,10 +4697,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         reasonCategory: body.reasonCategory,
         manual: true,
         overrideGuards: body.overrideGuards,
-        correlationId: corr(req),
+        correlationId,
       });
 
       if (!result.ok) return mapTransitionError(result);
+      if (result.to === 'done') {
+        await rollUpRequirementAcceptance(db, { workItemId: id, actor, correlationId });
+      }
       return toTransitionResponse(result);
     },
   );
@@ -5410,13 +5431,77 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
           .where(eq(workItems.id, decision.workItemId));
       }
 
+      /**
+       * A review approval is not a detour from `awaiting_decision`: the task deliberately
+       * remains in `reviewing` while the human inspects it. Sending `decision_approved`
+       * here therefore cannot match the state machine and used to leave the decision
+       * approved while the task stayed stuck forever. Human approval supplies the two
+       * review-gate overrides, then follows the same release/acceptance chain as the
+       * automatic reviewer.
+       */
+      if (decision.type === 'review_approval') {
+        const reason = body.note ?? decision.whyHuman ?? 'Human approved the review';
+        await recordHumanAcceptance(db, {
+          workItemId: decision.workItemId,
+          evidenceRef: `decision:${id}`,
+          actor,
+          reason,
+          correlationId,
+        });
+        const review = await transition(db, {
+          workItemId: decision.workItemId,
+          trigger: 'review_passed',
+          actor,
+          overrideGuards: ['qualityGatePassed'],
+          reason,
+          correlationId,
+        });
+        if (!review.ok) throw mapTransitionError(review);
+
+        let result = review;
+        for (const trigger of ['release_started', 'release_completed', 'accepted'] as const) {
+          const moved = await transition(db, {
+            workItemId: decision.workItemId,
+            trigger,
+            actor,
+            reason,
+            correlationId,
+          });
+          if (!moved.ok) throw mapTransitionError(moved);
+          result = moved;
+        }
+        await rollUpRequirementAcceptance(db, {
+          workItemId: decision.workItemId,
+          actor,
+          correlationId,
+        });
+        return { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) };
+      }
+
       const result = await transition(db, {
         workItemId: decision.workItemId,
         trigger: 'decision_approved',
         actor,
+        approvedDecisionId: id,
         correlationId,
       });
       if (!result.ok) throw mapTransitionError(result);
+      if (result.to === 'executing') {
+        const resumed = await resumeQueuedRun(
+          db,
+          deps.registry,
+          { workItemId: decision.workItemId, correlationId },
+          { workspaces: deps.workspaces },
+        );
+        if (resumed && !resumed.ok) {
+          throw fail(
+            'AGENT_UNAVAILABLE',
+            'work_item.dispatch_failed',
+            '审批已生效，但被挂起的 Agent Run 恢复失败',
+            { details: resumed.detail },
+          );
+        }
+      }
       return { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) };
     }
 
@@ -5472,13 +5557,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         .where(eq(decisions.id, id));
 
       if (decision.workItemId) {
-        await transition(db, {
+        const result = await transition(db, {
           workItemId: decision.workItemId,
-          trigger: 'decision_rejected',
+          trigger: decision.type === 'review_approval' ? 'review_rejected' : 'decision_rejected',
           actor,
           reason: body.reason,
           correlationId: corr(req),
         });
+        if (!result.ok) throw mapTransitionError(result);
       }
       return { ok: true, decisionId: id };
     },

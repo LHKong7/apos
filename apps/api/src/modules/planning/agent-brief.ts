@@ -219,6 +219,23 @@ export function buildRepairBrief(
       ? '（上一版没有写出产物文件）'
       : `\`\`\`json\n${truncated}\n\`\`\``;
 
+  const repairSteps =
+    truncated === null
+      ? `1. 上一轮运行结束了，但**没有创建 ${OUTPUT_FILE}**。这一轮必须实际调用写文件工具，
+   在当前工作目录创建它；不要只在回复文本里给出 JSON，也不要只说你准备开始。
+2. 按下面的 schema 重新完成分析，并把**完整 JSON**一次写进文件。写完后再读取
+   文件确认它存在、能被 JSON 解析，且顶层字段与 schema 一致。`
+      : `1. 对照上面的报错，**只改错的地方**。已经写对的部分（任务拆分、依赖关系、
+   工期估算）原样保留 —— 重写一份新的计划意味着上一轮的分析白做了，
+   而且很可能重新犯一个别的错。
+2. 报错指着某个**枚举字段**时（\`type\`、\`riskLevel\`、\`verification\`、
+   \`level\`、\`operationType\`、\`environment\`、\`dataSensitivity\` 这一类），
+   回到下面的 schema 照着允许的取值改。**不确定的可选字段整行删掉**，
+   不要写 \`null\`，也不要猜一个看起来差不多的值 —— 猜出来的值会让
+   治理规则静默地匹配不上，比留空危险得多。
+3. 改完把完整的 JSON 重新写进 \`${OUTPUT_FILE}\` —— 是整份文件，
+   不是补丁、不是差异。`;
+
   return `# 上一版产物没通过校验，请修正后重新交付
 
 ## 哪里不合格
@@ -233,16 +250,7 @@ ${previous}
 
 ## 这一轮怎么做
 
-1. 对照上面的报错，**只改错的地方**。已经写对的部分（任务拆分、依赖关系、
-   工期估算）原样保留 —— 重写一份新的计划意味着上一轮的分析白做了，
-   而且很可能重新犯一个别的错。
-2. 报错指着某个**枚举字段**时（\`type\`、\`riskLevel\`、\`verification\`、
-   \`level\`、\`operationType\`、\`environment\`、\`dataSensitivity\` 这一类），
-   回到下面的 schema 照着允许的取值改。**不确定的可选字段整行删掉**，
-   不要写 \`null\`，也不要猜一个看起来差不多的值 —— 猜出来的值会让
-   治理规则静默地匹配不上，比留空危险得多。
-3. 改完把完整的 JSON 重新写进 \`${OUTPUT_FILE}\` —— 是整份文件，
-   不是补丁、不是差异。
+${repairSteps}
 
 下面是原始任务书，schema 与要求与上一轮完全相同。
 
@@ -296,7 +304,13 @@ ${languageRule(locale)}
       // database.read|database.write|secret.read
       "requiredCapabilities": ["workspace.read"],
       "requiresHuman": false,
-      "acceptanceCriteria": [{ "text": "…", "verification": "auto" }],
+      "acceptanceCriteria": [
+        {
+          "text": "…",
+          "requirementCriterionId": "ac-1",
+          "verification": "auto"
+        }
+      ],
       "dependsOn": []                       // 没有前置任务就是空数组
     },
     {
@@ -351,6 +365,8 @@ ${languageRule(locale)}
   都行），type 只能取上面那 13 个值里的一个。别把 ref 的字面量填进 type。
 - **依赖不能成环**。A 依赖 B、B 依赖 A 的话，两个任务会永远互相等待，
   界面上表现为两张卡永久卡住。
+- 如果一条任务验收标准用于证明需求中的某条验收标准，必须把那条需求标准的
+  \`id\` 原样写入 \`requirementCriterionId\`。不要填写不存在的 ID；纯任务内部标准省略它。
 - 生产环境的发布与数据库结构变更必须 \`"requiresHuman": true\`，
   并标上 \`operationType\` 与 \`environment\`。
 - \`operationType\` / \`environment\` / \`dataSensitivity\` **只能取上面列出的值**。
@@ -386,6 +402,7 @@ ${JSON.stringify(
     constraints: req.constraints,
     risks: req.risks,
     acceptanceCriteria: req.acceptanceCriteria.map((c) => ({
+      id: c.id,
       text: c.text,
       verification: c.verification,
     })),

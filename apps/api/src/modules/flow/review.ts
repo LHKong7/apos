@@ -1,8 +1,17 @@
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { agentRuns, decisions, projects, workItems, type Database } from '@apos/db';
+import {
+  agentRuns,
+  decisions,
+  plans,
+  projects,
+  requirements,
+  workItems,
+  type Database,
+} from '@apos/db';
 import {
   SYSTEM_ACTOR,
   type AcceptanceCriterion,
+  type ActorRef,
   type AutonomyLevel,
   type RiskLevel,
 } from '@apos/contracts';
@@ -101,7 +110,11 @@ async function reviewOne(
   const testsPassed = quality['testsPassed'] === true;
   const testsFailed = quality['testsPassed'] === false;
 
-  const acceptance = deriveAcceptance(item.acceptanceCriteria, run?.agentSelfReport ?? null);
+  const acceptance = deriveAcceptance(
+    item.acceptanceCriteria,
+    run?.agentSelfReport ?? null,
+    run ? `agent-run:${run.id}` : null,
+  );
 
   // 验收自评落库，页面上要能看到「Agent 认为哪条没做到」
   if (acceptance.changed) {
@@ -109,6 +122,35 @@ async function reviewOne(
       .update(workItems)
       .set({ acceptanceCriteria: acceptance.criteria })
       .where(eq(workItems.id, item.id));
+
+    const before = new Map(item.acceptanceCriteria.map((criterion) => [criterion.id, criterion]));
+    for (const criterion of acceptance.criteria) {
+      const previous = before.get(criterion.id);
+      if (
+        previous?.status === criterion.status &&
+        previous?.evidenceRef === criterion.evidenceRef &&
+        previous?.verifiedAt === criterion.verifiedAt
+      ) {
+        continue;
+      }
+      await emitAndPublish(db, {
+        orgId: item.orgId,
+        projectId: item.projectId,
+        actor: SYSTEM_ACTOR,
+        type: 'work_item.acceptance_updated',
+        level: 'detail',
+        subjectType: 'work_item',
+        subjectId: item.id,
+        payload: {
+          criterionId: criterion.id,
+          passed: criterion.status === 'passed',
+          status: criterion.status,
+          verification: criterion.verification,
+          evidenceRef: criterion.evidenceRef,
+        },
+        correlationId: opts.correlationId,
+      });
+    }
   }
 
   await emitAndPublish(db, {
@@ -240,6 +282,14 @@ async function advance(
     last = moved.to;
   }
 
+  if (last === 'done') {
+    await rollUpRequirementAcceptance(db, {
+      workItemId: item.id,
+      actor: SYSTEM_ACTOR,
+      correlationId: opts.correlationId,
+    });
+  }
+
   return {
     workItemId: item.id,
     title: item.title,
@@ -317,6 +367,7 @@ const POSITIVE_RE = /满足|完成|实现|通过|met\b|passed|done\b|yes\b|✓|�
 export function deriveAcceptance(
   criteria: AcceptanceCriterion[],
   report: string | null,
+  evidenceRef: string | null = null,
 ): {
   criteria: AcceptanceCriterion[];
   passed: number;
@@ -354,7 +405,14 @@ export function deriveAcceptance(
     const line = lines.find((l) => l.includes(c.id));
     if (!line) {
       unclear++;
-      return c.status === 'pending' ? c : { ...c, status: 'pending' as const };
+      if (c.status === 'pending' && c.evidenceRef === null && c.verifiedAt === null) return c;
+      changed = true;
+      return {
+        ...c,
+        status: 'pending' as const,
+        evidenceRef: null,
+        verifiedAt: null,
+      };
     }
 
     /**
@@ -374,7 +432,15 @@ export function deriveAcceptance(
     else if (status === 'failed') failed++;
     else unclear++;
 
-    if (status !== c.status) changed = true;
+    const nextEvidenceRef = status === 'pending' ? null : (evidenceRef ?? c.evidenceRef);
+    const verifiedAt = status === 'pending' ? null : new Date().toISOString();
+    if (
+      status !== c.status ||
+      nextEvidenceRef !== c.evidenceRef ||
+      (status !== 'pending' && c.verifiedAt === null)
+    ) {
+      changed = true;
+    }
     /**
      * ★ verification 标成 'agent'：这是**自评**，不是独立验证。
      *   prompt 要求 Agent 按 ID 逐条说明，但它说「满足」不等于真的满足 ——
@@ -384,11 +450,181 @@ export function deriveAcceptance(
       ...c,
       status,
       verification: 'agent' as const,
-      verifiedAt: new Date().toISOString(),
+      evidenceRef: nextEvidenceRef,
+      verifiedAt,
     };
   });
 
   return { criteria: next, passed, failed, unclear, changed };
+}
+
+/**
+ * Human review is itself evidence. Persist it before evaluating the
+ * acceptanceCriteriaMet guard so a task never reaches done with pending
+ * criteria merely because the route force-passed the guard.
+ */
+export async function recordHumanAcceptance(
+  db: Database,
+  input: {
+    workItemId: string;
+    evidenceRef: string;
+    actor: ActorRef;
+    reason: string;
+    correlationId: string;
+  },
+): Promise<void> {
+  const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
+  if (!item || item.acceptanceCriteria.length === 0) return;
+
+  const verifiedAt = new Date().toISOString();
+  const criteria = item.acceptanceCriteria.map((criterion) => ({
+    ...criterion,
+    status: 'passed' as const,
+    verification: 'human' as const,
+    evidenceRef: input.evidenceRef,
+    verifiedAt,
+  }));
+
+  await db
+    .update(workItems)
+    .set({ acceptanceCriteria: criteria })
+    .where(eq(workItems.id, item.id));
+
+  for (const criterion of criteria) {
+    await emitAndPublish(db, {
+      orgId: item.orgId,
+      projectId: item.projectId,
+      actor: input.actor,
+      type: 'work_item.acceptance_updated',
+      level: 'detail',
+      subjectType: 'work_item',
+      subjectId: item.id,
+      payload: {
+        criterionId: criterion.id,
+        passed: true,
+        status: 'passed',
+        verification: 'human',
+        evidenceRef: input.evidenceRef,
+        reason: input.reason,
+      },
+      correlationId: input.correlationId,
+    });
+  }
+}
+
+/**
+ * Roll completed work-item evidence up to the requirement criterion it was
+ * planned to verify. The explicit requirementCriterionId lineage is preferred;
+ * same-id criteria remain supported for rule-based and historical plans.
+ */
+export async function rollUpRequirementAcceptance(
+  db: Database,
+  input: { workItemId: string; actor: ActorRef; correlationId: string },
+): Promise<void> {
+  const [completedItem] = await db
+    .select({ requirementId: workItems.requirementId, planId: workItems.planId })
+    .from(workItems)
+    .where(eq(workItems.id, input.workItemId));
+  if (!completedItem?.requirementId) return;
+
+  /**
+   * A requirement may retain tasks from an older plan for audit and comparison.
+   * Only the newest approved plan is authoritative: otherwise unfinished tasks
+   * from a superseded/fallback plan keep current acceptance pending forever.
+   */
+  if (completedItem.planId) {
+    const [activePlan] = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.requirementId, completedItem.requirementId), eq(plans.status, 'approved')))
+      .orderBy(desc(plans.version))
+      .limit(1);
+    if (activePlan && activePlan.id !== completedItem.planId) return;
+  }
+
+  const [requirement] = await db
+    .select()
+    .from(requirements)
+    .where(eq(requirements.id, completedItem.requirementId));
+  if (!requirement || requirement.acceptanceCriteria.length === 0) return;
+
+  const items = await db
+    .select({
+      id: workItems.id,
+      status: workItems.status,
+      acceptanceCriteria: workItems.acceptanceCriteria,
+    })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.requirementId, requirement.id),
+        completedItem.planId
+          ? eq(workItems.planId, completedItem.planId)
+          : isNull(workItems.planId),
+        isNull(workItems.deletedAt),
+      ),
+    );
+
+  const verifiedAt = new Date().toISOString();
+  const next = requirement.acceptanceCriteria.map((criterion) => {
+    const evidence = items.flatMap((item) =>
+      item.acceptanceCriteria
+        .filter(
+          (candidate) =>
+            candidate.requirementCriterionId === criterion.id || candidate.id === criterion.id,
+        )
+        .map((candidate) => ({ item, candidate })),
+    );
+    if (evidence.length === 0) return criterion;
+
+    const failed = evidence.some(({ candidate }) => candidate.status === 'failed');
+    const passed = evidence.every(
+      ({ item, candidate }) => item.status === 'done' && candidate.status === 'passed',
+    );
+    const status: AcceptanceCriterion['status'] = failed
+      ? 'failed'
+      : passed
+        ? 'passed'
+        : 'pending';
+
+    const refs = [...new Set(evidence.map(({ candidate }) => candidate.evidenceRef).filter(Boolean))];
+    const evidenceRef =
+      status === 'pending'
+        ? null
+        : refs.length === 1
+          ? refs[0]!
+          : `work-items:${[...new Set(evidence.map(({ item }) => item.id))].join(',')}`;
+
+    return {
+      ...criterion,
+      status,
+      evidenceRef,
+      verifiedAt: status === 'pending' ? null : verifiedAt,
+    };
+  });
+
+  if (JSON.stringify(next) === JSON.stringify(requirement.acceptanceCriteria)) return;
+
+  await db
+    .update(requirements)
+    .set({ acceptanceCriteria: next, updatedAt: new Date() })
+    .where(eq(requirements.id, requirement.id));
+
+  await emitAndPublish(db, {
+    orgId: requirement.orgId,
+    projectId: requirement.projectId,
+    actor: input.actor,
+    type: 'requirement.acceptance_updated',
+    subjectType: 'requirement',
+    subjectId: requirement.id,
+    payload: {
+      sourceWorkItemId: input.workItemId,
+      passed: next.filter((criterion) => criterion.status === 'passed').length,
+      failed: next.filter((criterion) => criterion.status === 'failed').length,
+      pending: next.filter((criterion) => criterion.status === 'pending').length,
+    },
+    correlationId: input.correlationId,
+  });
 }
 
 function describeBlock(moved: Awaited<ReturnType<typeof transition>>): string {

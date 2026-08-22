@@ -27,6 +27,7 @@ export const graph = {
   'event.plan.approved': 'Plan approved',
   'event.plan.revision_requested': 'Plan revision requested',
   'event.plan.superseded': 'Plan superseded',
+  'event.requirement.acceptance_updated': 'Requirement acceptance updated',
   'event.work_item.created': 'Work item created',
   'event.work_item.status_changed': 'Status changed',
   'event.work_item.assigned': 'Work item assigned',

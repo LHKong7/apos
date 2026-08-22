@@ -279,6 +279,12 @@ export const HUMAN_GATE_PRIORITY: Record<HumanGate, number> = {
 export const AcceptanceCriterion = z.object({
   id: z.string(),
   text: z.string(),
+  /**
+   * Work-item criteria may implement one requirement-level criterion. Keeping
+   * the lineage explicit lets review evidence roll up without fuzzy text
+   * matching. Requirement-level criteria leave this field absent.
+   */
+  requirementCriterionId: z.string().optional(),
   verification: z.enum(['auto', 'agent', 'human']),
   status: z.enum(['pending', 'passed', 'failed']).default('pending'),
   evidenceRef: z.string().nullable().default(null),

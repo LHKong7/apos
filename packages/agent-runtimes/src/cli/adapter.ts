@@ -19,7 +19,7 @@ import {
 import { buildInlinePreamble, buildPrompt } from '../prompt';
 import { mapSandbox, type MappedSandbox } from '../codex/permissions';
 import { CliOutputTranslator } from './translate';
-import type { CliProfile } from './profile';
+import type { CliArgContext, CliProfile } from './profile';
 
 export type CliSpawnFn = (
   command: string,
@@ -41,7 +41,7 @@ export interface GenericCliOptions {
   passthroughEnv?: string[];
   /**
    * 用户直接给出值的环境变量表（配置里的 `env` JSON）。
-   * ★ 最后应用，会盖掉上面各项算出来的同名变量 —— 填了就一定生效。
+   * ★ 覆盖凭证与普通透传变量；profile 生成的安全边界变量会在其后合并或覆盖。
    */
   env?: Record<string, string>;
   /** 注入 spawn，测试用 */
@@ -297,7 +297,7 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
       const spawnFn = this.options.spawnFn ?? defaultSpawn;
       const child = spawnFn(this.binary(), this.args(state), {
         cwd: task.workspace?.path,
-        env: this.childEnv(),
+        env: this.childEnv(state),
       });
       state.child = child;
 
@@ -402,17 +402,22 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
   }
 
   private args(state: RunState): string[] {
-    const args = this.profile.buildArgs({
-      sandbox: state.sandbox,
-      model: this.modelFor(state.task),
-      workspacePath: state.task.workspace?.path ?? null,
-      extraArgs: this.options.extraArgs ?? [],
-    });
+    const args = this.profile.buildArgs(this.profileContext(state));
 
     const delivery = this.profile.promptDelivery;
     if (delivery === 'arg') return [...args, this.fullPrompt(state)];
     if (typeof delivery === 'object') return [...args, delivery.flag, this.fullPrompt(state)];
     return args; // stdin
+  }
+
+  private profileContext(state: RunState): CliArgContext {
+    return {
+      sandbox: state.sandbox,
+      model: this.modelFor(state.task),
+      workspacePath: state.task.workspace?.path ?? null,
+      additionalPaths: state.task.workspace?.additionalPaths ?? [],
+      extraArgs: this.options.extraArgs ?? [],
+    };
   }
 
   /** 治理规则 + 人设折进用户消息最前面 —— 这些 CLI 都没有 system prompt 通道 */
@@ -427,7 +432,7 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
   }
 
   /** 最小环境集合。不做 { ...process.env } —— 那等于把平台密钥交给 Agent */
-  private childEnv(): NodeJS.ProcessEnv {
+  private childEnv(state: RunState): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {
       PATH: process.env['PATH'],
       HOME: process.env['HOME'],
@@ -438,8 +443,21 @@ export class GenericCliRuntime implements AgentRuntimeAdapter {
       env[this.profile.baseUrlEnv] = this.options.baseUrl;
     }
     for (const key of this.options.passthroughEnv ?? []) env[key] = process.env[key];
-    // ★ 用户填的排最后：填了就一定生效
+    // ★ 用户配置覆盖普通凭证与透传变量。
     for (const [key, value] of Object.entries(this.options.env ?? {})) env[key] = value;
+    /**
+     * ★★ Platform-generated runtime boundaries win over user-provided env.
+     * `OPENCODE_CONFIG_CONTENT` defines the actual workspace boundary for `--auto`;
+     * allowing an Agent definition to replace it would turn a configuration
+     * field into a sandbox escape hatch.
+     *
+     * 平台生成的安全边界最后覆盖；否则 Agent 配置里的同名环境变量就能绕过沙箱。
+     */
+    for (const [key, value] of Object.entries(
+      this.profile.buildEnv?.(this.profileContext(state), env) ?? {},
+    )) {
+      env[key] = value;
+    }
     return env;
   }
 

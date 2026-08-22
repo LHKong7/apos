@@ -140,9 +140,17 @@ export class CliOutputTranslator {
   private fromJson(value: unknown): RunEventBody[] {
     if (value === null || typeof value !== 'object') return this.note(clip(String(value)));
     const obj = value as Record<string, unknown>;
+    /**
+     * OpenCode's raw stream wraps the useful payload in `part`; other CLIs put
+     * the same fields at the top level. Treat the wrapper structurally rather
+     * than branching on a vendor name so unknown future events still pass
+     * through below.
+     */
+    const part = pickRecord(obj, ['part']);
+    const payload = part ?? obj;
     const out: RunEventBody[] = [];
 
-    const usage = pickUsage(obj);
+    const usage = pickUsage(obj) ?? (part ? pickUsage(part) : null);
     if (usage) {
       this.tokens = {
         input: (this.tokens?.input ?? 0) + usage.input,
@@ -150,7 +158,9 @@ export class CliOutputTranslator {
       };
     }
 
-    const err = pickString(obj, ['error', 'errorMessage', 'error_message']);
+    const err =
+      pickString(obj, ['error', 'errorMessage', 'error_message']) ??
+      (part ? pickString(part, ['error', 'errorMessage', 'error_message']) : null);
     if (err) {
       out.push({
         type: 'error',
@@ -163,9 +173,10 @@ export class CliOutputTranslator {
       });
     }
 
-    const tool = pickString(obj, ['tool', 'toolName', 'tool_name', 'name']);
-    const kind = pickString(obj, ['type', 'kind', 'event']);
+    const tool = pickString(payload, ['tool', 'toolName', 'tool_name', 'name']);
+    const kind = pickString(payload, ['type', 'kind', 'event']);
     if (tool && kind && /tool/i.test(kind)) {
+      const state = pickRecord(payload, ['state']);
       out.push({
         type: 'tool_call',
         /**
@@ -173,14 +184,19 @@ export class CliOutputTranslator {
          *   协议要求它非空，而下游只用它把 tool_call 与 tool_result 配对；
          *   配不上的后果只是详情页少一条关联，不影响执行。
          */
-        toolCallId: pickString(obj, ['toolCallId', 'tool_call_id', 'id']) ?? `${this.opts.kind}-${this.notes}`,
+        toolCallId:
+          pickString(payload, ['toolCallId', 'tool_call_id', 'callID', 'callId', 'id']) ??
+          `${this.opts.kind}-${this.notes}`,
         tool,
         // 参数原样带上：Run 详情里「它到底调了什么」是排查的第一现场
-        params: pickRecord(obj, ['input', 'args', 'arguments', 'parameters']) ?? {},
+        params:
+          pickRecord(payload, ['input', 'args', 'arguments', 'parameters']) ??
+          (state ? pickRecord(state, ['input', 'args', 'arguments', 'parameters']) : null) ??
+          {},
       });
     }
 
-    const text = pickText(obj);
+    const text = pickText(obj) ?? (part ? pickText(part) : null);
     if (text) {
       this.texts.push(text);
       out.push(...this.note(clip(text)));

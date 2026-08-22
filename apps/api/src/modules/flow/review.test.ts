@@ -45,8 +45,26 @@ describe('验收标准自评解析', () => {
   });
 
   it('自评结果标注 verification=agent，不冒充独立验证', () => {
-    const r = deriveAcceptance([ac('AC1')], '- [AC1] 已完成');
+    const r = deriveAcceptance([ac('AC1')], '- [AC1] 已完成', 'agent-run:run-1');
     expect(r.criteria[0]?.verification).toBe('agent');
+    expect(r.criteria[0]?.evidenceRef).toBe('agent-run:run-1');
+    expect(r.criteria[0]?.verifiedAt).toBeTruthy();
+  });
+
+  it('报告不再包含某条标准时清除陈旧证据并恢复 pending', () => {
+    const previouslyPassed: AcceptanceCriterion = {
+      ...ac('AC1'),
+      status: 'passed',
+      evidenceRef: 'agent-run:old',
+      verifiedAt: new Date().toISOString(),
+    };
+    const r = deriveAcceptance([previouslyPassed], '只提到了 AC2', 'agent-run:new');
+    expect(r.changed).toBe(true);
+    expect(r.criteria[0]).toMatchObject({
+      status: 'pending',
+      evidenceRef: null,
+      verifiedAt: null,
+    });
   });
 
   it('人已确认过的条目不被 Agent 自评覆盖', () => {

@@ -42,6 +42,8 @@ class FileWritingRuntime implements AgentRuntimeAdapter {
   dispatchCount = 0;
   /** 每轮上报的成本，null = 这个运行时不报成本 */
   costPerRound: number | null = null;
+  /** CLI may emit a token-carrying cost event without claiming monetary reporting. */
+  costReporting = true;
 
   private readonly outputs: unknown[];
 
@@ -55,7 +57,9 @@ class FileWritingRuntime implements AgentRuntimeAdapter {
   }
 
   async getCapabilities(): Promise<CapabilityManifest> {
-    return new MockRuntime().getCapabilities();
+    const capabilities = await new MockRuntime().getCapabilities();
+    capabilities.features.costReporting = this.costReporting;
+    return capabilities;
   }
 
   async dispatch(task: TaskDispatch) {
@@ -573,6 +577,52 @@ async function generate(registry: RuntimeRegistry) {
 }
 
 describe('规划产出不合格时的修正轮', () => {
+  it('★ 任务验收项保留有效的需求验收项关联，并丢弃伪造的关联', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(
+      plan(
+        planTask({
+          acceptanceCriteria: [
+            {
+              text: '重试三次后进入死信队列',
+              verification: 'auto',
+              requirementCriterionId: 'requirement-ac-1',
+            },
+            {
+              text: '补充内部运行手册',
+              verification: 'human',
+              requirementCriterionId: 'not-a-requirement-criterion',
+            },
+          ],
+        }),
+      ),
+    );
+    await seedPlanningAgent(registry, runtime);
+    const requirement: StructuredRequirement = {
+      ...PLAN_REQ,
+      acceptanceCriteria: [
+        {
+          id: 'requirement-ac-1',
+          text: '重试三次后进入死信队列',
+          verification: 'auto',
+          status: 'pending',
+          evidenceRef: null,
+          verifiedAt: null,
+        },
+      ],
+    };
+
+    const result = await provider(registry).generatePlan(requirement, 'web', undefined, {
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+    });
+
+    expect(result.tasks[0]!.acceptanceCriteria[0]?.requirementCriterionId).toBe(
+      'requirement-ac-1',
+    );
+    expect(result.tasks[0]!.acceptanceCriteria[1]?.requirementCriterionId).toBeUndefined();
+  });
+
   /**
    * ★★ 事故复现：第一轮拿回当时那份产物，第二轮拿回合格的。
    *   修完之后用户拿到的是**这个需求的**计划，而不是一份通用模板。
@@ -645,6 +695,17 @@ describe('规划产出不合格时的修正轮', () => {
     expect(result.cost).toBeCloseTo(0.5);
   });
 
+  it('运行时未声明成本能力时，不把 token 事件里的占位 0 显示成 $0.00', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(plan());
+    runtime.costPerRound = 0;
+    runtime.costReporting = false;
+    await seedPlanningAgent(registry, runtime);
+
+    const result = await generate(registry);
+    expect(result.cost).toBeNull();
+  });
+
   /**
    * ★★ 连败两轮才回退，而且只跑两轮 —— 每多一轮，用户就多等一次完整的
    *   Agent 执行。回退的原因里要写明「重试过仍不合格」：
@@ -679,19 +740,35 @@ describe('规划产出不合格时的修正轮', () => {
   });
 
   /**
-   * ★★ 不是所有失败都值得重试。压根没写出产物文件、超时、运行时拒收 ——
-   *   同一个 Agent 再跑一次是同样的结果，重试它们只是把用户的等待时间翻倍。
+   * ★★ Runtime exit 0 means the model was reachable. Missing the file is a
+   * delivery-protocol failure, and the repair brief can tell it exactly what
+   * was omitted — unlike a timeout or runtime rejection.
+   *
+   * 运行成功但漏写文件是可纠正的交付协议错误，不应直接把用户丢进规则模板。
    */
-  it('★ 没写出产物文件不重试 —— 再跑一次也是同样的结果', async () => {
+  it('★ 第一轮漏写产物时用明确的写文件提醒纠正一次', async () => {
+    const registry = new RuntimeRegistry();
+    const runtime = new FileWritingRuntime(undefined, plan());
+    await seedPlanningAgent(registry, runtime);
+
+    const result = await generate(registry);
+
+    expect(runtime.dispatchCount).toBe(2);
+    expect(runtime.briefs[1]).toContain('没有创建 apos-output.json');
+    expect(runtime.briefs[1]).toContain('实际调用写文件工具');
+    expect(result.fallback).toBeNull();
+  });
+
+  it('连续两轮都漏写产物后才回退，并说明已重试', async () => {
     const registry = new RuntimeRegistry();
     const runtime = new FileWritingRuntime(undefined);
     await seedPlanningAgent(registry, runtime);
 
     const result = await generate(registry);
 
-    expect(runtime.dispatchCount).toBe(1);
+    expect(runtime.dispatchCount).toBe(2);
     expect(result.fallback?.code).toBe('output_missing');
-    expect(result.fallback?.reason).not.toContain('重试过');
+    expect(result.fallback?.reason).toContain('重试过仍不合格');
   });
 
   /**

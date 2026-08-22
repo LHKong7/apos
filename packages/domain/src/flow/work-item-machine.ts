@@ -52,7 +52,9 @@ export const WORK_ITEM_MACHINE: WorkItemMachine = {
       trigger: 'human_work_started',
       to: 'executing',
       guards: ['dependenciesSatisfied'],
-      effects: ['recordActualStart'],
+      // The supervisor treats an executing item without an Agent Run as
+      // orphaned. Persist the human executor in the same transition.
+      effects: ['recordActualStart', 'switchExecutorToHuman'],
     },
 
     {

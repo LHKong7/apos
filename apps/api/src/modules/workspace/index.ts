@@ -165,12 +165,18 @@ export class WorkspaceService {
     this.publishers.set('none', new NonePublisher());
 
     this.hasArchive = Boolean(options.archiveRoot);
-    if (options.archiveRoot) {
-      this.publishers.set(
-        'local',
-        new LocalPublisher({ archiveRoot: options.archiveRoot, ...(onDiagnostic ? { onDiagnostic } : {}) }),
-      );
-    }
+    /**
+     * Writable local mounts publish back to `originPath`, so they do not need an
+     * archive directory. Keep a local publisher available in that case; read-only
+     * mounts still select `none` below when no archive was configured.
+     */
+    this.publishers.set(
+      'local',
+      new LocalPublisher({
+        archiveRoot: options.archiveRoot ?? root,
+        ...(onDiagnostic ? { onDiagnostic } : {}),
+      }),
+    );
   }
 
   private get root(): string {
@@ -321,6 +327,7 @@ export class WorkspaceService {
               path: m.path,
               role: m.role,
               writable: m.writable,
+              ...(m.originPath ? { originPath: m.originPath } : {}),
               source: m.source,
               targetId: m.targetId,
             })),
@@ -588,7 +595,11 @@ export class WorkspaceService {
       case 'object_storage':
         return 'object_storage';
       case 'local':
-        return this.hasArchive ? 'local' : 'none';
+        return primary.writable && primary.originPath
+          ? 'local'
+          : this.hasArchive
+            ? 'local'
+            : 'none';
       default:
         return 'none';
     }
@@ -891,6 +902,7 @@ function toWorkspace(ws: StoredWorkspace, runId: string): Workspace {
     path: m.path,
     role: m.role,
     writable: m.writable ?? m.role === 'primary',
+    ...(m.originPath ? { originPath: m.originPath } : {}),
     source: m.source ?? {
       kind: 'git' as const,
       identifier: m.repoId ?? m.targetId ?? ws.repoId,

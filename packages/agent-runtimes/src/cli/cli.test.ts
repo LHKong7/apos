@@ -134,6 +134,16 @@ describe('六个 CLI 的调用形态', () => {
     await collect(new GenericCliRuntime(OPENCODE_PROFILE, { apiKey: 'k', spawnFn }), task());
 
     expect(captured.args[0]).toBe('run');
+    expect(captured.args).toContain('--format');
+    expect(captured.args).toContain('json');
+    expect(captured.args.slice(captured.args.indexOf('--agent'), captured.args.indexOf('--agent') + 2)).toEqual([
+      '--agent',
+      'apos',
+    ]);
+    expect(captured.args.slice(captured.args.indexOf('--dir'), captured.args.indexOf('--dir') + 2)).toEqual([
+      '--dir',
+      task().workspace!.path,
+    ]);
     expect(captured.args.at(-1)).toContain('修复登录超时');
   });
 
@@ -171,12 +181,23 @@ describe('六个 CLI 的调用形态', () => {
     const q = fakeCli(['{}']);
     await collect(new GenericCliRuntime(QWEN_PROFILE, { apiKey: 'k', spawnFn: q.spawnFn }), readOnly);
     expect(q.captured.args).not.toContain('yolo');
+
+    const o = fakeCli(['{}']);
+    await collect(new GenericCliRuntime(OPENCODE_PROFILE, { apiKey: 'k', spawnFn: o.spawnFn }), readOnly);
+    expect(o.captured.args).not.toContain('--auto');
   });
 
   it('可写沙箱下才放开自动批准', async () => {
-    const { spawnFn, captured } = fakeCli(['{}']);
-    await collect(new GenericCliRuntime(GEMINI_PROFILE, { apiKey: 'k', spawnFn }), task());
-    expect(captured.args).toContain('--yolo');
+    const gemini = fakeCli(['{}']);
+    await collect(new GenericCliRuntime(GEMINI_PROFILE, { apiKey: 'k', spawnFn: gemini.spawnFn }), task());
+    expect(gemini.captured.args).toContain('--yolo');
+
+    const opencode = fakeCli(['{}']);
+    await collect(
+      new GenericCliRuntime(OPENCODE_PROFILE, { apiKey: 'k', spawnFn: opencode.spawnFn }),
+      task(),
+    );
+    expect(opencode.captured.args).toContain('--auto');
   });
 
   it('可执行文件与额外参数可以覆盖', async () => {
@@ -226,6 +247,67 @@ describe('凭证与环境', () => {
     } finally {
       delete process.env['MY_TOOL_TOKEN'];
     }
+  });
+
+  it('★ OpenCode 自动批准仍被限制在主工作区，参考目录保持只读', async () => {
+    const { spawnFn, captured } = fakeCli(['{}']);
+    const additionalPath = '/tmp/ws/reference-repo';
+    await collect(
+      new GenericCliRuntime(OPENCODE_PROFILE, {
+        apiKey: 'k',
+        env: {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            provider: { custom: { models: {} } },
+            agent: { apos: { permission: 'allow' } },
+          }),
+        },
+        spawnFn,
+      }),
+      task({
+        workspace: {
+          ...task().workspace!,
+          additionalPaths: [additionalPath],
+        },
+      }),
+    );
+
+    const config = JSON.parse(captured.env['OPENCODE_CONFIG_CONTENT']!) as {
+      provider: { custom: { models: Record<string, unknown> } };
+      agent: {
+        apos: {
+          mode: string;
+          permission: {
+            read: Record<string, string>;
+            external_directory: Record<string, string>;
+            edit: Record<string, string>;
+            question: string;
+            task: string;
+            webfetch: string;
+            websearch: string;
+          };
+        };
+      };
+    };
+    const permission = config.agent.apos.permission;
+    expect(config.provider.custom).toEqual({ models: {} });
+    expect(config.agent.apos.mode).toBe('primary');
+    expect(permission.read).toMatchObject({
+      '*.env': 'deny',
+      '*.env.*': 'deny',
+      '*.env.example': 'allow',
+    });
+    expect(permission.external_directory['*']).toBe('deny');
+    expect(permission.external_directory[task().workspace!.path]).toBe('allow');
+    expect(permission.external_directory[`${task().workspace!.path}/**`]).toBe('allow');
+    expect(permission.external_directory[`${additionalPath}/**`]).toBe('allow');
+    expect(permission.edit['*']).toBe('allow');
+    expect(permission.edit[`${additionalPath}/**`]).toBe('deny');
+    expect(permission).toMatchObject({
+      question: 'deny',
+      task: 'deny',
+      webfetch: 'deny',
+      websearch: 'deny',
+    });
   });
 
   /**
@@ -292,6 +374,46 @@ describe('输出翻译：不假装认识没验证过的 schema', () => {
     const out = t.line(JSON.stringify({ type: 'tool_use', tool: 'Bash', args: { cmd: 'ls' } }));
     const call = out.find((e) => e.type === 'tool_call');
     expect(call).toMatchObject({ tool: 'Bash', params: { cmd: 'ls' } });
+  });
+
+  it('识别 OpenCode raw JSON 的 part 包装，不把真实执行流降级成未知事件', () => {
+    const t = new CliOutputTranslator({ format: 'stream-json', kind: 'OpenCode' });
+    const textEvents = t.line(
+      JSON.stringify({
+        type: 'text',
+        sessionID: 'ses-1',
+        part: { type: 'text', text: '正在写入计划' },
+      }),
+    );
+    expect(textEvents).toContainEqual({ type: 'note', text: '正在写入计划' });
+
+    const toolEvents = t.line(
+      JSON.stringify({
+        type: 'tool_use',
+        part: {
+          type: 'tool',
+          tool: 'write',
+          callID: 'call-1',
+          state: { input: { filePath: '/tmp/ws/apos-output.json' } },
+        },
+      }),
+    );
+    expect(toolEvents).toContainEqual({
+      type: 'tool_call',
+      toolCallId: 'call-1',
+      tool: 'write',
+      params: { filePath: '/tmp/ws/apos-output.json' },
+    });
+
+    t.line(
+      JSON.stringify({
+        type: 'step_finish',
+        part: { type: 'step-finish', tokens: { input: 25, output: 10 } },
+      }),
+    );
+    expect(t.finish(0, '').find((e) => e.type === 'cost')).toMatchObject({
+      tokens: { input: 25, output: 10 },
+    });
   });
 
   /**

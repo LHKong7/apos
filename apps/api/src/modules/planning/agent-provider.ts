@@ -123,14 +123,20 @@ const MAX_PLANNING_ROUNDS = 2;
  * ★★ The test is "given more information, could the same agent produce a
  *   different result?" A rejected artifact qualifies: the error names the field
  *   and says what is wrong with it, and fixing that is within the model's reach.
- *   No agent available, runtime refusal, timeout, no file written at all — a
- *   second run returns the same answer, so retrying those merely doubles the
- *   user's wait.
+ *   A missing output file also qualifies: the runtime completed successfully,
+ *   so the model was reachable, and the repair brief can explicitly point out
+ *   that it failed the delivery protocol. Runtime refusal and timeout do not
+ *   qualify — no extra instruction can repair those.
  *
  *   判据是「同一个 Agent 拿着更多信息再跑一次，结果可能不一样吗」。产物不合格
- *   属于这一类；挑不到 Agent、运行时拒收、超时、没写出文件则不是。
+ *   属于这一类；运行成功但漏写文件也能用明确的交付提醒纠正。挑不到 Agent、
+ *   运行时拒收、超时则不是。
  */
-const REPAIRABLE_CODES = new Set<PlanFallbackCode>(['output_invalid', 'output_inconsistent']);
+const REPAIRABLE_CODES = new Set<PlanFallbackCode>([
+  'output_missing',
+  'output_invalid',
+  'output_inconsistent',
+]);
 
 /**
  * Requirement structuring and plan generation on a real agent runtime.
@@ -307,6 +313,10 @@ export class AgentPlanningProvider implements PlanningProvider {
         acceptanceCriteria: t.acceptanceCriteria.map((c, i) => ({
           id: `${t.ref}-ac-${i + 1}`,
           text: c.text,
+          ...(c.requirementCriterionId &&
+          req.acceptanceCriteria.some((criterion) => criterion.id === c.requirementCriterionId)
+            ? { requirementCriterionId: c.requirementCriterionId }
+            : {}),
           verification: c.verification,
           status: 'pending' as const,
           evidenceRef: null,
@@ -343,10 +353,10 @@ export class AgentPlanningProvider implements PlanningProvider {
    *   usually fixes them in one round. One repair round costs far less than
    *   discarding a complete requirement analysis.
    *
-   * ★★ Only `output_invalid` / `output_inconsistent` are worth another round.
-   *   The other codes (no agent available, runtime refusal, timeout, no file
-   *   written at all) return the same answer on a second run — retrying them
-   *   only doubles the user's wait.
+   * ★★ `output_missing` is repairable too. A zero-exit runtime proves that the
+   *   model was reachable; a second brief can name the exact protocol failure
+   *   and require a real file-tool call. Runtime refusal and timeout still stop
+   *   immediately because another prompt cannot change either condition.
    *
    * ★ Same agent, no substitution. Switching agents means this round cannot see
    *   the previous round's artifact (the workspace is mounted against that
@@ -359,9 +369,9 @@ export class AgentPlanningProvider implements PlanningProvider {
    *   enum wrong". Cost accumulates across rounds.
    *
    *   一次规划最多两轮。此前只有一轮，产物不合格就整场作废；而这类错误几乎
-   *   全是格式错误，把 zod 报的原话递回去通常一轮就改对了。只有产物不合格
-   *   的两个码值得重试，其余重试只是把等待时间翻倍。同一个 Agent、每轮一条
-   *   独立的 Run 记录、成本按轮累加。
+   *   全是格式或交付协议错误，把报错原话递回去通常一轮就改对了。无产物、
+   *   产物不合法和计划不自洽都允许一轮纠正；运行时拒收与超时不重试。
+   *   同一个 Agent、每轮一条独立的 Run 记录、成本按轮累加。
    */
   private async run<T>(input: {
     scope: PlanningScope | undefined;
@@ -1057,6 +1067,21 @@ export class AgentPlanningProvider implements PlanningProvider {
       { ok: true; costUsd: number | null } | { ok: false; reason: string }
     >((r) => (settle = r));
 
+    /**
+     * Some CLI translators carry token usage in a protocol `cost` event with
+     * zero-valued money fields because the protocol has no token-only event.
+     * The runtime manifest tells us whether those money fields are authoritative;
+     * without this gate, enabling OpenCode's JSON stream turns an unknown cost
+     * back into a misleading "$0.00" on the plan page.
+     *
+     * 有些 CLI 为了上报 token 会发金额为 0 的 cost 事件；只有运行时声明能上报
+     * 成本时才把它当金额，否则 OpenCode 一开 JSON 流，未知成本又会显示成 $0.00。
+     */
+    const reportsCost = await adapter
+      .getCapabilities()
+      .then((c) => c.features.costReporting)
+      .catch(() => false);
+
     const unsubscribe = await adapter.subscribe(runId, async (e: RunEvent) => {
       /**
        * ★★ Events have to be persisted, not merely passed through memory.
@@ -1096,7 +1121,7 @@ export class AgentPlanningProvider implements PlanningProvider {
         .where(eq(agentRuns.id, runId))
         .catch(() => undefined);
 
-      if (e.type === 'cost') costUsd = e.totalUsd;
+      if (e.type === 'cost' && reportsCost) costUsd = e.totalUsd;
       if (e.type === 'error') this.diag(`[planning] ${runId} 报错`, e.error);
       if (e.type === 'run_ended') {
         settle(

@@ -45,6 +45,7 @@ export interface CliArgContext {
   sandbox: MappedSandbox;
   model: string | null;
   workspacePath: string | null;
+  additionalPaths: string[];
   /** 用户在 Agent 配置里填的额外参数 */
   extraArgs: string[];
 }
@@ -55,6 +56,11 @@ export interface CliProfile {
   /** 默认可执行文件名；用户可在配置里覆盖 */
   binary: string;
   buildArgs: (ctx: CliArgContext) => string[];
+  /** 运行时专用的安全边界环境变量；平台生成，优先级高于用户配置 */
+  buildEnv?: (
+    ctx: CliArgContext,
+    currentEnv: Readonly<Record<string, string | undefined>>,
+  ) => Record<string, string>;
   promptDelivery: PromptDelivery;
   output: OutputFormat;
   /**
@@ -278,27 +284,47 @@ export const GOOSE_PROFILE: CliProfile = {
  * ★ `opencode run "<prompt>"` 走位置参数。模型格式是 `provider/model`
  *   （如 `anthropic/claude-sonnet-4`），与其他几个只填模型名不同 ——
  *   填错的表现是 CLI 报「unknown model」，所以配置项的说明里要写清楚。
+ *
+ * ★★ Headless runs have no approval channel. `--auto` is therefore required
+ *   for writable workspaces, but it must be paired with explicit denies:
+ *   otherwise OpenCode's default `external_directory: ask` becomes approved
+ *   and a task can escape the prepared workspace. An inline APOS agent is used
+ *   because OpenCode agent rules outrank global rules: putting the boundary in
+ *   `OPENCODE_PERMISSION` alone would still let the built-in build agent widen
+ *   it. The inline agent keeps the primary workspace writable, reference mounts
+ *   read-only, and everything outside those paths denied.
+ *
+ * ★★ 非交互运行没有权限确认通道，可写任务必须带 `--auto`；同时要把工作区外
+ *   路径显式拒绝，否则默认的 `external_directory: ask` 会被自动批准。
  */
 export const OPENCODE_PROFILE: CliProfile = {
   kind: 'opencode',
   label: 'OpenCode',
   binary: 'opencode',
   promptDelivery: 'arg',
-  output: 'text',
+  output: 'stream-json',
   credentialEnv: 'ANTHROPIC_API_KEY',
   dedicatedEnv: 'APOS_AGENT_OPENCODE_API_KEY',
   inheritEnv: 'ANTHROPIC_API_KEY',
   baseUrlEnv: null,
   defaultModel: null,
-  buildArgs: ({ model, extraArgs }) => [
+  buildArgs: ({ sandbox, model, workspacePath, extraArgs }) => [
     'run',
+    '--format',
+    'json',
+    '--agent',
+    'apos',
+    // OpenCode uses --dir as its project boundary; child cwd alone is not enough.
+    ...(workspacePath ? ['--dir', workspacePath] : []),
     ...(model ? ['--model', model] : []),
+    ...(sandbox.mode === 'read-only' ? [] : ['--auto']),
     ...extraArgs,
   ],
+  buildEnv: opencodeEnv,
   features: {
     ...SPAWNED_CLI_BASE,
     streamingEvents: true,
-    toolCallVisibility: false,
+    toolCallVisibility: true,
     reasoningVisibility: false,
     costReporting: false,
     tokenReporting: false,
@@ -306,8 +332,93 @@ export const OPENCODE_PROFILE: CliProfile = {
     selfReportOnFailure: false,
   },
   installHint: 'curl -fsSL https://opencode.ai/install | bash（或 npm i -g opencode-ai）',
-  docs: 'https://open-code.ai/en/docs/cli',
+  docs: 'https://opencode.ai/docs/cli/',
 };
+
+function opencodeEnv(
+  ctx: CliArgContext,
+  currentEnv: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const externalDirectory: Record<string, 'allow' | 'deny'> = { '*': 'deny' };
+  const edit: Record<string, 'allow' | 'deny'> = {
+    '*': ctx.sandbox.mode === 'read-only' ? 'deny' : 'allow',
+  };
+
+  /**
+   * OpenCode applies `external_directory` to absolute tool arguments even when
+   * they point at `--dir`. Its Bash tool emits an absolute `workdir`, so relying
+   * on the project directory exemption leaves every command denied. Explicitly
+   * allow the prepared primary mount while retaining the deny-all fallback.
+   */
+  if (ctx.workspacePath) {
+    const path = ctx.workspacePath.replace(/\/+$/, '');
+    if (path) {
+      externalDirectory[path] = 'allow';
+      externalDirectory[`${path}/**`] = 'allow';
+    }
+  }
+
+  for (const raw of ctx.additionalPaths) {
+    const path = raw.replace(/\/+$/, '');
+    if (!path) continue;
+    externalDirectory[path] = 'allow';
+    externalDirectory[`${path}/**`] = 'allow';
+    // Planning may inspect project resources, but its only writable mount is cwd.
+    edit[path] = 'deny';
+    edit[`${path}/**`] = 'deny';
+  }
+
+  const existing = parseObject(currentEnv['OPENCODE_CONFIG_CONTENT']);
+  const existingAgents = objectValue(existing['agent']);
+
+  return {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...existing,
+      agent: {
+        ...existingAgents,
+        apos: {
+          description: 'APOS non-interactive workspace agent',
+          mode: 'primary',
+          permission: {
+            '*': 'allow',
+            // Auto mode must not turn OpenCode's default .env prompt into secret access.
+            read: {
+              '*': 'allow',
+              '*.env': 'deny',
+              '*.env.*': 'deny',
+              '*.env.example': 'allow',
+            },
+            external_directory: externalDirectory,
+            edit,
+            // There is no interactive channel or sub-agent transport in this adapter.
+            question: 'deny',
+            task: 'deny',
+            plan_enter: 'deny',
+            plan_exit: 'deny',
+            ...(ctx.sandbox.mode === 'read-only' ? { bash: 'deny' } : {}),
+            ...(ctx.sandbox.network ? {} : { webfetch: 'deny', websearch: 'deny' }),
+          },
+        },
+      },
+    }),
+  };
+}
+
+function parseObject(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    return objectValue(JSON.parse(raw));
+  } catch {
+    // The platform boundary must remain valid even when a user-supplied inline config is not.
+    return {};
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
 /**
  * Qwen Code（QwenLM/qwen-code）。

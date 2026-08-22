@@ -169,6 +169,8 @@ export const DOMAIN_EVENT_TYPES = [
    */
   'requirement.deleted',
   'requirement.assumption_invalidated',
+  /** Work-item evidence was rolled up to requirement-level acceptance criteria. */
+  'requirement.acceptance_updated',
   // plan
   'plan.generated',
   'plan.item_modified',

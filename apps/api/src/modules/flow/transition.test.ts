@@ -261,6 +261,45 @@ describe('Policy 拦截与决策创建', () => {
     // 决策创建也要有事件
     const decisionEvents = await eventsFor(result.createdDecisionId!);
     expect(decisionEvents.map((e) => e.type)).toContain('decision.created');
+
+    await db
+      .update(decisions)
+      .set({ status: 'approved', resolvedAt: new Date() })
+      .where(eq(decisions.id, result.createdDecisionId!));
+
+    const approved = await transition(db, {
+      workItemId: item.id,
+      trigger: 'decision_approved',
+      actor: humanActor(randomUUID()),
+      approvedDecisionId: result.createdDecisionId!,
+      correlationId: corr(),
+    });
+
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) return;
+    expect(approved.to).toBe('reviewing');
+    expect(approved.createdDecisionId).toBeNull();
+
+    // humanGate is presentation state, not the durable authorization record.
+    // Human takeover legitimately replaces the badge after approval.
+    await db
+      .update(workItems)
+      .set({ humanGate: 'human_took_over' })
+      .where(eq(workItems.id, item.id));
+
+    const continued = await transition(db, {
+      workItemId: item.id,
+      trigger: 'review_passed',
+      actor: humanActor(randomUUID()),
+      overrideGuards: ['acceptanceCriteriaMet', 'qualityGatePassed'],
+      reason: 'Human verified the approved operation output',
+      correlationId: corr(),
+    });
+
+    expect(continued.ok).toBe(true);
+    if (!continued.ok) return;
+    expect(continued.to).toBe('waiting_for_release');
+    expect(continued.createdDecisionId).toBeNull();
   });
 
   it('低风险任务在 agent_led_approval 下自动放行', async () => {
