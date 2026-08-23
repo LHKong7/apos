@@ -1,5 +1,9 @@
 # projectOS
 
+<p align="center">
+  <img src="apps/web/public/product-icon.png" alt="APOS 产品图标" width="144" />
+</p>
+
 *[English version / 英文版本](README.md)*
 
 **Autonomous Project OS (APOS)** — 面向 Human–Agent 混合团队的自主项目操作系统。

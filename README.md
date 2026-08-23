@@ -1,5 +1,9 @@
 # projectOS
 
+<p align="center">
+  <img src="apps/web/public/product-icon.png" alt="APOS product icon" width="144" />
+</p>
+
 *[中文版本 / Chinese version](README.zh.md)*
 
 **Autonomous Project OS (APOS)** — an autonomous project operating system for
