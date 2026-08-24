@@ -89,6 +89,8 @@ export const errors = {
   'error.reason.plan.unassigned_human_tasks': '{count} human tasks have nobody assigned: {titles}. Approving the plan leaves them sitting in Ready — assign them, or confirm that they should go to the unclaimed queue.',
   'error.reason.plan.over_budget': 'The plan is estimated at {estimated} tokens, over the project budget of {budget} tokens.',
   'error.reason.plan.preflight_failed': 'The execution-readiness checks did not pass. Fix the highlighted project and plan settings before approval.',
+  'error.reason.plan.not_approvable': 'This plan was already handled or one of its tasks is no longer a draft. Refresh to see the latest state.',
+  'error.reason.plan.activation_failed': 'A task could not be activated, so the entire approval was rolled back. Fix the blocking condition and try again.',
   'error.reason.requirement.fallback_needs_manual_completion': 'Fallback content cannot be approved. Manually fill the title, business goal, scope and at least one acceptance criterion, or run the analysis again with a working planning Agent.',
   'error.reason.agent.suspend_needs_reason': 'Suspending an Agent needs a reason.',
   'error.reason.request.against_must_be_version': '“against” has to be a version number.',

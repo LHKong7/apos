@@ -239,6 +239,8 @@ export const ErrorReason = z.enum([
   'plan.unassigned_human_tasks',
   'plan.over_budget',
   'plan.preflight_failed',
+  'plan.not_approvable',
+  'plan.activation_failed',
   'requirement.fallback_needs_manual_completion',
 
   // work_item

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { agentRuns, artifacts, repositories, runEvents, storageTargets } from '@apos/db';
 import type { AgentPermissions } from '@apos/contracts';
@@ -287,7 +287,7 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     const second = await p.release({ runId, outcome: 'completed', summary: 's', agentName: 'a' });
 
     expect(first.committed).toBe(true);
-    expect(second.note).toContain('此前已收尾');
+    expect(second).toEqual(first);
   });
 
   it('配置了核验命令时在提交前执行，结果如实回报', async () => {
@@ -618,6 +618,57 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     expect(validation.find((event) => event.type === 'delivery_validation')).toMatchObject({
       summary: expect.stringContaining('没有文件变更或产物'),
     });
+  });
+
+  it('run_ended 收尾失败后可重投，不会被已落库的原始事件永久跳过', async () => {
+    const service = new WorkspaceService(db, { root });
+    await registerRepo();
+    const { runId } = await acquireFor(service, scopes('write'));
+    const release = service.release.bind(service);
+    let failOnce = true;
+    const flaky = {
+      release: async (input: Parameters<WorkspaceService['release']>[0]) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('temporary workspace settlement failure');
+        }
+        return release(input);
+      },
+    } as WorkspaceService;
+    const event = {
+      runId,
+      seq: 7,
+      ts: new Date().toISOString(),
+      type: 'run_ended',
+      outcome: 'completed',
+      summary: '完成',
+    } as const;
+
+    await expect(
+      ingestRunEvent(
+        db,
+        { runId, event, correlationId: randomUUID() },
+        { workspaces: flaky },
+      ),
+    ).rejects.toThrow('temporary workspace settlement failure');
+
+    const afterFailure = await db
+      .select()
+      .from(runEvents)
+      .where(and(eq(runEvents.runId, runId), eq(runEvents.seq, event.seq)));
+    expect(afterFailure).toHaveLength(0);
+
+    const retried = await ingestRunEvent(
+      db,
+      { runId, event, correlationId: randomUUID() },
+      { workspaces: flaky },
+    );
+    expect(retried.stored).toBe(true);
+    const afterRetry = await db
+      .select()
+      .from(runEvents)
+      .where(and(eq(runEvents.runId, runId), eq(runEvents.seq, event.seq)));
+    expect(afterRetry).toHaveLength(1);
   });
 
   /**

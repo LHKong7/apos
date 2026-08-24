@@ -35,9 +35,10 @@ import {
 } from '@apos/domain';
 import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { executionModeOf, resolveExecutor } from '../agent/matching';
-import { emitAndPublish } from '../event/bus';
+import { defaultBus, emitAndPublish } from '../event/bus';
+import { emit, type EmittedEvent } from '../event/emitter';
 import { allocateNumbers } from '../work-item/numbering';
-import { transition } from '../flow/transition';
+import { transitionInTransaction } from '../flow/transition';
 import type { GeneratedPlan, PlanningProvider, StructuredRequirement } from './provider';
 
 export interface AutoAction {
@@ -110,6 +111,21 @@ export interface PlanSummary {
   autoActions: AutoAction[];
   humanGates: HumanGateEntry[];
   riskCount: number;
+}
+
+function completeTokenEstimate(
+  tasks: readonly Pick<GeneratedPlan['tasks'][number], 'estimatedTokens' | 'requiresHuman'>[],
+): number | null {
+  if (tasks.length === 0) return null;
+  let total = 0;
+  for (const task of tasks) {
+    if (task.estimatedTokens === null) {
+      if (task.requiresHuman) continue;
+      return null;
+    }
+    total += task.estimatedTokens;
+  }
+  return total;
 }
 
 /**
@@ -235,6 +251,7 @@ export async function generatePlan(
       orgId: req.orgId,
       projectId: req.projectId,
       requirementId: req.id,
+      ...(req.authorAgentId ? { agentId: req.authorAgentId } : {}),
       ...(input.locale ? { locale: input.locale } : {}),
     },
   );
@@ -259,24 +276,20 @@ export async function generatePlan(
 
   const estimatedHours = generated.tasks.reduce((s, t) => s + t.estimatedHours, 0);
   /**
-   * ★★ When nothing was estimated, store null — **not 0**.
+   * ★★ A plan estimate is complete or unknown; a partial sum must never masquerade
+   * as the whole plan.
    *
-   *   This used to be `reduce((s, t) => s + (t.estimatedTokens ?? 0), 0)`: with
-   *   no estimates from the agent, a string of nulls summed to 0, so the plan
-   *   page confidently printed "Token estimate 0" and the approval dialog said
-   *   "estimated usage 0 tokens" — indistinguishable from "this plan genuinely
-   *   costs no tokens" (issue log: NEW-BUG-3).
+   *   Summing only the known tasks underestimates the plan. That is the dangerous
+   *   direction for a budget gate: 70k known + one unknown would pass a 100k
+   *   budget even when the real total is 140k. Preserve null when any automatic
+   *   task is unknown, and let preflight require a complete estimate when the
+   *   project has a budget. Human-only tasks consume no Agent tokens, so their
+   *   null remains an intentional zero contribution.
    *
-   * ★ Partially estimated sums the estimates that exist: half an estimate is
-   *   still information, and it necessarily runs low — which is the safe
-   *   direction for a budget gate, since it stops things earlier rather than
-   *   later.
-   *
-   *   一条都没估时落 null 而不是 0 —— 否则「没估算」与「真的不花 token」
-   *   完全无法区分；部分估了就按估到的那些求和，偏小的方向对预算闸门是安全的。
+   *   计划估算要么完整，要么未知。只加已知项会低估总量，让本该拦下的计划
+   *   穿过预算闸门；所以只要有一项自动任务未知，整份计划就保留为 null。
    */
-  const estimated = generated.tasks.map((t) => t.estimatedTokens).filter((n): n is number => typeof n === 'number');
-  const estimatedTokens = estimated.length === 0 ? null : estimated.reduce((a, b) => a + b, 0);
+  const estimatedTokens = completeTokenEstimate(generated.tasks);
 
   /**
    * ★★ The plan, its tasks, and the dependency edges must land in **one
@@ -636,8 +649,8 @@ function predictPolicyOutcomes(
     });
   }
 
-  const totalTokens = plan.tasks.reduce((s, t) => s + (t.estimatedTokens ?? 0), 0);
-  if (totalTokens > 0) {
+  const totalTokens = completeTokenEstimate(plan.tasks);
+  if (totalTokens !== null && totalTokens > 0) {
     const pct = ctx.budget ? ((totalTokens / ctx.budget) * 100).toFixed(1) : null;
     /**
      * ★★ 这里曾经是 `$${totalTokens.toFixed(2)}` —— 把一个 **token 数**
@@ -693,6 +706,8 @@ export type ApprovePlanResult =
   | { ok: true; planId: string; activatedTasks: number; unclaimed: number }
   | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number }
   | { ok: false; code: 'PREFLIGHT_FAILED'; issues: PlanPreflightIssue[] }
+  | { ok: false; code: 'PLAN_NOT_APPROVABLE'; status: string }
+  | { ok: false; code: 'ACTIVATION_FAILED'; taskId: string; detail: unknown }
   /**
    * ★★ 有人工任务没人认领。
    *
@@ -718,6 +733,7 @@ export type PlanPreflightCode =
   | 'agent_scope_missing'
   | 'workspace_source_missing'
   | 'verification_missing'
+  | 'token_estimate_missing'
   | 'delivery_goal_missing';
 
 export interface PlanPreflightIssue {
@@ -829,9 +845,21 @@ export async function evaluatePlanPreflight(
   }
 
   const [preflightProject] = await db
-    .select({ orgId: projects.orgId })
+    .select({ orgId: projects.orgId, tokenBudget: projects.tokenBudget })
     .from(projects)
     .where(eq(projects.id, plan.projectId));
+  if (!preflightProject) throw new Error(`项目不存在: ${plan.projectId}`);
+
+  const tasksWithoutEstimate = automatic.filter((task) => task.estimatedTokens === null);
+  if (preflightProject.tokenBudget !== null && tasksWithoutEstimate.length > 0) {
+    issues.push({
+      code: 'token_estimate_missing',
+      taskIds: tasksWithoutEstimate.map((task) => task.id),
+      taskTitles: tasksWithoutEstimate.map((task) => task.title),
+      fixPath: requirementPath,
+    });
+  }
+
   const [projectRepos, projectStorage] = await Promise.all([
     db
       .select({
@@ -843,7 +871,7 @@ export async function evaluatePlanPreflight(
       .from(repositories)
       .where(
         and(
-          eq(repositories.orgId, preflightProject!.orgId),
+          eq(repositories.orgId, preflightProject.orgId),
           or(eq(repositories.projectId, plan.projectId), isNull(repositories.projectId)),
           eq(repositories.status, 'active'),
         ),
@@ -853,7 +881,7 @@ export async function evaluatePlanPreflight(
       .from(storageTargets)
       .where(
         and(
-          eq(storageTargets.orgId, preflightProject!.orgId),
+          eq(storageTargets.orgId, preflightProject.orgId),
           or(eq(storageTargets.projectId, plan.projectId), isNull(storageTargets.projectId)),
           eq(storageTargets.status, 'active'),
         ),
@@ -960,84 +988,174 @@ export async function approvePlan(
   },
   options: { registry?: RuntimeRegistry } = {},
 ): Promise<ApprovePlanResult> {
-  const [plan] = await db.select().from(plans).where(eq(plans.id, input.planId));
-  if (!plan) throw new Error(`计划不存在: ${input.planId}`);
+  try {
+    const finalized = await db.transaction(async (tx) => {
+      /**
+       * ★★ Approval is one locked state change, not a plan update followed by N
+       * independent task transactions.
+       *
+       *   The lock makes a retried HTTP request observe the committed status
+       *   instead of overwriting approvedBy/approvedAt and emitting a second
+       *   approval event. Keeping every task transition in this transaction also
+       *   means an activation failure rolls the entire approval back.
+       */
+      const [plan] = await tx
+        .select()
+        .from(plans)
+        .where(eq(plans.id, input.planId))
+        .for('update');
+      if (!plan) throw new Error(`计划不存在: ${input.planId}`);
+      if (plan.status !== 'awaiting_approval') {
+        return {
+          result: { ok: false as const, code: 'PLAN_NOT_APPROVABLE' as const, status: plan.status },
+          events: [] as EmittedEvent[],
+        };
+      }
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, plan.projectId));
-  const estimated = (plan.estimatedTokens ?? 0);
-  const budget = project?.tokenBudget ? project.tokenBudget : null;
+      const [project] = await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.id, plan.projectId))
+        .for('update');
+      if (!project) throw new Error(`项目不存在: ${plan.projectId}`);
 
-  if (budget !== null && estimated > budget && !input.acknowledgedOverrun) {
-    return { ok: false, code: 'BUDGET_EXCEEDED', estimated, budget };
-  }
+      const tasks = await tx
+        .select()
+        .from(workItems)
+        .where(eq(workItems.planId, plan.id))
+        .for('update');
+      const inconsistent = tasks.find((task) => task.status !== 'draft');
+      if (inconsistent) {
+        return {
+          result: {
+            ok: false as const,
+            code: 'PLAN_NOT_APPROVABLE' as const,
+            status: `task:${inconsistent.id}:${inconsistent.status}`,
+          },
+          events: [] as EmittedEvent[],
+        };
+      }
 
-  const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
+      const estimated = plan.estimatedTokens;
+      const budget = project.tokenBudget;
+      if (
+        budget !== null &&
+        estimated !== null &&
+        estimated > budget &&
+        !input.acknowledgedOverrun
+      ) {
+        return {
+          result: { ok: false as const, code: 'BUDGET_EXCEEDED' as const, estimated, budget },
+          events: [] as EmittedEvent[],
+        };
+      }
 
-  const preflightIssues = await evaluatePlanPreflight(db, plan, tasks, options);
-  if (preflightIssues.length > 0) {
-    return { ok: false, code: 'PREFLIGHT_FAILED', issues: preflightIssues };
-  }
+      // evaluatePlanPreflight only uses query methods; the transaction handle is
+      // deliberately passed through so the verdict sees the same locked snapshot.
+      const preflightIssues = await evaluatePlanPreflight(
+        tx as unknown as Database,
+        plan,
+        tasks,
+        options,
+      );
+      if (preflightIssues.length > 0) {
+        return {
+          result: {
+            ok: false as const,
+            code: 'PREFLIGHT_FAILED' as const,
+            issues: preflightIssues,
+          },
+          events: [] as EmittedEvent[],
+        };
+      }
 
-  /**
-   * ★ 在写 approved 之前判，不是之后 —— 拦下来的时候计划必须还是待批状态，
-   *   否则用户补完执行者回来会发现计划已经批过了。
-   */
-  const unassignedHuman = tasks.filter(
-    (t) => t.status === 'draft' && executionModeOf(t.typeData) === 'human' && !t.executorId,
-  );
-  if (unassignedHuman.length > 0 && !input.acknowledgedUnassigned) {
-    return {
-      ok: false,
-      code: 'UNASSIGNED_HUMAN_TASKS',
-      tasks: unassignedHuman.map((t) => ({ id: t.id, title: t.title })),
-    };
-  }
+      const unassignedHuman = tasks.filter(
+        (task) => executionModeOf(task.typeData) === 'human' && !task.executorId,
+      );
+      if (unassignedHuman.length > 0 && !input.acknowledgedUnassigned) {
+        return {
+          result: {
+            ok: false as const,
+            code: 'UNASSIGNED_HUMAN_TASKS' as const,
+            tasks: unassignedHuman.map((task) => ({ id: task.id, title: task.title })),
+          },
+          events: [] as EmittedEvent[],
+        };
+      }
 
-  await db
-    .update(plans)
-    .set({
-      status: 'approved',
-      approvedBy: [input.approverId],
-      approvedAt: new Date(),
-    })
-    .where(eq(plans.id, plan.id));
+      const events: EmittedEvent[] = [];
+      for (const task of tasks) {
+        const moved = await transitionInTransaction(tx, {
+          workItemId: task.id,
+          trigger: 'plan_approved',
+          actor: humanActor(input.approverId),
+          correlationId: input.correlationId,
+        });
+        if (!moved.ok) throw new PlanActivationError(task.id, moved);
+        events.push(...moved.events);
+      }
 
-  let activated = 0;
-  for (const task of tasks) {
-    if (task.status !== 'draft') continue;
-    const moved = await transition(db, {
-      workItemId: task.id,
-      trigger: 'plan_approved',
-      actor: humanActor(input.approverId),
-      correlationId: input.correlationId,
+      await tx
+        .update(plans)
+        .set({
+          status: 'approved',
+          approvedBy: [input.approverId],
+          approvedAt: new Date(),
+        })
+        .where(eq(plans.id, plan.id));
+
+      events.push(
+        await emit(tx, {
+          type: 'plan.approved',
+          orgId: project.orgId,
+          projectId: plan.projectId,
+          actor: humanActor(input.approverId),
+          subjectType: 'plan',
+          subjectId: plan.id,
+          payload: {
+            version: plan.version,
+            approvers: [input.approverId],
+            acknowledgedOverrun: input.acknowledgedOverrun ?? false,
+            activatedTasks: tasks.length,
+            unclaimedHumanTasks: unassignedHuman.length,
+            autoActionsSnapshot: plan.autoActions,
+          },
+          correlationId: input.correlationId,
+        }),
+      );
+
+      return {
+        result: {
+          ok: true as const,
+          planId: plan.id,
+          activatedTasks: tasks.length,
+          unclaimed: unassignedHuman.length,
+        },
+        events,
+      };
     });
-    if (moved.ok) activated++;
+
+    if (finalized.events.length > 0) defaultBus.publish(finalized.events);
+    return finalized.result;
+  } catch (err) {
+    if (err instanceof PlanActivationError) {
+      return {
+        ok: false,
+        code: 'ACTIVATION_FAILED',
+        taskId: err.taskId,
+        detail: err.detail,
+      };
+    }
+    throw err;
   }
+}
 
-  await emitAndPublish(db, {
-    type: 'plan.approved',
-    orgId: project!.orgId,
-    projectId: plan.projectId,
-    actor: humanActor(input.approverId),
-    subjectType: 'plan',
-    subjectId: plan.id,
-    payload: {
-      version: plan.version,
-      approvers: [input.approverId],
-      acknowledgedOverrun: input.acknowledgedOverrun ?? false,
-      activatedTasks: activated,
-      /** ★ 留痕：批准时有几项人工任务是没人认领就放行的 */
-      unclaimedHumanTasks: unassignedHuman.length,
-      // 批准时的自动化清单快照 —— 追溯「他到底批准了什么」
-      autoActionsSnapshot: plan.autoActions,
-    },
-    correlationId: input.correlationId,
-  });
-
-  return {
-    ok: true,
-    planId: plan.id,
-    activatedTasks: activated,
-    unclaimed: unassignedHuman.length,
-  };
+class PlanActivationError extends Error {
+  constructor(
+    readonly taskId: string,
+    readonly detail: unknown,
+  ) {
+    super(`计划任务激活失败: ${taskId}`);
+    this.name = 'PlanActivationError';
+  }
 }

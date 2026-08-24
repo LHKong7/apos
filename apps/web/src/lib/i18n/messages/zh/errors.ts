@@ -82,6 +82,8 @@ export const errors: Record<keyof typeof en, string> = {
   'error.reason.plan.unassigned_human_tasks': '有 {count} 项人工任务还没有指定负责人：{titles}。批下去它们会停在待执行里不动 —— 先指派，或确认让它们进待认领队列。',
   'error.reason.plan.over_budget': '计划预估 {estimated} token，超出项目预算 {budget} token。',
   'error.reason.plan.preflight_failed': '执行前置检查未通过，请先修复页面标出的项目与计划配置。',
+  'error.reason.plan.not_approvable': '这份计划已经处理，或其中有任务不再是草稿。请刷新查看最新状态。',
+  'error.reason.plan.activation_failed': '有任务无法激活，整次批准已回滚。请修复阻断项后重试。',
   'error.reason.requirement.fallback_needs_manual_completion': '规则占位内容不能直接确认。请人工填写标题、业务目标、范围和至少一条验收标准，或使用可用的规划 Agent 重新分析。',
   'error.reason.agent.suspend_needs_reason': '暂停 Agent 必须填写原因。',
   'error.reason.request.against_must_be_version': 'against 必须是版本号。',

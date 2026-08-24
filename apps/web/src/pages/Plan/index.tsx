@@ -389,6 +389,7 @@ function PreflightChecklist({ detail: d }: { detail: PlanDetail }) {
     'agent_scope_missing',
     'workspace_source_missing',
     'verification_missing',
+    'token_estimate_missing',
     'delivery_goal_missing',
   ] as const;
   const issueByCode = new Map(d.metrics.preflight.map((issue) => [issue.code, issue]));

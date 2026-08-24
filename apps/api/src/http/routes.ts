@@ -2681,8 +2681,24 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
           throw fail(
             'GUARD_FAILED',
             'plan.preflight_failed',
-            '执行前检查未通过，请先补齐规划 Agent、执行 Agent、工作区、验证命令和交付目标。',
+            '执行前检查未通过，请先补齐规划 Agent、执行 Agent、工作区、验证命令、Token 估算和交付目标。',
             { details: { code: result.code, issues: result.issues } },
+          );
+        }
+        if (result.code === 'PLAN_NOT_APPROVABLE') {
+          throw fail(
+            'VERSION_CONFLICT',
+            'plan.not_approvable',
+            '计划已经处理，或其中的任务已不再处于草稿状态。请刷新后查看最新状态。',
+            { details: result },
+          );
+        }
+        if (result.code === 'ACTIVATION_FAILED') {
+          throw fail(
+            'GUARD_FAILED',
+            'plan.activation_failed',
+            '计划任务激活失败，整次批准已回滚。请修复阻断项后重试。',
+            { details: result },
           );
         }
         if (result.code === 'UNASSIGNED_HUMAN_TASKS') {

@@ -114,6 +114,7 @@ export const plan = {
   'plan.preflight.agent_scope_missing': 'Eligible Agents have read or write scope for the workspace they need',
   'plan.preflight.workspace_source_missing': 'A workspace source is configured for tasks that read or write files',
   'plan.preflight.verification_missing': 'An executable verification command is configured',
+  'plan.preflight.token_estimate_missing': 'Every automatic task has a token estimate when this project has a token budget',
   'plan.preflight.delivery_goal_missing': 'The plan contains a concrete acceptance and delivery target',
   'plan.preflight.fix': 'Fix',
   'plan.preflight.blocked': 'Approval is disabled until every failed check is fixed.',

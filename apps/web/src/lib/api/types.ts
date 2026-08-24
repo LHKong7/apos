@@ -686,7 +686,7 @@ export interface PlanDetail {
     /** 非 null = 这份计划是通用模板，不是按需求生成的 */
     fallback: PlanFallback | null;
     estimatedHours: number;
-    /** null = 没有任何任务给出估算（不是估成 0） */
+    /** null = 至少一项自动任务没有估算，整份计划的总量未知（不是估成 0） */
     estimatedTokens: number | null;
     createdAt: string;
     approvedAt: string | null;
@@ -700,7 +700,7 @@ export interface PlanDetail {
     agentTasks: number;
     humanTasks: number;
     estimatedHours: number;
-    /** null = 没有任何任务给出估算（不是估成 0） */
+    /** null = 至少一项自动任务没有估算，整份计划的总量未知（不是估成 0） */
     estimatedTokens: number | null;
     budget: number | null;
     spent: number;
@@ -717,6 +717,7 @@ export interface PlanDetail {
         | 'agent_scope_missing'
         | 'workspace_source_missing'
         | 'verification_missing'
+        | 'token_estimate_missing'
         | 'delivery_goal_missing';
       taskIds: string[];
       taskTitles: string[];

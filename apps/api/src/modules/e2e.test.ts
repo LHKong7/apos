@@ -5,6 +5,7 @@ import {
   agentRuns,
   artifacts,
   events,
+  plans,
   repositories,
   requirementClarifications,
   requirements,
@@ -13,6 +14,11 @@ import {
 import { resetDb, seedFixture, testDb, type Fixture } from '../test/db';
 import { seedAgent, waitFor } from '../test/agent-fixtures';
 import { StubPlanningProvider } from './planning/stub-provider';
+import type {
+  GeneratedPlan,
+  PlanningScope,
+  StructuredRequirement,
+} from './planning/provider';
 import { analyzeRequirement, answerClarification, approveRequirement } from './requirement/service';
 import { approvePlan, generatePlan } from './planning/service';
 import { scheduleRound } from './flow/scheduler';
@@ -31,6 +37,36 @@ afterAll(async () => {
 });
 
 const corr = () => randomUUID();
+
+class CapturingPlanningProvider extends StubPlanningProvider {
+  lastScope: PlanningScope | undefined;
+
+  override async generatePlan(
+    req: StructuredRequirement,
+    projectType: string,
+    feedback?: string,
+    scope?: PlanningScope,
+  ): Promise<GeneratedPlan> {
+    this.lastScope = scope;
+    return super.generatePlan(req, projectType, feedback);
+  }
+}
+
+class PartialEstimateProvider extends StubPlanningProvider {
+  override async generatePlan(
+    req: StructuredRequirement,
+    projectType: string,
+    feedback?: string,
+  ): Promise<GeneratedPlan> {
+    const generated = await super.generatePlan(req, projectType, feedback);
+    return {
+      ...generated,
+      tasks: generated.tasks.map((task, index) =>
+        index === 0 ? { ...task, estimatedTokens: null } : task,
+      ),
+    };
+  }
+}
 
 const RAW_INPUT = `现在用户查订单要等好几秒，客服天天投诉。想优化一下，最好能支持按手机号、
 订单号、时间段搜。另外老板要求这周五前上线。`;
@@ -401,5 +437,108 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
     const dispatched2 = round2.outcomes.filter((o) => o.action === 'dispatched');
     expect(dispatched2).toHaveLength(1);
     expect(dispatched2[0]!.title).toContain('设计');
+  });
+});
+
+describe('计划批准的可靠性边界', () => {
+  async function approvedRequirement(authorAgentId?: string) {
+    const req = await createRequirement();
+    await db
+      .update(requirements)
+      .set({
+        status: 'approved',
+        title: '可靠性修复',
+        acceptanceCriteria: [
+          {
+            id: 'ac-func',
+            text: '核心功能可用',
+            verification: 'agent',
+            status: 'pending',
+            evidenceRef: null,
+            verifiedAt: null,
+          },
+          {
+            id: 'ac-test',
+            text: '测试通过',
+            verification: 'auto',
+            status: 'pending',
+            evidenceRef: null,
+            verifiedAt: null,
+          },
+        ],
+        ...(authorAgentId ? { authorAgentId } : {}),
+      })
+      .where(eq(requirements.id, req.id));
+    return req;
+  }
+
+  it('计划生成沿用需求页明确点名的规划 Agent', async () => {
+    const named = await seedAgent(db, fx);
+    const req = await approvedRequirement(named.agentId);
+    const capturing = new CapturingPlanningProvider();
+
+    await generatePlan(db, capturing, { requirementId: req.id, correlationId: corr() });
+
+    expect(capturing.lastScope?.agentId).toBe(named.agentId);
+  });
+
+  it('自动任务有一项未知估算时不伪造部分总量，并由预算前置检查阻断', async () => {
+    await seedExecutionReadyAgent();
+    const req = await approvedRequirement();
+    const summary = await generatePlan(db, new PartialEstimateProvider(), {
+      requirementId: req.id,
+      correlationId: corr(),
+    });
+
+    expect(summary.estimatedTokens).toBeNull();
+    const [stored] = await db.select().from(plans).where(eq(plans.id, summary.planId));
+    expect(stored?.estimatedTokens).toBeNull();
+
+    const result = await approvePlan(db, {
+      planId: summary.planId,
+      approverId: fx.userId,
+      correlationId: corr(),
+      acknowledgedUnassigned: true,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'PREFLIGHT_FAILED',
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'token_estimate_missing' }),
+      ]),
+    });
+  });
+
+  it('重复批准不覆盖首个批准人，也不重复发批准事件', async () => {
+    await seedExecutionReadyAgent();
+    const req = await approvedRequirement();
+    const summary = await generatePlan(db, provider, {
+      requirementId: req.id,
+      correlationId: corr(),
+    });
+
+    const first = await approvePlan(db, {
+      planId: summary.planId,
+      approverId: fx.userId,
+      correlationId: corr(),
+      acknowledgedUnassigned: true,
+    });
+    expect(first.ok).toBe(true);
+
+    const second = await approvePlan(db, {
+      planId: summary.planId,
+      approverId: randomUUID(),
+      correlationId: corr(),
+      acknowledgedUnassigned: true,
+    });
+    expect(second).toMatchObject({ ok: false, code: 'PLAN_NOT_APPROVABLE' });
+
+    const [stored] = await db.select().from(plans).where(eq(plans.id, summary.planId));
+    expect(stored?.approvedBy).toEqual([fx.userId]);
+    const approvedEvents = await db
+      .select()
+      .from(events)
+      .where(eq(events.type, 'plan.approved'));
+    expect(approvedEvents).toHaveLength(1);
   });
 });

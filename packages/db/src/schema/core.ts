@@ -25,11 +25,14 @@ import type {
   AgentCapability,
   AgentPermissions,
   AgentPermissionSnapshot,
+  ChangeSet,
   Condition,
   ExecutionConstraint,
   HumanGate,
   PolicyContext,
+  PublishResult,
   ResourceScope,
+  WorkspaceCheckResult,
 } from '@apos/contracts';
 import { OrgRole } from '@apos/contracts';
 import type { BlockedDetail, DecisionReason } from '@apos/contracts';
@@ -1203,6 +1206,25 @@ export const agentRuns = pgTable(
       headCommit?: string | null;
       pushed?: boolean;
       changedFiles?: number;
+      /**
+       * Full idempotency record for workspace settlement.
+       *
+       * A run-ended event is processed transactionally, but filesystem delivery
+       * necessarily happens outside that database transaction. If the database
+       * work rolls back afterward, the retry must see the original diff, check,
+       * and publication result rather than an empty "already settled" response.
+       */
+      releaseResult?: {
+        committed: boolean;
+        pushed: boolean;
+        headCommit: string | null;
+        changedFiles: number;
+        branch: string | null;
+        note: string;
+        check: WorkspaceCheckResult;
+        changes: ChangeSet;
+        published: PublishResult;
+      };
     } | null>(),
 
     stepCurrent: integer(),

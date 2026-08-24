@@ -363,6 +363,8 @@ export class WorkspaceService {
 
     if (!run || !ws) return emptyRelease('本次执行没有工作区');
 
+    if (ws.releaseResult) return ws.releaseResult;
+
     if (ws.headCommit !== undefined) {
       // 已经收过尾了
       return {
@@ -376,8 +378,14 @@ export class WorkspaceService {
     }
 
     if (!(await exists(ws.path))) {
-      await this.finishWorkspace(input.runId, ws, { headCommit: null, pushed: false, changedFiles: 0 });
-      return { ...emptyRelease('工作区目录已不存在，跳过收尾'), branch: ws.branch || null };
+      const result = { ...emptyRelease('工作区目录已不存在，跳过收尾'), branch: ws.branch || null };
+      await this.finishWorkspace(input.runId, ws, {
+        headCommit: null,
+        pushed: false,
+        changedFiles: 0,
+        releaseResult: result,
+      });
+      return result;
     }
 
     const workspace = toWorkspace(ws, input.runId);
@@ -410,24 +418,10 @@ export class WorkspaceService {
      * ★★ 与 pipeline 里那条同一个判断：有改动却没交货成功时不删运行目录。
      *   删了的话，Agent 干的活既没上传、本地也没了 —— 只在 note 里留下一句话。
      */
-    const lost = !isPersisted(outcome.published) && outcome.changes.total > 0;
-    if (lost) {
-      this.diagnose(`Run ${input.runId} 产出未交货，保留运行目录以便人工取回`);
-    } else {
-      await this.cleanupRunDir(input.runId).catch(() => undefined);
-    }
-
     const git = outcome.published.kind === 'git' ? outcome.published : null;
     const headCommit = git?.headCommit ?? null;
     const pushed = git?.pushed ?? false;
-
-    await this.finishWorkspace(input.runId, ws, {
-      headCommit,
-      pushed,
-      changedFiles: outcome.changes.total,
-    });
-
-    return {
+    const result: ReleaseResult = {
       committed: headCommit !== null,
       pushed,
       headCommit,
@@ -438,6 +432,27 @@ export class WorkspaceService {
       changes: outcome.changes,
       published: outcome.published,
     };
+
+    /**
+     * Persist the complete result before the last cleanup step. Event ingestion
+     * may roll its database transaction back after release has already committed
+     * files or uploaded objects; the retry must replay this exact evidence.
+     */
+    await this.finishWorkspace(input.runId, ws, {
+      headCommit,
+      pushed,
+      changedFiles: outcome.changes.total,
+      releaseResult: result,
+    });
+
+    const lost = !isPersisted(outcome.published) && outcome.changes.total > 0;
+    if (lost) {
+      this.diagnose(`Run ${input.runId} 产出未交货，保留运行目录以便人工取回`);
+    } else {
+      await this.cleanupRunDir(input.runId).catch(() => undefined);
+    }
+
+    return result;
   }
 
   /**
@@ -873,7 +888,12 @@ export class WorkspaceService {
   private async finishWorkspace(
     runId: string,
     ws: StoredWorkspace,
-    result: { headCommit: string | null; pushed: boolean; changedFiles: number },
+    result: {
+      headCommit: string | null;
+      pushed: boolean;
+      changedFiles: number;
+      releaseResult?: ReleaseResult;
+    },
   ) {
     await this.db
       .update(agentRuns)

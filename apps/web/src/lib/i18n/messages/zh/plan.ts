@@ -111,6 +111,7 @@ export const plan: Record<keyof typeof en, string> = {
   'plan.preflight.agent_scope_missing': '执行 Agent 已获得所需工作区的读写范围',
   'plan.preflight.workspace_source_missing': '需要读写文件的任务已经配置工作区来源',
   'plan.preflight.verification_missing': '已经配置可执行的验证命令',
+  'plan.preflight.token_estimate_missing': '项目设置 Token 预算时，每个自动任务都已有 Token 估算',
   'plan.preflight.delivery_goal_missing': '计划包含明确、可验收的交付目标',
   'plan.preflight.fix': '去修复',
   'plan.preflight.blocked': '所有失败项修复前不能批准计划。',

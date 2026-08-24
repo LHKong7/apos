@@ -132,7 +132,7 @@ describe('run-supervisor', () => {
   });
 
   it('不支持状态查询的运行时超时后判失败，但分类标为推断', async () => {
-    const runtime = degradedMockRuntime({ steps: [], stepDelayMs: 100_000 });
+    const runtime = degradedMockRuntime({ steps: ['长任务'], stepDelayMs: 100_000 });
     const { run, registry } = await stuckRun({ runtime });
 
     await db

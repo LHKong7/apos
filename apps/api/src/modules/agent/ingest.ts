@@ -9,6 +9,7 @@ import {
   runEvents,
   workItems,
   type Database,
+  type DbTransaction,
 } from '@apos/db';
 import {
   agentActor,
@@ -18,9 +19,9 @@ import {
   type RunEvent,
 } from '@apos/contracts';
 import { decideRecovery } from '@apos/domain';
-import { emit } from '../event/emitter';
-import { emitAndPublish } from '../event/bus';
-import { transition } from '../flow/transition';
+import { emit, type EmittedEvent } from '../event/emitter';
+import { defaultBus } from '../event/bus';
+import { transitionInTransaction } from '../flow/transition';
 import type { ReleaseResult, WorkspaceService } from '../workspace';
 import { mergeTypeDataNested } from '../work-item/json-merge';
 import { findAlternativeAgent } from './matching';
@@ -80,26 +81,56 @@ export async function ingestRunEvent(
     return { stored: false, promoted: false, transitioned: false };
   }
 
-  // (runId, seq) 主键天然去重，重复投递直接跳过
-  const inserted = await db
-    .insert(runEvents)
-    .values({
-      runId,
-      seq: event.seq,
-      ts: new Date(event.ts),
-      type: event.type,
-      level: MILESTONE_RUN_EVENTS.includes(event.type) ? 'milestone' : 'detail',
-      summary: summarize(event),
-      payload: event as unknown as Record<string, unknown>,
-      tokensDelta: event.type === 'cost' ? totalTokens(event.tokens) : null,
-      costDelta: event.type === 'cost' ? String(event.deltaUsd) : null,
-    })
-    .onConflictDoNothing()
-    .returning({ seq: runEvents.seq });
+  const [alreadyStored] = await db
+    .select({ seq: runEvents.seq })
+    .from(runEvents)
+    .where(and(eq(runEvents.runId, runId), eq(runEvents.seq, event.seq)));
+  if (alreadyStored) return { stored: false, promoted: false, transitioned: false };
 
-  if (inserted.length === 0) {
-    return { stored: false, promoted: false, transitioned: false };
-  }
+  /**
+   * Filesystem delivery cannot participate in the database transaction below.
+   * WorkspaceService persists its complete idempotency result first, so a
+   * database rollback can call release again and receive the same diff/check.
+   */
+  const preparedRelease =
+    event.type === 'run_ended'
+      ? await prepareWorkspaceRelease(db, run, event, deps)
+      : null;
+
+  const outbox: EmittedEvent[] = [];
+  const result = await db.transaction(async (tx): Promise<IngestResult> => {
+    const [currentRaw] = await tx.select().from(agentRuns).where(eq(agentRuns.id, runId));
+    if (!currentRaw || currentRaw.workItemId === null) {
+      return { stored: false, promoted: false, transitioned: false };
+    }
+    const current: RunRow = { ...currentRaw, workItemId: currentRaw.workItemId };
+
+    const nowTerminal = ['completed', 'failed', 'timeout', 'terminated'].includes(current.status);
+    if (nowTerminal && event.type !== 'heartbeat') {
+      return { stored: false, promoted: false, transitioned: false };
+    }
+
+    // (runId, seq) is both deduplication and the transaction's processing claim.
+    // If anything below throws, this insert rolls back too and a retry may process it.
+    const inserted = await tx
+      .insert(runEvents)
+      .values({
+        runId,
+        seq: event.seq,
+        ts: new Date(event.ts),
+        type: event.type,
+        level: MILESTONE_RUN_EVENTS.includes(event.type) ? 'milestone' : 'detail',
+        summary: summarize(event),
+        payload: event as unknown as Record<string, unknown>,
+        tokensDelta: event.type === 'cost' ? totalTokens(event.tokens) : null,
+        costDelta: event.type === 'cost' ? String(event.deltaUsd) : null,
+      })
+      .onConflictDoNothing()
+      .returning({ seq: runEvents.seq });
+
+    if (inserted.length === 0) {
+      return { stored: false, promoted: false, transitioned: false };
+    }
 
   /**
    * ★ 工作区收尾必须在状态流转**之前**。
@@ -108,91 +139,102 @@ export async function ingestRunEvent(
    *   一棵临时工作树里 —— 评审者点开只会看到一条没有实体的记录。
    *   先提交推送、把分支落成产物，再让任务前进。
    */
-  let effectiveEvent = event;
-  let effectiveRun = run;
-  if (event.type === 'run_ended') {
-    const release = await settleWorkspace(db, run, event, deps);
+    let effectiveEvent = event;
+    let effectiveRun = current;
+    if (event.type === 'run_ended') {
+      await settleWorkspace(tx, current, event, preparedRelease);
 
-    if (event.outcome === 'completed') {
-      const artifactRows = await db
+      if (event.outcome === 'completed') {
+        const artifactRows = await tx
         .select({ id: artifacts.id })
         .from(artifacts)
-        .where(eq(artifacts.runId, run.id));
-      const changes = release?.changes.total ?? 0;
-      const artifactCount = artifactRows.length;
-      const delivered = changes > 0 || artifactCount > 0;
-      const summary = delivered
-        ? `交付校验通过：${changes} 项变更，${artifactCount} 个产物`
-        : '交付校验失败：进程正常退出，但没有文件变更或产物';
-      const validation: RunEvent = {
-        runId: run.id,
-        seq: event.seq + 3,
-        ts: new Date().toISOString(),
-        type: 'delivery_validation',
-        status: delivered ? 'passed' : 'failed',
-        summary,
-        changes,
-        artifacts: artifactCount,
-      };
-
-      await db
-        .insert(runEvents)
-        .values({
-          runId: run.id,
-          seq: validation.seq,
-          ts: new Date(validation.ts),
-          type: validation.type,
-          level: 'milestone',
+        .where(eq(artifacts.runId, current.id));
+        const changes = preparedRelease?.changes.total ?? 0;
+        const artifactCount = artifactRows.length;
+        const delivered = changes > 0 || artifactCount > 0;
+        const summary = delivered
+          ? `交付校验通过：${changes} 项变更，${artifactCount} 个产物`
+          : '交付校验失败：进程正常退出，但没有文件变更或产物';
+        const validation: RunEvent = {
+          runId: current.id,
+          seq: event.seq + 3,
+          ts: new Date().toISOString(),
+          type: 'delivery_validation',
+          status: delivered ? 'passed' : 'failed',
           summary,
-          payload: validation as unknown as Record<string, unknown>,
-        })
-        .onConflictDoNothing();
+          changes,
+          artifacts: artifactCount,
+        };
 
-      if (!delivered) {
-        const stdoutRows = await db
-          .select({ summary: runEvents.summary })
-          .from(runEvents)
-          .where(and(eq(runEvents.runId, run.id), eq(runEvents.type, 'note')))
-          .orderBy(desc(runEvents.seq))
-          .limit(20);
-        const stdout = stdoutRows
-          .reverse()
-          .map((row) => row.summary)
-          .join('\n')
-          .slice(-8_000) || null;
-        effectiveEvent = {
-          ...event,
-          outcome: 'failed',
-          summary,
-        };
-        effectiveRun = {
-          ...run,
-          errorClass: 'output_missing',
-          errorMessage: summary,
-          agentSelfReport: stdout,
-        };
-        await db
-          .update(agentRuns)
-          .set({
+        await tx
+          .insert(runEvents)
+          .values({
+            runId: current.id,
+            seq: validation.seq,
+            ts: new Date(validation.ts),
+            type: validation.type,
+            level: 'milestone',
+            summary,
+            payload: validation as unknown as Record<string, unknown>,
+          })
+          .onConflictDoNothing();
+
+        if (!delivered) {
+          const stdoutRows = await tx
+            .select({ summary: runEvents.summary })
+            .from(runEvents)
+            .where(and(eq(runEvents.runId, current.id), eq(runEvents.type, 'note')))
+            .orderBy(desc(runEvents.seq))
+            .limit(20);
+          const stdout =
+            stdoutRows
+              .reverse()
+              .map((row) => row.summary)
+              .join('\n')
+              .slice(-8_000) || null;
+          effectiveEvent = {
+            ...event,
+            outcome: 'failed',
+            summary,
+          };
+          effectiveRun = {
+            ...current,
             errorClass: 'output_missing',
             errorMessage: summary,
             agentSelfReport: stdout,
-            errorDetail: {
-              classificationSource: 'inferred',
-              validation: 'empty_delivery',
-              changes,
-              artifacts: artifactCount,
-            },
-          })
-          .where(eq(agentRuns.id, run.id));
+          };
+          await tx
+            .update(agentRuns)
+            .set({
+              errorClass: 'output_missing',
+              errorMessage: summary,
+              agentSelfReport: stdout,
+              errorDetail: {
+                classificationSource: 'inferred',
+                validation: 'empty_delivery',
+                changes,
+                artifacts: artifactCount,
+              },
+            })
+            .where(eq(agentRuns.id, current.id));
+        }
       }
     }
-  }
 
-  await applyRunPatch(db, run.id, effectiveEvent);
+    await applyRunPatch(tx, current.id, effectiveEvent);
 
-  const promotion = await promote(db, effectiveRun, effectiveEvent, correlationId);
-  return { stored: true, ...promotion };
+    const promotion = await promote(
+      tx,
+      effectiveRun,
+      effectiveEvent,
+      correlationId,
+      outbox,
+    );
+    return { stored: true, ...promotion };
+  });
+
+  if (outbox.length > 0) defaultBus.publish(outbox);
+  return result;
 }
 
 /**
@@ -201,7 +243,7 @@ export async function ingestRunEvent(
  * 这里保留运行时的进程结果；调用方随后会独立校验是否真的存在变更或产物。
  * 因此进程可以正常退出，而平台交付状态仍因空交付失败。
  */
-async function settleWorkspace(
+async function prepareWorkspaceRelease(
   db: Database,
   run: RunRow,
   event: Extract<RunEvent, { type: 'run_ended' }>,
@@ -210,13 +252,21 @@ async function settleWorkspace(
   if (!deps.workspaces || !run.workspace) return null;
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
-
-  const result = await deps.workspaces.release({
+  return deps.workspaces.release({
     runId: run.id,
     outcome: event.outcome === 'completed' ? 'completed' : event.outcome,
     summary: event.summary,
     agentName: agent?.name ?? 'agent',
   });
+}
+
+async function settleWorkspace(
+  db: DbTransaction,
+  run: RunRow,
+  event: Extract<RunEvent, { type: 'run_ended' }>,
+  result: ReleaseResult | null,
+): Promise<void> {
+  if (!result) return;
 
   await db.insert(runEvents).values({
     runId: run.id,
@@ -273,7 +323,6 @@ async function settleWorkspace(
   }
 
   await recordWorkspaceArtifact(db, run, result);
-  return result;
 }
 
 /** 变更集里最多记多少个文件名进 metadata */
@@ -290,7 +339,7 @@ const CHANGE_LIST_CAP = 200;
  *   搬进 GitPublisher —— 那是 Git 专属知识，不该待在这个后端无关的步骤里。
  */
 async function recordWorkspaceArtifact(
-  db: Database,
+  db: DbTransaction,
   run: RunRow,
   result: ReleaseResult,
 ): Promise<void> {
@@ -411,7 +460,7 @@ async function recordWorkspaceArtifact(
 }
 
 /** 事件对 agent_runs 行的增量更新 */
-async function applyRunPatch(db: Database, runId: string, event: RunEvent) {
+async function applyRunPatch(db: DbTransaction, runId: string, event: RunEvent) {
   switch (event.type) {
     case 'heartbeat':
       await db
@@ -515,10 +564,11 @@ type RunRow = typeof agentRuns.$inferSelect & { workItemId: string };
 
 /** 事件提升规则 —— docs/tech/06-agent-protocol.md §5.1 */
 async function promote(
-  db: Database,
+  db: DbTransaction,
   run: RunRow,
   event: RunEvent,
   correlationId: string,
+  outbox: EmittedEvent[],
 ): Promise<Omit<IngestResult, 'stored'>> {
   const actor = agentActor(run.agentId);
   const base = {
@@ -530,45 +580,42 @@ async function promote(
 
   switch (event.type) {
     case 'run_started':
-      await emitAndPublish(db, {
+      outbox.push(await emit(db, {
         ...base,
         type: 'agent_run.started',
         subjectType: 'agent_run',
         subjectId: run.id,
         payload: { model: event.model, tools: event.toolsAvailable },
-      });
+      }));
       return { promoted: true, transitioned: false };
 
     case 'artifact': {
-      const artifactId = await db.transaction(async (tx) => {
-        const [row] = await tx
-          .insert(artifacts)
-          .values({
-            orgId: run.orgId,
-            projectId: run.projectId,
-            workItemId: run.workItemId,
-            runId: run.id,
-            kind: event.artifact.kind,
-            title: event.artifact.title,
-            storage: event.artifact.externalUrl ? 'external' : 'inline',
-            externalUrl: event.artifact.externalUrl,
-            content: event.artifact.content,
-            metadata: event.artifact.metadata,
-            producedByType: 'agent',
-            producedById: run.agentId,
-          })
-          .returning({ id: artifacts.id });
+      const [row] = await db
+        .insert(artifacts)
+        .values({
+          orgId: run.orgId,
+          projectId: run.projectId,
+          workItemId: run.workItemId,
+          runId: run.id,
+          kind: event.artifact.kind,
+          title: event.artifact.title,
+          storage: event.artifact.externalUrl ? 'external' : 'inline',
+          externalUrl: event.artifact.externalUrl,
+          content: event.artifact.content,
+          metadata: event.artifact.metadata,
+          producedByType: 'agent',
+          producedById: run.agentId,
+        })
+        .returning({ id: artifacts.id });
 
-        await emit(tx, {
-          ...base,
-          type: 'artifact.produced',
-          subjectType: 'artifact',
-          subjectId: row!.id,
-          payload: { workItemId: run.workItemId, kind: event.artifact.kind, title: event.artifact.title },
-        });
-        return row!.id;
-      });
-      return { promoted: Boolean(artifactId), transitioned: false };
+      outbox.push(await emit(db, {
+        ...base,
+        type: 'artifact.produced',
+        subjectType: 'artifact',
+        subjectId: row!.id,
+        payload: { workItemId: run.workItemId, kind: event.artifact.kind, title: event.artifact.title },
+      }));
+      return { promoted: true, transitioned: false };
     }
 
     /**
@@ -578,12 +625,13 @@ async function promote(
      * 不落成 Decision，Agent 的求助就只是一条淹没在执行流里的日志。
      */
     case 'intervention_request': {
-      const moved = await transition(db, {
+      const moved = await transitionInTransaction(db, {
         workItemId: run.workItemId,
         trigger: 'decision_required',
         actor,
         correlationId,
       });
+      if (moved.ok) outbox.push(...moved.events);
 
       const [item] = await db.select().from(workItems).where(eq(workItems.id, run.workItemId));
 
@@ -661,7 +709,7 @@ async function promote(
         );
       }
 
-      await emitAndPublish(db, {
+      outbox.push(await emit(db, {
         ...base,
         type: 'decision.created',
         subjectType: 'decision',
@@ -673,7 +721,7 @@ async function promote(
           urgency: request.urgency,
           source: 'agent_intervention',
         },
-      });
+      }));
 
       return { promoted: true, transitioned: moved.ok };
     }
@@ -697,13 +745,13 @@ async function promote(
         const before = ((project.spent - delta) / project.budget) * 100;
         for (const threshold of [80, 100]) {
           if (before < threshold && pct >= threshold) {
-            await emitAndPublish(db, {
+            outbox.push(await emit(db, {
               ...base,
               type: 'project.budget_threshold_reached',
               subjectType: 'project',
               subjectId: run.projectId,
               payload: { thresholdPct: threshold, spent: project.spent, budget: project.budget },
-            });
+            }));
             return { promoted: true, transitioned: false };
           }
         }
@@ -713,34 +761,35 @@ async function promote(
 
     case 'run_ended': {
       if (event.outcome === 'completed') {
-        await emitAndPublish(db, {
+        outbox.push(await emit(db, {
           ...base,
           type: 'agent_run.completed',
           subjectType: 'agent_run',
           subjectId: run.id,
           payload: { summary: event.summary, cost: run.cost, attempt: run.attempt },
-        });
+        }));
 
-        const moved = await transition(db, {
+        const moved = await transitionInTransaction(db, {
           workItemId: run.workItemId,
           trigger: 'agent_run_completed',
           actor,
           correlationId,
         });
+        if (moved.ok) outbox.push(...moved.events);
         return { promoted: true, transitioned: moved.ok };
       }
 
       if (event.outcome === 'failed') {
-        return handleFailure(db, run, correlationId, event.summary);
+        return handleFailure(db, run, correlationId, event.summary, outbox);
       }
 
-      await emitAndPublish(db, {
+      outbox.push(await emit(db, {
         ...base,
         type: 'agent_run.terminated',
         subjectType: 'agent_run',
         subjectId: run.id,
         payload: { reason: event.summary },
-      });
+      }));
       return { promoted: true, transitioned: false };
     }
 
@@ -756,10 +805,11 @@ async function promote(
  * 这里只负责判定并记录，保证责任单一。
  */
 async function handleFailure(
-  db: Database,
+  db: DbTransaction,
   run: RunRow,
   correlationId: string,
   summary: string,
+  outbox: EmittedEvent[],
 ): Promise<Omit<IngestResult, 'stored'>> {
   const actor = agentActor(run.agentId);
 
@@ -779,7 +829,9 @@ async function handleFailure(
    *   capability_mismatch 一律退化成 transfer_to_human，
    *   而「换个更合适的 Agent 再试」本来是最该先试的一步。
    */
-  const alternative = item ? await findAlternativeAgent(db, item, run.agentId) : null;
+  const alternative = item
+    ? await findAlternativeAgent(db as unknown as Database, item, run.agentId)
+    : null;
 
   const recovery = decideRecovery({
     errorClass: (run.errorClass as never) ?? 'unknown',
@@ -809,7 +861,7 @@ async function handleFailure(
     })
     .where(eq(agentRuns.id, run.id));
 
-  await emitAndPublish(db, {
+  outbox.push(await emit(db, {
     orgId: run.orgId,
     projectId: run.projectId,
     actor,
@@ -828,14 +880,15 @@ async function handleFailure(
       // recovery worker 要换 Agent 时不必再算一遍
       alternativeAgentId: alternative,
     },
-  });
+  }));
 
-  const moved = await transition(db, {
+  const moved = await transitionInTransaction(db, {
     workItemId: run.workItemId,
     trigger: 'agent_run_failed',
     actor,
     correlationId,
   });
+  if (moved.ok) outbox.push(...moved.events);
 
   return { promoted: true, transitioned: moved.ok, recovery };
 }
@@ -847,7 +900,7 @@ async function handleFailure(
  *   再压 60 秒退避只会让待办晚一分钟出现在收件箱里。
  */
 async function backoffFor(
-  db: Database,
+  db: DbTransaction,
   run: RunRow,
   action: string,
 ): Promise<Date | null> {
