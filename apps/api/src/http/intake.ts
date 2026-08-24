@@ -9,8 +9,10 @@ import {
   type Database,
 } from '@apos/db';
 import type { AutonomyLevel, PlanFallback } from '@apos/contracts';
+import type { RuntimeRegistry } from '@apos/agent-runtimes';
 import { auditPolicies, diffPlans, type PlanSide } from '@apos/domain';
 import { resolveExecutor } from '../modules/agent/matching';
+import { evaluatePlanPreflight } from '../modules/planning/service';
 import { notFound } from './errors';
 import { loadProjectPolicies } from './policies';
 
@@ -63,7 +65,11 @@ export async function listRequirements(db: Database, projectId: string) {
  *   snapshot, never a list computed just now. The result under the current
  *   rules is returned alongside it, and the page calls out any mismatch.
  */
-export async function getPlanDetail(db: Database, planId: string) {
+export async function getPlanDetail(
+  db: Database,
+  planId: string,
+  options: { registry?: RuntimeRegistry } = {},
+) {
   const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
   if (!plan) throw notFound('plan');
 
@@ -141,9 +147,10 @@ export async function getPlanDetail(db: Database, planId: string) {
   const unrunnable: { id: string; title: string }[] = [];
   for (const task of tasks) {
     if (gatedTitles.has(task.title)) continue;
-    const match = await resolveExecutor(db, task);
+    const match = await resolveExecutor(db, task, { registry: options.registry });
     if (match.candidates.length === 0) unrunnable.push({ id: task.id, title: task.title });
   }
+  const preflight = await evaluatePlanPreflight(db, plan, tasks, options);
 
   return {
     plan: {
@@ -190,6 +197,7 @@ export async function getPlanDetail(db: Database, planId: string) {
       humanGateCount: (plan.humanGates as unknown[]).length,
       /** Tasks no qualified agent can take — once approved they sit in `ready` and never move */
       tasksWithoutAgent: unrunnable,
+      preflight,
       highRiskTasks: tasks.filter((t) => t.riskLevel === 'high' || t.riskLevel === 'critical').length,
     },
     /** The snapshot taken at approval time */

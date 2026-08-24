@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, agents, projectAgentBindings, projectMembers } from '@apos/db';
+import { agentRuns, agents, projectAgentBindings, projectMembers, runEvents } from '@apos/db';
 import { MockRuntime, RuntimeRegistry, type AgentRuntimeAdapter } from '@apos/agent-runtimes';
 import type {
   CapabilityManifest,
@@ -79,10 +79,11 @@ class FileWritingRuntime implements AgentRuntimeAdapter {
 
   async subscribe(runId: string, onEvent: (e: RunEvent) => Promise<void>) {
     queueMicrotask(async () => {
+      let seq = 0;
       if (this.costPerRound !== null) {
         await onEvent({
           runId,
-          seq: 0,
+          seq: seq++,
           ts: new Date().toISOString(),
           type: 'cost',
           deltaUsd: this.costPerRound,
@@ -92,7 +93,14 @@ class FileWritingRuntime implements AgentRuntimeAdapter {
       }
       await onEvent({
         runId,
-        seq: 1,
+        seq: seq++,
+        ts: new Date().toISOString(),
+        type: 'note',
+        text: 'stdout: I finished the analysis but may have forgotten to write the file',
+      } as RunEvent);
+      await onEvent({
+        runId,
+        seq,
         ts: new Date().toISOString(),
         type: 'run_ended',
         outcome: 'completed',
@@ -756,7 +764,18 @@ describe('规划产出不合格时的修正轮', () => {
     expect(runtime.dispatchCount).toBe(2);
     expect(runtime.briefs[1]).toContain('没有创建 apos-output.json');
     expect(runtime.briefs[1]).toContain('实际调用写文件工具');
+    expect(runtime.briefs[1]).toContain('上一轮 stdout');
+    expect(runtime.briefs[1]).toContain('forgotten to write the file');
     expect(result.fallback).toBeNull();
+
+    const runs = await db.select().from(agentRuns).where(eq(agentRuns.kind, 'planning'));
+    const failed = runs.find((run) => run.status === 'failed');
+    expect(failed?.errorClass).toBe('output_missing');
+    const validation = await db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, failed!.id));
+    expect(validation.some((event) => event.type === 'delivery_validation')).toBe(true);
   });
 
   it('连续两轮都漏写产物后才回退，并说明已重试', async () => {

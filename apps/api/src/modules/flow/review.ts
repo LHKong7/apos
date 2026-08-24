@@ -7,6 +7,7 @@ import {
   requirements,
   workItems,
   type Database,
+  type DbTransaction,
 } from '@apos/db';
 import {
   SYSTEM_ACTOR,
@@ -15,7 +16,8 @@ import {
   type AutonomyLevel,
   type RiskLevel,
 } from '@apos/contracts';
-import { emitAndPublish } from '../event/bus';
+import { defaultBus, emitAndPublish } from '../event/bus';
+import { emit, type EmittedEvent } from '../event/emitter';
 import { transition } from '../flow/transition';
 
 export interface ReviewOptions {
@@ -473,8 +475,22 @@ export async function recordHumanAcceptance(
     correlationId: string;
   },
 ): Promise<void> {
-  const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
-  if (!item || item.acceptanceCriteria.length === 0) return;
+  const events = await db.transaction((tx) => recordHumanAcceptanceInTransaction(tx, input));
+  if (events.length > 0) defaultBus.publish(events);
+}
+
+export async function recordHumanAcceptanceInTransaction(
+  tx: DbTransaction,
+  input: {
+    workItemId: string;
+    evidenceRef: string;
+    actor: ActorRef;
+    reason: string;
+    correlationId: string;
+  },
+): Promise<EmittedEvent[]> {
+  const [item] = await tx.select().from(workItems).where(eq(workItems.id, input.workItemId));
+  if (!item || item.acceptanceCriteria.length === 0) return [];
 
   const verifiedAt = new Date().toISOString();
   const criteria = item.acceptanceCriteria.map((criterion) => ({
@@ -485,13 +501,14 @@ export async function recordHumanAcceptance(
     verifiedAt,
   }));
 
-  await db
+  await tx
     .update(workItems)
     .set({ acceptanceCriteria: criteria })
     .where(eq(workItems.id, item.id));
 
+  const events: EmittedEvent[] = [];
   for (const criterion of criteria) {
-    await emitAndPublish(db, {
+    events.push(await emit(tx, {
       orgId: item.orgId,
       projectId: item.projectId,
       actor: input.actor,
@@ -508,8 +525,9 @@ export async function recordHumanAcceptance(
         reason: input.reason,
       },
       correlationId: input.correlationId,
-    });
+    }));
   }
+  return events;
 }
 
 /**
@@ -521,11 +539,19 @@ export async function rollUpRequirementAcceptance(
   db: Database,
   input: { workItemId: string; actor: ActorRef; correlationId: string },
 ): Promise<void> {
-  const [completedItem] = await db
+  const events = await db.transaction((tx) => rollUpRequirementAcceptanceInTransaction(tx, input));
+  if (events.length > 0) defaultBus.publish(events);
+}
+
+export async function rollUpRequirementAcceptanceInTransaction(
+  tx: DbTransaction,
+  input: { workItemId: string; actor: ActorRef; correlationId: string },
+): Promise<EmittedEvent[]> {
+  const [completedItem] = await tx
     .select({ requirementId: workItems.requirementId, planId: workItems.planId })
     .from(workItems)
     .where(eq(workItems.id, input.workItemId));
-  if (!completedItem?.requirementId) return;
+  if (!completedItem?.requirementId) return [];
 
   /**
    * A requirement may retain tasks from an older plan for audit and comparison.
@@ -533,22 +559,22 @@ export async function rollUpRequirementAcceptance(
    * from a superseded/fallback plan keep current acceptance pending forever.
    */
   if (completedItem.planId) {
-    const [activePlan] = await db
+    const [activePlan] = await tx
       .select({ id: plans.id })
       .from(plans)
       .where(and(eq(plans.requirementId, completedItem.requirementId), eq(plans.status, 'approved')))
       .orderBy(desc(plans.version))
       .limit(1);
-    if (activePlan && activePlan.id !== completedItem.planId) return;
+    if (activePlan && activePlan.id !== completedItem.planId) return [];
   }
 
-  const [requirement] = await db
+  const [requirement] = await tx
     .select()
     .from(requirements)
     .where(eq(requirements.id, completedItem.requirementId));
-  if (!requirement || requirement.acceptanceCriteria.length === 0) return;
+  if (!requirement || requirement.acceptanceCriteria.length === 0) return [];
 
-  const items = await db
+  const items = await tx
     .select({
       id: workItems.id,
       status: workItems.status,
@@ -603,14 +629,14 @@ export async function rollUpRequirementAcceptance(
     };
   });
 
-  if (JSON.stringify(next) === JSON.stringify(requirement.acceptanceCriteria)) return;
+  if (JSON.stringify(next) === JSON.stringify(requirement.acceptanceCriteria)) return [];
 
-  await db
+  await tx
     .update(requirements)
     .set({ acceptanceCriteria: next, updatedAt: new Date() })
     .where(eq(requirements.id, requirement.id));
 
-  await emitAndPublish(db, {
+  return [await emit(tx, {
     orgId: requirement.orgId,
     projectId: requirement.projectId,
     actor: input.actor,
@@ -624,7 +650,7 @@ export async function rollUpRequirementAcceptance(
       pending: next.filter((criterion) => criterion.status === 'pending').length,
     },
     correlationId: input.correlationId,
-  });
+  })];
 }
 
 function describeBlock(moved: Awaited<ReturnType<typeof transition>>): string {

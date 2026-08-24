@@ -163,7 +163,7 @@ export function AgentAccessPanel({
         <Notice tone="warning">
           {t('access.degraded')}
           <ul className="mt-1 list-disc pl-4">
-            {data.warnings.map((w) => (
+            {[...new Set(data.warnings)].map((w) => (
               <li key={w}>{w}</li>
             ))}
           </ul>
@@ -372,7 +372,7 @@ function ImpactSummary({ impact }: { impact: AgentAccessPreview }) {
 
       {impact.warnings.length > 0 && (
         <ul className="mt-1 list-disc pl-4">
-          {impact.warnings.map((w) => (
+          {[...new Set(impact.warnings)].map((w) => (
             <li key={w}>{w}</li>
           ))}
         </ul>

@@ -206,6 +206,7 @@ export function buildRepairBrief(
   originalBrief: string,
   problems: string,
   previousOutput: string | null,
+  previousStdout: string | null = null,
 ): string {
   const truncated =
     previousOutput === null
@@ -216,7 +217,12 @@ export function buildRepairBrief(
 
   const previous =
     truncated === null
-      ? '（上一版没有写出产物文件）'
+      ? [
+          '（上一版没有写出产物文件）',
+          previousStdout?.trim()
+            ? `\n上一轮 stdout（只用于诊断，不能替代产物文件）：\n\n\`\`\`text\n${previousStdout}\n\`\`\``
+            : '',
+        ].join('')
       : `\`\`\`json\n${truncated}\n\`\`\``;
 
   const repairSteps =

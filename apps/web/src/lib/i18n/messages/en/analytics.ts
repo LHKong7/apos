@@ -30,6 +30,7 @@ export const analytics = {
   'analytics.quality.incident_rate_per_release.label': 'Incidents per release',
   'analytics.quality.incident_rate_per_release.hint': 'No release has completed this period.',
   'analytics.failureReason.context_insufficient': 'Not enough context',
+  'analytics.failureReason.output_missing': 'No deliverable produced',
   'analytics.failureReason.capability_mismatch': 'Capability mismatch',
   'analytics.failureReason.tool_failure': 'Tool call failed',
   'analytics.failureReason.timeout': 'Timed out',

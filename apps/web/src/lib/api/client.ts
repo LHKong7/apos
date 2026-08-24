@@ -702,7 +702,11 @@ export const api = {
   batchApproveDecisions: (ids: string[], note?: string) =>
     request<{ approved: number; failed: { id: string; error?: string }[] }>(
       '/decisions/batch-approve',
-      { method: 'POST', json: { ids, note } },
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': `decision-batch:${stableKey([...ids].sort().join(','))}` },
+        json: { ids, note },
+      },
     ),
 
   // ── Policy 配置 ────────────────────────────────────────────────────
@@ -1022,12 +1026,14 @@ export const api = {
     } = {},
   ) => request<{ ok: true; decisionId: string }>(`/decisions/${id}/approve`, {
     method: 'POST',
+    headers: { 'Idempotency-Key': `decision:${id}:approve` },
     json: body,
   }),
 
   rejectDecision: (id: string, reason: string) =>
     request<{ ok: true; decisionId: string }>(`/decisions/${id}/reject`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': `decision:${id}:reject` },
       json: { reason },
     }),
 
@@ -1040,3 +1046,13 @@ export const api = {
       json: {},
     }),
 };
+
+/** Short deterministic key for multi-id commands; the server also scopes it by endpoint and actor. */
+function stableKey(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   agentRuns,
   agents,
@@ -101,8 +101,6 @@ export async function ingestRunEvent(
     return { stored: false, promoted: false, transitioned: false };
   }
 
-  await applyRunPatch(db, run.id, event);
-
   /**
    * ★ 工作区收尾必须在状态流转**之前**。
    *
@@ -110,27 +108,106 @@ export async function ingestRunEvent(
    *   一棵临时工作树里 —— 评审者点开只会看到一条没有实体的记录。
    *   先提交推送、把分支落成产物，再让任务前进。
    */
+  let effectiveEvent = event;
+  let effectiveRun = run;
   if (event.type === 'run_ended') {
-    await settleWorkspace(db, run, event, deps);
+    const release = await settleWorkspace(db, run, event, deps);
+
+    if (event.outcome === 'completed') {
+      const artifactRows = await db
+        .select({ id: artifacts.id })
+        .from(artifacts)
+        .where(eq(artifacts.runId, run.id));
+      const changes = release?.changes.total ?? 0;
+      const artifactCount = artifactRows.length;
+      const delivered = changes > 0 || artifactCount > 0;
+      const summary = delivered
+        ? `交付校验通过：${changes} 项变更，${artifactCount} 个产物`
+        : '交付校验失败：进程正常退出，但没有文件变更或产物';
+      const validation: RunEvent = {
+        runId: run.id,
+        seq: event.seq + 3,
+        ts: new Date().toISOString(),
+        type: 'delivery_validation',
+        status: delivered ? 'passed' : 'failed',
+        summary,
+        changes,
+        artifacts: artifactCount,
+      };
+
+      await db
+        .insert(runEvents)
+        .values({
+          runId: run.id,
+          seq: validation.seq,
+          ts: new Date(validation.ts),
+          type: validation.type,
+          level: 'milestone',
+          summary,
+          payload: validation as unknown as Record<string, unknown>,
+        })
+        .onConflictDoNothing();
+
+      if (!delivered) {
+        const stdoutRows = await db
+          .select({ summary: runEvents.summary })
+          .from(runEvents)
+          .where(and(eq(runEvents.runId, run.id), eq(runEvents.type, 'note')))
+          .orderBy(desc(runEvents.seq))
+          .limit(20);
+        const stdout = stdoutRows
+          .reverse()
+          .map((row) => row.summary)
+          .join('\n')
+          .slice(-8_000) || null;
+        effectiveEvent = {
+          ...event,
+          outcome: 'failed',
+          summary,
+        };
+        effectiveRun = {
+          ...run,
+          errorClass: 'output_missing',
+          errorMessage: summary,
+          agentSelfReport: stdout,
+        };
+        await db
+          .update(agentRuns)
+          .set({
+            errorClass: 'output_missing',
+            errorMessage: summary,
+            agentSelfReport: stdout,
+            errorDetail: {
+              classificationSource: 'inferred',
+              validation: 'empty_delivery',
+              changes,
+              artifacts: artifactCount,
+            },
+          })
+          .where(eq(agentRuns.id, run.id));
+      }
+    }
   }
 
-  const promotion = await promote(db, run, event, correlationId);
+  await applyRunPatch(db, run.id, effectiveEvent);
+
+  const promotion = await promote(db, effectiveRun, effectiveEvent, correlationId);
   return { stored: true, ...promotion };
 }
 
 /**
  * Run 结束时收工作区：提交 → 推送 → 落成产物。
  *
- * 收尾出错不会让 Run 从成功翻成失败 —— 代码已经跑完了，
- * 推送失败是运维问题，改动还在本地分支上可以人工补推。
+ * 这里保留运行时的进程结果；调用方随后会独立校验是否真的存在变更或产物。
+ * 因此进程可以正常退出，而平台交付状态仍因空交付失败。
  */
 async function settleWorkspace(
   db: Database,
   run: RunRow,
   event: Extract<RunEvent, { type: 'run_ended' }>,
   deps: IngestDeps,
-): Promise<void> {
-  if (!deps.workspaces || !run.workspace) return;
+): Promise<ReleaseResult | null> {
+  if (!deps.workspaces || !run.workspace) return null;
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId));
 
@@ -196,6 +273,7 @@ async function settleWorkspace(
   }
 
   await recordWorkspaceArtifact(db, run, result);
+  return result;
 }
 
 /** 变更集里最多记多少个文件名进 metadata */
@@ -834,6 +912,8 @@ function summarize(event: RunEvent): string {
       return '心跳';
     case 'error':
       return `错误（${event.error.class}）：${event.error.message}`;
+    case 'delivery_validation':
+      return event.summary;
     case 'run_ended':
       return `Run 结束：${event.outcome}`;
   }

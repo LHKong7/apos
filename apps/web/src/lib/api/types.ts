@@ -424,6 +424,8 @@ export interface RunDetail {
   };
   metrics: {
     tokens: {
+      /** false means the runtime never reported usage; numeric zero is not authoritative. */
+      reported: boolean;
       input: number;
       output: number;
       cacheRead: number;
@@ -706,6 +708,20 @@ export interface PlanDetail {
     humanGateCount: number;
     /** 没有任何合格 Agent 能接的任务 —— 批下去会停在 ready 不动 */
     tasksWithoutAgent: { id: string; title: string }[];
+    preflight: {
+      code:
+        | 'fallback_plan'
+        | 'empty_plan'
+        | 'planner_unavailable'
+        | 'agent_unavailable'
+        | 'agent_scope_missing'
+        | 'workspace_source_missing'
+        | 'verification_missing'
+        | 'delivery_goal_missing';
+      taskIds: string[];
+      taskTitles: string[];
+      fixPath: string;
+    }[];
     highRiskTasks: number;
   };
   autoActions: {

@@ -32,6 +32,7 @@ export const analytics: Record<keyof typeof en, string> = {
   'analytics.quality.incident_rate_per_release.label': '每次发布的事故数',
   'analytics.quality.incident_rate_per_release.hint': '本周期还没有完成的发布。',
   'analytics.failureReason.context_insufficient': '上下文不足',
+  'analytics.failureReason.output_missing': '没有产生交付物',
   'analytics.failureReason.capability_mismatch': '能力不匹配',
   'analytics.failureReason.tool_failure': '工具调用失败',
   'analytics.failureReason.timeout': '超时',

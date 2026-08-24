@@ -1,11 +1,17 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import {
+  agents,
   plans,
   policies,
   projects,
+  projectAgentBindings,
+  projectAgentPermissions,
+  projectMembers,
+  repositories,
   requirementAssumptions,
   requirementClarifications,
   requirements,
+  storageTargets,
   workItemDependencies,
   workItems,
   type Database,
@@ -27,7 +33,8 @@ import {
   formatTokens,
   requiresHuman,
 } from '@apos/domain';
-import { executionModeOf } from '../agent/matching';
+import type { RuntimeRegistry } from '@apos/agent-runtimes';
+import { executionModeOf, resolveExecutor } from '../agent/matching';
 import { emitAndPublish } from '../event/bus';
 import { allocateNumbers } from '../work-item/numbering';
 import { transition } from '../flow/transition';
@@ -685,6 +692,7 @@ function predictPolicyOutcomes(
 export type ApprovePlanResult =
   | { ok: true; planId: string; activatedTasks: number; unclaimed: number }
   | { ok: false; code: 'BUDGET_EXCEEDED'; estimated: number; budget: number }
+  | { ok: false; code: 'PREFLIGHT_FAILED'; issues: PlanPreflightIssue[] }
   /**
    * ★★ 有人工任务没人认领。
    *
@@ -702,6 +710,241 @@ export type ApprovePlanResult =
       tasks: { id: string; title: string }[];
     };
 
+export type PlanPreflightCode =
+  | 'fallback_plan'
+  | 'empty_plan'
+  | 'planner_unavailable'
+  | 'agent_unavailable'
+  | 'agent_scope_missing'
+  | 'workspace_source_missing'
+  | 'verification_missing'
+  | 'delivery_goal_missing';
+
+export interface PlanPreflightIssue {
+  code: PlanPreflightCode;
+  taskIds: string[];
+  taskTitles: string[];
+  fixPath: string;
+}
+
+/**
+ * One server-side verdict powers both the checklist and the approval gate.
+ * A warning computed only in the browser can be bypassed by calling the API,
+ * while a check computed only after scheduling discovers the problem too late.
+ */
+export async function evaluatePlanPreflight(
+  db: Database,
+  plan: typeof plans.$inferSelect,
+  tasks: (typeof workItems.$inferSelect)[],
+  options: { registry?: RuntimeRegistry } = {},
+): Promise<PlanPreflightIssue[]> {
+  const issues: PlanPreflightIssue[] = [];
+  const requirementPath = plan.requirementId
+    ? `/projects/${plan.projectId}/requirements/${plan.requirementId}`
+    : `/projects/${plan.projectId}/requirements`;
+
+  if (plan.generationFallback !== null) {
+    issues.push({
+      code: 'fallback_plan',
+      taskIds: [],
+      taskTitles: [],
+      fixPath: requirementPath,
+    });
+  }
+  if (tasks.length === 0) {
+    issues.push({
+      code: 'empty_plan',
+      taskIds: [],
+      taskTitles: [],
+      fixPath: requirementPath,
+    });
+    return issues;
+  }
+
+  const agentMembers = await db
+    .select({ actorId: projectMembers.actorId })
+    .from(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.projectId, plan.projectId),
+        eq(projectMembers.actorType, 'agent'),
+      ),
+    );
+  const memberIds = agentMembers.map((member) => member.actorId);
+  const activeMembers = memberIds.length > 0
+    ? await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(inArray(agents.id, memberIds), eq(agents.status, 'active')))
+    : [];
+  const activeMemberIds = new Set(
+    activeMembers
+      .filter((agent) => !options.registry || options.registry.has(agent.id))
+      .map((agent) => agent.id),
+  );
+  const [requirement] = plan.requirementId
+    ? await db
+        .select({ authorAgentId: requirements.authorAgentId })
+        .from(requirements)
+        .where(eq(requirements.id, plan.requirementId))
+    : [undefined];
+  const plannerBindings = await db
+    .select({ agentId: projectAgentBindings.agentId })
+    .from(projectAgentBindings)
+    .where(
+      and(
+        eq(projectAgentBindings.projectId, plan.projectId),
+        eq(projectAgentBindings.role, 'planner'),
+      ),
+    );
+  const plannerAvailable = requirement?.authorAgentId
+    ? activeMemberIds.has(requirement.authorAgentId)
+    : plannerBindings.length > 0
+      ? plannerBindings.some((binding) => activeMemberIds.has(binding.agentId))
+      : activeMemberIds.size > 0;
+  if (!plannerAvailable) {
+    issues.push({
+      code: 'planner_unavailable',
+      taskIds: [],
+      taskTitles: [],
+      fixPath: `/projects/${plan.projectId}/settings/agents`,
+    });
+  }
+
+  const automatic = tasks.filter((task) => executionModeOf(task.typeData) !== 'human');
+  const unrunnable: (typeof workItems.$inferSelect)[] = [];
+  const candidatesByTask = new Map<string, string[]>();
+  for (const task of automatic) {
+    const match = await resolveExecutor(db, task, { registry: options.registry });
+    candidatesByTask.set(task.id, match.candidates.map((candidate) => candidate.agentId));
+    if (match.candidates.length === 0) unrunnable.push(task);
+  }
+  if (unrunnable.length > 0) {
+    issues.push({
+      code: 'agent_unavailable',
+      taskIds: unrunnable.map((task) => task.id),
+      taskTitles: unrunnable.map((task) => task.title),
+      fixPath: `/projects/${plan.projectId}/settings/agents`,
+    });
+  }
+
+  const [preflightProject] = await db
+    .select({ orgId: projects.orgId })
+    .from(projects)
+    .where(eq(projects.id, plan.projectId));
+  const [projectRepos, projectStorage] = await Promise.all([
+    db
+      .select({
+        id: repositories.id,
+        ref: repositories.ref,
+        projectId: repositories.projectId,
+        checkCommand: repositories.checkCommand,
+      })
+      .from(repositories)
+      .where(
+        and(
+          eq(repositories.orgId, preflightProject!.orgId),
+          or(eq(repositories.projectId, plan.projectId), isNull(repositories.projectId)),
+          eq(repositories.status, 'active'),
+        ),
+      ),
+    db
+      .select({ id: storageTargets.id, ref: storageTargets.ref })
+      .from(storageTargets)
+      .where(
+        and(
+          eq(storageTargets.orgId, preflightProject!.orgId),
+          or(eq(storageTargets.projectId, plan.projectId), isNull(storageTargets.projectId)),
+          eq(storageTargets.status, 'active'),
+        ),
+      ),
+  ]);
+  const workspaceTasks = automatic.filter((task) => {
+    const capabilities = task.typeData['requiredCapabilities'];
+    return Array.isArray(capabilities) && capabilities.some((value) => /^workspace\.(read|write)$/.test(String(value)));
+  });
+  const sourceRefs = new Set([
+    ...projectRepos.map((repo) => repo.ref),
+    ...projectStorage.map((target) => target.ref),
+  ]);
+  const tasksWithoutSource = workspaceTasks.filter((task) => {
+    const resources = task.typeData['requiredResources'];
+    const required = Array.isArray(resources) ? resources.map(String) : [];
+    return required.length > 0
+      ? required.some((ref) => !sourceRefs.has(ref))
+      : sourceRefs.size === 0;
+  });
+  if (tasksWithoutSource.length > 0) {
+    issues.push({
+      code: 'workspace_source_missing',
+      taskIds: tasksWithoutSource.map((task) => task.id),
+      taskTitles: tasksWithoutSource.map((task) => task.title),
+      fixPath: `/projects/${plan.projectId}/settings/storage`,
+    });
+  }
+
+  if (workspaceTasks.length > 0 && (projectRepos.length > 0 || projectStorage.length > 0)) {
+    const grants = await db
+      .select({
+        agentId: projectAgentPermissions.agentId,
+        resourceScopes: projectAgentPermissions.resourceScopes,
+      })
+      .from(projectAgentPermissions)
+      .where(eq(projectAgentPermissions.projectId, plan.projectId));
+    const scopesByAgent = new Map(grants.map((grant) => [grant.agentId, grant.resourceScopes]));
+    const tasksWithoutScope = workspaceTasks.filter((task) => {
+      const capabilities = task.typeData['requiredCapabilities'];
+      const required = Array.isArray(capabilities) ? capabilities.map(String) : [];
+      const needsWrite = required.includes('workspace.write');
+      const candidateIds = candidatesByTask.get(task.id) ?? [];
+      return !candidateIds.some((agentId) => {
+        const scopes = scopesByAgent.get(agentId) ?? [];
+        if (needsWrite) {
+          return scopes.some((scope) => sourceRefs.has(scope.ref) && scope.access === 'write');
+        }
+        return projectRepos.some((repo) => repo.projectId === plan.projectId) || scopes.some(
+          (scope) => sourceRefs.has(scope.ref) && scope.access !== 'none',
+        );
+      });
+    });
+    if (tasksWithoutScope.length > 0) {
+      issues.push({
+        code: 'agent_scope_missing',
+        taskIds: tasksWithoutScope.map((task) => task.id),
+        taskTitles: tasksWithoutScope.map((task) => task.title),
+        fixPath: `/projects/${plan.projectId}/settings/agents`,
+      });
+    }
+  }
+
+  const needsAutomaticVerification = automatic.some((task) =>
+    task.acceptanceCriteria.some((criterion) => criterion.verification === 'auto'),
+  );
+  if (needsAutomaticVerification && !projectRepos.some((repo) => Boolean(repo.checkCommand?.trim()))) {
+    issues.push({
+      code: 'verification_missing',
+      taskIds: automatic
+        .filter((task) => task.acceptanceCriteria.some((criterion) => criterion.verification === 'auto'))
+        .map((task) => task.id),
+      taskTitles: automatic
+        .filter((task) => task.acceptanceCriteria.some((criterion) => criterion.verification === 'auto'))
+        .map((task) => task.title),
+      fixPath: `/projects/${plan.projectId}/settings/storage`,
+    });
+  }
+
+  if (!tasks.some((task) => task.acceptanceCriteria.some((criterion) => criterion.text.trim().length > 0))) {
+    issues.push({
+      code: 'delivery_goal_missing',
+      taskIds: tasks.map((task) => task.id),
+      taskTitles: tasks.map((task) => task.title),
+      fixPath: requirementPath,
+    });
+  }
+
+  return issues;
+}
+
 /**
  * Human Gate：计划批准。批准后任务从 draft 转 ready，Scheduler 开始接手。
  */
@@ -715,6 +958,7 @@ export async function approvePlan(
     /** 确认「这几项人工任务先进待认领队列」 */
     acknowledgedUnassigned?: boolean;
   },
+  options: { registry?: RuntimeRegistry } = {},
 ): Promise<ApprovePlanResult> {
   const [plan] = await db.select().from(plans).where(eq(plans.id, input.planId));
   if (!plan) throw new Error(`计划不存在: ${input.planId}`);
@@ -728,6 +972,11 @@ export async function approvePlan(
   }
 
   const tasks = await db.select().from(workItems).where(eq(workItems.planId, plan.id));
+
+  const preflightIssues = await evaluatePlanPreflight(db, plan, tasks, options);
+  if (preflightIssues.length > 0) {
+    return { ok: false, code: 'PREFLIGHT_FAILED', issues: preflightIssues };
+  }
 
   /**
    * ★ 在写 approved 之前判，不是之后 —— 拦下来的时候计划必须还是待批状态，

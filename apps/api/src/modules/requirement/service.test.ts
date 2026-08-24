@@ -12,7 +12,7 @@ import type {
   StructureInput,
   StructuredRequirement,
 } from '../planning/provider';
-import { analyzeRequirement, setRequirementAuthorAgent } from './service';
+import { analyzeRequirement, approveRequirement, setRequirementAuthorAgent } from './service';
 
 const db = testDb();
 let fx: Fixture;
@@ -212,5 +212,31 @@ describe('setRequirementAuthorAgent 的判据', () => {
     });
 
     expect(result).toMatchObject({ ok: false, code: 'NOT_PROJECT_MEMBER' });
+  });
+});
+
+describe('规则占位需求不能冒充完整 PRD', () => {
+  it('占位模式不编造验收标准，且未经人工补全不能批准', async () => {
+    const id = await createRequirement('做一个最小待办事项应用');
+    const result = await analyzeRequirement(db, new StubPlanningProvider({ placeholder: true }), {
+      requirementId: id,
+      correlationId: randomUUID(),
+    });
+
+    expect(result.completeness.goal).toBe(0);
+    expect(result.completeness.acceptance).toBe(0);
+    const [row] = await db.select().from(requirements).where(eq(requirements.id, id));
+    expect(row!.acceptanceCriteria).toEqual([]);
+    expect(row!.scope).toEqual({ inScope: [], outOfScope: [] });
+
+    const approved = await approveRequirement(db, {
+      requirementId: id,
+      approverId: fx.userId,
+      correlationId: randomUUID(),
+    });
+    expect(approved).toMatchObject({
+      ok: false,
+      code: 'FALLBACK_REQUIRES_MANUAL_COMPLETION',
+    });
   });
 });

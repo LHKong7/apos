@@ -20,7 +20,10 @@ import type {
 export class StubPlanningProvider implements PlanningProvider {
   readonly name = 'stub';
 
+  constructor(private readonly options: { placeholder?: boolean } = {}) {}
+
   async structureRequirement(input: StructureInput): Promise<StructuredRequirement> {
+    if (this.options.placeholder) return placeholderRequirement(input);
     const raw = input.rawInput.trim();
     const firstSentence = raw.split(/[。.！!？?\n]/)[0]?.trim() ?? raw.slice(0, 40);
 
@@ -130,6 +133,7 @@ export class StubPlanningProvider implements PlanningProvider {
     projectType: string,
     feedback?: string,
   ): Promise<GeneratedPlan> {
+    if (this.options.placeholder) return placeholderPlan(req);
     const start = 0;
     const involvesDb = req.risks.some((r) => r.includes('数据库'));
 
@@ -276,6 +280,80 @@ export class StubPlanningProvider implements PlanningProvider {
       model: `stub:${projectType}`,
     };
   }
+}
+
+/**
+ * A fallback is an editable scaffold, not a guessed PRD. It intentionally
+ * carries no invented user story, quality target, pagination choice or release
+ * step. The approval gate requires a person to replace these blanks.
+ */
+function placeholderRequirement(input: StructureInput): StructuredRequirement {
+  const raw = input.rawInput.trim();
+  const firstLine = raw.split(/\r?\n/)[0]?.trim() || '未命名需求';
+  return {
+    title: firstLine.slice(0, 60),
+    businessContext: '',
+    userProblem: raw,
+    businessGoal: '',
+    userStories: [],
+    scope: { inScope: [], outOfScope: [] },
+    nonFunctional: [],
+    successMetrics: [],
+    constraints: [],
+    risks: [],
+    acceptanceCriteria: [],
+    clarifications: [
+      {
+        question: '请补充目标用户、明确范围，以及至少一条可验证的成功条件。',
+        level: 'must_confirm',
+        impact: '缺少这些信息时无法生成可执行、可验收的计划。',
+        agentSuggestion: null,
+        suggestionBasis: null,
+        options: [],
+      },
+    ],
+    assumptions: [],
+    provenance: {
+      title: { source: 'raw_input', span: [0, Math.min(firstLine.length, raw.length)] },
+      userProblem: { source: 'raw_input', span: [0, raw.length] },
+    },
+    cost: 0,
+    model: 'stub:fallback',
+  };
+}
+
+function placeholderPlan(req: StructuredRequirement): GeneratedPlan {
+  return {
+    tasks: [
+      {
+        ref: 'manual-completion',
+        title: '人工补全需求与执行计划',
+        description: `围绕「${req.title}」补齐范围、实现边界、验证方式与交付目标后重新生成计划。`,
+        type: 'task',
+        phase: 'Clarification',
+        estimatedHours: 0,
+        estimatedTokens: null,
+        riskLevel: 'low',
+        requiredSkills: [],
+        requiredCapabilities: [],
+        requiredTools: [],
+        requiresHuman: true,
+        acceptanceCriteria: [],
+        dependsOn: [],
+      },
+    ],
+    milestones: [],
+    risks: [
+      {
+        description: '当前内容是占位骨架，不能据此执行或审批。',
+        level: 'medium',
+        mitigation: '人工补齐需求后使用可用的规划 Agent 重新生成。',
+      },
+    ],
+    cost: 0,
+    durationMs: 0,
+    model: 'stub:fallback',
+  };
 }
 
 /**

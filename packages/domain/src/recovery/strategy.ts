@@ -115,6 +115,18 @@ export function decideRecovery(input: RecoveryInput): RecoveryDecision {
         decisionType: 'budget_overrun',
       };
 
+    case 'output_missing':
+      return attempt === 1
+        ? {
+            action: 'retry_with_context',
+            reason: '上次进程正常退出但没有交付变更或产物，附带完整输出自动重试一次',
+          }
+        : {
+            action: 'request_decision',
+            reason: '附带上次输出重试后仍然空交付，需要人类检查任务与执行配置',
+            decisionType: 'invalid_output',
+          };
+
     case 'invalid_task':
       return {
         action: 'request_decision',

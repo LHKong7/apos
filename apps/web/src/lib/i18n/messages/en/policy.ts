@@ -184,6 +184,7 @@ export const policy = {
   'decision.type.cost_overrun': 'Cost overrun',
   'decision.type.scope_change': 'Scope change',
   'decision.type.decision_required': 'Handed to a person mid-run',
+  'decision.type.review_approval': 'Review approval',
   'decision.needsYou': '{title} — needs you',
   'decisions.emptyHint': 'An empty queue means the system is running itself — that is the norm, not a fault',
   'decisions.selectedCount': '{count} selected',

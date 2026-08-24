@@ -78,6 +78,7 @@ export const board: Record<keyof typeof en, string> = {
   'workItemStatus.released': '已发布',
   'workItemStatus.acceptance': '验收中',
   'workItemStatus.done': '已完成',
+  'workItemStatus.completed': '已完成',
   'workItemStatus.cancelled': '已取消',
   'createItem.title': '新建任务',
   'createItem.titleField': '标题',

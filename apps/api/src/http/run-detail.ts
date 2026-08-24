@@ -103,6 +103,9 @@ export async function getRunDetail(db: Database, runId: string) {
   const policyHits = await loadPolicyHits(db, run);
 
   const toolCalls = countToolCalls(runEventRows);
+  const usageReported =
+    runEventRows.some((event) => event.type === 'cost') ||
+    run.tokensInput + run.tokensOutput + run.tokensCacheRead + run.tokensCacheWrite > 0;
   const startedAt = run.startedAt ?? run.createdAt;
   const endedAt = run.endedAt;
 
@@ -155,6 +158,7 @@ export async function getRunDetail(db: Database, runId: string) {
 
     metrics: {
       tokens: {
+        reported: usageReported,
         input: run.tokensInput,
         output: run.tokensOutput,
         cacheRead: run.tokensCacheRead,

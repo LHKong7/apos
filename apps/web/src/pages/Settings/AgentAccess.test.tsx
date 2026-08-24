@@ -160,6 +160,14 @@ describe('★ 运行时降级必须可见', () => {
 
     expect(await screen.findByText(/沙箱级/)).toBeTruthy();
   });
+
+  it('重复的运行时限制只显示一次，不产生重复 React key', async () => {
+    const warning = '运行时 opencode 的权限粒度是沙箱级，无法按命令拦截';
+    agentAccess.mockResolvedValue(view({ warnings: [warning, warning] }));
+    renderPanel();
+
+    expect(await screen.findAllByText(warning)).toHaveLength(1);
+  });
 });
 
 describe('★ 档案升级不自动生效', () => {

@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
+    "test:opencode-contract": "APOS_OPENCODE_CONTRACT_TEST=1 vitest run packages/agent-runtimes/src/cli/opencode.contract.test.ts",
     "test:watch": "vitest",
     "lint": "eslint .",
     "db:generate": "pnpm --filter @apos/db generate",

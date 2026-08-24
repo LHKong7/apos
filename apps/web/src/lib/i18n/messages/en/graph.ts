@@ -13,6 +13,7 @@ export const graph = {
   'event.project.resumed': 'Project resumed',
   'event.project.budget_threshold_reached': 'Budget threshold reached',
   'event.project.completed': 'Project completed',
+  'event.project.member_added': 'Project member added',
   'event.requirement.created': 'Requirement captured',
   'event.requirement.analyzed': 'Requirement analyzed',
   'event.requirement.clarification_answered': 'Clarification answered',

@@ -8,6 +8,52 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+die() { echo "✗ $*" >&2; exit 1; }
+
+# Node 22's dotenv parser treats the file as data; unlike `source .env`, values
+# cannot execute shell commands. Existing exported variables keep precedence.
+load_dotenv() {
+  [ -f "$ROOT/.env" ] || die "缺少 .env。先运行 cp .env.example .env 并填写本机配置"
+  while IFS= read -r -d '' entry; do
+    key="${entry%%=*}"
+    if [ "${!key+x}" != "x" ]; then
+      export "$entry"
+    fi
+  done < <(node "$ROOT/scripts/export-dotenv.mjs" "$ROOT/.env")
+}
+
+normalize_path() {
+  ROOT="$ROOT" VALUE="$1" node -e \
+    "const p=require('node:path'); process.stdout.write(p.resolve(process.env.ROOT, process.env.VALUE))"
+}
+
+validate_dev_env() {
+  [ -n "${APOS_SECRET_KEY:-}" ] || die ".env 必须设置 APOS_SECRET_KEY，避免 Agent 凭证明文入库"
+  [ -n "${AGENT_WORKSPACE_ROOT:-}" ] || die ".env 必须设置 AGENT_WORKSPACE_ROOT"
+  [ -n "${APOS_LOCAL_MOUNT_ROOTS:-}" ] || die ".env 必须设置 APOS_LOCAL_MOUNT_ROOTS"
+
+  AGENT_WORKSPACE_ROOT="$(normalize_path "$AGENT_WORKSPACE_ROOT")"
+  [ "$AGENT_WORKSPACE_ROOT" != "/" ] || die "AGENT_WORKSPACE_ROOT 不能是根目录 /"
+  export AGENT_WORKSPACE_ROOT
+
+  APOS_LOCAL_MOUNT_ROOTS="$({
+    ROOT="$ROOT" VALUE="$APOS_LOCAL_MOUNT_ROOTS" node -e '
+      const p = require("node:path");
+      const roots = process.env.VALUE.split(p.delimiter).filter(Boolean).map((x) => p.resolve(process.env.ROOT, x));
+      if (roots.length === 0 || roots.includes(p.parse(process.env.ROOT).root)) process.exit(2);
+      process.stdout.write([...new Set(roots)].join(p.delimiter));
+    '
+  })" || die "APOS_LOCAL_MOUNT_ROOTS 必须包含至少一个非根目录路径"
+  export APOS_LOCAL_MOUNT_ROOTS
+
+  echo "配置  凭证加密：已启用"
+  echo "配置  Agent 工作区：$AGENT_WORKSPACE_ROOT"
+  echo "配置  本机挂载白名单：$APOS_LOCAL_MOUNT_ROOTS"
+}
+
+load_dotenv
+validate_dev_env
+
 PGPORT="${APOS_PGPORT:-5433}"
 API_PORT="${APOS_API_PORT:-3000}"
 WEB_PORT="${APOS_WEB_PORT:-5173}"
@@ -16,7 +62,6 @@ TEST_URL="postgres://apos:apos@localhost:$PGPORT/apos_test"
 LOG_DIR="${APOS_LOG_DIR:-/tmp/apos-dev}"
 mkdir -p "$LOG_DIR"
 
-die() { echo "✗ $*" >&2; exit 1; }
 port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
 # ── Postgres ──────────────────────────────────────────────────────────
@@ -131,12 +176,8 @@ echo "就绪  API :$API_PORT   Web :$WEB_PORT   Postgres :$PGPORT   日志 $LOG_
 #   匿名 GET /projects 一律 401 —— 而这一步只是锦上添花的收尾输出，
 #   拿不到链接不该让整个脚本失败：此刻环境其实已经就绪了。
 #   所以下面每一步都容错，任何一步不成就只少打印一行。
-read_env() {
-  [ -f "$ROOT/.env" ] || return 1
-  sed -n "s/^$1=//p" "$ROOT/.env" | tail -1 | tr -d '\r'
-}
-ADMIN_EMAIL="${APOS_SUPERADMIN_EMAIL:-$(read_env APOS_SUPERADMIN_EMAIL)}"
-ADMIN_PASSWORD="${APOS_SUPERADMIN_PASSWORD:-$(read_env APOS_SUPERADMIN_PASSWORD)}"
+ADMIN_EMAIL="${APOS_SUPERADMIN_EMAIL:-}"
+ADMIN_PASSWORD="${APOS_SUPERADMIN_PASSWORD:-}"
 
 if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
   echo "提示  .env 里没有 APOS_SUPERADMIN_EMAIL / APOS_SUPERADMIN_PASSWORD —— 现在没有账号能登录。"

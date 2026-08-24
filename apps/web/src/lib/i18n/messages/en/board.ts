@@ -78,6 +78,7 @@ export const board = {
   'workItemStatus.released': 'Released',
   'workItemStatus.acceptance': 'Acceptance',
   'workItemStatus.done': 'Done',
+  'workItemStatus.completed': 'Completed',
   'workItemStatus.cancelled': 'Canceled',
   'createItem.title': 'New work item',
   'createItem.titleField': 'Title',

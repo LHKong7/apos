@@ -36,7 +36,9 @@ const detail = (over: Partial<BlockedDetail> = {}): BlockedDetail => ({
   ...over,
 });
 
-const view = (node: React.ReactNode) => render(<MemoryRouter>{node}</MemoryRouter>);
+const view = (node: React.ReactNode) => render(
+  <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{node}</MemoryRouter>,
+);
 
 describe('阻塞原因分项展示', () => {
   it('每个候选单独一行，带自己的原因', () => {

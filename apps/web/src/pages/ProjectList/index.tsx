@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api/client';
+import { apiErrorMessage } from '../../lib/api/errors';
 import { qk } from '../../lib/query/keys';
 import { QueryBoundary } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
@@ -118,21 +119,30 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [goal, setGoal] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState('agent_led_approval');
   const [budget, setBudget] = useState('');
+  const [budgetError, setBudgetError] = useState<string | null>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (tokenBudget: number | undefined) =>
       api.createProject({
         name: name.trim(),
         ...(goal.trim() ? { goal: goal.trim() } : {}),
         autonomyLevel,
-        ...(budget.trim() ? { tokenBudget: Number(budget.trim()) } : {}),
+        ...(tokenBudget === undefined ? {} : { tokenBudget }),
       }),
     onSuccess: async (res) => {
       await qc.invalidateQueries({ queryKey: qk.projects() });
       navigate(`/projects/${res.project.id}`);
       onClose();
+    },
+    onError: (error) => {
+      if (!(error instanceof ApiError) || !Array.isArray(error.details)) return;
+      const budgetIssue = error.details.some((issue: unknown) => {
+        const path = (issue as { path?: unknown })?.path;
+        return Array.isArray(path) && path.includes('tokenBudget');
+      });
+      if (budgetIssue) setBudgetError(t('project.budgetInvalid'));
     },
   });
 
@@ -199,14 +209,27 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           </span>
           <Input
             value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            placeholder="500.00"
-            inputMode="decimal"
+            onChange={(e) => {
+              setBudget(e.target.value);
+              setBudgetError(null);
+            }}
+            placeholder="500000"
+            inputMode="numeric"
+            type="number"
+            min={1}
+            step={1}
+            aria-invalid={Boolean(budgetError)}
+            aria-describedby="new-project-budget-error"
             className="mt-1" />
+          {budgetError && (
+            <span id="new-project-budget-error" className="mt-1 block text-[11px] text-rose-600">
+              {budgetError}
+            </span>
+          )}
         </Label>
 
-        {create.error instanceof ApiError && (
-          <p className="text-xs text-rose-600">{create.error.message}</p>
+        {create.error instanceof ApiError && !budgetError && (
+          <p className="text-xs text-rose-600">{apiErrorMessage(create.error, t('project.createFailed'))}</p>
         )}
 
         <div className="flex justify-end gap-2">
@@ -216,7 +239,15 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           </Button>
           <Button variant="neutral" size="sm"
             disabled={!name.trim() || create.isPending}
-            onClick={() => create.mutate()}>
+            onClick={() => {
+              const value = budget.trim();
+              if (value && (!/^\d+$/.test(value) || Number(value) <= 0 || !Number.isSafeInteger(Number(value)))) {
+                setBudgetError(t('project.budgetInvalid'));
+                return;
+              }
+              setBudgetError(null);
+              create.mutate(value ? Number(value) : undefined);
+            }}>
             {create.isPending ? t('project.creating') : t('project.create')}
           </Button>
         </div>

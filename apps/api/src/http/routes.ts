@@ -69,15 +69,18 @@ import {
 } from '../modules/requirement/service';
 import { approvePlan, generatePlan } from '../modules/planning/service';
 import { scheduleRound } from '../modules/flow/scheduler';
-import { transition } from '../modules/flow/transition';
+import { transition, transitionInTransaction } from '../modules/flow/transition';
 import {
   recordHumanAcceptance,
+  recordHumanAcceptanceInTransaction,
   rollUpRequirementAcceptance,
+  rollUpRequirementAcceptanceInTransaction,
 } from '../modules/flow/review';
 import { dispatchRun, resumeQueuedRun } from '../modules/agent/dispatch';
 import type { WorkspaceService } from '../modules/workspace';
 import { ingestRunEvent } from '../modules/agent/ingest';
 import { emitAndPublish } from '../modules/event/bus';
+import { emit, type EmittedEvent } from '../modules/event/emitter';
 import {
   ChangePasswordInput,
   CreateAccountInput,
@@ -2421,6 +2424,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
             '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
           );
         }
+        if (result.code === 'FALLBACK_REQUIRES_MANUAL_COMPLETION') {
+          throw fail(
+            'VALIDATION_FAILED',
+            'requirement.fallback_needs_manual_completion',
+            '规则占位内容不能直接确认。请人工填写标题、业务目标、范围和至少一条验收标准，或使用可用的规划 Agent 重新分析。',
+          );
+        }
         // Required clarifications are still unanswered — return exactly which ones so the
         // frontend can jump straight to them
         throw fail(
@@ -2502,6 +2512,13 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
             '这条需求还没有任何结构化内容，不能确认。先做一次 AI 分析，或者自己填写标题、业务目标与验收标准。',
           );
         }
+        if (approved.code === 'FALLBACK_REQUIRES_MANUAL_COMPLETION') {
+          throw fail(
+            'VALIDATION_FAILED',
+            'requirement.fallback_needs_manual_completion',
+            '规则占位内容不能直接确认。请人工填写标题、业务目标、范围和至少一条验收标准，或使用可用的规划 Agent 重新分析。',
+          );
+        }
         throw fail(
           'UNANSWERED_MUST_CONFIRM',
           'requirement.unanswered_must_confirm',
@@ -2561,7 +2578,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
 
   app.get('/api/v1/plans/:id', async (req) => {
     const { id } = req.params as { id: string };
-    return getPlanDetail(db, id);
+    return getPlanDetail(db, id, { registry: deps.registry });
   });
 
   /**
@@ -2638,12 +2655,16 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         })
         .parse(req.body ?? {});
 
-      const result = await approvePlan(db, {
-        planId: id,
-        approverId: userId,
-        correlationId: corr(req),
-        ...body,
-      });
+      const result = await approvePlan(
+        db,
+        {
+          planId: id,
+          approverId: userId,
+          correlationId: corr(req),
+          ...body,
+        },
+        { registry: deps.registry },
+      );
 
       if (!result.ok) {
         /**
@@ -2656,6 +2677,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
          *   一个是「确认超支」，一个是「确认这几项先没人认领」，
          *   用户要做的判断完全不同。
          */
+        if (result.code === 'PREFLIGHT_FAILED') {
+          throw fail(
+            'GUARD_FAILED',
+            'plan.preflight_failed',
+            '执行前检查未通过，请先补齐规划 Agent、执行 Agent、工作区、验证命令和交付目标。',
+            { details: { code: result.code, issues: result.issues } },
+          );
+        }
         if (result.code === 'UNASSIGNED_HUMAN_TASKS') {
           throw fail(/** ★ Not a validation failure — the request is fine, it just needs one confirmation from the user (see errors.ts) */
             'CONFIRMATION_REQUIRED', 'plan.unassigned_human_tasks', `有 ${result.tasks.length} 项人工任务还没有指定负责人：${result.tasks
@@ -2665,7 +2694,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         throw fail(
           'BUDGET_EXCEEDED',
           'plan.over_budget',
-          `计划预估成本 $${result.estimated} 超出项目预算 $${result.budget}`,
+          `计划预估 ${result.estimated} token，超出项目预算 ${result.budget} token`,
           { params: { estimated: result.estimated, budget: result.budget }, details: result },
         );
       }
@@ -5381,39 +5410,64 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     body: z.infer<typeof ApproveBody>,
     correlationId: string,
   ) {
-    const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-    if (!decision) throw notFound('decision');
-    if (decision.status !== 'pending') {
-      throw fail(
-        'VERSION_CONFLICT',
-        'decision.already_handled',
-        '该决策已被处理',
-        { details: { status: decision.status } },
-      );
-    }
-    // 决策责任不可代行（docs/tech/09-security.md §2.4）
-    if (decision.assigneeId && decision.assigneeId !== userId) {
-      throw fail(
-        'FORBIDDEN',
-        'decision.not_delegable',
-        '决策责任不可代行。如需变更责任人，请使用改派功能。',
-        { details: { assigneeId: decision.assigneeId } },
-      );
-    }
+    const outbox: EmittedEvent[] = [];
+    const finalized = await db.transaction(async (tx) => {
+      const [decision] = await tx
+        .select()
+        .from(decisions)
+        .where(eq(decisions.id, id))
+        .for('update');
+      if (!decision) throw notFound('decision');
+      if (decision.status !== 'pending') {
+        throw fail(
+          'VERSION_CONFLICT',
+          'decision.already_handled',
+          '该决策已被处理',
+          { details: { status: decision.status } },
+        );
+      }
+      if (decision.assigneeId && decision.assigneeId !== userId) {
+        throw fail(
+          'FORBIDDEN',
+          'decision.not_delegable',
+          '决策责任不可代行。如需变更责任人，请使用改派功能。',
+          { details: { assigneeId: decision.assigneeId } },
+        );
+      }
 
-    await db
-      .update(decisions)
-      .set({
-        status: 'approved',
-        resolvedBy: userId,
-        resolvedAt: new Date(),
-        resolutionNote: body.note,
-        appliedConstraints: body.constraints as never,
-      })
-      .where(eq(decisions.id, id));
+      await tx
+        .update(decisions)
+        .set({
+          status: 'approved',
+          resolvedBy: userId,
+          resolvedAt: new Date(),
+          resolutionNote: body.note,
+          appliedConstraints: body.constraints as never,
+        })
+        .where(eq(decisions.id, id));
+      outbox.push(
+        await emit(tx, {
+          orgId: decision.orgId,
+          projectId: decision.projectId,
+          actor,
+          type: 'decision.approved',
+          subjectType: 'decision',
+          subjectId: id,
+          payload: {
+            workItemId: decision.workItemId,
+            assigneeId: decision.assigneeId,
+          },
+          correlationId,
+        }),
+      );
 
-    if (decision.workItemId) {
-      // 人类附加的约束写入任务，Agent 执行时必须遵守
+      if (!decision.workItemId) {
+        return {
+          response: { ok: true as const, decisionId: id },
+          resumeWorkItemId: null,
+        };
+      }
+
       if (body.constraints.length > 0) {
         /**
          * ★ 追加而不是「读出来再整个写回」。两条决策同时批准时，
@@ -5421,7 +5475,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
          *   先加的那几条约束就凭空消失了 —— 而约束是人类附加给 Agent 的
          *   执行限制，少一条没有任何迹象。见 work-item/json-merge.ts。
          */
-        await db
+        await tx
           .update(workItems)
           .set({
             constraints: appendConstraints(
@@ -5441,14 +5495,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
        */
       if (decision.type === 'review_approval') {
         const reason = body.note ?? decision.whyHuman ?? 'Human approved the review';
-        await recordHumanAcceptance(db, {
+        outbox.push(...await recordHumanAcceptanceInTransaction(tx, {
           workItemId: decision.workItemId,
           evidenceRef: `decision:${id}`,
           actor,
           reason,
           correlationId,
-        });
-        const review = await transition(db, {
+        }));
+        const review = await transitionInTransaction(tx, {
           workItemId: decision.workItemId,
           trigger: 'review_passed',
           actor,
@@ -5457,10 +5511,11 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
           correlationId,
         });
         if (!review.ok) throw mapTransitionError(review);
+        outbox.push(...review.events);
 
         let result = review;
         for (const trigger of ['release_started', 'release_completed', 'accepted'] as const) {
-          const moved = await transition(db, {
+          const moved = await transitionInTransaction(tx, {
             workItemId: decision.workItemId,
             trigger,
             actor,
@@ -5468,17 +5523,21 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
             correlationId,
           });
           if (!moved.ok) throw mapTransitionError(moved);
+          outbox.push(...moved.events);
           result = moved;
         }
-        await rollUpRequirementAcceptance(db, {
+        outbox.push(...await rollUpRequirementAcceptanceInTransaction(tx, {
           workItemId: decision.workItemId,
           actor,
           correlationId,
-        });
-        return { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) };
+        }));
+        return {
+          response: { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) },
+          resumeWorkItemId: null,
+        };
       }
 
-      const result = await transition(db, {
+      const result = await transitionInTransaction(tx, {
         workItemId: decision.workItemId,
         trigger: 'decision_approved',
         actor,
@@ -5486,26 +5545,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         correlationId,
       });
       if (!result.ok) throw mapTransitionError(result);
-      if (result.to === 'executing') {
-        const resumed = await resumeQueuedRun(
-          db,
-          deps.registry,
-          { workItemId: decision.workItemId, correlationId },
-          { workspaces: deps.workspaces },
-        );
-        if (resumed && !resumed.ok) {
-          throw fail(
-            'AGENT_UNAVAILABLE',
-            'work_item.dispatch_failed',
-            '审批已生效，但被挂起的 Agent Run 恢复失败',
-            { details: resumed.detail },
-          );
-        }
-      }
-      return { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) };
-    }
+      outbox.push(...result.events);
+      return {
+        response: { ok: true as const, decisionId: id, workItem: toTransitionResponse(result) },
+        resumeWorkItemId: result.to === 'executing' ? decision.workItemId : null,
+      };
+    });
 
-    return { ok: true as const, decisionId: id };
+    if (outbox.length > 0) deps.bus.publish(outbox);
+
+    if (finalized.resumeWorkItemId) {
+      const resumed = await resumeQueuedRun(
+        db,
+        deps.registry,
+        { workItemId: finalized.resumeWorkItemId, correlationId },
+        { workspaces: deps.workspaces },
+      );
+      if (resumed && !resumed.ok) {
+        return { ...finalized.response, resume: { ok: false as const, detail: resumed.detail } };
+      }
+    }
+    return finalized.response;
   }
 
   app.post(
@@ -5543,29 +5603,71 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         })
         .parse(req.body);
 
-      const [decision] = await db.select().from(decisions).where(eq(decisions.id, id));
-      if (!decision) throw notFound('decision');
+      const correlationId = corr(req);
+      const outbox: EmittedEvent[] = [];
+      await db.transaction(async (tx) => {
+        const [decision] = await tx
+          .select()
+          .from(decisions)
+          .where(eq(decisions.id, id))
+          .for('update');
+        if (!decision) throw notFound('decision');
+        if (decision.status !== 'pending') {
+          throw fail(
+            'VERSION_CONFLICT',
+            'decision.already_handled',
+            '该决策已被处理',
+            { details: { status: decision.status } },
+          );
+        }
+        if (decision.assigneeId && decision.assigneeId !== userId) {
+          throw fail(
+            'FORBIDDEN',
+            'decision.not_delegable',
+            '决策责任不可代行。如需变更责任人，请使用改派功能。',
+            { details: { assigneeId: decision.assigneeId } },
+          );
+        }
 
-      await db
-        .update(decisions)
-        .set({
-          status: 'rejected',
-          resolvedBy: userId,
-          resolvedAt: new Date(),
-          resolutionNote: body.reason,
-        })
-        .where(eq(decisions.id, id));
+        await tx
+          .update(decisions)
+          .set({
+            status: 'rejected',
+            resolvedBy: userId,
+            resolvedAt: new Date(),
+            resolutionNote: body.reason,
+          })
+          .where(eq(decisions.id, id));
 
-      if (decision.workItemId) {
-        const result = await transition(db, {
-          workItemId: decision.workItemId,
-          trigger: decision.type === 'review_approval' ? 'review_rejected' : 'decision_rejected',
-          actor,
-          reason: body.reason,
-          correlationId: corr(req),
-        });
-        if (!result.ok) throw mapTransitionError(result);
-      }
+        if (decision.workItemId) {
+          const result = await transitionInTransaction(tx, {
+            workItemId: decision.workItemId,
+            trigger: decision.type === 'review_approval' ? 'review_rejected' : 'decision_rejected',
+            actor,
+            reason: body.reason,
+            correlationId,
+          });
+          if (!result.ok) throw mapTransitionError(result);
+          outbox.push(...result.events);
+        }
+        outbox.push(
+          await emit(tx, {
+            orgId: decision.orgId,
+            projectId: decision.projectId,
+            actor,
+            type: 'decision.rejected',
+            subjectType: 'decision',
+            subjectId: id,
+            payload: {
+              workItemId: decision.workItemId,
+              assigneeId: decision.assigneeId,
+              reason: body.reason,
+            },
+            correlationId,
+          }),
+        );
+      });
+      if (outbox.length > 0) deps.bus.publish(outbox);
       return { ok: true, decisionId: id };
     },
   );

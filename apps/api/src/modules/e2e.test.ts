@@ -5,6 +5,7 @@ import {
   agentRuns,
   artifacts,
   events,
+  repositories,
   requirementClarifications,
   requirements,
   workItems,
@@ -47,13 +48,33 @@ async function createRequirement() {
   return req!;
 }
 
+async function seedExecutionReadyAgent() {
+  const agent = await seedAgent(db, fx, {
+    grant: {
+      profileKey: 'code_developer',
+      resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }],
+    },
+  });
+  await db.insert(repositories).values({
+    orgId: fx.orgId,
+    projectId: fx.projectId,
+    ref: 'order-service',
+    name: 'Order service',
+    remoteUrl: 'https://example.invalid/order-service.git',
+    defaultBranch: 'main',
+    checkCommand: 'pnpm test',
+    createdBy: fx.userId,
+  });
+  return agent;
+}
+
 /**
  * MVP 计划里阶段 1 的验收演示脚本，作为自动化测试。
  * docs/tech/10-mvp-plan.md §4
  */
 describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动流转', () => {
   it('端到端跑通，全程无需手动拖动任何卡片', async () => {
-    const agent = await seedAgent(db, fx);
+    const agent = await seedExecutionReadyAgent();
     const c = corr();
 
     // ── 1. 录入口语化需求 ────────────────────────────────────────────
@@ -235,6 +256,7 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
   });
 
   it('★ 计划预估成本超预算时阻断批准', async () => {
+    await seedExecutionReadyAgent();
     const c = corr();
     const req = await createRequirement();
     await analyzeRequirement(db, provider, { requirementId: req.id, correlationId: c });
@@ -289,6 +311,7 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
   });
 
   it('计划批准的事件里带自动化清单快照，供追溯「他到底批准了什么」', async () => {
+    await seedExecutionReadyAgent();
     const c = corr();
     const req = await createRequirement();
     await analyzeRequirement(db, provider, { requirementId: req.id, correlationId: c });
@@ -326,7 +349,7 @@ describe('★★ 阶段 1 验收：需求 → 计划 → 执行 → 看板自动
   });
 
   it('依赖链按序执行：后置任务在前置完成后才被调度', async () => {
-    const agent = await seedAgent(db, fx);
+    const agent = await seedExecutionReadyAgent();
     const c = corr();
     const req = await createRequirement();
 

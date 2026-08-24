@@ -201,6 +201,8 @@ export function PlanPage() {
           */}
           <FallbackBanner detail={d} projectId={projectId!} />
 
+          <PreflightChecklist detail={d} />
+
           {/*
             ★ 「没有 Agent 能接」排在自动化承诺之前，理由同上：
               它反驳的正是那一段里的「N 个任务会自动跑」。
@@ -295,6 +297,7 @@ export function PlanPage() {
                 permission="plan.approve"
                 projectId={d.plan.projectId}
                 onClick={() => setApproving(true)}
+                disabled={d.metrics.preflight.length > 0}
                 className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
               >
                 {t('plan.approveAndStart')}
@@ -373,6 +376,49 @@ export function PlanPage() {
         />
       )}
     </div>
+  );
+}
+
+function PreflightChecklist({ detail: d }: { detail: PlanDetail }) {
+  const t = useT();
+  const allCodes = [
+    'empty_plan',
+    'fallback_plan',
+    'planner_unavailable',
+    'agent_unavailable',
+    'agent_scope_missing',
+    'workspace_source_missing',
+    'verification_missing',
+    'delivery_goal_missing',
+  ] as const;
+  const issueByCode = new Map(d.metrics.preflight.map((issue) => [issue.code, issue]));
+
+  return (
+    <section className="rounded border border-slate-200 bg-white px-3 py-2">
+      <h2 className="text-xs font-semibold text-slate-800">{t('plan.preflight.title')}</h2>
+      <ul className="mt-1.5 space-y-1">
+        {allCodes.map((code) => {
+          const issue = issueByCode.get(code);
+          return (
+            <li key={code} className="flex items-start gap-2 text-xs">
+              <span className={issue ? 'text-red-600' : 'text-emerald-600'}>{issue ? '✗' : '✓'}</span>
+              <span className={issue ? 'text-red-800' : 'text-slate-600'}>
+                {t(`plan.preflight.${code}` as MessageKey)}
+                {issue?.taskTitles.length ? `${colon()}${joinList(issue.taskTitles)}` : ''}
+              </span>
+              {issue && (
+                <Link className="ml-auto shrink-0 text-[11px] text-red-800 underline" to={issue.fixPath}>
+                  {t('plan.preflight.fix')}
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {d.metrics.preflight.length > 0 && (
+        <p className="mt-1.5 text-[11px] text-red-700">{t('plan.preflight.blocked')}</p>
+      )}
+    </section>
   );
 }
 

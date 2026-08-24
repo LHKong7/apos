@@ -13,3 +13,6 @@ coverage/
 logs/
 .vite/
 .turbo/
+.apos-workspaces/
+.apos-archive/
+_skills

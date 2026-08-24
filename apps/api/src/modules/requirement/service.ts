@@ -54,18 +54,28 @@ export function scoreCompleteness(req: {
   risks: unknown[];
   businessContext: string | null;
   unansweredMustConfirm: number;
+  fallback?: boolean;
+  humanFields?: string[];
 }): Completeness {
   const inScope = (req.scope['inScope'] as unknown[] | undefined) ?? [];
   const outOfScope = (req.scope['outOfScope'] as unknown[] | undefined) ?? [];
 
+  const human = new Set(req.humanFields ?? []);
+  const trusted = (field: string) => !req.fallback || human.has(field);
   const scores = {
-    goal: req.businessGoal ? 100 : 0,
-    scope: Math.min(100, inScope.length * 40 + outOfScope.length * 20),
-    acceptance: Math.min(100, req.acceptanceCriteria.length * 34),
+    goal: trusted('businessGoal') && req.businessGoal?.trim() ? 100 : 0,
+    scope: trusted('scope') ? Math.min(100, inScope.length * 40 + outOfScope.length * 20) : 0,
+    acceptance: trusted('acceptanceCriteria')
+      ? Math.min(100, req.acceptanceCriteria.length * 34)
+      : 0,
     // 未回答的必答问题直接压低依赖明确度 —— 它们通常就是依赖不清导致的
     dependency: Math.max(0, 100 - req.unansweredMustConfirm * 30),
-    risk: req.risks.length > 0 ? 100 : 40,
-    technical: req.businessContext && req.businessContext.length > 50 ? 80 : 40,
+    risk: trusted('risks') ? (req.risks.length > 0 ? 100 : 40) : 0,
+    technical: trusted('businessContext')
+      ? req.businessContext && req.businessContext.length > 50
+        ? 80
+        : 40
+      : 0,
   };
 
   const total = Math.round(DIMENSIONS.reduce((sum, d) => sum + scores[d], 0) / DIMENSIONS.length);
@@ -240,6 +250,8 @@ export async function analyzeRequirement(
     risks: merged['risks'] as unknown[],
     businessContext: merged['businessContext'] as string | null,
     unansweredMustConfirm: mustConfirm,
+    fallback: isFallbackAnalysisModel(structured.model),
+    humanFields: keptHumanFields,
   });
 
   await db
@@ -357,6 +369,10 @@ export async function refreshCompleteness(db: Database, requirementId: string) {
     risks: req.risks,
     businessContext: req.businessContext,
     unansweredMustConfirm: unanswered,
+    fallback: isFallbackAnalysisModel(req.analysisModel),
+    humanFields: Object.entries(req.fieldProvenance)
+      .filter(([, value]) => (value as { source?: string } | null)?.source === 'human')
+      .map(([field]) => field),
   });
 
   /**
@@ -385,7 +401,29 @@ export async function refreshCompleteness(db: Database, requirementId: string) {
 export type ApproveResult =
   | { ok: true; requirementId: string }
   | { ok: false; code: 'UNANSWERED_MUST_CONFIRM'; questions: { id: string; question: string }[] }
-  | { ok: false; code: 'EMPTY_REQUIREMENT'; questions?: undefined };
+  | { ok: false; code: 'EMPTY_REQUIREMENT'; questions?: undefined }
+  | { ok: false; code: 'FALLBACK_REQUIRES_MANUAL_COMPLETION'; questions?: undefined };
+
+export function isFallbackAnalysisModel(model: string | null | undefined): boolean {
+  return model === 'stub:fallback' || Boolean(model?.includes('规则占位，未走 Agent'));
+}
+
+function fallbackWasManuallyCompleted(req: typeof requirements.$inferSelect): boolean {
+  if (!isFallbackAnalysisModel(req.analysisModel)) return true;
+  const provenance = req.fieldProvenance as Record<string, { source?: string } | undefined>;
+  const human = (field: string) => provenance[field]?.source === 'human';
+  const inScope = Array.isArray(req.scope['inScope']) ? req.scope['inScope'] : [];
+  return Boolean(
+    human('title') &&
+      req.title?.trim() &&
+      human('businessGoal') &&
+      req.businessGoal?.trim() &&
+      human('scope') &&
+      inScope.length > 0 &&
+      human('acceptanceCriteria') &&
+      req.acceptanceCriteria.length > 0,
+  );
+}
 
 /**
  * Human Gate：需求确认（产品文档 8.2.5）。
@@ -616,6 +654,10 @@ export async function approveRequirement(
 
   if (!hasStructuredContent(req)) {
     return { ok: false, code: 'EMPTY_REQUIREMENT' };
+  }
+
+  if (!fallbackWasManuallyCompleted(req)) {
+    return { ok: false, code: 'FALLBACK_REQUIRES_MANUAL_COMPLETION' };
   }
 
   const clarifications = await db

@@ -275,7 +275,7 @@ async function main() {
      *   成员，见 pickAgent），claude-code / codex / 将来的 pi / kimi
      *   都走 AgentRuntimeAdapter 这一个接口，这里不用区分。
      */
-    provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider(), {
+    provider: new AgentPlanningProvider(db, registry, new StubPlanningProvider({ placeholder: true }), {
       root: process.env['AGENT_WORKSPACE_ROOT'],
       timeoutMs: Number(process.env['PLANNING_TIMEOUT_MS'] ?? 600_000),
       // 与执行 Run 共用同一个工作区服务，诊断输出汇到一处

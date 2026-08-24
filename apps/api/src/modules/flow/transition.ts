@@ -8,6 +8,7 @@ import {
   workItemDependencies,
   workItems,
   type Database,
+  type DbTransaction,
 } from '@apos/db';
 import {
   IRREVERSIBLE_OPERATIONS,
@@ -111,6 +112,7 @@ export type TransitionResult =
 export async function transition(
   db: Database,
   input: TransitionInput,
+  options: { publish?: boolean } = {},
 ): Promise<TransitionResult> {
   const outbox: EmittedEvent[] = [];
 
@@ -326,9 +328,24 @@ export async function transition(
   });
 
   // ★ 事务提交后才发布 —— 订阅者不会看到未提交的状态
-  if (outbox.length > 0) defaultBus.publish(outbox);
+  if (options.publish !== false && outbox.length > 0) defaultBus.publish(outbox);
 
   return result as TransitionResult;
+}
+
+/**
+ * Run the exact same state-machine implementation inside a caller-owned
+ * transaction. The returned outbox must be published only after that outer
+ * transaction commits.
+ */
+export function transitionInTransaction(
+  tx: DbTransaction,
+  input: TransitionInput,
+): Promise<TransitionResult> {
+  const transactionalDb = {
+    transaction: <T>(fn: (inner: DbTransaction) => Promise<T>) => fn(tx),
+  } as unknown as Database;
+  return transition(transactionalDb, input, { publish: false });
 }
 
 async function approvedDecisionMatches(

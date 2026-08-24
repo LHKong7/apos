@@ -151,13 +151,19 @@ function RunDetailView({ detail }: { detail: RunDetail }) {
           )}
           <span className="font-mono text-[11px]">{detail.agent?.model ?? '—'}</span>
           <span className="tabular-nums">{duration(detail.metrics.durationMs / 60_000)}</span>
-          <span className="tabular-nums">{tokens(detail.metrics.tokens.total)}</span>
-          <span className="tabular-nums text-slate-500">
-            {(detail.metrics.tokens.total / 1000).toFixed(1)}k tok
-            {detail.metrics.tokens.cacheHitRate > 0 && (
-              <>{t('runDetail.cacheHit', { percent: (detail.metrics.tokens.cacheHitRate * 100).toFixed(0) })}</>
-            )}
-          </span>
+          {detail.metrics.tokens.reported ? (
+            <>
+              <span className="tabular-nums">{tokens(detail.metrics.tokens.total)}</span>
+              <span className="tabular-nums text-slate-500">
+                {(detail.metrics.tokens.total / 1000).toFixed(1)}k tok
+                {detail.metrics.tokens.cacheHitRate > 0 && (
+                  <>{t('runDetail.cacheHit', { percent: (detail.metrics.tokens.cacheHitRate * 100).toFixed(0) })}</>
+                )}
+              </span>
+            </>
+          ) : (
+            <span className="text-slate-500">{t('runDetail.usageUnknown')}</span>
+          )}
 
           <div className="ml-auto flex gap-1">
             {live && (

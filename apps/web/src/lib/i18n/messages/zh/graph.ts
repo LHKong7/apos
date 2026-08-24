@@ -15,6 +15,7 @@ export const graph: Record<keyof typeof en, string> = {
   'event.project.resumed': '项目恢复',
   'event.project.budget_threshold_reached': '预算触线',
   'event.project.completed': '项目完成',
+  'event.project.member_added': '添加项目成员',
   'event.requirement.created': '需求录入',
   'event.requirement.analyzed': '需求分析完成',
   'event.requirement.clarification_answered': '澄清已回答',

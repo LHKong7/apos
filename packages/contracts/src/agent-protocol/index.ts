@@ -374,6 +374,7 @@ export const ErrorClass = z.enum([
   'external_unavailable',
   'timeout',
   'budget_exceeded',
+  'output_missing',
   'invalid_task',
   'runtime_error',
   'unknown',
@@ -526,6 +527,19 @@ export const RunEvent = z.discriminatedUnion('type', [
   RunEventBase.extend({ type: z.literal('note'), text: z.string() }),
   RunEventBase.extend({ type: z.literal('heartbeat') }),
   RunEventBase.extend({ type: z.literal('error'), error: AgentError }),
+  /**
+   * The runtime can only report that its process ended. Whether the work is a
+   * deliverable is a platform verdict made after workspace settlement.
+   * Keeping the two as separate events prevents an exit code of zero from
+   * masquerading as a successful delivery.
+   */
+  RunEventBase.extend({
+    type: z.literal('delivery_validation'),
+    status: z.enum(['passed', 'failed']),
+    summary: z.string(),
+    changes: z.number().int().min(0),
+    artifacts: z.number().int().min(0),
+  }),
   RunEventBase.extend({
     type: z.literal('run_ended'),
     outcome: z.enum(['completed', 'failed', 'terminated']),
@@ -577,6 +591,7 @@ export const PROMOTED_RUN_EVENTS: Record<RunEventType, string | null> = {
   note: null,
   heartbeat: null,
   error: null,
+  delivery_validation: null,
 };
 
 /** 里程碑级事件在简明模式下展示（页面文档 09 §5.3） */
@@ -585,6 +600,7 @@ export const MILESTONE_RUN_EVENTS: readonly RunEventType[] = [
   'artifact',
   'intervention_request',
   'error',
+  'delivery_validation',
   'run_ended',
 ] as const;
 

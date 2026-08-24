@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import {
   agentRuns,
@@ -14,11 +14,13 @@ import {
 import { usdCeilingForTokens, type RuntimeRegistry } from '@apos/agent-runtimes';
 import type {
   AgentPermissions,
+  ErrorClass,
   PlanFallbackCode,
   RunEvent,
   RunWorkspace,
   TaskDispatch,
 } from '@apos/contracts';
+import { totalTokens } from '@apos/contracts';
 import type { EffectiveAgentAccess } from '@apos/domain';
 import { resolveAgentAccess } from '../agent/access';
 import { WorkspaceService } from '../workspace';
@@ -74,6 +76,8 @@ function planningEventSummary(e: RunEvent): string {
       return `报错：${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`;
     case 'progress':
       return e.totalSteps ? `${e.description}（${e.step}/${e.totalSteps}）` : e.description;
+    case 'delivery_validation':
+      return e.summary;
     default:
       return e.type;
   }
@@ -137,6 +141,25 @@ const REPAIRABLE_CODES = new Set<PlanFallbackCode>([
   'output_invalid',
   'output_inconsistent',
 ]);
+
+function planningErrorClass(code: PlanFallbackCode): ErrorClass {
+  switch (code) {
+    case 'output_missing':
+      return 'output_missing';
+    case 'output_invalid':
+    case 'output_inconsistent':
+      return 'invalid_task';
+    case 'no_scope':
+      return 'context_insufficient';
+    case 'no_agent':
+    case 'agent_unregistered':
+      return 'capability_mismatch';
+    case 'runtime_rejected':
+    case 'run_failed':
+    case 'unexpected_error':
+      return 'runtime_error';
+  }
+}
 
 /**
  * Requirement structuring and plan generation on a real agent runtime.
@@ -419,7 +442,7 @@ export class AgentPlanningProvider implements PlanningProvider {
       }
 
       repaired = true;
-      brief = buildRepairBrief(input.brief, attempt.reason, attempt.raw);
+      brief = buildRepairBrief(input.brief, attempt.reason, attempt.raw, attempt.stdout);
       this.diag(
         `[planning] ${input.kind} 第 ${round} 轮产出不合格，带着报错再试一轮：${attempt.reason}`,
       );
@@ -477,10 +500,31 @@ export class AgentPlanningProvider implements PlanningProvider {
     const failRun = async (
       code: PlanFallbackCode,
       reason: string,
-      extra: { costUsd?: number | null; raw?: string | null } = {},
+      extra: { costUsd?: number | null; raw?: string | null; stdout?: string | null } = {},
     ): Promise<Round<T>> => {
-      await this.closeRun(runId, 'failed', extra.costUsd ?? 0, reason);
-      return { ok: false, code, reason, costUsd: extra.costUsd ?? null, raw: extra.raw ?? null };
+      if (REPAIRABLE_CODES.has(code)) {
+        await this.recordDeliveryValidation(
+          runId,
+          'failed',
+          reason,
+          extra.raw === undefined || extra.raw === null ? 0 : 1,
+        );
+      }
+      await this.closeRun(
+        runId,
+        'failed',
+        extra.costUsd ?? 0,
+        reason,
+        planningErrorClass(code),
+      );
+      return {
+        ok: false,
+        code,
+        reason,
+        costUsd: extra.costUsd ?? null,
+        raw: extra.raw ?? null,
+        stdout: extra.stdout ?? null,
+      };
     };
 
     let acquired: Awaited<ReturnType<WorkspaceService['acquireLocal']>> | null = null;
@@ -579,6 +623,7 @@ export class AgentPlanningProvider implements PlanningProvider {
       if (raw === null) {
         return failRun('output_missing', `Agent 结束了但没有写出 ${OUTPUT_FILE}`, {
           costUsd: outcome.costUsd,
+          stdout: outcome.stdout,
         });
       }
 
@@ -589,6 +634,7 @@ export class AgentPlanningProvider implements PlanningProvider {
         return failRun('output_invalid', `${OUTPUT_FILE} 不符合约定格式：${describe(err)}`, {
           costUsd: outcome.costUsd,
           raw,
+          stdout: outcome.stdout,
         });
       }
 
@@ -597,13 +643,15 @@ export class AgentPlanningProvider implements PlanningProvider {
         return failRun('output_inconsistent', `产出的计划不自洽：${problems.join('；')}`, {
           costUsd: outcome.costUsd,
           raw,
+          stdout: outcome.stdout,
         });
       }
 
       this.diag(
         `[planning] ${input.kind} 由 ${agent.name} 完成（第 ${input.round} 轮），工作区 ${dir}`,
       );
-      await this.closeRun(runId, 'completed', outcome.costUsd, null);
+      await this.recordDeliveryValidation(runId, 'passed', `${OUTPUT_FILE} 已写入并通过 schema 校验`, 1);
+      await this.closeRun(runId, 'completed', outcome.costUsd, null, null);
       return { ok: true, value: parsed, costUsd: outcome.costUsd };
     } catch (err) {
       return failRun('unexpected_error', describe(err));
@@ -942,6 +990,7 @@ export class AgentPlanningProvider implements PlanningProvider {
     status: 'completed' | 'failed',
     costUsd: number | null,
     reason: string | null,
+    errorClass: ErrorClass | null,
   ): Promise<void> {
     await this.db
       .update(agentRuns)
@@ -958,10 +1007,9 @@ export class AgentPlanningProvider implements PlanningProvider {
          */
         cost: String(costUsd ?? 0),
         endedAt: new Date(),
-        ...(reason === null ? {} : { errorMessage: reason, errorClass: 'runtime_error' }),
+        ...(reason === null ? {} : { errorMessage: reason, errorClass }),
       })
-      .where(eq(agentRuns.id, runId))
-      .catch(() => undefined);
+      .where(eq(agentRuns.id, runId));
   }
 
   private buildDispatch(
@@ -1042,7 +1090,10 @@ export class AgentPlanningProvider implements PlanningProvider {
     adapter: ReturnType<RuntimeRegistry['get']>,
     runId: string,
     agentTimeoutSeconds: number,
-  ): Promise<{ ok: true; costUsd: number | null } | { ok: false; reason: string }> {
+  ): Promise<
+    | { ok: true; costUsd: number | null; stdout: string | null }
+    | { ok: false; reason: string }
+  > {
     const budgetMs = Math.min(
       this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       agentTimeoutSeconds * 1000,
@@ -1062,9 +1113,12 @@ export class AgentPlanningProvider implements PlanningProvider {
      *   一次真实的规划会在计划页上显示 $0.00。
      */
     let costUsd: number | null = null;
-    let settle: (r: { ok: true; costUsd: number | null } | { ok: false; reason: string }) => void;
+    const stdoutTail: string[] = [];
+    let settle: (
+      r: { ok: true; costUsd: number | null; stdout: string | null } | { ok: false; reason: string },
+    ) => void;
     const done = new Promise<
-      { ok: true; costUsd: number | null } | { ok: false; reason: string }
+      { ok: true; costUsd: number | null; stdout: string | null } | { ok: false; reason: string }
     >((r) => (settle = r));
 
     /**
@@ -1109,6 +1163,7 @@ export class AgentPlanningProvider implements PlanningProvider {
           level: 'detail',
           summary: planningEventSummary(e),
           payload: e as unknown as Record<string, unknown>,
+          tokensDelta: e.type === 'cost' ? totalTokens(e.tokens) : null,
           costDelta: e.type === 'cost' ? String(e.deltaUsd) : null,
         })
         .onConflictDoNothing()
@@ -1117,16 +1172,31 @@ export class AgentPlanningProvider implements PlanningProvider {
       // ★ Keep the heartbeat moving so the run detail page can show it is still alive
       await this.db
         .update(agentRuns)
-        .set({ lastHeartbeatAt: new Date(), ...(e.type === 'cost' ? { cost: String(e.totalUsd) } : {}) })
+        .set({
+          lastHeartbeatAt: new Date(),
+          ...(e.type === 'cost'
+            ? {
+                cost: String(e.totalUsd),
+                tokensInput: sql`${agentRuns.tokensInput} + ${e.tokens.input}`,
+                tokensOutput: sql`${agentRuns.tokensOutput} + ${e.tokens.output}`,
+                tokensCacheRead: sql`${agentRuns.tokensCacheRead} + ${e.tokens.cacheRead}`,
+                tokensCacheWrite: sql`${agentRuns.tokensCacheWrite} + ${e.tokens.cacheWrite}`,
+              }
+            : {}),
+        })
         .where(eq(agentRuns.id, runId))
         .catch(() => undefined);
 
       if (e.type === 'cost' && reportsCost) costUsd = e.totalUsd;
+      if (e.type === 'note') {
+        stdoutTail.push(e.text);
+        while (stdoutTail.join('\n').length > 8_000 && stdoutTail.length > 1) stdoutTail.shift();
+      }
       if (e.type === 'error') this.diag(`[planning] ${runId} 报错`, e.error);
       if (e.type === 'run_ended') {
         settle(
           e.outcome === 'completed'
-            ? { ok: true, costUsd }
+            ? { ok: true, costUsd, stdout: stdoutTail.length > 0 ? stdoutTail.join('\n') : null }
             : { ok: false, reason: `Agent 以 ${e.outcome} 结束：${e.summary}` },
         );
       }
@@ -1152,6 +1222,43 @@ export class AgentPlanningProvider implements PlanningProvider {
        */
       await adapter.control(runId, { action: 'terminate', reason: '规划超时' }).catch(() => {});
     }
+  }
+
+  /** Persist the platform verdict separately from the runtime process verdict. */
+  private async recordDeliveryValidation(
+    runId: string,
+    status: 'passed' | 'failed',
+    summary: string,
+    artifacts: number,
+  ): Promise<void> {
+    const [last] = await this.db
+      .select({ seq: runEvents.seq })
+      .from(runEvents)
+      .where(eq(runEvents.runId, runId))
+      .orderBy(desc(runEvents.seq))
+      .limit(1);
+    const event: RunEvent = {
+      runId,
+      seq: (last?.seq ?? -1) + 1,
+      ts: new Date().toISOString(),
+      type: 'delivery_validation',
+      status,
+      summary,
+      changes: 0,
+      artifacts,
+    };
+    await this.db
+      .insert(runEvents)
+      .values({
+        runId,
+        seq: event.seq,
+        ts: new Date(event.ts),
+        type: event.type,
+        level: 'milestone',
+        summary,
+        payload: event as unknown as Record<string, unknown>,
+      })
+      .onConflictDoNothing();
   }
 
   private root(): string {
@@ -1180,6 +1287,7 @@ type Round<T> =
       reason: string;
       costUsd: number | null;
       raw: string | null;
+      stdout: string | null;
     };
 
 /**

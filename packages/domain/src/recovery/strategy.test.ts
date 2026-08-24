@@ -47,6 +47,16 @@ describe('decideRecovery', () => {
     );
   });
 
+  it('空交付：附带上一轮输出只自动重试一次', () => {
+    expect(decideRecovery(input({ errorClass: 'output_missing', attempt: 1 }))).toMatchObject({
+      action: 'retry_with_context',
+    });
+    expect(decideRecovery(input({ errorClass: 'output_missing', attempt: 2 }))).toMatchObject({
+      action: 'request_decision',
+      decisionType: 'invalid_output',
+    });
+  });
+
   it('能力不匹配：有替代 Agent 就改派，没有就转人工', () => {
     expect(
       decideRecovery(input({ errorClass: 'capability_mismatch', hasAlternativeAgent: true })).action,

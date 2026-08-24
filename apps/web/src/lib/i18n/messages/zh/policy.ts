@@ -186,6 +186,7 @@ export const policy: Record<keyof typeof en, string> = {
   'decision.type.cost_overrun': '成本超限',
   'decision.type.scope_change': '范围变更',
   'decision.type.decision_required': '执行中转人工',
+  'decision.type.review_approval': '审核批准',
   'decision.needsYou': '{title} —— 需要你确认',
   'decisions.emptyHint': '队列空了就说明系统在自己跑 —— 这是常态，不是异常',
   'decisions.selectedCount': '已选 {count} 条',

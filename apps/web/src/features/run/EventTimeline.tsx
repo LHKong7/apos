@@ -97,7 +97,9 @@ function Entry({
   const t = useT();
   const [open, setOpen] = useState(false);
   const expandable = detailed || entry.members.length > 1 || hasDetail(entry);
-  const isError = entry.type === 'error';
+  const isError =
+    entry.type === 'error' ||
+    (entry.type === 'delivery_validation' && entry.payload?.['status'] === 'failed');
 
   return (
     <li className="relative flex gap-2 pb-2 pl-1" id={isError ? 'run-failure-point' : undefined}>
@@ -111,7 +113,7 @@ function Entry({
           isError ? 'bg-red-100' : 'bg-slate-100',
         )}
       >
-        {eventIcon(entry.type)}
+        {eventIcon(entry.type, entry.payload)}
       </span>
 
       <div className="min-w-0 flex-1">

@@ -323,7 +323,7 @@ export async function getAgentAccess(
     deniedCapabilities: access.deniedCapabilities,
     resourceScopes: access.runtimePermissions.resourceScopes,
     sources: access.sources,
-    warnings: access.warnings,
+    warnings: [...new Set(access.warnings)],
     explained: access.capabilities.map((c) => ({
       capability: c,
       label: CAPABILITY_SPECS[c].label,
@@ -411,7 +411,7 @@ export async function previewAgentAccess(
      *   two lists unmerged and the user sees a green "granted" in the preview
      *   while nothing at all will actually happen.
      */
-    warnings: [...impact.warnings, ...after.warnings],
+    warnings: [...new Set([...impact.warnings, ...after.warnings])],
     next,
   };
 }

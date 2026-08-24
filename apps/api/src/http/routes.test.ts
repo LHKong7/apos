@@ -9,6 +9,7 @@ import {
   plans,
   policies,
   projectMembers,
+  repositories,
   requirementClarifications,
   requirements,
   workItems,
@@ -410,7 +411,13 @@ describe('认证与错误映射', () => {
 
 describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
   it('走通完整流程', async () => {
-    await seedAgent(db, fx, { registry });
+    await seedAgent(db, fx, {
+      registry,
+      grant: {
+        profileKey: 'code_developer',
+        resourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'write' }],
+      },
+    });
 
     // Capture the requirement
     const created = await app.inject({
@@ -480,6 +487,31 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
     expect(plan.autoActions.length).toBeGreaterThan(0);
     expect(plan.humanGates.length).toBeGreaterThan(0);
 
+    // Approval is a hard preflight gate: an Agent alone is not enough when the
+    // plan needs a writable workspace and an executable verification command.
+    const blocked = await app.inject({
+      method: 'POST',
+      url: `/api/v1/plans/${plan.planId}/approve`,
+      headers: auth(),
+      payload: { acknowledgedUnassigned: true },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error.reason).toBe('plan.preflight_failed');
+    expect(blocked.json().error.details.issues.map((issue: { code: string }) => issue.code)).toEqual(
+      expect.arrayContaining(['workspace_source_missing', 'verification_missing']),
+    );
+
+    await db.insert(repositories).values({
+      orgId: fx.orgId,
+      projectId: fx.projectId,
+      ref: 'order-service',
+      name: 'Order service',
+      remoteUrl: 'https://example.invalid/order-service.git',
+      defaultBranch: 'main',
+      checkCommand: 'pnpm test',
+      createdBy: fx.userId,
+    });
+
     // Approve the plan
     /**
      * ★ acknowledgedUnassigned: the plan's human tasks have nobody assigned yet, so
@@ -493,7 +525,7 @@ describe('★ 需求 → 计划 → 看板（HTTP 全链路）', () => {
       headers: auth(),
       payload: { acknowledgedUnassigned: true },
     });
-    expect(activated.statusCode).toBe(200);
+    expect(activated.statusCode, JSON.stringify(activated.json())).toBe(200);
     expect(activated.json().activatedTasks).toBe(plan.taskCount);
 
     // Trigger scheduling
@@ -1910,6 +1942,42 @@ describe('★ 决策责任不可代行', () => {
     expect(after!.status).toBe('changes_requested');
   });
 
+  it('★ 状态流转失败时决策仍保持 pending，不留下半成功状态', async () => {
+    const item = await createWorkItem(db, fx, { status: 'ready' });
+    const [decision] = await db
+      .insert(decisions)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        type: 'review_approval',
+        riskLevel: 'low',
+        reversible: true,
+        title: '不应在 Ready 状态批准评审',
+        whyHuman: '事务回滚测试',
+        assigneeId: fx.userId,
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/decisions/${decision!.id}/approve`,
+      headers: auth(),
+      payload: { note: '这个流转会失败' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const [afterDecision] = await db
+      .select()
+      .from(decisions)
+      .where(eq(decisions.id, decision!.id));
+    const [afterItem] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(afterDecision!.status).toBe('pending');
+    expect(afterDecision!.resolvedAt).toBeNull();
+    expect(afterItem!.status).toBe('ready');
+  });
+
   it('非责任人无法批准，提示用改派', async () => {
     const item = await createWorkItem(db, fx);
 
@@ -2142,12 +2210,44 @@ describe('Run 详情（页面文档 09）', () => {
     // 工具调用按名字聚合 —— 「哪个工具被反复调用」是排障的第一个线索
     expect(body.metrics.toolCalls.total).toBeGreaterThan(0);
     expect(Object.keys(body.metrics.toolCalls.byTool).length).toBeGreaterThan(0);
+    expect(body.metrics.tokens.reported).toBe(true);
     expect(body.metrics.tokens.total).toBeGreaterThan(0);
     expect(body.metrics.durationMs).toBeGreaterThanOrEqual(0);
 
     expect(body.artifacts.length).toBeGreaterThan(0);
     expect(body.related.attempts).toHaveLength(1);
     expect(body.error).toBeNull();
+  });
+
+  it('运行时没有上报用量时返回 unknown 标记，而不是伪造 0 token', async () => {
+    const agent = await seedAgent(db, fx, { registry });
+    const item = await createWorkItem(db, fx);
+    const now = new Date();
+    const [run] = await db
+      .insert(agentRuns)
+      .values({
+        orgId: fx.orgId,
+        projectId: fx.projectId,
+        workItemId: item.id,
+        agentId: agent.agentId,
+        kind: 'execution',
+        attempt: 1,
+        idempotencyKey: randomUUID(),
+        goal: item.title,
+        inputContext: [],
+        status: 'completed',
+        startedAt: now,
+        endedAt: now,
+      })
+      .returning();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runs/${run!.id}`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().metrics.tokens).toMatchObject({ reported: false, total: 0 });
   });
 
   /**

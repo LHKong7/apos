@@ -115,7 +115,12 @@ describe('★ 阶段 1 闭环：调度 → 派发 → Agent 执行 → 自动流
 
     // 简明模式只看 milestone
     const milestones = runEventRows.filter((e) => e.level === 'milestone');
-    expect(milestones.map((e) => e.type).sort()).toEqual(['artifact', 'run_ended', 'run_started']);
+    expect(milestones.map((e) => e.type).sort()).toEqual([
+      'artifact',
+      'delivery_validation',
+      'run_ended',
+      'run_started',
+    ]);
   });
 
   it('token 用量从 Run 累加到 Work Item 与项目', async () => {

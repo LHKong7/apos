@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentRuns, artifacts, repositories, storageTargets } from '@apos/db';
+import { agentRuns, artifacts, repositories, runEvents, storageTargets } from '@apos/db';
 import type { AgentPermissions } from '@apos/contracts';
 import { createWorkItem, resetDb, seedFixture, testDb, type Fixture } from '../../test/db';
 import { seedAgent } from '../../test/agent-fixtures';
@@ -575,6 +575,17 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
     await registerRepo();
     const { runId } = await acquireFor(p, scopes('write'));
 
+    await ingestRunEvent(db, {
+      runId,
+      event: {
+        runId,
+        seq: 0,
+        ts: new Date().toISOString(),
+        type: 'note',
+        text: 'I inspected the workspace but forgot to create the requested output.',
+      },
+      correlationId: randomUUID(),
+    });
     await ingestRunEvent(
       db,
       {
@@ -594,6 +605,19 @@ describe.skipIf(!gitReady.ok)('工作区供给（真实 git）', () => {
 
     const rows = await db.select().from(artifacts).where(eq(artifacts.runId, runId));
     expect(rows).toHaveLength(0);
+
+    const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
+    expect(run?.status).toBe('failed');
+    expect(run?.errorClass).toBe('output_missing');
+    expect(run?.recoveryAction).toBe('retry_with_context');
+    expect(run?.agentSelfReport).toContain('forgot to create the requested output');
+    const validation = await db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, runId));
+    expect(validation.find((event) => event.type === 'delivery_validation')).toMatchObject({
+      summary: expect.stringContaining('没有文件变更或产物'),
+    });
   });
 
   /**

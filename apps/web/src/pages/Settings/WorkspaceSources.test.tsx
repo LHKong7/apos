@@ -126,7 +126,10 @@ function wrapper(children: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/projects/p1/settings/storage']}>
+      <MemoryRouter
+        initialEntries={['/projects/p1/settings/storage']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
         <Routes>
           <Route path="/projects/:projectId/settings/storage" element={children} />
         </Routes>

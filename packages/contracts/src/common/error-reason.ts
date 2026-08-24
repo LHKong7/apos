@@ -238,6 +238,8 @@ export const ErrorReason = z.enum([
   'plan.no_requirement',
   'plan.unassigned_human_tasks',
   'plan.over_budget',
+  'plan.preflight_failed',
+  'requirement.fallback_needs_manual_completion',
 
   // work_item
   'work_item.manual_status_not_allowed',

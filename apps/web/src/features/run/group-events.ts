@@ -78,10 +78,12 @@ export const EVENT_ICONS: Record<string, string> = {
   heartbeat: '·',
   error: '❌',
   artifact: '📎',
+  delivery_validation: '📦',
   run_ended: '🏁',
 };
 
-export function eventIcon(type: string): string {
+export function eventIcon(type: string, payload?: Record<string, unknown> | null): string {
+  if (type === 'delivery_validation') return payload?.['status'] === 'failed' ? '❌' : '✅';
   return EVENT_ICONS[type] ?? '•';
 }
 

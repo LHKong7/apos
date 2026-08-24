@@ -175,6 +175,14 @@ export function CostTab({ detail }: { detail: RunDetail }) {
   const steps = breakdown.data?.steps ?? [];
   const maxCost = Math.max(...steps.map((s) => s.tokens), 1);
 
+  if (!usage.reported) {
+    return (
+      <Section title={t('runTab.tokenBreakdown')}>
+        <p className="text-slate-500">{t('runTab.usageUnknown')}</p>
+      </Section>
+    );
+  }
+
   return (
     <div className="space-y-4 text-xs">
       <Section title={t('runTab.tokenBreakdown')}>
@@ -335,6 +343,7 @@ const ERROR_LABELS: Record<string, MessageKey> = {
   tool_failure: 'errClass.tool_failure',
   timeout: 'errClass.timeout',
   budget_exceeded: 'errClass.budget_exceeded',
+  output_missing: 'errClass.output_missing',
   capability_mismatch: 'errClass.capability_mismatch',
   invalid_task: 'errClass.invalid_task',
   external_unavailable: 'errClass.external_unavailable',
