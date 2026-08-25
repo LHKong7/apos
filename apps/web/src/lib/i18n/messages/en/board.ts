@@ -12,6 +12,7 @@ export const board = {
   'blocked.kind.no_matching_agent': 'No agent in this project can take this on ({count} checked)',
   'blocked.kind.no_agents_in_project': 'This project has no agents yet',
   'blocked.kind.workspace_unavailable': 'The workspace could not be prepared',
+  'blocked.kind.policy_paused': 'Paused by a policy rule, waiting for approval',
   'blocked.kind.other': 'Blocked',
   'blocked.scope.project': 'In this project',
   'blocked.scope.org': 'Agent profile',

@@ -92,6 +92,14 @@ export const BlockedKind = z.enum([
   'no_agents_in_project',
   /** 工作区准备不出来 */
   'workspace_unavailable',
+  /**
+   * Policy 的 pause 把这次流转拦下了，挂着一条待批的决策。
+   *
+   * ★ 和上面三种不同：这一种阻塞是**平台按规则自己造成的**，
+   *   而且有明确的解法 —— 去批那条决策。归进 `other` 的话，
+   *   卡片上只会写一个干巴巴的「已阻塞」，看的人无从知道该做什么。
+   */
+  'policy_paused',
   /** 说不出细节的兜底，只有 reason 字符串可用 */
   'other',
 ]);

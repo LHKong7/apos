@@ -83,6 +83,39 @@ describe('resolveTransition', () => {
     expect(t?.effects).toContain('applyConstraints');
   });
 
+  /**
+   * ★ Policy 的 pause 把任务压进 blocked 而不是 awaiting_decision，但一样挂着
+   *   一条待批的决策。少了这条边，批准就撞在 INVALID_TRANSITION 上、整个批准
+   *   事务回滚，任务永远停在 blocked 而决策永远 pending —— 而这两处
+   *   （transition.ts 里选 finalStatus、routes.ts 里发 decision_approved）
+   *   各自看都完全正常。
+   *
+   * A Policy `pause` parks the task in `blocked`, still carrying a Decision;
+   * without this edge approving it was an INVALID_TRANSITION.
+   */
+  it('pause 压进 blocked 的任务，批准后同样回到进入前的状态', () => {
+    const t = resolveTransition(WORK_ITEM_MACHINE, 'blocked', 'decision_approved');
+    expect(t?.to).toBe(PREVIOUS_STATE);
+    expect(t?.effects).toContain('applyConstraints');
+    // 阻塞理由与「卡了多久」的计时随之清掉，和 blocked 的另外两条出边一致
+    expect(t?.effects).toContain('clearBlocked');
+  });
+
+  /**
+   * ★ 每一个「能挂起等人」的状态都必须能被批准放行。
+   *   这条断言存在的意义是：将来再多一种挂起方式时，
+   *   忘了配对的出边会在这里红，而不是在生产上表现为「批准按钮点了没反应」。
+   *
+   * Every status a task can be parked in awaiting a human must have a way back
+   * out via approval.
+   */
+  it('每个挂起状态都有 decision_approved 出边', () => {
+    for (const parked of ['awaiting_decision', 'blocked'] as Status[]) {
+      const t = resolveTransition(WORK_ITEM_MACHINE, parked, 'decision_approved');
+      expect(t, `${parked} 缺少 decision_approved 出边`).not.toBeNull();
+    }
+  });
+
   it('ready → executing 需要三个 guard', () => {
     const t = resolveTransition(WORK_ITEM_MACHINE, 'ready', 'run_dispatched');
     expect(t?.guards).toEqual(['dependenciesSatisfied', 'wipAvailable', 'executorAssigned']);

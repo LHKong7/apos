@@ -227,6 +227,132 @@ describe('★ 上下文快照 —— Policy 模拟回放的前提', () => {
   });
 });
 
+/**
+ * ★★ Policy 的 `pause` 走的是另一条停靠路径：任务停在 `blocked` 而不是
+ *   `awaiting_decision`，但一样挂着一条待批的决策。
+ *
+ *   这组用例锁住的是「停下来」和「能再走」必须成对出现。以前只有前半截：
+ *   决策建出来了，任务也确实停住了，而 `blocked` 上没有 decision_approved
+ *   这条边 —— 批准撞在 INVALID_TRANSITION 上，整个批准事务回滚，
+ *   于是任务永远停在 blocked、决策永远 pending，再点多少次批准都一样。
+ *   两处代码（这里选 finalStatus、routes.ts 发 decision_approved）
+ *   分开看都完全正常，只有连起来跑才看得见。
+ *
+ * A Policy `pause` parks the task in `blocked` rather than
+ * `awaiting_decision`. These lock down that parking it and resuming it come as
+ * a pair — approving used to hit INVALID_TRANSITION and roll back, stranding
+ * the task and its Decision forever.
+ */
+describe('★ Policy pause：停在 blocked 的任务必须能被批准放行', () => {
+  const PAUSE_RULE = {
+    name: '生产数据库变更先暂停',
+    priority: 5,
+    condition: {
+      all: [
+        { fact: 'environment', op: 'eq', value: 'production' },
+        { fact: 'operationType', op: 'in', value: ['db_ddl', 'db_dml'] },
+      ],
+    },
+    action: { type: 'pause', resumeCondition: 'human_decision' },
+  };
+
+  async function pausedItem() {
+    const ruleId = await insertRule('org', PAUSE_RULE);
+    const item = await createWorkItem(db, fx, {
+      status: 'executing',
+      typeData: { environment: 'production', operationType: 'db_ddl' },
+    });
+    await withArtifact(item.id);
+
+    const result = await transition(db, {
+      workItemId: item.id,
+      trigger: 'agent_run_completed',
+      actor: agentActor(randomUUID()),
+      correlationId: corr(),
+    });
+    return { ruleId, item, result };
+  }
+
+  it('pause 把任务压进 blocked 并建出决策', async () => {
+    const { ruleId, result } = await pausedItem();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 目标本是 reviewing，被 pause 改道到 blocked（而不是 awaiting_decision）
+    expect(result.to).toBe('blocked');
+    expect(result.verdict.matchedPolicyId).toBe(ruleId);
+    expect(result.createdDecisionId).toBeTruthy();
+  });
+
+  /**
+   * ★ 停在哪之外还得记住「本来要去哪」。这一栏为空的话，就算后来能批准，
+   *   $previous 也只会回落到 ready —— 任务默默倒退一个阶段，没有任何报错。
+   */
+  it('记住批准后的目的地，而不是把它丢掉', async () => {
+    const { item } = await pausedItem();
+
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(row!.previousStatus).toBe('reviewing');
+    // 看板要看得出它在等人，而不是一张静静停住的卡片
+    expect(row!.humanGate).toBe('waiting_for_decision');
+  });
+
+  /**
+   * ★ 「已阻塞」而阻塞原因一栏是空的，是这条路径以前的样子。
+   *   这是唯一一种阻塞是平台自己造成的情形 —— 说得出是哪条规则拦的，
+   *   用户才知道该去批哪条决策。
+   */
+  it('把阻塞原因一起写上，卡片能自己解释', async () => {
+    const { item } = await pausedItem();
+
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(row!.blockedReason).toContain(PAUSE_RULE.name);
+    expect(row!.blockedSince).toBeTruthy();
+
+    // ★ 界面读的是这份结构化的，不是上面那句中文（CLAUDE.md：原因码 + 参数）
+    const detail = row!.blockedDetail as { kind: string; detail: string | null };
+    expect(detail.kind).toBe('policy_paused');
+    // 规则名字是用户自己起的，原样带过去 —— 翻译它等于改名
+    expect(detail.detail).toBe(PAUSE_RULE.name);
+  });
+
+  it('★★ 批准决策后任务回到本来要去的状态，而不是卡死在 blocked', async () => {
+    const { item, result } = await pausedItem();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    await db
+      .update(decisions)
+      .set({ status: 'approved', resolvedAt: new Date() })
+      .where(eq(decisions.id, result.createdDecisionId!));
+
+    const approved = await transition(db, {
+      workItemId: item.id,
+      trigger: 'decision_approved',
+      actor: humanActor(randomUUID()),
+      approvedDecisionId: result.createdDecisionId!,
+      correlationId: corr(),
+    });
+
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) return;
+    expect(approved.to).toBe('reviewing');
+
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, item.id));
+    expect(row!.status).toBe('reviewing');
+    // 阻塞的痕迹随之清掉，否则卡片会一直挂着一条早已解决的阻塞原因
+    expect(row!.blockedReason).toBeNull();
+    expect(row!.blockedSince).toBeNull();
+    expect(row!.previousStatus).toBeNull();
+    expect(row!.humanGate).toBe('approved');
+
+    // ★ 核心不变式照旧：状态变了就必须有事件
+    const rows = await eventsFor(item.id);
+    const changes = rows.filter((r) => r.type === 'work_item.status_changed');
+    expect(changes.at(-1)!.payload).toMatchObject({ from: 'blocked', to: 'reviewing' });
+  });
+});
+
 describe('Policy 拦截与决策创建', () => {
   it('★ 生产数据库变更被规则拦截，任务进入 awaiting_decision', async () => {
     const ruleId = await insertRule('org', PROD_DB_RULE);
