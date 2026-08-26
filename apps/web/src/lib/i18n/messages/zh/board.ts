@@ -14,6 +14,7 @@ export const board: Record<keyof typeof en, string> = {
   'blocked.kind.no_matching_agent': '本项目里没有 Agent 接得下这活（查了 {count} 个）',
   'blocked.kind.no_agents_in_project': '这个项目还没有 Agent',
   'blocked.kind.workspace_unavailable': '工作区准备不出来',
+  'blocked.kind.policy_paused': '规则暂停了这次流转，等待批准',
   'blocked.kind.other': '被阻塞',
   'blocked.scope.project': '本项目里',
   'blocked.scope.org': 'Agent 档案',

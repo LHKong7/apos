@@ -90,6 +90,31 @@ export const WORK_ITEM_MACHINE: WorkItemMachine = {
       to: 'executing',
       effects: ['clearBlocked', 'switchExecutorToHuman'],
     },
+    /**
+     * ★★ A Policy `pause` parks the task here, not in `awaiting_decision`.
+     *
+     *   `pause` is the second-strictest action there is (ACTION_STRICTNESS 8),
+     *   and it deliberately shows on the board as blocked rather than as one
+     *   more approval queue — but it still creates a Decision, and a Decision
+     *   that cannot be approved is worse than no Decision at all. Without this
+     *   edge `decision_approved` arrived at a status the machine had no rule
+     *   for, so approving returned INVALID_TRANSITION, the whole approval
+     *   transaction rolled back, and the task stayed blocked forever with a
+     *   pending Decision nobody could clear.
+     *
+     *   `clearBlocked` belongs here for the same reason it does on the two
+     *   edges above: the blocker is gone, so the reason and the "blocked
+     *   since" clock have to go with it.
+     *
+     * Policy `pause` parks a task in `blocked` with a Decision attached; this
+     * is the edge that lets approving that Decision resume it.
+     */
+    {
+      from: 'blocked',
+      trigger: 'decision_approved',
+      to: PREVIOUS_STATE,
+      effects: ['applyConstraints', 'clearPreviousStatus', 'clearBlocked'],
+    },
 
     // ── Review ───────────────────────────────────────────────────────────
     {
