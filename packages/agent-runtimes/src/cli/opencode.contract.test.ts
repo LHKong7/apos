@@ -32,7 +32,7 @@ contractTest(
     const task: TaskDispatch = {
       runId,
       idempotencyKey: `contract:${runId}`,
-      agent: { name: 'OpenCode contract test', type: 'planner', description: null, skills: [] },
+      agent: { name: 'OpenCode contract test', type: 'planner', description: null },
       outputLocale: 'en',
       goal: {
         title: 'Write the APOS output contract fixture',

@@ -172,7 +172,9 @@ Reassign to:
  [🤖 code-agent-2]  match 78%  success 96%  load 0/5   ~$9.1
  [👤 Zhang Wei]     domain match    current load 3 items
  ─────────────
- Matching uses Skill(SQL tuning, TypeScript) and the success rate on comparable past tasks
+ Matching uses the success rate on comparable past tasks, familiarity with this project,
+ current load and expected cost — no skill tags: nothing an Agent declares about itself
+ takes part (see 04-flow-engine §4.3)
 ```
 
 ### 5.5 Timeline view

@@ -238,7 +238,6 @@ export interface AgentSummary {
   type: string;
   status: string;
   model: string | null;
-  skills: string[];
   maxConcurrency: number;
   tokenLimitPerRun: number | null;
   stats: Record<string, unknown>;
@@ -892,8 +891,6 @@ export interface AgentDetail {
     model: string | null;
     status: string;
     pausedReason: string | null;
-    skills: string[];
-    applicableTypes: string[];
     maxConcurrency: number;
     timeoutSeconds: number;
     tokenLimitPerRun: number | null;
@@ -1316,8 +1313,6 @@ export interface AgentAdminRow {
   lastCheckAt: string | null;
 
   model: string | null;
-  skills: string[];
-  applicableTypes: string[];
   /**
    * ★★ 组织级记录只有**上限**，没有「它能做什么」。
    *
@@ -1596,7 +1591,6 @@ export interface ProjectAgentBindings {
     agentName: string;
     runtimeKind: string;
     status: string;
-    applicableTypes: string[];
     updatedAt: string;
   }[];
   /** ★ 只列本项目成员里的 Agent —— 列全组织的话会选到保存时才被拒的那些 */
@@ -1605,8 +1599,6 @@ export interface ProjectAgentBindings {
     name: string;
     runtimeKind: string;
     status: string;
-    applicableTypes: string[];
-    skills: string[];
   }[];
 }
 

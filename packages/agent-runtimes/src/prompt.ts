@@ -127,12 +127,11 @@ export function buildPersona(task: TaskDispatch): string {
 
   const lines = [`你是「${agent.name}」，一个${agent.type} 类型的 Agent。`];
   if (agent.description?.trim()) lines.push(agent.description.trim());
-  if (agent.skills.length > 0) {
-    lines.push(
-      `你被登记的专长是：${agent.skills.join('、')}。` +
-        '任务落在专长之外时，如实说明并给出你的把握程度，不要硬扛。',
-    );
-  }
+  /**
+   * ★ 这里曾经还有一句「你被登记的专长是：…」。拿掉的理由见 contracts 的
+   *   AgentPersona：那份专长清单没人维护，写进 prompt 只会让 Agent 对着一份
+   *   与自己真实能力无关的标签自我设限。
+   */
   return lines.join('\n');
 }
 

@@ -364,7 +364,6 @@ export async function generatePlan(
         acceptanceCriteria: task.acceptanceCriteria,
         typeData: {
           phase: task.phase,
-          requiredSkills: task.requiredSkills,
           requiredCapabilities: task.requiredCapabilities,
           requiredTools: task.requiredTools,
           /**

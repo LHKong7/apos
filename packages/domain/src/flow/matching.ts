@@ -12,8 +12,6 @@ export interface AgentCandidate {
   id: string;
   name: string;
   type: string;
-  skills: string[];
-  applicableTypes: WorkItemType[];
   successRate: number | null;
   sampleSize: number;
   /** 历史平均 token 用量；null = 没有样本 */
@@ -61,7 +59,6 @@ export interface AgentCandidate {
 
 export interface MatchTarget {
   type: WorkItemType;
-  requiredSkills: string[];
   /**
    * 这活需要哪些语义能力。
    *
@@ -126,34 +123,43 @@ export interface MatchResult {
   rejected: MatchRejection[];
 }
 
-/** 权重存在项目配置里，此处是默认值。上线后需用真实数据校准。 */
+/**
+ * 权重存在项目配置里，此处是默认值。上线后需用真实数据校准。
+ *
+ * ★★ 这里**没有** skill 这一项，而且不该再加回来。
+ *
+ *   评分只用得到「跑起来之后能观察到的事实」：历史成功率、项目上下文经验、
+ *   当前负载、预计成本。技能标签不是事实，是一段没人维护的自述 ——
+ *   Claude Code 明明写得了 TypeScript，只因为没人在它的档案里敲过
+ *   「TypeScript」这个词就被排到最后，而那个词与它真实的能力毫无因果关系。
+ *
+ * Scoring uses only facts observable from actual runs — success rate, project
+ * familiarity, current load, expected cost. Skill tags were self-declared prose
+ * nobody maintained: an agent perfectly able to do the work lost to one it had
+ * never done because a word was missing from a text box.
+ */
 export interface MatchWeights {
-  skill: number;
   successRate: number;
   contextAffinity: number;
   load: number;
   cost: number;
 }
 
+/**
+ * ★ 拿掉 skill 那 0.3 之后，剩下四项按原有比例重新归一（0.25 / 0.15 / 0.15 / 0.15
+ *   之和是 0.7），而不是把 0.3 平摊或者全塞给成功率 —— 归一化保持了四项之间
+ *   原本的相对轻重，也让总分仍然落在 0–1 上，历史分数还能横向比。
+ */
 export const DEFAULT_WEIGHTS: MatchWeights = {
-  skill: 0.3,
-  successRate: 0.25,
-  contextAffinity: 0.15,
-  load: 0.15,
-  cost: 0.15,
+  successRate: 0.25 / 0.7,
+  contextAffinity: 0.15 / 0.7,
+  load: 0.15 / 0.7,
+  cost: 0.15 / 0.7,
 };
 
 /** 样本不足时给中性值，避免新 Agent 因「没有历史成功率」被永久排除 */
 const NEUTRAL_SUCCESS_RATE = 0.7;
 const MIN_SAMPLE_FOR_STATS = 5;
-
-function jaccard(a: string[], b: string[]): number {
-  if (b.length === 0) return 1; // 任务没有技能要求时不因此扣分
-  const setA = new Set(a);
-  const hit = b.filter((s) => setA.has(s));
-  const union = new Set([...a, ...b]);
-  return union.size === 0 ? 1 : hit.length / b.length;
-}
 
 export function matchExecutors(
   target: MatchTarget,
@@ -221,17 +227,21 @@ export function matchExecutors(
       });
       continue;
     }
-    if (!agent.applicableTypes.includes(target.type)) {
-      rejected.push({
-        agentId: agent.id,
-        agentName: agent.name,
-        reason: `不适用于 ${target.type} 类型任务`,
-        code: 'type_not_applicable',
-        scope: 'org',
-        params: { type: target.type },
-      });
-      continue;
-    }
+    /**
+     * ★★ 这里**曾经**卡一道 `applicableTypes.includes(target.type)`。
+     *
+     *   它是「零配置接入」要拆掉的第一根钉子：那一栏的空数组含义是
+     *   「什么活都不接」，而建 Agent 时它默认就是空的 —— 于是新建出来的
+     *   Agent 永远接不到工作，界面上却哪儿都不红。承接范围现在不再由
+     *   Agent 自己声明：普通任务由调度器从可用 Agent 里挑，特殊职责
+     *   （planner / reviewer / policy manager）由项目的 Agent 绑定指定。
+     *
+     *   The `applicableTypes` gate is gone. An empty array meant "takes no work
+     *   at all" and was the creation-time default, so every freshly created
+     *   agent was silently unemployable. What an agent takes on is now decided
+     *   by the scheduler (ordinary work) or by a project role binding (special
+     *   duties) — never by a tag on the agent's own profile.
+     */
     if (agent.currentLoad >= agent.maxConcurrency) {
       rejected.push({
         agentId: agent.id,
@@ -338,7 +348,6 @@ export function matchExecutors(
     }
 
     // ── 加权评分 ──
-    const skillMatch = jaccard(agent.skills, target.requiredSkills);
     const hasStats = agent.sampleSize >= MIN_SAMPLE_FOR_STATS && agent.successRate !== null;
     const successRate = hasStats ? agent.successRate! : NEUTRAL_SUCCESS_RATE;
     const loadFactor = 1 - agent.currentLoad / agent.maxConcurrency;
@@ -348,17 +357,12 @@ export function matchExecutors(
         : 1 - (agent.avgTokens - minTokens) / (maxTokens - minTokens);
 
     const score =
-      weights.skill * skillMatch +
       weights.successRate * successRate +
       weights.contextAffinity * agent.contextAffinity +
       weights.load * loadFactor +
       weights.cost * costFactor;
 
-    const matched = target.requiredSkills.filter((s) => agent.skills.includes(s));
     const reasons = [
-      target.requiredSkills.length > 0
-        ? `Skill 匹配 ${Math.round(skillMatch * 100)}%（${matched.join('、') || '无重合'}）`
-        : 'Skill 无特定要求',
       hasStats
         ? `历史成功率 ${Math.round(successRate * 100)}%（${agent.sampleSize} 次）`
         : `样本不足（${agent.sampleSize} 次），按中性值 ${Math.round(NEUTRAL_SUCCESS_RATE * 100)}% 计`,

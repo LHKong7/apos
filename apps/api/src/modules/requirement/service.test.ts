@@ -62,10 +62,7 @@ async function createRequirement(rawInput = '订单查询太慢') {
 describe('分析时把需求上选定的编写 Agent 传下去', () => {
   it('选过 Agent 的需求，scope 里带着它', async () => {
     const id = await createRequirement();
-    const author = await seedAgent(db, fx, {
-      name: 'prd-writer',
-      applicableTypes: ['requirement'],
-    });
+    const author = await seedAgent(db, fx, { name: 'prd-writer' });
     await setRequirementAuthorAgent(db, {
       requirementId: id,
       agentId: author.agentId,
@@ -99,8 +96,8 @@ describe('分析时把需求上选定的编写 Agent 传下去', () => {
 
   it('换过一次之后，下一次分析跟着换', async () => {
     const id = await createRequirement();
-    const first = await seedAgent(db, fx, { name: 'writer-1', applicableTypes: ['requirement'] });
-    const second = await seedAgent(db, fx, { name: 'writer-2', applicableTypes: ['requirement'] });
+    const first = await seedAgent(db, fx, { name: 'writer-1' });
+    const second = await seedAgent(db, fx, { name: 'writer-2' });
 
     const provider = new CapturingProvider();
     await setRequirementAuthorAgent(db, {
@@ -127,10 +124,7 @@ describe('分析时把需求上选定的编写 Agent 传下去', () => {
    */
   it('分析不会清掉或改写已选的编写 Agent', async () => {
     const id = await createRequirement();
-    const author = await seedAgent(db, fx, {
-      name: 'prd-writer',
-      applicableTypes: ['requirement'],
-    });
+    const author = await seedAgent(db, fx, { name: 'prd-writer' });
     await setRequirementAuthorAgent(db, {
       requirementId: id,
       agentId: author.agentId,
@@ -151,11 +145,7 @@ describe('分析时把需求上选定的编写 Agent 传下去', () => {
 describe('setRequirementAuthorAgent 的判据', () => {
   it('不是本项目成员的 Agent 被拒，库里不动', async () => {
     const id = await createRequirement();
-    const outsider = await seedAgent(db, fx, {
-      name: 'outsider',
-      applicableTypes: ['requirement'],
-      inProject: false,
-    });
+    const outsider = await seedAgent(db, fx, { name: 'outsider', inProject: false });
 
     const result = await setRequirementAuthorAgent(db, {
       requirementId: id,
@@ -170,15 +160,15 @@ describe('setRequirementAuthorAgent 的判据', () => {
   });
 
   /**
-   * ★★ 适用类型不再是门槛：项目里的任何一个 Agent 成员都写得了 PRD。
+   * ★★ 项目里的**任何**一个 Agent 成员都写得了 PRD。
    *
-   *   那条判据是从派工作项那边借来的（matchExecutors 按
-   *   applicableTypes 匹配执行者），而写 PRD 不派工作项 —— 借过来的后果
-   *   是一个配了整队 Agent 的项目，能写 PRD 的却是零个。
+   *   这里以前卡一条从派工作项那边借来的判据（按 applicableTypes 匹配
+   *   执行者），而写 PRD 不派工作项 —— 借过来的后果是一个配了整队 Agent
+   *   的项目，能写 PRD 的却是零个。那一栏现在整个不存在了。
    */
-  it('适用类型不含 requirement 的 Agent 照样能被指定，并且真的落库', async () => {
+  it('任何一个 Agent 成员都能被指定为编写者，并且真的落库', async () => {
     const id = await createRequirement();
-    const coder = await seedAgent(db, fx, { name: 'coder', applicableTypes: ['task', 'bug'] });
+    const coder = await seedAgent(db, fx, { name: 'coder' });
 
     const result = await setRequirementAuthorAgent(db, {
       requirementId: id,
@@ -193,16 +183,12 @@ describe('setRequirementAuthorAgent 的判据', () => {
   });
 
   /**
-   * ★ 成员校验是**授权**，与适用类型那条放宽是两回事 —— 放宽了前者，
-   *   后者一道不减。规划 Run 会把项目资源只读挂进 Agent 的工作区。
+   * ★ 成员校验是**授权**，与「谁写得了 PRD」那条放宽是两回事 ——
+   *   放宽了后者，前者一道不减。规划 Run 会把项目资源只读挂进 Agent 的工作区。
    */
-  it('放宽适用类型之后，非成员仍然被拒 —— 授权那道没跟着松', async () => {
+  it('放宽编写者判据之后，非成员仍然被拒 —— 授权那道没跟着松', async () => {
     const id = await createRequirement();
-    const outsider = await seedAgent(db, fx, {
-      name: 'outsider-coder',
-      applicableTypes: ['task'],
-      inProject: false,
-    });
+    const outsider = await seedAgent(db, fx, { name: 'outsider-coder', inProject: false });
 
     const result = await setRequirementAuthorAgent(db, {
       requirementId: id,

@@ -143,12 +143,6 @@ async function seedPlanningAgent(
   name = 'planner-1',
   opts: {
     inProject?: boolean;
-    /**
-     * ★ 可覆盖 —— 用来造「适用类型里没有 requirement」的那种 Agent。
-     *   它现在照样写得了 PRD（适用类型只在自动挑选时排个先后），
-     *   而这正是下面那一组要钉住的。
-     */
-    applicableTypes?: ('requirement' | 'task' | 'bug' | 'review')[];
   } = {},
 ) {
   const [agent] = await db
@@ -160,8 +154,7 @@ async function seedPlanningAgent(
       runtimeKind: 'mock',
       capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
       model: 'claude-opus-5',
-      skills: [],
-      applicableTypes: opts.applicableTypes ?? ['requirement'],
+      /** ★ skills / applicableTypes 两列已经没有读取方，夹具不再写它们 */
       allowedTools: ['read_file', 'write_file'],
       deniedTools: [],
       maxConcurrency: 1,
@@ -402,26 +395,25 @@ describe('点名指定的 PRD 编写 Agent', () => {
 });
 
 /**
- * 适用类型（applicableTypes）与「能不能写 PRD」。
+ * 谁能写 PRD。
  *
- * ★★ 这一组钉的是：**它不是门槛**。
+ * ★★ 这一组钉的是：**没有任何自述标签参与这件事**。
  *
- *   `applicableTypes` 回答的是派工作项时能不能派给它
- *   （domain/flow/matching.ts 那条 includes(target.type)），而写 PRD
- *   不派工作项 —— 这会儿工作项还不存在。拿它当门槛的后果是一个配了
- *   整队 Agent 的项目，能写 PRD 的却是零个，而界面上只有一个空下拉框。
+ *   这里以前有一栏 `applicableTypes`：它回答的是派工作项时能不能派给它，
+ *   而写 PRD 不派工作项 —— 这会儿工作项还不存在。拿它当门槛的后果是一个
+ *   配了整队 Agent 的项目，能写 PRD 的却是零个，而界面上只有一个空下拉框；
+ *   退一步拿它当排序偏好，效果也只是把「有人勾过一个格子」当成了
+ *   「它更擅长写 PRD」。那一栏现在整个不存在了：能不能写由项目成员关系决定，
+ *   由谁来写由项目的 planner 绑定决定。
  *
- *   applicableTypes gates work-item dispatch, not PRD authorship. These pin
- *   that any project agent member can author, with the type only ordering the
- *   automatic pick.
+ *   Nothing an agent declares about itself takes part in this. Membership
+ *   decides eligibility; the planner binding decides who.
  */
-describe('适用类型不再决定谁能写 PRD', () => {
-  it('点名一个只处理 task 的 Agent：照样由它跑，不回退规则占位', async () => {
+describe('谁能写 PRD 不由任何自述标签决定', () => {
+  it('点名一个普通执行 Agent：照样由它跑，不回退规则占位', async () => {
     const registry = new RuntimeRegistry();
     const runtime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'coder 写的' });
-    const coder = await seedPlanningAgent(registry, runtime, 'coder', {
-      applicableTypes: ['task', 'bug'],
-    });
+    const coder = await seedPlanningAgent(registry, runtime, 'coder');
 
     const result = await provider(registry).structureRequirement({
       rawInput: '订单超时要重试',
@@ -437,15 +429,13 @@ describe('适用类型不再决定谁能写 PRD', () => {
   });
 
   /**
-   * ★ 自动挑也一样：项目里只有一个「不含 requirement」的 Agent 时，
-   *   以前这里返回空、整次分析退成规则占位 —— 而那个 Agent 跑得动。
+   * ★ 项目里只有一个 Agent 时就用它。以前这里会因为它「不含 requirement」
+   *   而返回空、整次分析退成规则占位 —— 而那个 Agent 跑得动。
    */
-  it('自动挑：项目里只有不含 requirement 的 Agent 时，仍然挑它', async () => {
+  it('自动挑：项目里只有一个 Agent 成员时，就是它', async () => {
     const registry = new RuntimeRegistry();
     const runtime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: '唯一的那个写的' });
-    await seedPlanningAgent(registry, runtime, 'only-coder', {
-      applicableTypes: ['task'],
-    });
+    await seedPlanningAgent(registry, runtime, 'only-coder');
 
     const result = await provider(registry).structureRequirement({
       rawInput: '订单超时要重试',
@@ -459,23 +449,19 @@ describe('适用类型不再决定谁能写 PRD', () => {
   });
 
   /**
-   * ★★ 放宽的是门槛，不是顺序：勾了 requirement 的仍然优先。
+   * ★★ 自动挑只按 createdAt —— 排序里**没有**任何标签偏好。
    *
-   *   两者都能写，但勾过的那个是有人明确表达过意图的 ——
-   *   自动挑在没有别的信息时，照着那个意图走。
+   *   这条以前断言的是「勾了 requirement 的排在前面」。删掉那一栏之后，
+   *   自动挑退回到一个诚实的规则：最早建的那个。它不假装知道谁更擅长 ——
+   *   真要指定，用项目的 planner 绑定（上面那一组测的就是绑定优先）。
    */
-  it('自动挑：勾了 requirement 的排在前面', async () => {
+  it('★ 自动挑按建号顺序，不按任何标签偏好', async () => {
     const registry = new RuntimeRegistry();
-    const coderRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'coder 写的' });
-    const writerRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'writer 写的' });
+    const firstRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: '先建的写的' });
+    const secondRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: '后建的写的' });
 
-    // ★ 先建 coder：自动挑按 createdAt 排，光靠建号顺序它会排在前面
-    await seedPlanningAgent(registry, coderRuntime, 'coder-first', {
-      applicableTypes: ['task'],
-    });
-    await seedPlanningAgent(registry, writerRuntime, 'writer-second', {
-      applicableTypes: ['requirement'],
-    });
+    await seedPlanningAgent(registry, firstRuntime, 'agent-first');
+    await seedPlanningAgent(registry, secondRuntime, 'agent-second');
 
     const result = await provider(registry).structureRequirement({
       rawInput: '订单超时要重试',
@@ -484,25 +470,21 @@ describe('适用类型不再决定谁能写 PRD', () => {
       scope: { orgId: fx.orgId, projectId: fx.projectId },
     });
 
-    expect(result.title).toBe('writer 写的');
-    expect(coderRuntime.lastTask).toBeNull();
+    expect(result.title).toBe('先建的写的');
+    expect(secondRuntime.lastTask).toBeNull();
   });
 
   /**
-   * ★ 偏好排在「现在能不能跑」之后：勾了 requirement 但运行时没注册的那个
+   * ★ 「现在能不能跑」仍然排在建号顺序之前：先建但运行时没注册的那个
    *   不该压过一个跑得动的。反过来的话，一次本来能成的分析会退成规则占位。
    */
-  it('自动挑：勾了 requirement 但运行时没注册时，让位给跑得动的那个', async () => {
+  it('自动挑：先建但运行时没注册时，让位给跑得动的那个', async () => {
     const registry = new RuntimeRegistry();
     const coderRuntime = new FileWritingRuntime({ ...STRUCTURED_OUTPUT, title: 'coder 写的' });
 
     const unregistered = new RuntimeRegistry();
-    await seedPlanningAgent(unregistered, new FileWritingRuntime(STRUCTURED_OUTPUT), 'ghost', {
-      applicableTypes: ['requirement'],
-    });
-    await seedPlanningAgent(registry, coderRuntime, 'runnable-coder', {
-      applicableTypes: ['task'],
-    });
+    await seedPlanningAgent(unregistered, new FileWritingRuntime(STRUCTURED_OUTPUT), 'ghost');
+    await seedPlanningAgent(registry, coderRuntime, 'runnable-coder');
 
     const result = await provider(registry).structureRequirement({
       rawInput: '订单超时要重试',
@@ -560,7 +542,6 @@ const planTask = (over: Record<string, unknown> = {}) => ({
   estimatedHours: 4,
   estimatedTokens: 50_000,
   riskLevel: 'low',
-  requiredSkills: [],
   requiredCapabilities: [],
   requiresHuman: false,
   acceptanceCriteria: [],

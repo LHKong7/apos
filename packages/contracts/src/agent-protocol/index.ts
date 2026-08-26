@@ -272,11 +272,19 @@ export type RunWorkspace = z.infer<typeof RunWorkspace>;
  *   开一个自由文本框覆盖 system prompt，等于允许用户写一句
  *   「遇到问题自己想办法解决」把整条人工干预通道架空。
  */
+/**
+ * ★★ 这里**没有** skills 了。
+ *
+ *   它曾经生成一句「你被登记的专长是：TypeScript、测试」，而那句话的来源是
+ *   建 Agent 时一个自由文本框 —— 没人维护，也没有任何东西校验它是真的。
+ *   把它写进 prompt 的实际效果是给模型一个与事实无关的自我设限：一个完全
+ *   写得了 TypeScript 的 Agent，因为没人敲过那个词，会主动声明自己没把握。
+ *   职责说明（description）才是这一层该说的话，而它是用户真的会写的那一栏。
+ */
 export const AgentPersona = z.object({
   name: z.string(),
   type: z.string(),
   description: z.string().nullable(),
-  skills: z.array(z.string()).default([]),
 });
 export type AgentPersona = z.infer<typeof AgentPersona>;
 

@@ -141,7 +141,7 @@ apps/web/                      React 18 + Vite + TanStack Query + zustand + shad
 
 **Agent 权限说的是能力，不是工具名**。用户配的是 `workspace.write` / `repository.push` / `pull_request.merge` 这类语义能力（`AGENT_CAPABILITIES`），翻译成 `Read` / `Edit` / `Bash(npm test:*)` 是适配器的事。这三个词此前是一个 `repo:write`，而它们的风险差两个数量级 —— 「让 Agent 能改代码」顺手把「让 Agent 能合并代码」也授了出去。翻译不出来的部分必须作为降级警告显示，不能吞。
 
-**授权是项目级的，没配置 ≠ 没权限**。权限在 `project_agent_permissions(project_id, agent_id)`，同一个 Agent 在两个项目里可以是两套。组织级的 `agents` 只留**上限**（`capability_ceiling`，NULL = 不设上限，与空数组含义相反）与硬拒绝；`allowed_tools` / `denied_tools` / `resource_scopes` 三列已退役（不写不读，留列是因为它们是迁移前配置的唯一记录）。没配过时落到默认档案 `standard_executor`（工作区里能干活，出不去），而不是空数组 —— 默认值不可用的系统里，真正的默认值是用户从别处抄来的那份配置。档案**展开后落库**：只存指针的话，平台改一次档案会让所有在跑的 Agent 一起变宽。
+**授权是项目级的，没配置 ≠ 没权限**。权限在 `project_agent_permissions(project_id, agent_id)`，同一个 Agent 在两个项目里可以是两套。组织级的 `agents` 只留**上限**（`capability_ceiling`，NULL = 不设上限，与空数组含义相反）与硬拒绝；`allowed_tools` / `denied_tools` / `resource_scopes` 三列已退役（不写不读，留列是因为它们是迁移前配置的唯一记录）。没配过时落到默认档案 `full_project` —— 项目里的活都能干（改工作区、构建、测试、交产物、推分支、开 PR），`critical` 那一档一条不给（合并、部署、写库、读凭证、改权限与治理）。既不是空数组，也不再是更窄的 `standard_executor`：默认值不可用的系统里，真正的默认值是用户从别处抄来的那份配置。这条界线**由能力目录的风险等级推导**，于是以后新加一条能力会自动落在正确的一侧，不需要有人记得回来改 `profiles.ts`。档案**展开后落库**：只存指针的话，平台改一次档案会让所有在跑的 Agent 一起变宽。
 
 **生效权限只有一个求值器**（`resolveEffectiveAgentAccess`）。调度器选候选、派发冻结快照、界面显示、保存前预览四处全走它。两份实现的代价不是重复代码，是两个对不上的答案 —— 「调度器说没有候选，手动派下去其实能跑」这种问题极难复现。改权限走 `executeGovernedMutation`：读状态 → 判方向 → 授权 → 校验原因 → 事务 → 审计，顺序不能换（先授权就不知道该要哪条权限，实现只能挑宽的那条，§2.3 的不对称设计当场作废）。
 

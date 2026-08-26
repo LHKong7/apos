@@ -537,6 +537,9 @@ CREATE TABLE agents (
   runtime_ref       text NOT NULL,      -- 运行时内的标识
   model             text,
 
+  -- ★★ 这两列已经**退役**：不再写、不再读。承接范围由调度器（普通任务）
+  --    或项目角色绑定（特殊职责）决定 —— 见 04-flow-engine §4.3。
+  --    它们留着只是改动之前那份配置的唯一记录，确认没人依赖之后即删。
   skills            text[] NOT NULL DEFAULT '{}',
   applicable_types  work_item_type[] NOT NULL DEFAULT '{}',
 

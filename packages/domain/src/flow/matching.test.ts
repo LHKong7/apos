@@ -16,8 +16,6 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
   id: 'a1',
   name: 'coder',
   type: 'code',
-  skills: ['typescript'],
-  applicableTypes: ['task'],
   successRate: 0.9,
   sampleSize: 10,
   avgTokens: 1,
@@ -39,7 +37,6 @@ const agent = (over: Partial<AgentCandidate> = {}): AgentCandidate => ({
 
 const target = (over: Partial<MatchTarget> = {}): MatchTarget => ({
   type: 'task',
-  requiredSkills: [],
   requiredCapabilities: [],
   requiredTools: [],
   estimatedTokens: null,
@@ -76,16 +73,36 @@ describe('执行主体匹配', () => {
 
   /**
    * ★ 成员关系要**排在能力判定之前**。排后面的话，一个不属于本项目的
-   *   Agent 会先被算分、再以「技能不匹配」被拒 —— 用户照着那条理由
-   *   去加技能，加完还是不行，而真正的原因从没显示出来。
+   *   Agent 会先被算分、再以「缺少能力」被拒 —— 用户照着那条理由
+   *   去加能力，加完还是不行，而真正的原因从没显示出来。
    */
-  it('★ 既不是成员又不适用该类型时，报的是成员关系', () => {
+  it('★ 既不是成员又缺能力时，报的是成员关系', () => {
     const result = matchExecutors(
-      target({ type: 'bug' }),
-      [agent({ inProject: false, applicableTypes: ['task'] })],
+      target({ requiredCapabilities: ['repository.push'] }),
+      [agent({ inProject: false })],
     );
     expect(reasonFor(result)).toContain('不是本项目成员');
-    expect(reasonFor(result)).not.toContain('不适用');
+    expect(reasonFor(result)).not.toContain('所需能力');
+  });
+
+  /**
+   * ★★ 零配置接入：承接范围不再由 Agent 自己声明。
+   *
+   *   以前这里卡 `applicableTypes.includes(target.type)`，而那一栏建 Agent 时
+   *   默认是空数组 —— 空数组的含义是「什么都不接」，于是界面上建出来的
+   *   Agent 永远接不到任何工作，配置页上却没有一处显示缺了什么。
+   *   现在同一个 Agent 对 13 种工作项类型一视同仁。
+   */
+  it('★ 任何工作项类型都不再因为「类型不适用」被拒', () => {
+    const types = [
+      'requirement', 'feature', 'story', 'task', 'bug', 'research', 'review',
+      'test', 'incident', 'decision', 'approval', 'release', 'knowledge',
+    ] as const;
+    for (const type of types) {
+      const result = matchExecutors(target({ type }), [agent()]);
+      expect(result.candidates, type).toHaveLength(1);
+      expect(result.rejected, type).toHaveLength(0);
+    }
   });
 
   it('★ 运行时没注册的 Agent 不进候选 —— 派下去只会卡到超时', () => {
@@ -206,7 +223,6 @@ describe('执行主体匹配', () => {
       [agent({ inProject: false }), 'not_project_member', 'project'],
       [agent({ status: 'retired' }), 'agent_inactive', 'org'],
       [agent({ registered: false }), 'runtime_not_registered', 'platform'],
-      [agent({ applicableTypes: ['bug'] }), 'type_not_applicable', 'org'],
       [agent({ currentLoad: 3, maxConcurrency: 3 }), 'at_capacity', 'org'],
     ];
     for (const [candidate, code, scope] of cases) {

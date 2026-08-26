@@ -16,28 +16,9 @@ export async function seedAgent(
     runtime?: MockRuntime;
     registry?: RuntimeRegistry;
     name?: string;
-    skills?: string[];
     maxConcurrency?: number;
     tokenLimitPerRun?: number;
     stats?: Record<string, unknown>;
-    /**
-     * ★ 含 `requirement`：自动挑规划 / PRD 编写 Agent 时它排在前面
-     *   （pickAgent 的 PLANNING_TYPE）。此前这个联合漏了它，于是想造一个
-     *   「优先被挑去写 PRD 的 Agent」只能绕开夹具直接插表 —— 而绕开夹具的
-     *   测试造出来的形态迟早与真实路径分家。
-     *
-     * ★ 它**不是**能不能写 PRD 的门槛：那条判据只有「是不是项目成员」。
-     *   所以默认值里没有它，也照样能被指定为 PRD 编写者。
-     */
-    applicableTypes?: (
-      | 'task'
-      | 'bug'
-      | 'test'
-      | 'research'
-      | 'review'
-      | 'release'
-      | 'requirement'
-    )[];
     /**
      * 把这个 Agent 登记成项目成员。默认 **true** —— 派发的硬性前置就是
      * 项目成员关系（domain 的 matchExecutors 里那条 inProject），
@@ -74,8 +55,13 @@ export async function seedAgent(
       runtimeKind: 'mock',
       capabilities: (await runtime.getCapabilities()) as unknown as Record<string, unknown>,
       model: 'claude-opus-5',
-      skills: opts.skills ?? ['TypeScript', 'SQL 优化'],
-      applicableTypes: opts.applicableTypes ?? ['task', 'bug', 'test', 'research', 'review'],
+      /**
+       * ★★ 夹具**不写** skills / applicableTypes 两列。
+       *
+       *   它们已经没有任何读取方（承接范围由调度与绑定决定），列还留着只是
+       *   为了不做一次性迁移。夹具照写的话，测试造出来的形态会比真实路径更
+       *   「配置齐全」—— 而夹具比真实数据更宽的那一刻，它就把一个洞焊死了。
+       */
       maxConcurrency: opts.maxConcurrency ?? 3,
       tokenLimitPerRun: opts.tokenLimitPerRun ?? 500_000,
       ownerId: fx.userId,

@@ -5,6 +5,8 @@ import {
   agentRuns,
   agents,
   projectAgentBindings,
+  projectMembers,
+  projects,
   requirements,
   users,
   workItems,
@@ -20,7 +22,6 @@ import {
   RUNTIME_KIND_SPECS,
   runtimeKindSpec,
   validateRuntimeConfig,
-  WorkItemType,
 } from '@apos/contracts';
 import { CAPABILITY_SPECS, capabilityChangeImpact } from '@apos/domain';
 import { checkCompatibility, type RuntimeRegistry } from '@apos/agent-runtimes';
@@ -164,8 +165,6 @@ export const AgentInput = z.object({
   credential: z.string().nullable().optional(),
 
   model: z.string().nullable().optional(),
-  skills: z.array(z.string()).default([]),
-  applicableTypes: z.array(WorkItemType).default([]),
 
   /**
    * ★★ The **capability ceiling** the organization sets for this agent.
@@ -201,19 +200,84 @@ export const AgentInput = z.object({
 });
 export type AgentInput = z.infer<typeof AgentInput>;
 
+/**
+ * What creating an Agent asks for / 建一个 Agent 要填的东西。
+ *
+ * ★★ 它比 {@link AgentInput} **少四栏**：skills、applicableTypes、
+ *   capabilityCeiling、deniedCapabilities。
+ *
+ *   前两栏整个删掉了（承接范围由调度与绑定决定，专长标签不再存在）；
+ *   后两栏是「事后限制」，不是「先回答才能开始」的问题 —— 建 Agent 时
+ *   问「它最多能被授权到什么程度」，等于要求用户在还没跑过一次任务的时候
+ *   就预判它会用到哪些能力。答不上来的人会跳过，而跳过的默认值是空数组，
+ *   空数组的含义恰好是最坏的那一种。现在建出来就是全项目访问，
+ *   要收窄去详情页的 Restrict access（走 PATCH，与这份 schema 是两回事）。
+ *
+ * Creation asks for a runtime connection and nothing else. The ceiling fields
+ * live on update only: asking for a permission boundary before the agent has
+ * ever run is asking users to predict what they cannot know, and the answer
+ * people give when they cannot answer is "skip" — whose stored value was an
+ * empty array, i.e. the worst of the available meanings.
+ */
+/**
+ * 收下一栏只为了**当场拒掉**它。
+ *
+ * ★★ 默认丢弃比报错更糟。zod 的对象 schema 会静默丢掉多余的键 —— 一个还在
+ *   送 `capabilityCeiling` 的老客户端会拿到 201，以为限制生效了，而实际建出来
+ *   的是全项目访问。「配置没生效，而且没有任何迹象」是这个仓库反复吃过亏的
+ *   那一类问题，所以这里宁可返回一个说得清下一步的 400。
+ */
+const refusedAtCreate = (field: string, hint: string) =>
+  z
+    .any()
+    .refine((v) => v === undefined, {
+      message: `创建 Agent 不再接收 ${field}：新建的 Agent 默认是全项目访问。${hint}`,
+    })
+    /**
+     * ★ `.optional()` 必须在 `.refine()` **之后**。反过来的话，refine 包出来的
+     *   ZodEffects 不再被 zod 认作可选，于是这一栏变成**必填** —— 表现是每一次
+     *   建 Agent 都 400，而错误说的是「缺少 capabilityCeiling」。
+     */
+    .optional();
+
+export const AgentCreateInput = AgentInput.omit({
+  capabilityCeiling: true,
+  deniedCapabilities: true,
+}).extend({
+  capabilityCeiling: refusedAtCreate(
+    'capabilityCeiling',
+    '要收窄请先建出来，再到 Agent 详情的「限制访问范围」里改（PATCH /admin/agents/:id）。',
+  ),
+  deniedCapabilities: refusedAtCreate(
+    'deniedCapabilities',
+    '硬拒绝同样在建完之后配（PATCH /admin/agents/:id）。',
+  ),
+  /**
+   * ★★ 在哪个项目里建的。给了就把这个 Agent 加进那个项目。
+   *
+   *   在项目配置页建 Agent 却还要用户再去「成员与角色」加一次，是这套流程里
+   *   最没有信息量的一步：用户刚刚在这个项目里点了「新建 Agent」，
+   *   意图不可能更清楚了。而漏掉那一步的表现是 Agent 建好了、看着一切正常、
+   *   就是永远派不到活（调度器判 `not_project_member`）。
+   *
+   * ★ 反过来，从组织级 Agent 页建的（不传 projectId）**不自动加进任何项目**：
+   *   自动加进「所有项目」等于把每个项目的代码交给一个没人授权过它的执行体。
+   *   默认全访问的边界始终是「当前这一个项目」。
+   */
+  projectId: z.string().uuid().nullable().optional(),
+});
+export type AgentCreateInput = z.infer<typeof AgentCreateInput>;
+
 export async function createAgent(
   db: Database,
   registry: RuntimeRegistry,
   orgId: string,
-  input: AgentInput,
+  input: AgentCreateInput,
   actorUserId: string,
 ) {
   const spec = assertKind(input.runtimeKind);
   await assertOwner(db, input.ownerId);
-  assertCeilingSane({
-    capabilityCeiling: input.capabilityCeiling ?? null,
-    deniedCapabilities: input.deniedCapabilities,
-  });
+  if (input.projectId) await assertProject(db, orgId, input.projectId);
 
   const { config, unknownKeys } = prepareConfig(input.runtimeKind, input.runtimeConfig, null);
 
@@ -241,10 +305,16 @@ export async function createAgent(
       ...credentialColumns(credential),
 
       model: input.model ?? null,
-      skills: input.skills,
-      applicableTypes: input.applicableTypes,
-      capabilityCeiling: input.capabilityCeiling ?? null,
-      deniedCapabilities: input.deniedCapabilities,
+      /**
+       * ★★ 建的时候**不设上限、不硬拒绝**。
+       *
+       *   `null` 与空数组在这里含义相反：null 是「不设上限，沿用平台基线」，
+       *   空数组是「一条能力都不给」。零配置的语义是前者 —— 实际能做什么由
+       *   项目里的默认档案（full_project）决定，而平台基线那两条
+       *   （permission.manage / policy.manage）任何配置都放不开。
+       */
+      capabilityCeiling: null,
+      deniedCapabilities: [],
       maxConcurrency: input.maxConcurrency,
       timeoutSeconds: input.timeoutSeconds,
       tokenLimitPerRun: input.tokenLimitPerRun ?? null,
@@ -259,6 +329,32 @@ export async function createAgent(
   //   it and it does nothing", and all the UI says is "no adapter registered in this process"
   registerAgentNow(registry, row!);
 
+  /**
+   * ★★ 在项目里建的 Agent 当场入项目，不留一步给用户去别处补。
+   *
+   *   `onConflictDoNothing` 是必要的：这条路径没有幂等键兜着，重复提交
+   *   （或者一个刚被移出项目又被重新建的同名 Agent）不该炸在唯一约束上。
+   */
+  let joinedProject = false;
+  if (input.projectId) {
+    await db
+      .insert(projectMembers)
+      .values({
+        orgId,
+        projectId: input.projectId,
+        actorType: 'agent',
+        actorId: row!.id,
+        /**
+         * ★ Agent 进项目拿的是 executor 角色 —— 它能干活，但拿不到人类那几档
+         *   （批准、改角色、发 Policy）。这是「平台固定边界」的一半，
+         *   另一半是能力目录里的 neverAutoGrant。
+         */
+        role: 'executor',
+      })
+      .onConflictDoNothing();
+    joinedProject = true;
+  }
+
   // Creating the profile is itself a permission grant, so it leaves an audit trail too
   await db.insert(agentPermissionChanges).values({
     agentId: row!.id,
@@ -269,7 +365,12 @@ export async function createAgent(
     reason: '创建 Agent',
   });
 
-  return { agent: await describeAgent(db, registry, row!), unknownConfigKeys: unknownKeys };
+  return {
+    agent: await describeAgent(db, registry, row!),
+    unknownConfigKeys: unknownKeys,
+    /** ★ 回给界面：它据此决定要不要提示「已加入本项目，可以直接派活」 */
+    joinedProject,
+  };
 }
 
 /**
@@ -408,8 +509,6 @@ export async function updateAgent(
       ...(input.endpoint !== undefined ? { endpoint: input.endpoint ?? null } : {}),
       ...(credential !== undefined ? credentialColumns(credential) : {}),
       ...(input.model !== undefined ? { model: input.model ?? null } : {}),
-      ...(input.skills ? { skills: input.skills } : {}),
-      ...(input.applicableTypes ? { applicableTypes: input.applicableTypes } : {}),
       ...(input.capabilityCeiling !== undefined
         ? { capabilityCeiling: input.capabilityCeiling }
         : {}),
@@ -804,8 +903,6 @@ async function describeAgent(db: Database, registry: RuntimeRegistry, row: Agent
     lastCheckAt: row.lastCheckAt?.toISOString() ?? null,
 
     model: row.model,
-    skills: row.skills,
-    applicableTypes: row.applicableTypes,
     /**
      * ★ The organization-level record returns the **ceiling** only, never "what it can do".
      *   That is a project-level question, and the same agent can have two different answers
@@ -952,6 +1049,21 @@ function credentialColumns(credential: string | null) {
 async function assertOwner(db: Database, ownerId: string) {
   const [u] = await db.select({ id: users.id }).from(users).where(eq(users.id, ownerId));
   if (!u) throw notFound('owner');
+}
+
+/**
+ * ★★ 「在这个项目里建」的项目必须属于调用者的组织。
+ *
+ *   不查组织的话，一个跨租户的 projectId 会让这个 Agent 悄悄成为别人项目的
+ *   成员 —— 而项目成员关系正是调度器唯一的授权判据。越界回 404 不回 403：
+ *   403 等于确认这个 id 存在。
+ */
+async function assertProject(db: Database, orgId: string, projectId: string) {
+  const [p] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.orgId, orgId)));
+  if (!p) throw notFound('project');
 }
 
 export interface AgentCeilingRecord {

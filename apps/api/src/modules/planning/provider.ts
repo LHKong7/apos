@@ -160,7 +160,6 @@ export interface PlanTaskDraft {
   estimatedHours: number;
   estimatedTokens: number | null;
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
-  requiredSkills: string[];
   /**
    * Semantic capabilities this task needs — runtime independent. The scheduler
    * filters candidates by them / 这个任务需要的语义能力（跨运行时）。

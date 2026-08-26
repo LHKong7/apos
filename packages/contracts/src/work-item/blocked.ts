@@ -19,6 +19,16 @@ export const RejectionCode = z.enum([
   'not_project_member',
   'agent_inactive',
   'runtime_not_registered',
+  /**
+   * ★★ **不再产生**，只保留解释能力。
+   *
+   *   承接范围（applicableTypes）这道闸已经拆了（见 domain/flow/matching.ts）：
+   *   Agent 不再声明自己接什么类型的活。但 `work_items.blocked_detail` 里
+   *   躺着历史行，删掉这个码会让那些行在界面上渲染成空白 —— 那不是「已修复」，
+   *   是「看不懂了」。留着它，删的是产生它的代码，不是读它的能力。
+   *
+   *   No longer produced — kept so historical `blocked_detail` rows still render.
+   */
   'type_not_applicable',
   'at_capacity',
   'missing_capabilities',

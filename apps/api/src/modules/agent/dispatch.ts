@@ -11,7 +11,7 @@ import {
   agentRuns,
   type Database,
 } from '@apos/db';
-import { selectPolicyGates } from '@apos/domain';
+import { accessModeOf, selectPolicyGates } from '@apos/domain';
 import {
   ACTIVE_RUN_STATUSES,
   agentActor,
@@ -178,6 +178,17 @@ export async function dispatchRun(
     version: 2,
     profileKey: access.profileKey,
     profileVersion: access.profileVersion,
+    /**
+     * ★★ 默认简单，运行记录不简单。
+     *
+     *   零配置建出来的 Agent 用的是 full_project 默认档案 —— 用户从没做过
+     *   任何权限选择。正因如此，「它当时实际被授权到什么程度」只能靠这份快照
+     *   回答：`accessMode` 说清那是默认还是有人收窄过，`projectId` 钉死这份
+     *   授权的边界始终是单个项目，`resolvedAt` 记下求值发生在哪一刻。
+     */
+    accessMode: accessModeOf(access.profileKey),
+    projectId: item.projectId,
+    resolvedAt: new Date().toISOString(),
     capabilities: access.capabilities,
     deniedCapabilities: access.deniedCapabilities,
     allowedTools: permissionSnapshot.allowedTools,
@@ -350,7 +361,6 @@ export async function dispatchRun(
       name: agent.name,
       type: agent.type,
       description: agent.description,
-      skills: agent.skills,
     },
     workspace: acquired.workspace,
     /** ★ Language is a project property — a scheduler dispatch has no request and no "current user" */
@@ -542,7 +552,6 @@ export async function resumeQueuedRun(
       name: agent.name,
       type: agent.type,
       description: agent.description,
-      skills: agent.skills,
     },
     workspace: acquired.workspace,
     outputLocale: project?.outputLocale === 'zh' ? 'zh' : 'en',

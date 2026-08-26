@@ -158,7 +158,6 @@ export const AgentPlanOutput = z.object({
           .default(null)
           .transform((v) => (v === null ? null : Math.round(v))),
         riskLevel: RiskLevel,
-        requiredSkills: z.array(z.string()).default([]),
         /**
          * ★★ A plan expresses **capabilities**, never tool names.
          *

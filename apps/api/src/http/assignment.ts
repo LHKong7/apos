@@ -156,7 +156,7 @@ export async function setAssignee(
       executorType,
       executorId,
       /**
-       * ★ executionMode lives inside typeData, next to requiredSkills / requiredTools.
+       * ★ executionMode lives inside typeData, next to requiredCapabilities / requiredTools.
        *   Merge that one key rather than writing the whole typeData we read back:
        *   between the SELECT above and this point, qualityGate may have been updated by
        *   CI or by an Agent finishing up, and a whole-column overwrite erases it. See

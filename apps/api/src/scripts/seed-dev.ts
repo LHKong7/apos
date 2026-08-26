@@ -175,8 +175,6 @@ async function main() {
         type: 'code',
         runtimeKind: 'mock',
         model: 'claude-opus-5',
-        skills: ['TypeScript', 'SQL 优化', 'API 设计'],
-        applicableTypes: ['task', 'bug', 'research'],
         /** ★ 组织级只定**上限**；实际能做什么按项目选档案（见下面的授权行） */
         capabilityCeiling: [
           'workspace.read',
@@ -199,8 +197,6 @@ async function main() {
         type: 'test',
         runtimeKind: 'mock',
         model: 'claude-sonnet-5',
-        skills: ['测试', 'Playwright'],
-        applicableTypes: ['test', 'task'],
         capabilityCeiling: [
           'workspace.read',
           'workspace.write',
@@ -220,8 +216,6 @@ async function main() {
         type: 'review',
         runtimeKind: 'mock',
         model: 'claude-sonnet-5',
-        skills: ['代码评审'],
-        applicableTypes: ['review'],
         /** ★ 评审 Agent 只读 —— 上限里就没有写能力，项目里也授不出来 */
         capabilityCeiling: ['workspace.read', 'command.test', 'artifact.create'],
         deniedCapabilities: ['workspace.write', 'pull_request.merge'],
@@ -236,8 +230,6 @@ async function main() {
         type: 'ops',
         runtimeKind: 'mock',
         model: 'claude-sonnet-5',
-        skills: ['部署', '灰度发布'],
-        applicableTypes: ['release'],
         capabilityCeiling: [
           'workspace.read',
           'artifact.create',

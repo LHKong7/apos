@@ -201,10 +201,10 @@ Requirement structuring and plan generation use the same mechanism: the platform
 calls no model API of its own. It picks one of the **project's own agent members**
 and uses that Agent's credential. Order of preference: the agent named on the
 requirement (the "PRD author" dropdown on the requirement page) → the project's
-planner binding (primary, then fallbacks) → any agent member of the project, with
-those declaring `requirement` in `applicableTypes` sorted first. Applicable types
-are a preference, not a gate: they govern work-item dispatch matching, and
-planning dispatches no work item.
+planner binding (primary, then fallbacks) → any agent member of the project, the
+runnable ones first and then in creation order. Nothing an agent declares about
+itself takes part in the choice: membership decides who is eligible, and the
+planner binding decides who is preferred.
 
 ---
 

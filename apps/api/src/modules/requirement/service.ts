@@ -713,21 +713,17 @@ export type SetAuthorAgentResult =
 /**
  * 指定 / 取消指定这条需求的 PRD 编写 Agent。
  *
- * ★★ 候选是**项目的 Agent 成员**，全体 —— 不再要求「适用类型含 requirement」。
+ * ★★ 候选是**项目的 Agent 成员**，全体。判据只有成员关系这一条。
  *
- *   那条判据是从派工作项那边借来的（domain/flow/matching.ts 按
- *   `applicableTypes.includes(target.type)` 匹配执行者），可写 PRD 这件事
- *   压根不经过派工：这会儿工作项还不存在。借过来的后果是一个项目配了
- *   一整队 Agent，需求页上的下拉框却是空的 —— 而空下拉框不会说明
- *   「去 Agent 配置里勾一个你不知道有什么用的类型」。
+ *   这里曾经还卡一条「适用类型含 requirement」，是从派工作项那边借来的，
+ *   而写 PRD 压根不经过派工：这会儿工作项还不存在。借过来的后果是一个项目
+ *   配了一整队 Agent，需求页上的下拉框却是空的 —— 而空下拉框不会说明
+ *   「去 Agent 配置里勾一个你不知道有什么用的类型」。那一栏现在整个不存在了。
  *
  *   任何一个被拉进这个项目的 Agent 都写得了 PRD；写得好不好是人看产出
  *   之后换一个的事，不该由一个建号时随手勾的复选框提前替他决定。
  *
- *   Any agent on the project's team can author. The old
- *   `applicableTypes ∋ requirement` gate came from work-item dispatch
- *   matching, which PRD authoring never goes through — it only left projects
- *   with a staffed agent team and an empty dropdown.
+ *   Any agent on the project's team can author. Membership is the only gate.
  *
  * ★★ 两道校验放在**保存这一刻**，不是等到分析的时候。
  *

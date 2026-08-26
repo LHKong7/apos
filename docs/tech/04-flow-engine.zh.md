@@ -305,39 +305,54 @@ FOR UPDATE SKIP LOCKED;      -- ★ 多 worker 实例并行调度不冲突
 
 ```typescript
 function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
-  // 硬性条件：不满足直接淘汰
-  if (!agent.applicableTypes.includes(item.type)) return null;
+  // 硬性条件：不满足直接淘汰。
+  // ★ 注意这里**没有**「它自己声明接什么类型的活」那一条 —— 见下面「承接范围」
+  if (!agent.inProject) return null;                          // 授权，不是偏好
   if (agent.status !== 'active') return null;
+  if (!agent.registered) return null;                         // 本进程没有它的适配器
   if (ctx.agentLoad[agent.id] >= agent.maxConcurrency) return null;
   if (!hasRequiredPermissions(agent, item)) return null;      // 权限范围
   if (agent.costLimitPerRun && item.estimatedCost > agent.costLimitPerRun) return null;
 
-  // 加权评分
-  const skillMatch   = jaccard(agent.skills, item.requiredSkills);       // 0–1
+  // 加权评分 —— 每一项都是「跑起来之后能观察到的事实」
   const successRate  = agent.stats.successRate ?? 0.7;                   // 样本不足给中性值
   const loadFactor   = 1 - ctx.agentLoad[agent.id] / agent.maxConcurrency;
   const contextMatch = ctx.agentContextAffinity[agent.id] ?? 0.5;        // 是否做过同模块
   const costFactor   = 1 - normalize(agent.stats.avgCost, ctx.costRange);
 
+  // 四项权重是拿掉 skill 那 0.30 之后按原比例重新归一的结果
   const score =
-      0.30 * skillMatch
-    + 0.25 * successRate
-    + 0.15 * contextMatch
-    + 0.15 * loadFactor
-    + 0.15 * costFactor;
+      0.25/0.70 * successRate
+    + 0.15/0.70 * contextMatch
+    + 0.15/0.70 * loadFactor
+    + 0.15/0.70 * costFactor;
 
   return {
     agentId: agent.id,
     score,
     // ★ 理由必须可解释——页面文档 04 §5.4 要求改派下拉展示匹配依据
     reasons: [
-      `Skill 匹配 ${(skillMatch * 100).toFixed(0)}%（${intersect(agent.skills, item.requiredSkills).join(', ')}）`,
       `历史成功率 ${(successRate * 100).toFixed(0)}%（${agent.stats.sampleSize} 次）`,
       `当前负载 ${ctx.agentLoad[agent.id]}/${agent.maxConcurrency}`,
     ],
   };
 }
 ```
+
+**承接范围**。评分里没有 skill 这一项，硬性条件里也没有 `applicableTypes` 那道闸。
+两者都是 Agent 档案上的自述标签，而标签与它真实的能力之间没有任何因果关系 ——
+一个完全写得了 TypeScript 的 Agent，只因为没人在那个文本框里敲过这个词就被排到最后。
+更糟的是 `applicableTypes` 建 Agent 时默认是空数组，而空数组的含义是「什么活都不接」：
+每一个新建出来的 Agent 都接不到任何工作，界面上却哪儿都不红。
+
+承接范围现在只由两处决定：
+
+- **普通任务** —— 调度器从过了上面那几道硬闸的 Agent 里挑。
+- **特殊职责**（planner / reviewer / policy manager）—— 由项目的 Agent 角色绑定
+  （`project_agent_bindings`）明确指定。
+
+`agents.skills` 与 `agents.applicable_types` 两列还在，但已经没有任何读取方，
+确认没有历史行依赖之后再删。
 
 **需要人类经验的任务**：产品文档 8.3.4 提到"是否需要人类经验"是分配依据之一。实现上由 Plan 生成时在 `type_data.requires_human` 标记，或由 Policy 规则强制（如"涉及生产 DDL 的任务必须分配给人类"）。
 

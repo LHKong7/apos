@@ -170,8 +170,6 @@ export async function getAgent(
       model: agent.model,
       status: agent.status,
       pausedReason: agent.pausedReason,
-      skills: agent.skills,
-      applicableTypes: agent.applicableTypes,
       maxConcurrency: agent.maxConcurrency,
       timeoutSeconds: agent.timeoutSeconds,
       tokenLimitPerRun: agent.tokenLimitPerRun,
