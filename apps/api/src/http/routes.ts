@@ -132,6 +132,7 @@ import { getAnalytics, getAnalyticsItems } from './analytics';
 import { getOverview } from './overview';
 import { getAgent, listAgents, listRuntimes } from './agents';
 import {
+  AgentCreateInput,
   AgentInput,
   createAgent,
   deleteAgent,
@@ -2777,7 +2778,6 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
         type: agents.type,
         status: agents.status,
         model: agents.model,
-        skills: agents.skills,
         maxConcurrency: agents.maxConcurrency,
         tokenLimitPerRun: agents.tokenLimitPerRun,
         stats: agents.stats,
@@ -3026,17 +3026,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps) {
     },
     async (req, reply) => {
       const { orgId, userId } = await callerOrg(req);
-      const body = AgentInput.parse(req.body);
+      const body = AgentCreateInput.parse(req.body);
       const result = await createAgent(db, deps.registry, orgId, body, userId);
 
       await emitAndPublish(db, {
         orgId,
-        projectId: null,
+        /**
+         * ★ 在项目里建的 Agent，这条事件就挂在那个项目上 —— 项目活动流里
+         *   看得到「谁把这个 Agent 拉进来了」。从组织级页面建的仍然是 null。
+         */
+        projectId: body.projectId ?? null,
         type: 'agent.registered',
         actor: humanActor(userId),
         subjectType: 'agent',
         subjectId: result.agent.id,
-        payload: { name: body.name, type: body.type, runtimeKind: body.runtimeKind },
+        payload: {
+          name: body.name,
+          type: body.type,
+          runtimeKind: body.runtimeKind,
+          /** ★ 自动入项目也是一次授权，审计里要看得见 */
+          joinedProject: result.joinedProject,
+        },
         correlationId: corr(req),
       });
 

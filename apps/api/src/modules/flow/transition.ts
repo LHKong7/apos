@@ -198,12 +198,31 @@ export async function transition(
      */
     if (target === 'awaiting_decision') intendedStatus = from;
 
-    if (verdict.requiresHuman && !approvalSatisfied) {
+    /**
+     * ★ 「Policy 把这次流转拦下来了，任务停在这里等人」。
+     *
+     *   停的地方有两个（pause 停 blocked，其余停 awaiting_decision），
+     *   但**性质只有一个**：都挂着一条待批的决策，都要在批准后回到
+     *   本来要去的地方。下面几处写库都按这个性质判，而不是按状态名判 ——
+     *   按状态名判正是 pause 那条路径以前少掉 previousStatus、
+     *   少掉 humanGate 徽标、少掉阻塞原因的原因。
+     *
+     * Policy parked this transition pending a human. The spot differs (pause
+     * parks in `blocked`, everything else in `awaiting_decision`) but the
+     * nature does not, so the writes below key off this flag rather than the
+     * status name.
+     */
+    const parkedByPolicy = verdict.requiresHuman && !approvalSatisfied;
+
+    if (parkedByPolicy) {
       finalStatus = verdict.action.type === 'pause' ? 'blocked' : 'awaiting_decision';
       // Policy 把流转拦下来了：本来要去的地方才是批准后的目的地
       if (target !== 'awaiting_decision') intendedStatus = target;
       createdDecisionId = await createDecisionFor(tx, item, verdict, intendedStatus ?? target);
     }
+
+    /** 挂起等人：无论停在 blocked 还是 awaiting_decision */
+    const parked = finalStatus === 'awaiting_decision' || (parkedByPolicy && finalStatus === 'blocked');
 
     // 6. 执行 effects
     const effectPatch = applyEffects(rule.effects, {
@@ -221,16 +240,49 @@ export async function transition(
         stage: stageFor(finalStatus, intendedStatus),
         version: item.version + 1,
         updatedAt: new Date(),
-        previousStatus: finalStatus === 'awaiting_decision' ? intendedStatus : null,
+        /**
+         * ★ 批准后要回到哪。pause 停在 blocked 时同样要记 ——
+         *   以前这里按 `=== 'awaiting_decision'` 判，于是 pause 那条路径
+         *   把目的地写成了 null，就算后来能批准也只会回落到 ready。
+         */
+        previousStatus: parked ? intendedStatus : null,
         /**
          * Human Gate 徽标。放在这里而不是某条规则的 effects 里 ——
-         * 它取决于「最终停在哪个状态」，而挂起可能来自两条完全不同的路径：
-         * 状态机自身的 decision_required，或 Policy 把一次普通流转拦下来。
-         * 只在其中一条路径上打徽标，另一条的卡片就只是静静停住，
+         * 它取决于「最终停在哪个状态」，而挂起可能来自三条不同的路径：
+         * 状态机自身的 decision_required、Policy 把一次普通流转拦下来、
+         * 或 Policy 的 pause 把它压进 blocked。
+         * 只在其中一条路径上打徽标，另外两条的卡片就只是静静停住，
          * 看板上看不出它在等人。
          */
-        ...(finalStatus === 'awaiting_decision'
-          ? { humanGate: 'waiting_for_decision' as const }
+        ...(parked ? { humanGate: 'waiting_for_decision' as const } : {}),
+        /**
+         * ★★ pause 压进 blocked 时把原因一起写上。
+         *
+         *   不写的话卡片显示「已阻塞」而原因一栏是空的 —— 偏偏这是唯一一种
+         *   「阻塞是平台按规则自己造成的」的情形，也是唯一一种有明确解法的
+         *   （去批那条决策）。说不出是哪条规则拦的，用户就只能干看着。
+         *
+         * ★ 结构化的那份走 blockedDetail（界面按 kind 取本地化词条），
+         *   规则名字是**用户自己起的**，原样放进 detail 不翻译 ——
+         *   翻译一个用户起的名字等于给它改名。blockedReason 那句中文
+         *   只是日志与存量客户端的兜底，界面不读它。
+         *
+         * The structured copy goes in blockedDetail so both UIs can localize;
+         * the rule's name is user data and is passed through verbatim.
+         */
+        ...(parkedByPolicy && finalStatus === 'blocked'
+          ? {
+              blockedSince: item.blockedSince ?? new Date(),
+              blockedReason: verdict.matchedPolicyName
+                ? `Policy「${verdict.matchedPolicyName}」暂停了这次流转，等待人工确认`
+                : '项目自治等级要求该操作暂停，等待人工确认',
+              blockedDetail: {
+                kind: 'policy_paused' as const,
+                candidates: [],
+                detail: verdict.matchedPolicyName,
+                at: new Date().toISOString(),
+              },
+            }
           : {}),
         ...effectPatch,
       })

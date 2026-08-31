@@ -62,8 +62,6 @@ function agentList(
       name: a.name ?? 'prd-writer',
       runtimeKind: a.runtimeKind ?? 'claude-code',
       status: a.status ?? 'active',
-      applicableTypes: a.applicableTypes ?? ['requirement'],
-      skills: a.skills ?? [],
     })),
   };
 }
@@ -109,17 +107,17 @@ function renderPicker(over: {
 
 describe('PRD 编写 Agent 选择', () => {
   /**
-   * ★★ 项目 Agent 成员**全都**列出来，不按适用类型筛。
+   * ★★ 项目 Agent 成员**全都**列出来。
    *
-   *   适用类型管的是派工作项时的执行者匹配，而写 PRD 不派工作项。
-   *   照着它筛的后果是项目里配了一整队 Agent、下拉框却是空的 ——
-   *   而空下拉框不会解释「去勾一个你不知道有什么用的复选框」。
+   *   这里以前按「适用类型含 requirement」筛过一轮，后果是项目里配了一整队
+   *   Agent、下拉框却是空的 —— 而空下拉框不会解释「去勾一个你不知道有什么用
+   *   的复选框」。那一栏现在整个不存在了，能不能写 PRD 由这个下拉框自己决定。
    */
-  it('列出项目里全部 Agent 成员 —— 适用类型不含 requirement 的照样能选', async () => {
+  it('列出项目里全部 Agent 成员 —— 不按任何自述标签筛', async () => {
     vi.spyOn(api, 'projectAgents').mockResolvedValue(
       agentList([
-        { agentId: 'a1', name: 'prd-writer', applicableTypes: ['requirement'] },
-        { agentId: 'a2', name: 'coder', applicableTypes: ['task'] },
+        { agentId: 'a1', name: 'prd-writer' },
+        { agentId: 'a2', name: 'coder' },
       ]),
     );
 

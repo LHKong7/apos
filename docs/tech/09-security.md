@@ -527,7 +527,11 @@ No explicit configuration does not mean "no permissions".
 It means "use the safe, useful default profile".
 ```
 
-In a system where a freshly created Agent has an empty permission array ("can do nothing at all"), **the real default is whichever configuration the user copied from somewhere else**. So an Agent joining a project with no profile specified falls to `standard_executor`: it can edit code, run tests, and deliver artifacts inside an isolated workspace; it cannot push, merge, deploy, read credentials, or touch governance. The criterion is "can the consequences leave the workspace".
+In a system where a freshly created Agent has an empty permission array ("can do nothing at all"), **the real default is whichever configuration the user copied from somewhere else**. So an Agent joining a project with no profile specified falls to `full_project`: everything inside the project — edit code, build, test, deliver artifacts, push branches, open pull requests — and nothing beyond it: no merging, no deploying, no writing to a database, no reading credentials, no touching permissions or governance.
+
+The line is **derived from the capability catalog's risk tiers** rather than hand-listed: `critical` is exactly the platform control plane plus the calls that are a human's last word (merge lands changes with nobody left to review them; deploy touches production; a database write does not come back; a secret in a model context is a leaked secret). Deriving it means a capability added to the catalog later falls on the correct side without anyone remembering to revisit `profiles.ts` — and a hand-written list would have failed in the direction of "the freshly created Agent is silently short one capability, with nothing on screen saying why".
+
+`standard_executor` (work inside an isolated workspace, nothing leaves it) still exists as the profile to pick when someone deliberately narrows an Agent. It is no longer the default: making the safest possible profile the default sounds right, but its actual effect was that users created an Agent, found it could not push a branch, and pasted in a wider configuration copied from elsewhere.
 
 The built-in profiles are in `packages/domain/src/capabilities/profiles.ts`. Anything more has to be an explicit decision with a written reason.
 

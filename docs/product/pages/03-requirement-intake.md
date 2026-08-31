@@ -177,15 +177,15 @@ Every field:
 and the error offers both the AI and the manual way out). Gating on "has this been analyzed" walls off the manual path at the very last step.
 
 **Who writes this PRD can be chosen per requirement.** A dropdown above the structured panel lists **this project's Agent members** —
-all of them, not filtered by applicable type (the same criterion as binding a planning Agent in project settings). Leave it unset and the project's bound planning Agent is used
+all of them, unfiltered (the same criterion as binding a planning Agent in project settings). Leave it unset and the project's bound planning Agent is used
 — behavior for existing requirements does not change at all.
 
-**Applicable type (`applicableTypes`) is not a gate.** It answers "can a work item be dispatched to this Agent," and writing a PRD dispatches no work item at all —
-no work item exists yet, which is exactly why `agent_runs.work_item_id` was widened to nullable. Back when it was used as a gate, the result was a project with a full
-roster of Agents and zero of them able to write a PRD, with nothing on screen but an empty dropdown that could not explain "go tick a checkbox in Agent settings whose
-purpose you don't know." Whether an Agent writes well is something a person decides after reading its output and swapping it out — not something a checkbox ticked
-offhand at signup gets to decide in advance. The type now only sets the ordering for **automatic selection**: Agents that declare it sort first (someone stated that
-intent explicitly), and the ones that don't are still eligible.
+**No tag an Agent declares about itself takes part in this.** There used to be an `applicableTypes` gate here: it answers "can a work item be dispatched to this
+Agent," and writing a PRD dispatches no work item at all — no work item exists yet, which is exactly why `agent_runs.work_item_id` was widened to nullable. Used as
+a gate, the result was a project with a full roster of Agents and zero of them able to write a PRD, with nothing on screen but an empty dropdown that could not
+explain "go tick a checkbox in Agent settings whose purpose you don't know." Kept as a mere sort preference, all it did was treat "somebody ticked a box" as
+"this one is better at writing PRDs." The field is gone entirely. Whether an Agent writes well is something a person decides after reading its output and swapping
+it out; who gets picked by default is what the planner binding is for.
 
 **There is exactly one criterion for writing a PRD: is this an Agent member of this project.** A disabled Agent can still be selected — the UI says plainly
 that the next analysis will fail, because disabling is usually temporary and this choice has to survive until the next analysis.

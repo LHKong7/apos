@@ -171,10 +171,34 @@ export interface CapabilityTranslator {
  * is what an audit six months later asks. Old snapshots are never rewritten:
  * they are the evidence of that run, and `version` tells them apart.
  */
+/**
+ * 这次执行按哪种访问模式跑的。
+ *
+ * ★ `full_project` 是零配置建出来的 Agent 的默认状态；`restricted` 表示有人
+ *   主动收窄过（详情页的 Restrict access，或项目里换了别的能力档案）。
+ *
+ * ★★ 默认变简单不等于运行记录可以变糊涂。审计里必须分得出「它当时是默认的
+ *   全项目访问」和「它当时被限制过」—— 只看能力清单是分不出来的：一份被
+ *   收窄到恰好等于默认的配置，和真的没配过，两者的责任归属完全不同。
+ */
+export const AgentAccessMode = z.enum(['full_project', 'restricted']);
+export type AgentAccessMode = z.infer<typeof AgentAccessMode>;
+
 export const AgentPermissionSnapshot = z.object({
   version: z.literal(2),
   profileKey: z.string(),
   profileVersion: z.number().int(),
+
+  /**
+   * ★ 这三栏是零配置接入之后补的，都**可选** —— 在它们出现之前写下的 v2 快照
+   *   里没有它们，而快照不迁移（见上）。读取侧遇到缺失就是「那次执行早于这个
+   *   字段」，不是「那次执行没有项目」。
+   */
+  accessMode: AgentAccessMode.optional(),
+  /** 这份授权的边界始终是**单个项目**，快照里点名是哪一个 */
+  projectId: z.string().uuid().optional(),
+  /** 求值发生的时刻。与 Run 的开始时间不是一回事，中间隔着工作区准备 */
+  resolvedAt: z.string().datetime().optional(),
 
   capabilities: z.array(AgentCapability),
   deniedCapabilities: z.array(AgentCapability),

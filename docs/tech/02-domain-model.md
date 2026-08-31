@@ -502,6 +502,10 @@ CREATE TABLE agents (
   runtime_ref       text NOT NULL,      -- identifier inside the runtime
   model             text,
 
+  -- ★★ Both columns are RETIRED: never written, never read. What an agent takes
+  --    on is decided by the scheduler (ordinary work) or a project role binding
+  --    (special duties) — see 04-flow-engine §4.3. They survive only as the record
+  --    of pre-change configuration, and are dropped once nothing depends on them.
   skills            text[] NOT NULL DEFAULT '{}',
   applicable_types  work_item_type[] NOT NULL DEFAULT '{}',
 

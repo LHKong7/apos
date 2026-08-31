@@ -10,7 +10,7 @@ function task(
     runId: '11111111-1111-4111-8111-111111111111',
     idempotencyKey: 'wi-1:1',
     outputLocale: 'en',
-    agent: { name: 'a', type: 'code', description: null, skills: [] },
+    agent: { name: 'a', type: 'code', description: null },
     workspace,
     goal: { title: 't', description: 'd', acceptanceCriteria: [], constraints: [] },
     context: [],

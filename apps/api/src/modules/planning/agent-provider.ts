@@ -83,28 +83,6 @@ function planningEventSummary(e: RunEvent): string {
   }
 }
 
-/**
- * The applicable type the automatic pick **prefers** — a preference, not a gate.
- *
- * ★★ `applicableTypes` answers "can this agent be *assigned* a work item of
- *   type X" (`applicableTypes.includes(target.type)` in domain/flow/matching.ts),
- *   and authoring a PRD dispatches no work item at all: none exists yet, which
- *   is exactly why `agent_runs.work_item_id` was widened to nullable. Gating on
- *   it conflated two things, and the cost was a project holding a full agent
- *   team with zero eligible PRD authors — while the user saw an empty dropdown
- *   on the requirement page and no hint as to why.
- *
- *   So now: **every project agent member can author a PRD**, and this type only
- *   orders the automatic pick. An explicitly named agent is always honored
- *   (see pickAgent).
- *
- *   自动挑选时优先考虑的适用类型 —— 是偏好，不是门槛。它回答的是「派工作项
- *   时能不能派给它」，而写 PRD 根本不经过派工。拿它当门槛的代价是项目里明明
- *   有一队 Agent，能写 PRD 的却是零个。现在项目 Agent 成员都能写，人点了名
- *   的一律照办。
- */
-const PLANNING_TYPE = 'requirement';
-
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 /**
@@ -325,7 +303,6 @@ export class AgentPlanningProvider implements PlanningProvider {
         estimatedHours: t.estimatedHours,
         estimatedTokens: t.estimatedTokens,
         riskLevel: t.riskLevel,
-        requiredSkills: t.requiredSkills,
         requiredCapabilities: t.requiredCapabilities,
         requiredTools: t.requiredTools,
         requiresHuman: t.requiresHuman,
@@ -703,15 +680,12 @@ export class AgentPlanningProvider implements PlanningProvider {
   private unusableReason(agent: typeof agents.$inferSelect): string | null {
     if (agent.status !== 'active') return agent.status;
     /**
-     * ★ applicableTypes is deliberately **no longer** a gate here. The reason is
-     *   on PLANNING_TYPE: it decides work-item dispatch, not PRD authorship.
-     *   Left in, it would veto at analysis time the very pick the requirement
-     *   page had just accepted — moving validation from "when you choose" to
-     *   "when you are waiting for the result", which is the worst behavior this
-     *   feature could have.
+     * ★ 「这个 Agent 适不适合写 PRD」不在这里判，因为它压根无从判起 ——
+     *   承接范围那一栏已经不存在了（见 domain/flow/matching.ts）。这里只判
+     *   「现在跑不跑得起来」：停用的、运行时没注册的，派下去只会白等。
      *
-     *   这里不再卡 applicableTypes：它是派工作项的判据，留在这里等于把校验
-     *   从「选的时候」推迟到「等结果的时候」。
+     *   Nothing here judges *suitability* — there is no such field any more.
+     *   It judges runnability only: paused agents and unregistered runtimes.
      */
     if (!this.registry.has(agent.id)) return '运行时未注册';
     return null;
@@ -720,19 +694,17 @@ export class AgentPlanningProvider implements PlanningProvider {
   /**
    * Pick the planning agent — the project's **explicit binding** first.
    *
-   * ★★ Before project_agent_bindings existed, this was "the first agent in the
-   *   org with status=active whose applicableTypes contains requirement",
-   *   ordered by createdAt. Three consequences: the user could not name one;
-   *   changing it meant editing some other agent's configuration or the order
-   *   accounts were created in; and it **ignored project membership entirely**
-   *   — any agent in the org could be pulled in to read this project's
-   *   requirement, when the project is precisely the boundary for permissions
-   *   and context.
+   * ★★ Before project_agent_bindings existed, this was "the first active agent
+   *   in the org that had ticked the right box", ordered by createdAt. Three
+   *   consequences: the user could not name one; changing it meant editing some
+   *   other agent's configuration or the order accounts were created in; and it
+   *   **ignored project membership entirely** — any agent in the org could be
+   *   pulled in to read this project's requirement, when the project is
+   *   precisely the boundary for permissions and context.
    *
-   * ★★ The candidates are **the project's agent members**, all of them, not
-   *   filtered by applicable type. Authoring a PRD is not work-item dispatch,
-   *   so applicableTypes only orders this path (see PLANNING_TYPE). The
-   *   authorization boundary is still membership, undiminished.
+   * ★★ The candidates are **the project's agent members**, all of them. Who
+   *   authors the PRD is decided by the binding, never by a tag on an agent's
+   *   own profile. The authorization boundary is still membership, undiminished.
    *
    * ★ Bindings win; only without one do we fall back to the old "auto-pick
    *   within the org", and **the fallback says so** (the reason travels all the
@@ -743,9 +715,9 @@ export class AgentPlanningProvider implements PlanningProvider {
    * ★ Whatever the fallback picks must also be a member of this project — this
    *   rule outranks bindings: it is authorization, not preference.
    *
-   *   先看项目显式绑定的那个；候选是项目的 Agent 成员全体，适用类型只排先后。
-   *   没绑定时回退到组织内自动挑，但必须说出来 —— 直接报错会让所有还没配
-   *   绑定的既有项目在下一次分析时全部失败。回退挑出来的也必须是本项目成员：
+   *   先看项目显式绑定的那个；候选是项目的 Agent 成员全体。没绑定时回退到
+   *   项目成员里自动挑，但必须说出来 —— 直接报错会让所有还没配绑定的既有
+   *   项目在下一次分析时全部失败。回退挑出来的也必须是本项目成员：
    *   那是授权，不是偏好。
    */
   private async pickAgent(
@@ -894,27 +866,24 @@ export class AgentPlanningProvider implements PlanningProvider {
     }
 
     /**
-     * ★★ "applicableTypes contains requirement" is a **sort preference** here,
-     *   not a filter.
+     * ★★ 挑法只剩一条判据：**现在跑得起来的**排前面。
      *
-     *   It used to be a SQL where clause: a project could have five agent
-     *   members, and if none of them had ticked requirement the auto-pick
-     *   returned nothing and the analysis dropped to the rule-based placeholder
-     *   — while any one of those five could have authored the PRD. Now the ones
-     *   that ticked it sort first and the ones that did not are still eligible.
+     *   这里曾经还有一层「适用类型含 requirement 的排前面」的偏好。它连同
+     *   applicableTypes 一起删掉了：那一栏不再存在，而它作为偏好的实际效果是
+     *   把「有人在某个文本框里勾过一个格子」当成了「它更擅长写 PRD」——
+     *   两者之间没有任何因果关系。真正要指定谁写 PRD，用项目的 planner 绑定
+     *   （这条路径只在没有绑定时才会走到）。
      *
-     * ★ Layer by "usable right now" first, then apply the preference. The other
-     *   way around picks an agent that declared requirement but has no
-     *   registered runtime while a runnable one stands right beside it. When
-     *   none is usable, fall back to the full list so run() can report the
-     *   specific reason instead of a vague "no agent available".
+     * ★ 一个都不可用时退回整份名单，好让 run() 报出具体原因，
+     *   而不是一句含糊的「没有可用 Agent」。
      *
-     *   适用类型是排序偏好不是过滤条件；先按「现在可用」分层再按偏好挑，
-     *   一个都不可用时退回整份名单，好让 run() 报出具体原因。
+     *   The "prefers requirement in applicableTypes" tie-breaker is gone with
+     *   the field itself: a ticked checkbox never implied being better at
+     *   authoring PRDs. Naming a specific author is what the planner binding is
+     *   for; this path only runs when no binding exists.
      */
     const usable = candidates.filter((a) => this.unusableReason(a) === null);
-    const pool = usable.length > 0 ? usable : candidates;
-    const row = pool.find((a) => a.applicableTypes.includes(PLANNING_TYPE)) ?? pool[0]!;
+    const row = (usable.length > 0 ? usable : candidates)[0]!;
 
     return { agent: row, reason: '' };
   }
@@ -1029,7 +998,6 @@ export class AgentPlanningProvider implements PlanningProvider {
         name: agent.name,
         type: agent.type,
         description: agent.description,
-        skills: agent.skills,
       },
       /**
        * ★ An empty-directory workspace, not a git worktree.

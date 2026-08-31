@@ -1,5 +1,5 @@
-import type { AgentCapability } from '@apos/contracts';
-import { expandImplied, sortCapabilities } from './catalog';
+import { AGENT_CAPABILITIES, type AgentCapability } from '@apos/contracts';
+import { CAPABILITY_SPECS, expandImplied, sortCapabilities } from './catalog';
 
 /**
  * 能力档案 —— 用户实际要做的那个选择。
@@ -46,10 +46,58 @@ export interface CapabilityProfile {
 }
 
 /**
- * 默认档案 —— Agent 进项目时没指定就是它。
+ * 「全项目访问」—— **默认**档案，也就是零配置建出来的 Agent 用的那一份。
  *
+ * ★★ 界线由风险等级推导，不是手抄一份清单。
+ *
+ *   产品定义的边界是「项目里的活它都能干，平台控制面与人类专属能力它碰不到」。
+ *   目录里 `critical` 那一档恰好就是这条线的另一侧，逐条对得上：
+ *   管理成员 / 改角色 → permission.manage；发布 Policy / 改安全配置 →
+ *   policy.manage；代替人做最后那一下审批 → pull_request.merge、
+ *   environment.deploy；读组织凭证 → secret.read；不可回退的数据破坏 →
+ *   database.write。剩下的（读写工作区、构建、测试、产物、公网、推分支、
+ *   开 PR、读数据库）都是「项目里的活」。
+ *
+ * ★★ 按等级推导而不是列清单，是为了让**新增一条能力时不需要记得回来改这里**：
+ *   新能力自带风险等级，于是它自动落在正确的一侧。手抄的清单在下一条能力
+ *   加进目录时会静默漏掉它 —— 而漏掉的方向是「默认不给」，用户看到的是
+ *   一个刚建好就缺能力的 Agent，没有任何地方说明为什么。
+ *
+ * ★ 「全部」不等于「无限」：资源侧仍然被项目边界卡着（求值时只给本项目的
+ *   资源范围），运行时做不到的仍然会被翻译器降级掉。这一栏只回答
+ *   「治理愿意给到哪一档」。
+ *
+ * The zero-configuration default. Its boundary is derived from the catalog's
+ * risk tiers rather than hand-listed: everything below `critical` is "work
+ * inside the project", and `critical` is exactly the platform control plane and
+ * the human-only final calls. Deriving it means a capability added to the
+ * catalog later lands on the correct side without anyone remembering this file.
+ */
+const NON_CRITICAL = AGENT_CAPABILITIES.filter((c) => CAPABILITY_SPECS[c].risk !== 'critical');
+const CRITICAL = AGENT_CAPABILITIES.filter((c) => CAPABILITY_SPECS[c].risk === 'critical');
+
+export const FULL_PROJECT: CapabilityProfile = {
+  key: 'full_project',
+  version: 1,
+  name: '全项目访问',
+  nameEn: 'Full project access',
+  description:
+    '本项目里的活都能干：改代码、构建、测试、交产物、推分支、开 PR。合并、部署、' +
+    '写数据库、读凭证、改权限与治理仍然要人来。',
+  descriptionEn:
+    'Everything inside this project: edit code, build, test, submit artifacts, push branches, ' +
+    'open pull requests. Merging, deploying, writing to databases, reading secrets and ' +
+    'changing governance stay with people.',
+  capabilities: NON_CRITICAL,
+  deniedCapabilities: CRITICAL,
+};
+
+/**
  * ★ 能在隔离工作区里改代码、跑测试、交产物；不能发布、不能合并、不能部署、
  *   不能读凭证、不能改治理。这条界线的判据是「后果出不出得了工作区」。
+ *
+ * ★★ 它**不再是默认**（默认是 FULL_PROJECT）。留着是因为「事后限制」要有档可选：
+ *   用户在 Agent 详情里点 Restrict access 之后，挑的就是这几份里的一份。
  */
 export const STANDARD_EXECUTOR: CapabilityProfile = {
   key: 'standard_executor',
@@ -167,15 +215,27 @@ export const PLANNER: CapabilityProfile = {
   ],
 };
 
+/** ★ 顺序 = 从宽到窄。界面照抄这个顺序，默认那一份排在最前面 */
 export const BUILTIN_CAPABILITY_PROFILES: readonly CapabilityProfile[] = [
+  FULL_PROJECT,
+  CODE_DEVELOPER,
   STANDARD_EXECUTOR,
   READONLY_REVIEWER,
-  CODE_DEVELOPER,
   PLANNER,
 ];
 
-/** Agent 进项目时没指定档案就是它 */
-export const DEFAULT_PROFILE_KEY = STANDARD_EXECUTOR.key;
+/**
+ * Agent 进项目时没指定档案就是它。
+ *
+ * ★★ 从 standard_executor 换成 full_project 是一次**有意的放宽**。
+ *
+ *   老默认的推理是「默认要安全」，而它带来的实际后果是：用户建完 Agent
+ *   发现它推不了分支、开不了 PR，于是去别处抄一份更宽的配置贴上来 ——
+ *   一个默认值不够用的系统，真正的默认值是用户抄来的那一份。现在默认给到
+ *   「项目里的活都能干」，而真正危险的那一档（合并、部署、写库、读凭证、
+ *   改权限与治理）仍然一条都不给，且任何配置都放不开后两条。
+ */
+export const DEFAULT_PROFILE_KEY = FULL_PROJECT.key;
 
 export function capabilityProfile(key: string): CapabilityProfile | null {
   return BUILTIN_CAPABILITY_PROFILES.find((p) => p.key === key) ?? null;
@@ -229,5 +289,17 @@ export function expandProfile(
 
 /** 默认档案的展开结果 —— 「没配置」时用的那一份 */
 export function defaultExpandedProfile(): ExpandedProfile {
-  return expandProfile(STANDARD_EXECUTOR);
+  return expandProfile(FULL_PROJECT);
+}
+
+/**
+ * 访问模式 —— 这个 Agent 在这个项目里是「全项目访问」还是被事后限制过。
+ *
+ * ★ 它是从档案 key 推出来的，不是另存一栏。多存一栏就是多一处会和档案对不上的
+ *   地方，而两者对不上时界面会说「全项目访问」、实际跑的是一份窄档案。
+ */
+export type AccessMode = 'full_project' | 'restricted';
+
+export function accessModeOf(profileKey: string): AccessMode {
+  return profileKey === FULL_PROJECT.key ? 'full_project' : 'restricted';
 }

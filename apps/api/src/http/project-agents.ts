@@ -37,7 +37,6 @@ export async function listProjectAgents(db: Database, projectId: string) {
       agentName: agents.name,
       runtimeKind: agents.runtimeKind,
       status: agents.status,
-      applicableTypes: agents.applicableTypes,
       updatedAt: projectAgentBindings.updatedAt,
     })
     .from(projectAgentBindings)
@@ -57,8 +56,6 @@ export async function listProjectAgents(db: Database, projectId: string) {
       name: agents.name,
       runtimeKind: agents.runtimeKind,
       status: agents.status,
-      applicableTypes: agents.applicableTypes,
-      skills: agents.skills,
     })
     .from(projectMembers)
     .innerJoin(agents, eq(agents.id, projectMembers.actorId))
@@ -119,18 +116,17 @@ export async function setProjectAgent(
   }
 
   /**
-   * ★★ 三个角色都**不校验 applicableTypes**。
+   * ★★ 绑定这一格**只判成员关系**，不判 Agent 的任何自述标签。
    *
-   *   planner 这一格以前卡「适用类型含 requirement」，与需求页上的 PRD
-   *   编写 Agent 是同一条判据 —— 那条判据现在取消了（见
-   *   modules/requirement/service.ts）：它管的是派工作项时的执行者匹配，
-   *   而规划与 PRD 编写压根不经过派工。留一半在这里的话，同一个 Agent
-   *   在需求页上选得上、在项目设置里绑不上，而两处指的是同一件活。
+   *   `applicableTypes` 这条判据已经整个不存在了（见 domain/flow/matching.ts）：
+   *   Agent 不再声明自己接什么类型的活。而**职责恰恰由这里决定** ——
+   *   谁当 planner、谁当 reviewer、谁当 Policy Manager，是绑定说了算，
+   *   不是标签说了算。一个 Agent 该不该干这个角色，用户点这一格的时候
+   *   就已经回答了。
    *
-   *   No applicableTypes gate on any role: it governs work-item dispatch
-   *   matching, which planning never goes through. Keeping it only here would
-   *   let an agent be picked as PRD author on the requirement page yet be
-   *   refused as the project's planner — the same job, two answers.
+   *   Bindings gate on project membership only. What an agent takes on is
+   *   decided here (special duties) or by the scheduler (ordinary work) —
+   *   never by a self-declared tag on its own profile.
    *
    * ★ 成员校验照旧 —— 那是授权，不是偏好。
    */

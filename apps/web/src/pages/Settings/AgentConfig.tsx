@@ -207,7 +207,7 @@ export function AgentConfigPage() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        {tab === 'agents' && <AgentsSection />}
+        {tab === 'agents' && <AgentsSection projectId={projectId} />}
         {tab === 'binding' && <ProjectAgentSection projectId={projectId} />}
         {tab === 'conventions' && <ConventionsSection projectId={projectId} />}
       </div>
@@ -217,7 +217,15 @@ export function AgentConfigPage() {
 
 // ── Agents ────────────────────────────────────────────────────────────
 
-function AgentsSection() {
+/**
+ * ★★ 这一页挂在**某个项目**下面（路由是 /projects/:projectId/settings），
+ *   所以在这里建的 Agent 天然属于这个项目，建完直接入项目成员。
+ *
+ *   列表本身仍然是**组织级**的（listAgentsAdmin 按 orgId 查）—— 那是刻意的：
+ *   「组织里有它、但这个项目还没加进来」正是用户需要在这一页看到的状态。
+ *   projectId 只影响「新建的那个进哪儿」。
+ */
+function AgentsSection({ projectId }: { projectId: string }) {
   const t = useT();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AgentAdminRow | 'new' | null>(null);
@@ -334,6 +342,7 @@ function AgentsSection() {
           kinds={data.kinds}
           encryptsInline={data.encryptsInlineSecrets}
           agent={editing === 'new' ? null : editing}
+          projectId={projectId}
           onClose={() => setEditing(null)}
           /**
            * ★ Close the dialog whether or not unknown keys turned up.
@@ -509,16 +518,23 @@ function AgentCard({
           )}
         </Field>
         {/*
-          ★ When it is empty, say so **prominently** rather than rendering a dash.
-            The agent will simply sit idle while its credential, probe, and permissions
-            are all green — if the card does not call it out, the investigation runs all
-            the way from the runtime to the scheduler.
+          ★★ 这一格以前显示「承接范围」，空着时还专门标黄提醒。它连同
+            applicableTypes 一起没了 —— 那一栏的空值是建 Agent 时的默认值，
+            于是这个提醒对**每一个**新建的 Agent 都亮着，而它要提醒的东西
+            用户在配置页上压根填不了。现在承接范围恒定是「全部」，
+            这一格改说访问边界，那才是还需要被看见的事。
         */}
-        <Field label={t('agent.scope.field')}>
-          {agent.applicableTypes.length > 0 ? (
-            joinList(agent.applicableTypes.map((t) => typeLabel(t)))
+        {/*
+          ★ 「有没有被收窄过」照实说。恒定显示「全项目访问」的话，一个
+            真被限制过的 Agent 在列表上和没限制过的长得一模一样 ——
+            而排查「它为什么推不了分支」时，这一格正是第一个被看的地方。
+        */}
+        <Field label={t('agent.access.field')}>
+          {agent.ceiling.capabilityCeiling === null &&
+          agent.ceiling.deniedCapabilities.length === 0 ? (
+            t('agent.access.fullProject')
           ) : (
-            <span className="text-amber-700">{t('agent.scope.unset')}</span>
+            <span className="text-amber-700">{t('agentCfg.form.restrictedNow')}</span>
           )}
         </Field>
         <Field label={t('agentCfg.field.concurrency')}>
@@ -611,10 +627,34 @@ function AgentCard({
   );
 }
 
-function AgentForm({
+/**
+ * 建 / 改一个 Agent。
+ *
+ * ★★ 建一个 Agent 只问三件事：**叫什么、用哪个运行时、凭证是什么**。
+ *
+ *   这张表以前还问四件用户在那个时刻答不上来的事：它接什么类型的活、
+ *   它有哪些 Skill Tag、它的能力上限、它的硬拒绝清单。四件的共同点是
+ *   「要先跑过一次才知道答案」，而答不上来的人会跳过 —— 跳过的默认值恰好是
+ *   最坏的那一种（空数组 = 什么都不接），于是新建出来的 Agent 一动不动，
+ *   页面上却全绿。
+ *
+ * ★ 运行时的执行参数（型号、端点、并发、超时、token 上限）不是「答不上来」，
+ *   是「大多数时候不用改」—— 它们收进 Advanced settings，默认值直接可用。
+ *
+ * ★ 权限收窄留在**编辑**态的 Restrict access 里，建的时候不出现：
+ *   默认是全项目访问，要收窄是一个事后的、明确的决定。
+ *
+ * Creating an agent asks for a name, a runtime and a credential. Everything the
+ * old form asked that a user could not yet answer — what work it takes on, its
+ * skill tags, its permission boundary — is gone: the answer people gave when
+ * they could not answer was "skip", and skip stored the worst of the available
+ * meanings.
+ */
+export function AgentForm({
   kinds,
   encryptsInline,
   agent,
+  projectId,
   onClose,
   onSaved,
 }: {
@@ -622,6 +662,13 @@ function AgentForm({
   /** Whether a pasted secret is stored encrypted. Both work; it only changes the hint */
   encryptsInline: boolean;
   agent: AgentAdminRow | null;
+  /**
+   * ★★ 在哪个项目里建的。新建时随请求送上去，服务端把它加进这个项目。
+   *
+   *   少了它，用户在项目配置页建完 Agent，还得再去「成员与角色」把它加一遍 ——
+   *   而漏掉那一步的表现是「建好了、看着正常、就是永远派不到活」。
+   */
+  projectId: string;
   onClose: () => void;
   onSaved: (unknownConfigKeys: string[]) => void;
 }) {
@@ -636,27 +683,41 @@ function AgentForm({
   const [description, setDescription] = useState(agent?.description ?? '');
   const [credential, setCredential] = useState('');
   const [endpoint, setEndpoint] = useState(agent?.endpoint ?? '');
+  /**
+   * ★ 负责人默认就是当前登录的人，不要求用户额外做一次选择。
+   *   「这个 Agent 出事找谁」的默认答案是「建它的人」，而那几乎总是对的；
+   *   要改的人在 Advanced settings 里改。
+   */
   const [ownerId, setOwnerId] = useState(agent?.ownerId ?? currentUser ?? '');
-  const [skills, setSkills] = useState((agent?.skills ?? []).join(', '));
+
+  /** 运行时执行参数 —— 收在 Advanced settings 里，默认值直接可用 */
+  const [maxConcurrency, setMaxConcurrency] = useState(String(agent?.maxConcurrency ?? 3));
+  const [timeoutSeconds, setTimeoutSeconds] = useState(String(agent?.timeoutSeconds ?? 1800));
+  const [tokenLimitPerRun, setTokenLimitPerRun] = useState(
+    agent?.tokenLimitPerRun === null || agent?.tokenLimitPerRun === undefined
+      ? ''
+      : String(agent.tokenLimitPerRun),
+  );
+  const [tokenLimitDaily, setTokenLimitDaily] = useState(
+    agent?.tokenLimitDaily === null || agent?.tokenLimitDaily === undefined
+      ? ''
+      : String(agent.tokenLimitDaily),
+  );
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   /**
-   * ★★ 承接范围。空数组的含义是「什么都不接」，不是「不限制」
-   *   （domain/flow/matching.ts 是 `applicableTypes.includes(target.type)` 判定）。
+   * ★★ 事后限制 —— 只在**编辑**态出现，而且默认收起。
    *
-   *   这一栏此前根本没有渲染，而后端建 Agent 时它默认是空数组 —— 于是
-   *   界面上建出来的 Agent 永远接不到任何工作，也永远当不了规划 Agent，
-   *   而页面上没有任何地方提示缺了什么。配置页不给的字段，用户没法自己发现。
+   *   建的时候不问权限边界：那时候用户还不知道这个 Agent 会用到什么，
+   *   而问一个答不上来的问题只会换来一份随手抄的配置。默认是全项目访问，
+   *   真要收窄是一个明确的、事后的决定，所以入口低频、折叠、写明当前状态。
+   *
+   * ★ `null` = 不设上限，和「一条都不给」相反。开关表达它，不让空清单兼任两种含义。
    */
-  const [applicableTypes, setApplicableTypes] = useState<string[]>(agent?.applicableTypes ?? []);
-  /**
-   * ★★ 组织级配置的是**上限**，不是「它能做什么」。
-   *
-   *   实际授权在项目里选档案（见 AgentAccess.tsx）。这一页只回答
-   *   「这个 Agent 最多能被授权到什么程度」—— 项目管理员在自己项目里
-   *   选不出组织没打算给它的能力。
-   *
-   * ★ `null` = 不设上限，和「一条都不给」相反。界面上用一个开关表达，
-   *   而不是让空清单去兼任两种含义。
-   */
+  const [restricting, setRestricting] = useState(
+    agent !== null &&
+      (agent.ceiling.capabilityCeiling !== null || agent.ceiling.deniedCapabilities.length > 0),
+  );
   const [limited, setLimited] = useState(agent?.ceiling.capabilityCeiling !== null);
   const [ceiling, setCeiling] = useState<string[]>(
     agent?.ceiling.capabilityCeiling ?? [...DEFAULT_CEILING],
@@ -717,15 +778,35 @@ function AgentForm({
         runtimeConfig: config,
         endpoint: endpoint.trim() || null,
         ownerId,
-        skills: splitList(skills),
-        applicableTypes,
-        // ★ 不设上限时送 null，不是空数组 —— 两者含义相反
-        capabilityCeiling: limited ? ceiling : null,
-        deniedCapabilities,
+        maxConcurrency: positiveOr(maxConcurrency, 3),
+        timeoutSeconds: positiveOr(timeoutSeconds, 1800),
+        /** ★ 空 = 不限制，送 null；`0` 不是「不限制」，服务端会拒 */
+        tokenLimitPerRun: positiveOrNull(tokenLimitPerRun),
+        tokenLimitDaily: positiveOrNull(tokenLimitDaily),
         ...(credential.trim() ? { credential: credential.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       };
-      return agent ? api.updateAgent(agent.id, body) : api.createAgent(body);
+
+      if (!agent) {
+        /**
+         * ★★ 建的时候一栏权限都不送。
+         *   服务端据此写「不设上限、无硬拒绝」，实际能做什么由项目里的默认
+         *   档案（全项目访问）决定 —— 而这份表单不再需要用户理解那句话。
+         */
+        return api.createAgent({ ...body, projectId });
+      }
+      return api.updateAgent(agent.id, {
+        ...body,
+        /**
+         * ★ 没展开 Restrict access 时，权限那两栏**原样送回**，不是送空。
+         *   送空会把一个正在生效的限制悄悄解除掉，而用户这次只是来改个超时。
+         */
+        capabilityCeiling: restricting
+          ? // ★ 不设上限时送 null，不是空数组 —— 两者含义相反
+            (limited ? ceiling : null)
+          : agent.ceiling.capabilityCeiling,
+        deniedCapabilities: restricting ? deniedCapabilities : agent.ceiling.deniedCapabilities,
+      });
     },
     onSuccess: (result) => onSaved(result.unknownConfigKeys ?? []),
   });
@@ -745,8 +826,10 @@ function AgentForm({
     credential.trim() !== '' ||
     endpoint !== (agent?.endpoint ?? '') ||
     ownerId !== (agent?.ownerId ?? currentUser ?? '') ||
-    skills !== (agent?.skills ?? []).join(', ') ||
-    JSON.stringify(applicableTypes) !== JSON.stringify(agent?.applicableTypes ?? []) ||
+    maxConcurrency !== String(agent?.maxConcurrency ?? 3) ||
+    timeoutSeconds !== String(agent?.timeoutSeconds ?? 1800) ||
+    tokenLimitPerRun !== (agent?.tokenLimitPerRun == null ? '' : String(agent.tokenLimitPerRun)) ||
+    tokenLimitDaily !== (agent?.tokenLimitDaily == null ? '' : String(agent.tokenLimitDaily)) ||
     JSON.stringify(config) !== JSON.stringify(agent?.runtimeConfig ?? {}) ||
     kind !== (agent?.runtimeKind ?? kinds[0]?.kind ?? 'mock');
   useUnsavedGuard(dirty);
@@ -792,29 +875,12 @@ function AgentForm({
           {agent ? t('agentCfg.editing', { name: agent.name }) : t('agentCfg.new')}
         </h2>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Labeled label={t('agentCfg.form.name')}>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t('agentCfg.form.namePlaceholder')} />
-          </Labeled>
-          <Labeled label={t('agentCfg.form.type')}>
-            <Select value={type} onValueChange={setType}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {/* ★ 参数别叫 t —— 这个文件里 t 是 i18n 函数，遮蔽掉它下次改这段会很意外 */}
-                {['code', 'test', 'review', 'research', 'ops'].map((value) => (
-                  <SelectItem key={value} value={value}>
-                    {value}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Labeled>
-        </div>
+        <Labeled label={t('agentCfg.form.name')}>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('agentCfg.form.namePlaceholder')} />
+        </Labeled>
 
         {/*
           ★★ 职责说明单独成区，紧跟名字，而不是夹在「类型」和「运行时」中间。
@@ -908,208 +974,279 @@ function AgentForm({
             </Labeled>
           )}
 
-          {spec?.endpoint && (
-            <Labeled
-              label={sx(spec.endpoint.label, spec.endpoint.labelEn)}
-              help={sx(spec.endpoint.help, spec.endpoint.helpEn)}
-            >
-              <Input
-                value={endpoint}
-                onChange={(e) => setEndpoint(e.target.value)}
-                placeholder="https://…" />
-            </Labeled>
-          )}
+        </div>
 
-          {/*
-            ★★ 整份运行时配置就是这一个 JSON 框。
-              平台认识的键带着默认值先摆进去（用户才知道能配什么），
-              自己加的键原样保存 —— 服务端不认识也照收，只在保存后提示一句。
-          */}
-          {/*
-            ★★ 默认是**逐键的表单**，JSON 是逃生口 —— 此前正好反过来。
-              schema 里写着每个键的类型、取值范围、默认值和影响范围，
-              而界面把它们全降级成一个 25 行的文本框（问题记录 #18 / #46）。
-            ★ 逃生口不能封：平台不认识的键（新版 CLI 刚加的参数）只能从
-              那儿进来，而服务端本来就照收。
-          */}
-          <Labeled
-            label={t('agentCfg.form.runtimeConfig')}
-            help={
-              t('agentCfg.form.runtimeConfigHelp') +
-              t('agentCfg.form.secretKeys') +
-              (encryptsInline ? t('agentCfg.form.encrypted') : t('agentCfg.form.plaintextStored')) +
-              t('agentCfg.secretEcho')
-            }
+        {/*
+          ── Advanced settings ──
+
+          ★★ 默认**收起**。里面的每一项都有一个直接可用的默认值：
+            并发 3、超时 30 分钟、token 不限、端点用 CLI 自己的。
+            把它们摊在主表单上，会让「建一个 Agent」看起来像是要先做六个决定 ——
+            而这六个决定里，用户在建的那一刻一个也答不上来。
+
+          ★ 「模型」在运行时配置里（每种 CLI 自己的 `model` 键），这里**不再开一栏**：
+            同一件事两个入口，迟早出现两处填了不同值、而谁也说不清哪个生效。
+        */}
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <Button
+            variant="link"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="h-auto p-0 text-[11px] font-medium text-slate-700 hover:text-slate-900"
           >
-            {spec ? (
-              <RuntimeConfigForm
-                key={kind}
-                spec={spec}
-                value={withDefaults(spec, config)}
-                onChange={setConfig}
-                renderJson={() => (
+            {showAdvanced ? '▾ ' : '▸ '}
+            {t('agentCfg.form.advanced')}
+          </Button>
+          <p className="mt-0.5 text-[11px] text-slate-500">{t('agentCfg.form.advancedHelp')}</p>
+
+          {showAdvanced && (
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Labeled label={t('agentCfg.form.type')} help={t('agentCfg.form.typeHelp')}>
+                  <Select value={type} onValueChange={setType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* ★ 参数别叫 t —— 这个文件里 t 是 i18n 函数，遮蔽掉它下次改这段会很意外 */}
+                      {['code', 'test', 'review', 'research', 'ops'].map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {value}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Labeled>
+                <Labeled label={t('agentCfg.form.owner')} help={t('agentCfg.form.ownerHelp')}>
+                  <Select
+                    value={toSelectValue(ownerId)}
+                    onValueChange={(v) => setOwnerId(fromSelectValue(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={SELECT_EMPTY}>{t('agentCfg.form.choose')}</SelectItem>
+                      {(users.data?.users ?? []).map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Labeled>
+              </div>
+
+              {spec?.endpoint && (
+                <Labeled
+                  label={sx(spec.endpoint.label, spec.endpoint.labelEn)}
+                  help={sx(spec.endpoint.help, spec.endpoint.helpEn)}
+                >
+                  <Input
+                    value={endpoint}
+                    onChange={(e) => setEndpoint(e.target.value)}
+                    placeholder="https://…" />
+                </Labeled>
+              )}
+
+              {/*
+                ★★ 默认是**逐键的表单**，JSON 是逃生口 —— 此前正好反过来。
+                  schema 里写着每个键的类型、取值范围、默认值和影响范围，
+                  而界面把它们全降级成一个 25 行的文本框（问题记录 #18 / #46）。
+                ★ 逃生口不能封：平台不认识的键（新版 CLI 刚加的参数）只能从
+                  那儿进来，而服务端本来就照收。
+              */}
+              <Labeled
+                label={t('agentCfg.form.runtimeConfig')}
+                help={
+                  t('agentCfg.form.runtimeConfigHelp') +
+                  t('agentCfg.form.secretKeys') +
+                  (encryptsInline ? t('agentCfg.form.encrypted') : t('agentCfg.form.plaintextStored')) +
+                  t('agentCfg.secretEcho')
+                }
+              >
+                {spec ? (
+                  <RuntimeConfigForm
+                    key={kind}
+                    spec={spec}
+                    value={withDefaults(spec, config)}
+                    onChange={setConfig}
+                    renderJson={() => (
+                      <JsonInput
+                        /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
+                        key={kind}
+                        errorKey="__config__"
+                        value={withDefaults(spec, config)}
+                        onChange={setConfig}
+                        onError={setJsonError}
+                        rows={14}
+                      />
+                    )}
+                  />
+                ) : (
                   <JsonInput
-                    /* 换 CLI 类型时重新挂载，否则文本框还留着上一种的内容 */
                     key={kind}
                     errorKey="__config__"
-                    value={withDefaults(spec, config)}
+                    value={config}
                     onChange={setConfig}
                     onError={setJsonError}
                     rows={14}
                   />
                 )}
-              />
-            ) : (
-              <JsonInput
-                key={kind}
-                errorKey="__config__"
-                value={config}
-                onChange={setConfig}
-                onError={setJsonError}
-                rows={14}
-              />
-            )}
-          </Labeled>
+              </Labeled>
 
-          {/*
-            ★ 说明书默认**收起**了。表单模式下每个字段旁边就带着自己的
-              说明、默认值与影响标记 —— 再摆一份完整的参照表是重复，
-              而重复的说明会让人怀疑哪一份是新的。切到 JSON 模式的人
-              仍然需要它，所以入口留着。
-          */}
-          {spec && spec.fields.length > 0 && (
-            <div className="mt-2">
+              {/*
+                ★ 说明书默认**收起**了。表单模式下每个字段旁边就带着自己的
+                  说明、默认值与影响标记 —— 再摆一份完整的参照表是重复，
+                  而重复的说明会让人怀疑哪一份是新的。切到 JSON 模式的人
+                  仍然需要它，所以入口留着。
+              */}
+              {spec && spec.fields.length > 0 && (
+                <div>
+                  <Button
+                    variant="link"
+                    onClick={() => setShowReference((v) => !v)}
+                    className="h-auto p-0 text-[11px] font-normal text-slate-500 underline hover:text-slate-700"
+                  >
+                    {showReference
+                      ? t('agentCfg.form.collapseOptions')
+                      : t('agentCfg.form.optionsCount', { count: spec.fields.length })}
+                  </Button>
+                  {showReference && <ConfigReference fields={spec.fields} />}
+                </div>
+              )}
+
+              {agent && agent.runtimeConfigProblems.length > 0 && (
+                <div className="space-y-0.5">
+                  {agent.runtimeConfigProblems.map((p) => (
+                    <p key={p.key} className="text-[11px] text-rose-600">
+                      ⚠ {envProblemText(p)}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/*
+                ★★ 这四栏是**闸门**，不是偏好：并发满了、超时到了、token 用尽了，
+                  调度器会当场把这个 Agent 淘汰掉，并把原因写进阻塞详情。
+                  所以它们的默认值必须是「够用」而不是「保险」—— 一个默认为 0
+                  的额度会让每一个新建的 Agent 立刻停摆。
+                ★ token 两栏留空 = 不限制。写 0 不是「不限制」，服务端会拒。
+              */}
+              <div className="grid grid-cols-2 gap-2">
+                <Labeled
+                  label={t('agentCfg.form.maxConcurrency')}
+                  help={t('agentCfg.form.maxConcurrencyHelp')}
+                >
+                  <Input
+                    value={maxConcurrency}
+                    onChange={(e) => setMaxConcurrency(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="3" />
+                </Labeled>
+                <Labeled
+                  label={t('agentCfg.form.timeout')}
+                  help={t('agentCfg.form.timeoutHelp')}
+                >
+                  <Input
+                    value={timeoutSeconds}
+                    onChange={(e) => setTimeoutSeconds(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="1800" />
+                </Labeled>
+                <Labeled
+                  label={t('agentCfg.form.tokenPerRun')}
+                  help={t('agentCfg.form.tokenPerRunHelp')}
+                >
+                  <Input
+                    value={tokenLimitPerRun}
+                    onChange={(e) => setTokenLimitPerRun(e.target.value)}
+                    inputMode="numeric"
+                    placeholder={t('agentCfg.form.unlimited')} />
+                </Labeled>
+                <Labeled
+                  label={t('agentCfg.form.tokenDaily')}
+                  help={t('agentCfg.form.tokenDailyHelp')}
+                >
+                  <Input
+                    value={tokenLimitDaily}
+                    onChange={(e) => setTokenLimitDaily(e.target.value)}
+                    inputMode="numeric"
+                    placeholder={t('agentCfg.form.unlimited')} />
+                </Labeled>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/*
+          ── Restrict access ──
+
+          ★★ 只在**编辑**态出现，而且默认收起、默认状态写在标题旁边。
+
+            建 Agent 时不问权限边界：那时候用户还不知道它会用到什么，而问一个
+            答不上来的问题只会换来一份从别处抄来的配置。默认是全项目访问 ——
+            项目里的活它都能干，平台控制面与人类专属能力（改权限、改治理、
+            代人审批、部署、写库、读凭证）一条都拿不到，且后两类任何配置都放不开。
+
+          ★ 没展开就不动这两栏（见 save 里的原样回送）：用户这次可能只是来改超时。
+        */}
+        {agent && (
+          <div className="rounded border border-slate-200 bg-slate-50 p-2">
+            <div className="flex flex-wrap items-baseline gap-2">
               <Button
                 variant="link"
-                onClick={() => setShowReference((v) => !v)}
-                className="h-auto p-0 text-[11px] font-normal text-slate-500 underline hover:text-slate-700"
+                onClick={() => setRestricting((v) => !v)}
+                className="h-auto p-0 text-[11px] font-medium text-slate-700 hover:text-slate-900"
               >
-                {showReference
-                  ? t('agentCfg.form.collapseOptions')
-                  : t('agentCfg.form.optionsCount', { count: spec.fields.length })}
+                {restricting ? '▾ ' : '▸ '}
+                {t('agentCfg.form.restrict')}
               </Button>
-              {showReference && <ConfigReference fields={spec.fields} />}
-            </div>
-          )}
-
-          {agent && agent.runtimeConfigProblems.length > 0 && (
-            <div className="mt-2 space-y-0.5">
-              {agent.runtimeConfigProblems.map((p) => (
-                <p key={p.key} className="text-[11px] text-rose-600">
-                  ⚠ {envProblemText(p)}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── 承接范围 ── */}
-        <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-1 text-[11px] font-medium text-slate-700">{t('agent.scope.heading')}</p>
-          <p className="mb-2 text-[11px] text-slate-500">
-            {t('agent.scope.help')}
-            {/*
-              ★ 「一个都不勾」的后果要当场说，不能等用户发现 Agent 一直闲着。
-                这是这一栏被漏掉时最贵的那个症状：配置看起来是完整的。
-            */}
-            <span className={clsx(applicableTypes.length === 0 && 'text-amber-700')}>
-              {t('agent.scope.emptyWarning')}
-            </span>
-            {t('agent.scope.requirementNote')}
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {WORK_ITEM_TYPES.map(([value, labelKey]) => {
-              const on = applicableTypes.includes(value);
-              return (
-                <Button
-                  key={value}
-                  variant="outline"
-                  aria-pressed={on}
-                  onClick={() =>
-                    setApplicableTypes((prev) =>
-                      prev.includes(value) ? prev.filter((t) => t !== value) : [...prev, value],
-                    )
-                  }
-                  className={clsx(
-                    'h-auto rounded border px-2 py-0.5 text-[11px] font-normal shadow-none',
-                    on
-                      ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-700 hover:text-white'
-                      : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
-                  )}
-                >
-                  {t(labelKey)}
-                </Button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ── 权限 ── */}
-        <div className="rounded border border-slate-200 bg-slate-50 p-2">
-          <p className="mb-2 text-[11px] font-medium text-slate-700">
-            {t('agentCfg.form.permissions')}
-          </p>
-          {/*
-            ★★ 这里曾经是三个字段：allowedTools、deniedTools、resourceScopes。
-              前两个要求用户先懂某个 CLI 的工具名，第三个把组织级配置
-              当成了项目级授权用。现在：上限在这一页，实际授权在项目里
-              选档案（项目设置 → 项目 Agent → 生效权限）。
-          */}
-          <Label className="flex items-start gap-2 text-xs font-normal">
-            <Checkbox
-              checked={limited}
-              onCheckedChange={(v) => setLimited(Boolean(v))}
-              className="mt-0.5"
-            />
-            <span>
-              {t('agentCfg.form.limitCeiling')}
-              <span className="ml-1 text-[11px] text-slate-400">
-                {t('agentCfg.form.limitCeilingHint')}
+              <span className="text-[11px] text-slate-500">
+                {agent.ceiling.capabilityCeiling === null &&
+                agent.ceiling.deniedCapabilities.length === 0
+                  ? t('agent.access.fullProject')
+                  : t('agentCfg.form.restrictedNow')}
               </span>
-            </span>
-          </Label>
+            </div>
 
-          {limited && (
-            <Labeled label={t('agentCfg.form.ceiling')} help={t('agentCfg.form.ceilingHelp')}>
-              <CapabilityPicker value={ceiling} onChange={setCeiling} />
-            </Labeled>
-          )}
+            {restricting && (
+              <div className="mt-2">
+                {/*
+                  ★★ 这里曾经是三个字段：allowedTools、deniedTools、resourceScopes。
+                    前两个要求用户先懂某个 CLI 的工具名，第三个把组织级配置
+                    当成了项目级授权用。现在：上限在这一页，实际授权在项目里
+                    选档案（项目设置 → 项目 Agent → 生效权限）。
+                */}
+                <Label className="flex items-start gap-2 text-xs font-normal">
+                  <Checkbox
+                    checked={limited}
+                    onCheckedChange={(v) => setLimited(Boolean(v))}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    {t('agentCfg.form.limitCeiling')}
+                    <span className="ml-1 text-[11px] text-slate-400">
+                      {t('agentCfg.form.limitCeilingHint')}
+                    </span>
+                  </span>
+                </Label>
 
-          <Labeled
-            label={t('agentCfg.form.hardDenied')}
-            help={t('agentCfg.form.hardDeniedHelp')}
-          >
-            <CapabilityPicker value={deniedCapabilities} onChange={setDeniedCapabilities} />
-          </Labeled>
-        </div>
+                {limited && (
+                  <Labeled label={t('agentCfg.form.ceiling')} help={t('agentCfg.form.ceilingHelp')}>
+                    <CapabilityPicker value={ceiling} onChange={setCeiling} />
+                  </Labeled>
+                )}
 
-        <div className="grid grid-cols-2 gap-2">
-          <Labeled label={t('agentCfg.form.owner')} help={t('agentCfg.form.ownerHelp')}>
-            <Select
-              value={toSelectValue(ownerId)}
-              onValueChange={(v) => setOwnerId(fromSelectValue(v))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SELECT_EMPTY}>{t('agentCfg.form.choose')}</SelectItem>
-                {(users.data?.users ?? []).map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Labeled>
-          <Labeled label={t('agentCfg.form.skills')} help={t('agentCfg.form.skillsHelp')}>
-            <Input
-              value={skills}
-              onChange={(e) => setSkills(e.target.value)}
-              placeholder={t('agentCfg.form.skillsPlaceholder')} />
-          </Labeled>
-        </div>
-
+                <Labeled
+                  label={t('agentCfg.form.hardDenied')}
+                  help={t('agentCfg.form.hardDeniedHelp')}
+                >
+                  <CapabilityPicker value={deniedCapabilities} onChange={setDeniedCapabilities} />
+                </Labeled>
+              </div>
+            )}
+          </div>
+        )}
         {agent && (
           <Labeled label={t('agentCfg.form.reason')} help={t('agentCfg.form.reasonHelp')}>
             <Input
@@ -1123,32 +1260,28 @@ function AgentForm({
 }
 
 /**
- * 13 种工作项类型（contracts 的 WorkItemType，产品文档 6.3）。
+ * 表单里的数字栏 → 服务端要的数。
  *
- * ★ 顺序跟着 contracts 走，不按字母排 —— 那个顺序是「从需求到交付」的流程序，
- *   界面上照抄能让人一眼看出这个 Agent 站在链路的哪一段。
+ * ★ 空串、非数字、非正数一律回落到默认值，而不是送一个 `NaN` 或 `0` 上去：
+ *   并发填成 0 的后果是这个 Agent 立刻被判「已满载」而永远不被派活，
+ *   而报错会出现在几小时后的看板上，不在填错的这一刻。
  */
-const WORK_ITEM_TYPES: [string, MessageKey][] = [
-  ['requirement', 'workItemType.requirement'],
-  ['feature', 'workItemType.feature'],
-  ['story', 'workItemType.story'],
-  ['task', 'workItemType.task'],
-  ['bug', 'workItemType.bug'],
-  ['research', 'workItemType.research'],
-  ['review', 'workItemType.review'],
-  ['test', 'workItemType.test'],
-  ['incident', 'workItemType.incident'],
-  ['decision', 'workItemType.decision'],
-  ['approval', 'workItemType.approval'],
-  ['release', 'workItemType.release'],
-  ['knowledge', 'workItemType.knowledge'],
-];
+function positiveOr(raw: string, fallback: number): number {
+  const n = Number(raw.trim());
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+}
 
-/** 认不出来的类型原样显示 —— 库里出现新类型时，显示成空白比显示英文更糟 */
-function typeLabel(value: string): string {
-  // ★ 这个函数不是组件，用模块级 t（取当前语言、不订阅）
-  const key = WORK_ITEM_TYPES.find(([v]) => v === value)?.[1];
-  return key ? t(key) : value;
+/**
+ * 同上，但**留空 = 不限制**（送 null）。
+ *
+ * ★ null 与 0 在这里含义相反：null 是「不设上限」，0 会被服务端当成非法值拒掉。
+ *   让空串走到 null，是为了让「我不想管这一栏」有一个正确的表达方式。
+ */
+function positiveOrNull(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
 /**
@@ -1372,13 +1505,6 @@ function describeAccepts(f: ConfigField): string {
     default:
       return t('agentCfg.accepts.string');
   }
-}
-
-function splitList(v: string): string[] {
-  return v
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 function formatValue(v: unknown): string {
@@ -1760,11 +1886,14 @@ function ProjectAgentSection({ projectId }: { projectId: string }) {
 }
 
 /**
- * 能力上限的默认勾选。
+ * 点开 Restrict access 时，能力上限的初始勾选。
  *
- * ★ 与平台默认档案（standard_executor）对齐：新建一个 Agent 时，
- *   上限刚好覆盖「在隔离工作区里干活」那一档。给一份能直接用的默认，
- *   而不是让用户对着一张空清单猜该勾什么 —— 猜出来的配置一律偏宽。
+ * ★★ 它对齐的是 **standard_executor**（在隔离工作区里干活），而不是当前默认的
+ *   full_project —— 这是刻意的：会点开这个折叠区的人，来意就是收窄。
+ *   给一份等于「不收窄」的初始勾选，等于让他先自己取消一遍。
+ *
+ * ★ 它只是这个折叠区的起点，不是新建 Agent 的默认值。新建时压根不送这一栏
+ *   （见 AgentForm 的 save），服务端写的是「不设上限」。
  */
 const DEFAULT_CEILING = [
   'workspace.read',

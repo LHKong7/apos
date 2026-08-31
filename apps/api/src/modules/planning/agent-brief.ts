@@ -303,7 +303,6 @@ ${languageRule(locale)}
       "estimatedHours": 4,
       "estimatedTokens": 75000,             // 预计消耗的 token 数；只有这一项估不出来时可以写 null
       "riskLevel": "low",                   // low|medium|high|critical
-      "requiredSkills": ["需求分析"],
       // 语义能力，**不是**工具名。可选值：workspace.read|workspace.write|
       // command.build|command.test|network.external|artifact.create|
       // repository.push|pull_request.create|pull_request.merge|environment.deploy|
@@ -328,7 +327,6 @@ ${languageRule(locale)}
       "estimatedHours": 2,
       "estimatedTokens": 20000,
       "riskLevel": "high",
-      "requiredSkills": [],
       "requiredCapabilities": ["environment.deploy"],
       "requiresHuman": true,
       // 下面四项都是可选的，只能填枚举里的值。

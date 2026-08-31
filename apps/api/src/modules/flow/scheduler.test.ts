@@ -65,18 +65,33 @@ describe('★ 阶段 1 闭环：调度 → 派发 → Agent 执行 → 自动流
     /**
      * ★★ 派发时冻结的是**语义能力**，不只是工具名。
      *
-     *   这个 Agent 在项目里没配过授权，于是走默认档案 —— 能在工作区里干活，
-     *   推不了、合不了。快照必须把这件事记下来：半年后翻审计的人问的是
-     *   「它当时被授权做什么」，而 `['read_file','write_file']` 回答不了，
-     *   因为同一串工具名在适配器改版前后不是一回事。
+     *   这个 Agent 在项目里没配过授权，于是走默认档案（零配置接入之后是
+     *   full_project）—— 项目里的活它都能干，合并、部署、写库、读凭证一条都
+     *   没有。快照必须把这件事记下来：半年后翻审计的人问的是「它当时被授权
+     *   做什么」，而 `['read_file','write_file']` 回答不了，因为同一串工具名
+     *   在适配器改版前后不是一回事。
+     *
+     * ★★ 「默认变简单」不等于「运行记录变糊涂」：accessMode 说清那是默认的
+     *   全项目访问还是有人收窄过，projectId 钉死这份授权的边界是单个项目。
+     *   没有这两栏的话，审计里区分不出「从没配过」和「被收窄到恰好一样」。
      */
     expect(run!.permissionSnapshot).toMatchObject({
       version: 2,
-      profileKey: 'standard_executor',
+      profileKey: 'full_project',
+      accessMode: 'full_project',
+      projectId: fx.projectId,
     });
-    const snapshot = run!.permissionSnapshot as { capabilities: string[]; deniedTools: string[] };
+    const snapshot = run!.permissionSnapshot as {
+      capabilities: string[];
+      deniedTools: string[];
+      resolvedAt?: string;
+    };
     expect(snapshot.capabilities).toContain('workspace.write');
+    expect(snapshot.capabilities).toContain('repository.push');
     expect(snapshot.capabilities).not.toContain('pull_request.merge');
+    expect(snapshot.capabilities).not.toContain('environment.deploy');
+    expect(snapshot.capabilities).not.toContain('secret.read');
+    expect(Number.isNaN(Date.parse(snapshot.resolvedAt ?? ''))).toBe(false);
     // 拒绝的能力落到运行时黑名单上 —— 合并在 mock 那边就叫 merge_pr
     expect(snapshot.deniedTools).toContain('merge_pr');
 
@@ -275,16 +290,20 @@ describe('执行主体匹配', () => {
   it('★ 无匹配 Agent 时任务被阻塞并给出具体原因', async () => {
     const registry = new RuntimeRegistry();
     /**
-     * ★ 默认档案（standard_executor）不含开 PR 的能力 —— 这正是
-     *   「没配置 ≠ 没权限，但默认档案是有边界的」那条设计的直接体现。
+     * ★★ 默认档案（full_project）不含**合并**的能力 —— 这正是
+     *   「默认全项目访问，但仍然有边界」那条设计的直接体现。
+     *
+     *   这里以前用的是 `create_pr`：那时默认是 standard_executor，开 PR 也在
+     *   界外。默认放宽到 full_project 之后开 PR 是给的，所以判据换成了那道
+     *   真正的闸 —— 合并之后没有任何人工复核，它必须仍然拦得住。
      */
     await seedAgent(db, fx, { registry });
 
-    // 任务要求 create_pr，而默认档案给不了这条能力
+    // 任务要求 merge_pr，而默认档案给不了这条能力
     const item = await createWorkItem(db, fx, {
       executorType: null,
       executorId: null,
-      typeData: { requiredTools: ['create_pr'] },
+      typeData: { requiredTools: ['merge_pr'] },
     });
 
     const report = await scheduleRound(db, registry, {
@@ -293,10 +312,10 @@ describe('执行主体匹配', () => {
     });
 
     expect(report.outcomes[0]?.action).toBe('skipped');
-    expect(report.outcomes[0]?.reason).toContain('缺少所需工具权限：create_pr');
+    expect(report.outcomes[0]?.reason).toContain('缺少所需工具权限：merge_pr');
 
     const [after] = await db.select().from(workItems).where(eq(workItems.id, item.id));
-    expect(after!.blockedReason).toContain('create_pr');
+    expect(after!.blockedReason).toContain('merge_pr');
     expect(after!.blockedSince).toBeTruthy();
 
     /**
@@ -326,7 +345,7 @@ describe('执行主体匹配', () => {
     const item = await createWorkItem(db, fx, {
       executorType: null,
       executorId: null,
-      typeData: { requiredTools: ['create_pr'] },
+      typeData: { requiredTools: ['merge_pr'] },
     });
 
     await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });
@@ -353,7 +372,7 @@ describe('执行主体匹配', () => {
     const item = await createWorkItem(db, fx, {
       executorType: null,
       executorId: null,
-      typeData: { requiredTools: ['create_pr'] },
+      typeData: { requiredTools: ['merge_pr'] },
     });
 
     await scheduleRound(db, registry, { projectId: fx.projectId, correlationId: corr() });

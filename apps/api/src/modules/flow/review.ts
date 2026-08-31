@@ -19,6 +19,7 @@ import {
 import { defaultBus, emitAndPublish } from '../event/bus';
 import { emit, type EmittedEvent } from '../event/emitter';
 import { transition } from '../flow/transition';
+import { mergeTypeData } from '../work-item/json-merge';
 
 export interface ReviewOptions {
   projectId?: string;
@@ -155,22 +156,47 @@ async function reviewOne(
     }
   }
 
-  await emitAndPublish(db, {
-    orgId: item.orgId,
-    projectId: item.projectId,
-    actor: SYSTEM_ACTOR,
-    type: 'work_item.quality_checked',
-    subjectType: 'work_item',
-    subjectId: item.id,
-    payload: {
-      testsRan,
-      testsPassed,
-      testCommand: quality['testCommand'] ?? null,
-      acceptance: { passed: acceptance.passed, failed: acceptance.failed, unclear: acceptance.unclear },
-      autonomy,
-    },
-    correlationId: opts.correlationId,
-  });
+  /**
+   * ★★ 只在结论**变了**的时候写这条事件。
+   *
+   *   评审循环每 20 秒把同一批 reviewing 任务重新判一遍，而判据
+   *   （核验结果、验收自评、自治等级）在人来处理之前通常一动不动。
+   *   无条件写的代价和调度器那边的 markBlocked 是同一笔：Timeline 上
+   *   每分钟堆三条一模一样的 `work_item.quality_checked`，把真正的状态
+   *   变更淹掉，而 events 表是审计、Analytics、通知共同的数据源。
+   *
+   *   判据本身就是结论的全部输入，所以指纹直接用 payload —— 不必再维护
+   *   一份「哪些字段算数」的清单，字段增减自动跟上。
+   *
+   * Only write when the verdict actually changed. The review loop re-derives
+   * the same conclusion every 20s; writing unconditionally floods the very
+   * table audit and analytics read.
+   */
+  const checkFacts = {
+    testsRan,
+    testsPassed,
+    testCommand: quality['testCommand'] ?? null,
+    acceptance: { passed: acceptance.passed, failed: acceptance.failed, unclear: acceptance.unclear },
+    autonomy,
+  };
+
+  if (!sameQualityCheck(item.typeData['reviewCheck'], checkFacts)) {
+    await db
+      .update(workItems)
+      .set({ typeData: mergeTypeData({ reviewCheck: checkFacts }) })
+      .where(eq(workItems.id, item.id));
+
+    await emitAndPublish(db, {
+      orgId: item.orgId,
+      projectId: item.projectId,
+      actor: SYSTEM_ACTOR,
+      type: 'work_item.quality_checked',
+      subjectType: 'work_item',
+      subjectId: item.id,
+      payload: checkFacts,
+      correlationId: opts.correlationId,
+    });
+  }
 
   // ── 明确失败：退回返工，不需要人拍板 ──
   if (testsFailed || acceptance.failed > 0) {
@@ -206,6 +232,44 @@ async function reviewOne(
 
   return advance(db, item, verdict.reason, opts);
 }
+
+/**
+ * 上一轮判据与这一轮是否一致。
+ *
+ * ★ 和 scheduler 的 sameBlockedDetail 一个用途、一个道理：定时循环写库前
+ *   先问一句「变了吗」。这里比的是结构化的判据本身，不是渲染出来的句子 ——
+ *   句子随时会改措辞，改一次措辞就等于全库任务各多一条事件。
+ *
+ * ★★ 必须**按规范化形式**比，不能直接 JSON.stringify 两边。
+ *
+ *   上一轮那份是从 jsonb 列里读回来的，而 jsonb **不保留键序**（Postgres
+ *   按键长度再按字节重排）。直接序列化比较，两份内容完全相同的判据会因为
+ *   `{testsRan,testsPassed,…}` 与 `{autonomy,testsRan,…}` 的顺序差异
+ *   判成「变了」—— 于是这道防重复的闸门看起来装好了，实际一次都没拦住，
+ *   而事件照旧每轮一条。这一条是被集成测试抓出来的，单测里两边都是内存
+ *   对象、键序天然一致，永远发现不了。
+ *
+ * Whether this round's verdict matches the one already recorded. Same purpose
+ * and same reasoning as the scheduler's sameBlockedDetail — but it must
+ * compare canonicalized forms: the stored copy comes back from a jsonb column,
+ * which does not preserve key order, so a plain JSON.stringify comparison
+ * reports "changed" every single round and the guard silently does nothing.
+ */
+export function sameQualityCheck(previous: unknown, next: Record<string, unknown>): boolean {
+  if (previous === null || typeof previous !== 'object') return false;
+  return canonical(previous) === canonical(next);
+}
+
+/** 键序无关的序列化 —— 见 sameQualityCheck 里 jsonb 那一段 */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+}
+
 
 function canAutoPass(
   autonomy: AutonomyLevel,
@@ -273,11 +337,38 @@ async function advance(
        *   停在哪一站就是哪一站，但要把原因说清楚 ——
        *   「自动推进到 waiting_for_release，被 xx 拦住」是可行动的信息。
        */
+      const why = `${reason}；推进到 ${last} 后被拦下：${describeBlock(moved)}`;
+
+      /**
+       * ★★ 第一步就被拦下 = 任务**一步没动**，还停在 reviewing。
+       *
+       *   这一支以前只是回一个 `action: 'awaiting_human'` 的报告就结束了 ——
+       *   而「awaiting_human」当时是句空话：没有人被通知，也没有待办产生。
+       *   任务原地不动，下一轮 20 秒后又被扫到、又判一遍、又被同一道 guard
+       *   拦下，如此往复；唯一的痕迹是 events 表里每 20 秒多一条
+       *   `work_item.quality_checked`，把真正的状态变更淹掉。
+       *
+       *   最容易撞上的是 agent_autonomous + 验收标准没人确认：
+       *   canAutoPass 这一档不看 unclear（那是有意的，见上表），
+       *   但 review_passed 上的 acceptanceCriteriaMet 门禁看 —— 于是
+       *   「可以自动放行」和「放不过去」在同一个任务上同时成立。
+       *   这里的答案不是去放宽那道门禁（自评没说通过就当通过，正是
+       *   deriveAcceptance 一直在防的事），而是把它交给人：
+       *   人批准 review_approval 决策时会先如实把验收标准记成
+       *   human/passed（recordHumanAcceptance），门禁随之自然通过。
+       *
+       * Blocked at the very first hop means the task has not moved at all.
+       * Returning a bare report left it in `reviewing` with no Decision, so
+       * the next round re-derived the same verdict forever. Hand it to a
+       * human instead — that both unblocks it and stops the event churn.
+       */
+      if (last === item.status) return awaitHuman(db, item, why, opts);
+
       return {
         workItemId: item.id,
         title: item.title,
-        action: last === item.status ? 'awaiting_human' : 'advanced',
-        reason: `${reason}；推进到 ${last} 后被拦下：${describeBlock(moved)}`,
+        action: 'advanced',
+        reason: why,
         finalStatus: last,
       };
     }

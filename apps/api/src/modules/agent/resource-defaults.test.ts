@@ -58,11 +58,41 @@ async function snapshotFor(agentId: string, registry: RuntimeRegistry): Promise<
   return run.permissionSnapshot.resourceScopes;
 }
 
-describe('★ 项目级仓库的默认只读', () => {
-  it('没配过任何范围的 Agent，快照里带上默认只读且标明出处', async () => {
+describe('★ 项目级仓库的默认档', () => {
+  /**
+   * ★★ 零配置建出来的 Agent 必须拿到一个**可写**的工作区。
+   *
+   *   默认档位以前恒定是 read，而默认档案（full_project）是有 workspace.write
+   *   的 —— 两句话对不上的表现是 Agent 在一个改不动的目录里开工，
+   *   然后报告「未找到相关代码，已创建新实现」，而管理员在配置页上
+   *   看不出哪里配漏了：因为哪儿都没配漏，是默认值自相矛盾。
+   *
+   *   出处那一栏照旧标 project_default —— 审计要分得出「管理员授的权」
+   *   和「平台默认给的」，这一条不因为档位变了而模糊。
+   */
+  it('★ 没配过任何范围的 Agent，快照里是可写的项目仓库，且标明是平台默认给的', async () => {
     await registerRepo();
     const registry = new RuntimeRegistry();
     const agent = await seedAgent(db, fx, { registry });
+
+    const scopes = await snapshotFor(agent.agentId, registry);
+
+    expect(scopes).toContainEqual({
+      kind: 'repo',
+      ref: 'order-service',
+      access: 'write',
+      origin: 'project_default',
+    });
+  });
+
+  /** ★ 收窄过的 Agent 走反方向：只读档案下同一条默认范围留在 read */
+  it('★ 只读档案的 Agent，同一条默认范围留在只读', async () => {
+    await registerRepo();
+    const registry = new RuntimeRegistry();
+    const agent = await seedAgent(db, fx, {
+      registry,
+      grant: { profileKey: 'readonly_reviewer' },
+    });
 
     const scopes = await snapshotFor(agent.agentId, registry);
 

@@ -310,26 +310,28 @@ FOR UPDATE SKIP LOCKED;      -- ★ multiple worker instances can schedule in pa
 
 ```typescript
 function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
-  // Hard requirements: fail one and you are out
-  if (!agent.applicableTypes.includes(item.type)) return null;
+  // Hard requirements: fail one and you are out.
+  // ★ Note what is NOT here: the agent's own declaration of what work it takes
+  //   on. That gate is gone — see "What an agent takes on" below.
+  if (!agent.inProject) return null;                          // authorization, not preference
   if (agent.status !== 'active') return null;
+  if (!agent.registered) return null;                         // no adapter in this process
   if (ctx.agentLoad[agent.id] >= agent.maxConcurrency) return null;
   if (!hasRequiredPermissions(agent, item)) return null;      // permission scope
   if (agent.costLimitPerRun && item.estimatedCost > agent.costLimitPerRun) return null;
 
-  // Weighted score
-  const skillMatch   = jaccard(agent.skills, item.requiredSkills);       // 0–1
+  // Weighted score — every input is a fact observable from actual runs
   const successRate  = agent.stats.successRate ?? 0.7;                   // neutral value when the sample is thin
   const loadFactor   = 1 - ctx.agentLoad[agent.id] / agent.maxConcurrency;
   const contextMatch = ctx.agentContextAffinity[agent.id] ?? 0.5;        // has it worked this module before?
   const costFactor   = 1 - normalize(agent.stats.avgCost, ctx.costRange);
 
+  // The four weights are the old ones renormalized after skill's 0.30 was removed
   const score =
-      0.30 * skillMatch
-    + 0.25 * successRate
-    + 0.15 * contextMatch
-    + 0.15 * loadFactor
-    + 0.15 * costFactor;
+      0.25/0.70 * successRate
+    + 0.15/0.70 * contextMatch
+    + 0.15/0.70 * loadFactor
+    + 0.15/0.70 * costFactor;
 
   return {
     agentId: agent.id,
@@ -337,7 +339,6 @@ function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
     // ★ The reasoning has to be legible — page doc 04 §5.4 requires the reassign
     //   dropdown to show what each candidate matched on
     reasons: [
-      `Skill 匹配 ${(skillMatch * 100).toFixed(0)}%（${intersect(agent.skills, item.requiredSkills).join(', ')}）`,
       `历史成功率 ${(successRate * 100).toFixed(0)}%（${agent.stats.sampleSize} 次）`,
       `当前负载 ${ctx.agentLoad[agent.id]}/${agent.maxConcurrency}`,
     ],
@@ -345,7 +346,24 @@ function scoreAgent(agent: Agent, item: WorkItem, ctx: Context): Score | null {
 }
 ```
 
-(The three `reasons` strings are the Chinese UI copy: skill match %, historical success rate with sample size, and current load.)
+(The `reasons` strings are the Chinese UI copy: historical success rate with sample size, and current load.)
+
+**What an agent takes on.** Scoring deliberately has no skill term, and there is no
+`applicableTypes` gate. Both were self-declared tags on the agent's profile, and
+neither had any causal relationship to what the agent could actually do — an agent
+perfectly able to write TypeScript lost to one that had never tried, because a word
+was missing from a text box. Worse, `applicableTypes` defaulted to the empty array,
+whose meaning is "takes on no work at all": every freshly created agent was silently
+unemployable, and nothing in the UI said so.
+
+What an agent takes on is now decided in exactly two places:
+
+- **Ordinary work** — the scheduler picks any agent that clears the hard gates above.
+- **Special duties** (planner, reviewer, policy manager) — the project's agent role
+  bindings (`project_agent_bindings`) name one explicitly.
+
+`agents.skills` and `agents.applicable_types` still exist as columns, but nothing
+reads them. They are scheduled for removal once no historical rows depend on them.
 
 **Tasks that need human judgment**: product doc §8.3.4 lists "does this need human experience" as one basis for assignment. In practice that is marked as `type_data.requires_human` when the Plan is generated, or forced by a Policy rule (e.g. "any task touching production DDL must go to a human").
 

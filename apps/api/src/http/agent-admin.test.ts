@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   agentPermissionChanges,
   agentRuns,
@@ -70,8 +70,6 @@ async function createAgent(payload: Record<string, unknown> = {}) {
       type: 'code',
       runtimeKind: 'mock',
       ownerId: fx.userId,
-      capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test'],
-      deniedCapabilities: [],
       ...payload,
     },
   });
@@ -842,37 +840,92 @@ describe('Agent 档案与权限', () => {
   });
 
   /**
-   * ★ 同一条能力既在上限里又在硬拒绝里，是自相矛盾的两句话。
-   *   不报错的话，界面上那条能力看起来是给了的，而实际永远拿不到。
+   * ★★ 建 Agent 只问运行时那三件事：叫什么、用哪个 CLI、凭证是什么。
+   *
+   *   建出来就是「不设上限、无硬拒绝」，实际能做什么由项目里的默认档案
+   *   （全项目访问）决定。用户在建的那一刻还没跑过一次任务，问他权限边界
+   *   只会换来一份从别处抄来的配置 —— 而抄来的配置一律偏宽。
    */
-  it('同一条能力同时出现在上限与硬拒绝时拒绝', async () => {
-    const res = await createAgent({
-      capabilityCeiling: ['workspace.read', 'repository.push'],
-      deniedCapabilities: ['repository.push'],
-    });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.details.conflict).toContain('repository.push');
+  it('★ 零配置建出来的 Agent 是「不设上限」，不是「一条都不给」', async () => {
+    const res = await createAgent();
+    expect(res.statusCode).toBe(201);
+    /** ★ null 与空数组含义相反：null = 沿用平台基线，空数组 = 什么都干不了 */
+    expect(res.json().agent.ceiling.capabilityCeiling).toBeNull();
+    expect(res.json().agent.ceiling.deniedCapabilities).toEqual([]);
+  });
+
+  /**
+   * ★★ 老客户端还在送 capabilityCeiling 时，必须**当场拒**，不能静默丢掉。
+   *
+   *   zod 默认会把多余的键丢掉，于是那个客户端拿到 201、以为限制生效了，
+   *   而建出来的是全项目访问。「配置没生效而且没有任何迹象」比一个 400
+   *   难查得多，所以这里宁可报错，并在错误里说清下一步去哪儿配。
+   */
+  it('★ 建 Agent 时仍然送权限边界的，当场拒并指向 Restrict access', async () => {
+    for (const field of ['capabilityCeiling', 'deniedCapabilities'] as const) {
+      const res = await createAgent({ [field]: ['workspace.read'] });
+      expect(res.statusCode, field).toBe(400);
+      /**
+       * ★ 校验细节走 details（zod issues），message 是那句统一的
+       *   「请求参数不合法」—— 与其他所有 schema 校验失败一致。
+       *   逐条 issue 里既点名了字段，也说清了下一步去哪儿配。
+       */
+      const issues = res.json().error.details as { path: string[]; message: string }[];
+      const issue = issues.find((i) => i.path[0] === field);
+      expect(issue, field).toBeDefined();
+      expect(issue!.message).toContain(field);
+      expect(issue!.message).toContain('全项目访问');
+    }
   });
 
   /**
    * ★★ 空清单与「不设上限」含义相反，必须分得开。
    *   混为一谈的话，想说「不限制」的人会得到一个在所有项目里都干不了活的 Agent。
+   *
+   * ★ 判定挪到了**改**这一侧 —— 建的时候压根收不到这一栏了。
    */
   it('上限给成空清单时拒绝，并说清「不设上限」该怎么写', async () => {
-    const res = await createAgent({ capabilityCeiling: [] });
+    const id = (await createAgent()).json().agent.id;
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: { capabilityCeiling: [], reason: '收紧' },
+    });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toContain('留空');
   });
 
-  it('不传上限 = 不设上限，建得出来', async () => {
-    const res = await createAgent({ capabilityCeiling: null });
-    expect(res.statusCode).toBe(201);
-    expect(res.json().agent.ceiling.capabilityCeiling).toBeNull();
+  /**
+   * ★ 同一条能力既在上限里又在硬拒绝里，是自相矛盾的两句话。
+   *   不报错的话，界面上那条能力看起来是给了的，而实际永远拿不到。
+   */
+  it('同一条能力同时出现在上限与硬拒绝时拒绝', async () => {
+    const id = (await createAgent()).json().agent.id;
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: {
+        capabilityCeiling: ['workspace.read', 'repository.push'],
+        deniedCapabilities: ['repository.push'],
+        reason: '限制一下',
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.details.conflict).toContain('repository.push');
   });
 
   /** ★ 放宽权限的默认解释（「大概是需要吧」）几乎总是不够 */
   it('放宽权限必须填原因，收紧不强制', async () => {
     const id = (await createAgent()).json().agent.id;
+    /** ★ 先收窄一次：建出来是「不设上限」，从那儿只能往窄了走 */
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: { capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test'] },
+    });
 
     const widen = await app.inject({
       method: 'PATCH',
@@ -894,6 +947,12 @@ describe('Agent 档案与权限', () => {
 
   it('填了原因的放宽被记入审计，含变更前后', async () => {
     const id = (await createAgent()).json().agent.id;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/agents/${id}`,
+      headers: auth(),
+      payload: { capabilityCeiling: ['workspace.read', 'workspace.write', 'command.test'] },
+    });
     await app.inject({
       method: 'PATCH',
       url: `/api/v1/admin/agents/${id}`,
@@ -947,6 +1006,57 @@ describe('Agent 档案与权限', () => {
     const res = await createAgent({ ownerId: '11111111-1111-4111-8111-111111111111' });
     expect(res.statusCode).toBe(404);
   });
+
+  /**
+   * ★★ 在项目里建的 Agent 当场入项目。
+   *
+   *   少了这一步，用户在项目配置页建完 Agent 还得再去「成员与角色」加一遍 ——
+   *   而漏掉那一步的表现是「建好了、看着一切正常、就是永远派不到活」：
+   *   调度器的第一道硬性条件就是项目成员关系（matchExecutors 的 inProject）。
+   */
+  it('★ 带 projectId 建的 Agent 直接成为该项目成员，可以被调度器看见', async () => {
+    const res = await createAgent({ name: 'in-project', projectId: fx.projectId });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().joinedProject).toBe(true);
+
+    const [member] = await db
+      .select()
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, fx.projectId),
+          eq(projectMembers.actorType, 'agent'),
+          eq(projectMembers.actorId, res.json().agent.id),
+        ),
+      );
+    expect(member?.role).toBe('executor');
+  });
+
+  /**
+   * ★★ 反过来：从组织级页面建的（不传 projectId）**不进任何项目**。
+   *
+   *   自动加进「所有项目」等于把每个项目的代码交给一个没人授权过它的执行体。
+   *   默认全访问的边界始终是「当前这一个项目」，而没有当前项目时就是零个。
+   */
+  it('★ 不带 projectId 建的 Agent 不会自动进任何项目', async () => {
+    const res = await createAgent({ name: 'org-level' });
+    expect(res.json().joinedProject).toBe(false);
+
+    const members = await db
+      .select()
+      .from(projectMembers)
+      .where(eq(projectMembers.actorId, res.json().agent.id));
+    expect(members).toHaveLength(0);
+  });
+
+  /** ★ 越界的 projectId 回 404 —— 403 等于确认这个项目存在 */
+  it('★ 别的组织的 projectId 建不进去', async () => {
+    const res = await createAgent({
+      name: 'cross-tenant',
+      projectId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(res.statusCode).toBe(404);
+  });
 });
 
 /**
@@ -992,7 +1102,8 @@ describe('★ 跨组织越界', () => {
 
     const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
     expect(row!.name).toBe('code-agent-1');
-    expect(row!.capabilityCeiling).toEqual(['workspace.read', 'workspace.write', 'command.test']);
+    /** ★ 零配置建出来是「不设上限」；越界那一下没能把它改成一份具体清单 */
+    expect(row!.capabilityCeiling).toBeNull();
   });
 
   it('删不掉别的组织的 Agent', async () => {

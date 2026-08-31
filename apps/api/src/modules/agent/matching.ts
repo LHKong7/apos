@@ -1,6 +1,6 @@
 import { and, count, eq, gte, inArray, ne, sql, sum } from 'drizzle-orm';
 import { agentRuns, agents, projectMembers, repositories, workItems, type Database } from '@apos/db';
-import { ACTIVE_RUN_STATUSES, ExecutionMode, type WorkItemType } from '@apos/contracts';
+import { ACTIVE_RUN_STATUSES, ExecutionMode } from '@apos/contracts';
 import {
   matchExecutors,
   type AgentCandidate,
@@ -164,8 +164,6 @@ export async function resolveExecutor(
       id: a.id,
       name: a.name,
       type: a.type,
-      skills: a.skills,
-      applicableTypes: a.applicableTypes as WorkItemType[],
       successRate: typeof stats['successRate'] === 'number' ? stats['successRate'] : null,
       sampleSize: typeof stats['sampleSize'] === 'number' ? stats['sampleSize'] : 0,
       avgTokens: typeof stats['avgTokens'] === 'number' ? stats['avgTokens'] : null,
@@ -196,7 +194,11 @@ export async function resolveExecutor(
 
   const target: MatchTarget = {
     type: item.type,
-    requiredSkills: Array.isArray(meta['requiredSkills']) ? (meta['requiredSkills'] as string[]) : [],
+    /**
+     * ★ `requiredSkills` 不再读了。计划里可能还留着这一栏（历史行 + 老版
+     *   规划输出），但它已经不参与任何判定 —— 保留数据、停止读取，
+     *   等确认没有旧逻辑依赖之后再删列。
+     */
     requiredCapabilities: Array.isArray(meta['requiredCapabilities'])
       ? (meta['requiredCapabilities'] as string[])
       : [],

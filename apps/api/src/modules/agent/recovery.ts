@@ -314,7 +314,18 @@ async function escalate(
         },
         consequence: { code: 'stuck_failed' as const },
       },
-      impact: { runId: run.id, errorClass: run.errorClass, recoveryAction: action },
+      /**
+       * ★ `intendedStatus` 不是可选的装饰：transition 的 approvedDecisionMatches
+       *   拿它和批准后的目标状态对比，缺了它这条决策就永远匹配不上自己的
+       *   批准 —— 表现是批准之后 Policy 又拦一次、再开一条决策。
+       *   这里任务还停在 failed，批准放行的正是「从 failed 继续」。
+       */
+      impact: {
+        runId: run.id,
+        errorClass: run.errorClass,
+        recoveryAction: action,
+        intendedStatus: item.status,
+      },
       dueAt: new Date(Date.now() + spec.dueHours * 3600_000),
     })
     .returning({ id: decisions.id });

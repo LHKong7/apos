@@ -91,20 +91,35 @@ describe('★ 没配置不等于没权限', () => {
    *   整个能力档案层存在的理由。
    *   默认值不安全（或不可用）的系统里，真正的默认值是用户从别处抄来的配置。
    */
-  it('没配过的 Agent 走默认档案，能在工作区里干活', async () => {
+  it('没配过的 Agent 走默认档案，项目里的活它都能干', async () => {
     const res = await access();
 
     expect(res.statusCode).toBe(200);
     expect(res.json().usingDefault).toBe(true);
-    expect(res.json().profileKey).toBe('standard_executor');
+    /**
+     * ★★ 零配置接入之后，默认档案是 full_project 而不是 standard_executor。
+     *   老默认的推理是「默认要安全」，而实际后果是用户建完 Agent 发现它
+     *   推不了分支、开不了 PR，于是去别处抄一份更宽的配置贴上来 ——
+     *   一个默认值不够用的系统，真正的默认值是用户抄来的那一份。
+     */
+    expect(res.json().profileKey).toBe('full_project');
     expect(res.json().capabilities).toContain('workspace.write');
     expect(res.json().capabilities).toContain('command.test');
+    expect(res.json().capabilities).toContain('repository.push');
+    expect(res.json().capabilities).toContain('pull_request.create');
   });
 
-  it('默认 Agent 推不了、合不了、发不了、读不到凭证', async () => {
+  /**
+   * ★★ 默认放宽了，但**边界还在**，而且边界正是这条测试要钉住的东西。
+   *
+   *   这六条是「代替人做最后那一下」和「平台控制面」：合并之后没有人再看一眼、
+   *   部署直接动生产、写库不可回退、凭证进了上下文就算泄露、改权限与改治理
+   *   等于让被管的人自己改规则。它们要是哪天悄悄进了默认档案，症状是
+   *   **没有症状** —— 所有人的 Agent 一起变宽，而没有任何一次配置变更留下痕迹。
+   */
+  it('★ 默认 Agent 合不了、发不了、写不了库、读不到凭证、改不了权限与治理', async () => {
     const caps = (await access()).json().capabilities as string[];
     for (const forbidden of [
-      'repository.push',
       'pull_request.merge',
       'environment.deploy',
       'database.write',
@@ -112,7 +127,7 @@ describe('★ 没配置不等于没权限', () => {
       'permission.manage',
       'policy.manage',
     ]) {
-      expect(caps).not.toContain(forbidden);
+      expect(caps, forbidden).not.toContain(forbidden);
     }
   });
 
@@ -156,9 +171,14 @@ describe('★ 项目之间不渗透', () => {
       role: 'tech_lead',
     });
 
-    const widened = await save({ profileKey: 'code_developer', reason: '这个项目要它自己开 PR' });
-    expect(widened.statusCode).toBe(200);
-    expect((await access()).json().capabilities).toContain('repository.push');
+    /**
+     * ★ 这里测的是「一个项目里的配置不渗到另一个项目」，方向是**收紧**：
+     *   默认已经是全项目访问了，所以能拉开差距的那一侧是把 A 项目收窄。
+     *   B 项目仍然是默认，也就是仍然推得了分支。
+     */
+    const narrowed = await save({ profileKey: 'readonly_reviewer', reason: '这个项目只让它看' });
+    expect(narrowed.statusCode).toBe(200);
+    expect((await access()).json().capabilities).not.toContain('workspace.write');
 
     const inOther = await app.inject({
       method: 'GET',
@@ -166,7 +186,8 @@ describe('★ 项目之间不渗透', () => {
       headers: auth(),
     });
     expect(inOther.json().usingDefault).toBe(true);
-    expect(inOther.json().capabilities).not.toContain('repository.push');
+    expect(inOther.json().capabilities).toContain('workspace.write');
+    expect(inOther.json().capabilities).toContain('repository.push');
   });
 
   it('不是本项目成员的 Agent 配不了权限', async () => {
@@ -243,6 +264,12 @@ describe('★ 预览与保存', () => {
    *   而它失效的方式最难发现 —— 两条记录都各自自洽。
    */
   it('预览与保存给出同一个方向和同一批新增能力', async () => {
+    /**
+     * ★ 先收窄一次做基线。默认已经是全项目访问了，从那儿往任何内置档案走
+     *   都是收紧 —— 要测「放宽」这条路径，得先有一个窄的起点。
+     */
+    await save({ profileKey: 'readonly_reviewer' });
+
     const body = { profileKey: 'code_developer', reason: '要它自己开 PR' };
 
     const previewed = await preview(body);
@@ -267,12 +294,13 @@ describe('★ 预览与保存', () => {
   });
 
   it('预览把后果说成人话，最重的那条排在前面', async () => {
+    /** ★ 同上：后果那句话说的是**新增**的能力，所以要从一个窄的起点看过去 */
+    await save({ profileKey: 'readonly_reviewer' });
     const warnings = (await preview({ profileKey: 'code_developer' })).json().warnings as string[];
     expect(warnings[0]).toContain('远端');
   });
 
   it('收紧不要求填原因', async () => {
-    await save({ profileKey: 'code_developer', reason: '先放宽' });
     const tightened = await save({ profileKey: 'readonly_reviewer' });
     expect(tightened.statusCode).toBe(200);
     expect(tightened.json().direction).toBe('tighten');
@@ -287,15 +315,21 @@ describe('★ 放宽的治理要求', () => {
    *   而不是各 handler 自己记得写。目录说要，就一定要。
    */
   it('放宽不填原因时被拒', async () => {
+    /** ★ 先收窄到只读（收紧不要原因），再从那儿试着放宽 */
+    await save({ profileKey: 'readonly_reviewer' });
+    const before = (await access()).json().profileKey;
+
     const res = await save({ profileKey: 'code_developer' });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toContain('原因');
 
-    const rows = await db
+    /** ★ 被拒的放宽一个字都不该落库 —— 存下来的还是收窄之后那一份 */
+    expect((await access()).json().profileKey).toBe(before);
+    const [row] = await db
       .select()
       .from(projectAgentPermissions)
       .where(eq(projectAgentPermissions.agentId, agentId));
-    expect(rows, '被拒的放宽不该留下任何记录').toHaveLength(0);
+    expect(row!.profileKey, '被拒的放宽不该改动已存的授权').toBe('readonly_reviewer');
   });
 
   /**
@@ -306,6 +340,7 @@ describe('★ 放宽的治理要求', () => {
    *   判错方向两边都会坏 —— 见 domain 的 change-direction 那段。
    */
   it('只能收紧的人放宽不了', async () => {
+    await save({ profileKey: 'readonly_reviewer' });
     const memberId = await createMember(db, fx, { projectRole: 'executor' });
     const res = await save(
       { profileKey: 'code_developer', reason: '想要更多权限' },
@@ -315,6 +350,7 @@ describe('★ 放宽的治理要求', () => {
   });
 
   it('放宽写进领域事件，带上方向与原因', async () => {
+    await save({ profileKey: 'readonly_reviewer' });
     await save({ profileKey: 'code_developer', reason: '要它自己开 PR' });
 
     const { events } = await import('@apos/db');
@@ -408,7 +444,18 @@ describe('★ 资源范围', () => {
     expect(scopes.find((s) => s.ref === 'order-service')?.access).toBe('read');
   });
 
-  it('项目级仓库默认只读，并标明是平台给的', async () => {
+  /**
+   * ★★ 平台默认给的那一档**跟着能力走**：默认档案（全项目访问）含
+   *   workspace.write，于是本项目登记的仓库默认就是可写的。
+   *
+   *   它以前恒定是 read，而那与默认档案自相矛盾 —— 一个零配置建出来的
+   *   Agent 有改代码的能力，却拿到一个改不动的工作区，报出来的是
+   *   「未找到相关代码」。收窄那一侧仍然生效（见上一条：只读档案下降到 read）。
+   *
+   * ★ 出处照旧标 project_default：审计要分得出「管理员授的权」和
+   *   「平台默认给的」，这一条不因为档位变了而模糊。
+   */
+  it('★ 默认档案下项目级仓库默认可写，出处仍标平台给的', async () => {
     await db.insert(repositories).values({
       orgId: fx.orgId,
       projectId: fx.projectId,
@@ -424,7 +471,7 @@ describe('★ 资源范围', () => {
       origin?: string;
     }[];
     expect(scopes.find((s) => s.ref === 'order-service')).toMatchObject({
-      access: 'read',
+      access: 'write',
       origin: 'project_default',
     });
   });

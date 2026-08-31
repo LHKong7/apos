@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_CAPABILITIES, type AgentCapability, type CapabilityTranslator } from '@apos/contracts';
 import { CAPABILITY_SPECS, expandImplied, PLATFORM_DENIED_CAPABILITIES } from './catalog';
 import {
+  accessModeOf,
   BUILTIN_CAPABILITY_PROFILES,
   CODE_DEVELOPER,
   expandProfile,
+  FULL_PROJECT,
   READONLY_REVIEWER,
   STANDARD_EXECUTOR,
 } from './profiles';
@@ -109,15 +111,36 @@ describe('★ 安全底线', () => {
     expect([...PLATFORM_DENIED_CAPABILITIES]).toEqual([...fromCatalog]);
   });
 
-  /** ★ 默认档案的边界：能在工作区里干活，不能把后果送出工作区 */
-  it('默认 Agent 推不了、合不了、发不了、读不到凭证', () => {
+  /**
+   * ★★ 默认档案的边界 —— 「零配置接入」把它从 standard_executor 挪到了
+   *   full_project，所以这条断言比以前更要紧。
+   *
+   *   放宽的那一半是刻意的：项目里的活它都能干（改工作区、构建、测试、
+   *   交产物、推分支、开 PR）。不放的那一半才是这条测试要钉住的 ——
+   *   合并、部署、写库、读凭证、改权限、改治理，一条都不给。
+   *   这六条正是「代替人做最后那一下」和「平台控制面」，而它们要是哪天
+   *   悄悄进了默认档案，症状是**没有症状**：所有人的 Agent 一起变宽，
+   *   而没有任何一次配置变更留下痕迹。
+   */
+  it('★ 默认 Agent 干得了项目里的活，但合不了、发不了、写不了库、读不到凭证、改不了治理', () => {
     const access = evaluate();
 
-    expect(access.profileKey).toBe(STANDARD_EXECUTOR.key);
-    expect(access.capabilities).toContain('workspace.write');
-    expect(access.capabilities).toContain('command.test');
-    for (const forbidden of [
+    expect(access.profileKey).toBe(FULL_PROJECT.key);
+    expect(accessModeOf(access.profileKey)).toBe('full_project');
+
+    for (const granted of [
+      'workspace.read',
+      'workspace.write',
+      'command.build',
+      'command.test',
+      'artifact.create',
       'repository.push',
+      'pull_request.create',
+    ] as AgentCapability[]) {
+      expect(access.capabilities, granted).toContain(granted);
+    }
+
+    for (const forbidden of [
       'pull_request.merge',
       'environment.deploy',
       'database.write',
@@ -125,8 +148,30 @@ describe('★ 安全底线', () => {
       'permission.manage',
       'policy.manage',
     ] as AgentCapability[]) {
-      expect(access.capabilities).not.toContain(forbidden);
+      expect(access.capabilities, forbidden).not.toContain(forbidden);
     }
+  });
+
+  /**
+   * ★★ 上一条列的是**今天**的清单，这一条钉的是**规则**：默认档案里
+   *   永远不出现 `critical` 这一档。
+   *
+   *   两条都要有。只写清单的话，往目录里加一条新的 critical 能力时，
+   *   谁也不会想起回来改这个数组 —— 而按规则判的这一条会当场红。
+   */
+  it('★ 默认档案里不含任何 critical 能力 —— 新加一条也自动落在外面', () => {
+    const access = evaluate();
+    const critical = access.capabilities.filter((c) => CAPABILITY_SPECS[c].risk === 'critical');
+    expect(critical).toEqual([]);
+  });
+
+  /** ★ 收窄仍然做得到：Restrict access 之后，默认那份就不作数了 */
+  it('★ 选了更窄的档案之后，访问模式记为 restricted', () => {
+    const access = evaluate({ projectGrant: expandProfile(STANDARD_EXECUTOR) });
+    expect(access.profileKey).toBe(STANDARD_EXECUTOR.key);
+    expect(accessModeOf(access.profileKey)).toBe('restricted');
+    expect(access.capabilities).toContain('workspace.write');
+    expect(access.capabilities).not.toContain('repository.push');
   });
 
   it('没有任何配置时也不是「没权限」，而是默认档案', () => {
@@ -196,10 +241,44 @@ describe('★ 上限与项目隔离', () => {
     expect(repo?.access).toBe('read');
   });
 
-  it('项目级仓库默认只读仍然生效，并标出处', () => {
+  /**
+   * ★★ 平台默认给的那一档**跟着能力走**，两个方向都走。
+   *
+   *   它以前恒定是 read，于是一个零配置建出来的 Agent（默认档案含
+   *   workspace.write）拿到的是只读工作区 —— 有能力改，却在一个改不动的
+   *   目录里开工，而失败发生在它已经跑起来之后，报出来的是「未找到相关代码」。
+   *
+   *   出处那一栏照旧标 project_default：审计要分得出「管理员授了权」
+   *   和「平台默认给的」，这一条不因为档位变了而模糊。
+   */
+  it('★ 默认档案下，项目级仓库默认档位升到可写，出处仍标平台默认', () => {
     const access = evaluate({ projectRepoRefs: ['order-service'] });
     const repo = access.runtimePermissions.resourceScopes.find((s) => s.ref === 'order-service');
+    expect(repo).toMatchObject({ access: 'write', origin: 'project_default' });
+  });
+
+  it('★ 只读档案下，同一条默认范围留在只读', () => {
+    const access = evaluate({
+      projectGrant: expandProfile(READONLY_REVIEWER),
+      projectRepoRefs: ['order-service'],
+    });
+    const repo = access.runtimePermissions.resourceScopes.find((s) => s.ref === 'order-service');
     expect(repo).toMatchObject({ access: 'read', origin: 'project_default' });
+  });
+
+  /**
+   * ★★ 管理员**显式**写的那些一个字不动 —— 升档只对平台默认那一档。
+   *
+   *   显式写着 read 是有人做过的决定（「这个仓库它只能看」），
+   *   而能力那一侧不该替他把这个决定撤销掉。
+   */
+  it('★ 显式配成只读的仓库不会被升成可写', () => {
+    const access = evaluate({
+      projectResourceScopes: [{ kind: 'repo', ref: 'order-service', access: 'read' }],
+      projectRepoRefs: ['order-service'],
+    });
+    const repo = access.runtimePermissions.resourceScopes.find((s) => s.ref === 'order-service');
+    expect(repo).toMatchObject({ access: 'read', origin: 'explicit' });
   });
 });
 

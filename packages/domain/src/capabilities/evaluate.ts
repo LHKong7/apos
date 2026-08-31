@@ -169,19 +169,35 @@ export function resolveEffectiveAgentAccess(input: EffectiveAccessInput): Effect
   });
 
   /**
-   * ★★ 资源范围要**跟着能力收窄**。
+   * ★★ 资源范围**跟着能力走**，两个方向都走。
    *
-   *   一个只读档案配上一条 `access:'write'` 的仓库范围，是配置层面
-   *   自相矛盾的两句话，而运行时只看得到后者 —— 于是「只读评审者」
-   *   会拿到一个可写工作区。让能力这一侧说了算：没有 workspace.write，
-   *   任何仓库范围都降到 read。
+   *   一句话概括这一段：「这个 Agent 能不能改代码」只有一个答案，
+   *   而那个答案在能力那一侧。资源范围不再是第二个要配的地方。
+   *
+   *   ↓ 收窄：一个只读档案配上一条 `access:'write'` 的仓库范围，是配置层面
+   *     自相矛盾的两句话，而运行时只看得到后者 —— 于是「只读评审者」
+   *     会拿到一个可写工作区。
+   *
+   *   ↑ 放宽：**只对平台默认给的那一档**（origin='project_default'，也就是
+   *     本项目登记的仓库）。它以前恒定是 read，于是一个零配置建出来的
+   *     Agent 拿到的是只读工作区 —— 它有 workspace.write 能力，却在一个
+   *     改不动的目录里开工，而失败发生在它已经跑起来之后。管理员显式配过的
+   *     那些一个字都不动：写着 read 就是 read，那是有人做过的决定。
+   *
+   * Scopes follow capabilities in both directions, because "may this agent
+   * change code" must have exactly one answer and that answer lives on the
+   * capability side. Only the platform's own default tier is widened; anything
+   * an admin wrote stays exactly as written.
    */
   const canWriteWorkspace = effective.includes('workspace.write');
-  const alignedScopes = scopes.map((s) =>
-    s.kind === 'repo' && s.access === 'write' && !canWriteWorkspace
-      ? { ...s, access: 'read' as const }
-      : s,
-  );
+  const alignedScopes = scopes.map((s) => {
+    if (s.kind !== 'repo') return s;
+    if (s.access === 'write' && !canWriteWorkspace) return { ...s, access: 'read' as const };
+    if (s.origin === 'project_default' && canWriteWorkspace) {
+      return { ...s, access: 'write' as const };
+    }
+    return s;
+  });
 
   const translation = input.translator
     ? input.translator.translate({

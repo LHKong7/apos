@@ -163,9 +163,9 @@ Basics
 
 Capabilities
   Description   Backend implementation, refactoring, and writing unit tests
-  Skills        [SQL tuning] [TypeScript] [REST API design] [Unit tests]  [+ Add]
-                └ from the organization Skill library, reusable (product doc 8.12.2)
-  Task types    Backend / Bugfix / Refactor / Unit Test
+                └ the Description is the only part of this block that reaches the
+                  model's prompt, and the only part that survives: Skill tags and
+                  "task types" were both removed — see the note below
 
 Callable tools
   ☑ read_file        ☑ write_file       ☑ run_tests
@@ -345,7 +345,7 @@ SSE   /api/stream?channels=agent:{id}
 
 ## 12. Open Questions
 
-1. The relationship between an agent's Skills and the organization Skill library needs to be pinned down (product doc 8.12.2 mentions Skill candidates). For MVP, do we do agent-level Skill tags only and skip the reusable library?
+1. ~~The relationship between an agent's Skills and the organization Skill library~~ — **settled: there are no Skill tags.** A tag has no causal relationship with what an Agent can actually do, and the scheduler weighting one meant an Agent perfectly able to do the work lost to one that had never tried, because a word was missing from a text box. Matching now scores only facts observable from real runs. The same decision removed "task types" (`applicableTypes`): its empty default meant "takes on no work at all", so every freshly created Agent was silently unemployable. What an Agent takes on is decided by the scheduler (ordinary work) or a project role binding (special duties). See 04-flow-engine §4.3.
 2. Where the "owner's" responsibility ends: when an agent causes a production incident, what does the owner carry? That has to be settled together with corporate compliance, but the product must at minimum guarantee that the responsible person is unambiguous and traceable.
 3. Cost apportionment rules when several projects share an agent (charge each run to the project it belongs to vs. spreading fixed costs proportionally).
 4. Where do the trial run's sample tasks come from? Do we need a built-in standard evaluation task set? That would be very valuable for comparing agents against each other.

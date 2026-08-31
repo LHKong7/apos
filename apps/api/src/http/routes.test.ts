@@ -993,14 +993,9 @@ describe('★ 需求：指定 PRD 编写 Agent', () => {
       payload: { agentId },
     });
 
-  /** 能写 PRD 的 Agent = 本项目的 Agent 成员（适用类型不参与判定） */
+  /** 能写 PRD 的 Agent = 本项目的 Agent 成员，判据只有这一条 */
   const seedAuthor = (name: string, inProject = true) =>
-    seedAgent(db, fx, {
-      registry,
-      name,
-      applicableTypes: ['requirement'],
-      inProject,
-    });
+    seedAgent(db, fx, { registry, name, inProject });
 
   const lastEvent = async (subjectId: string) => {
     /**
@@ -1080,14 +1075,15 @@ describe('★ 需求：指定 PRD 编写 Agent', () => {
   });
 
   /**
-   * ★★ 项目里的任何一个 Agent 成员都能写 PRD —— 适用类型不是门槛。
+   * ★★ 项目里的任何一个 Agent 成员都能写 PRD。
    *
-   *   它管的是派工作项时的执行者匹配，而写 PRD 不派工作项。卡在这里的
-   *   后果是一个配了整队 Agent 的项目，需求页上的下拉框却是空的。
+   *   这里以前卡「适用类型含 requirement」——它管的是派工作项时的执行者
+   *   匹配，而写 PRD 不派工作项。卡在这里的后果是一个配了整队 Agent 的
+   *   项目，需求页上的下拉框却是空的。
    */
-  it('适用类型不含 requirement 的项目成员照样能被指定', async () => {
+  it('任何一个项目 Agent 成员都能被指定为编写者', async () => {
     const id = await createRequirement();
-    const coder = await seedAgent(db, fx, { registry, name: 'coder', applicableTypes: ['task'] });
+    const coder = await seedAgent(db, fx, { registry, name: 'coder' });
 
     const res = await setAuthor(id, coder.agentId);
     expect(res.statusCode).toBe(200);
