@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiError, api } from '../../lib/api/client';
 import { qk } from '../../lib/query/keys';
-import { relativeTime, joinList } from '../../lib/format';
+import { relativeTime, joinList, integrationCategoryLabel } from '../../lib/format';
 import { CardSkeleton, EmptyState, ErrorState } from '../../components/states';
 import { Modal } from '../../features/work-item/ManualMoveDialog';
 import { useAuthStore } from '../../stores/auth';
@@ -128,8 +128,7 @@ export function IntegrationsPage() {
               return (
                 <section key={cat} className="space-y-2">
                   <h2 className="text-xs font-medium text-slate-600">
-                    {CATEGORY_ICONS[cat]}{' '}
-                    {rows[0]?.categoryLabel ?? addable[0]?.categoryLabel ?? cat}
+                    {CATEGORY_ICONS[cat]} {integrationCategoryLabel(cat)}
                   </h2>
                   {rows.map((r) => (
                     <IntegrationCard

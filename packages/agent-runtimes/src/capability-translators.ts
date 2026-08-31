@@ -52,15 +52,31 @@ export const codexTranslator: CapabilityTranslator = {
  *   假设，理由与那边一致：拿不准就降一级，选严了任务失败看得见，
  *   选松了 Agent 拿到不该有的能力看不见。
  */
-export const cliTranslator: CapabilityTranslator = {
-  kind: 'cli',
-  unsupported: [],
-  translate: (input) =>
-    translateWithToolTable(input, {
-      runtimeKind: 'cli',
-      extraDegradations: sandboxGranularityWarnings('cli'),
-    }),
-};
+function cliTranslatorFor(runtimeKind: string): CapabilityTranslator {
+  return {
+    kind: 'cli',
+    unsupported: [],
+    translate: (input) =>
+      translateWithToolTable(input, {
+        /**
+         * ★ Two different names, deliberately. The tool table is looked up by
+         *   tier — `cli` is the coarsest one and is what every unrecognized
+         *   runtime gets. The warning is read by a person, so it has to name
+         *   the runtime **they** configured: "运行时 cli 的权限粒度是沙箱级"
+         *   points at a runtime that does not exist on their agent, and the
+         *   first thing they do with it is go looking for it.
+         *
+         *   两个名字是刻意分开的：工具表按**档位**查，`cli` 是最粗那一档；
+         *   而警告是给人读的，必须写他自己配的那个运行时 —— 「运行时 cli」
+         *   指向一个他的 Agent 上并不存在的东西，读到的人第一反应是去找它。
+         */
+        runtimeKind: 'cli',
+        extraDegradations: sandboxGranularityWarnings(runtimeKind),
+      }),
+  };
+}
+
+export const cliTranslator: CapabilityTranslator = cliTranslatorFor('cli');
 
 /** Mock：测试用，工具名是它自己那套 */
 export const mockTranslator: CapabilityTranslator = {
@@ -157,5 +173,5 @@ const TRANSLATORS: Record<string, CapabilityTranslator> = {
  *   配置没生效而现场毫无迹象。
  */
 export function capabilityTranslator(runtimeKind: string): CapabilityTranslator {
-  return TRANSLATORS[runtimeKind] ?? cliTranslator;
+  return TRANSLATORS[runtimeKind] ?? cliTranslatorFor(runtimeKind);
 }

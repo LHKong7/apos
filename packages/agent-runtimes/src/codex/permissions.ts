@@ -70,10 +70,23 @@ export function mapSandbox(
    *   Codex 在 workspace-write 下，命令执行是沙箱内自由的 —— 带参数的黑名单
    *   （`Bash(rm *)`）根本没有落点。
    */
+  /**
+   * ★ The reason must not name a runtime. This mapper is shared: cli/adapter.ts
+   *   reuses it for all six headless CLIs, so a hardcoded "Codex" made an
+   *   OpenCode run's audit note read `⚠ OpenCode … / - Bash(git push:*)：Codex
+   *   的权限粒度是沙箱级 …` — two different runtimes named two lines apart, in
+   *   the one record an auditor uses to reconstruct what actually ran. Both
+   *   callers already name the runtime on the heading line above this list.
+   *
+   *   这句话里不能出现运行时名字。mapSandbox 是共用的 —— cli/adapter.ts 把它
+   *   用在全部六个 headless CLI 上，写死「Codex」的结果是 OpenCode 的审计
+   *   记录里，相隔两行出现了两个运行时的名字。而两个调用方都已经在上面那行
+   *   标题里写明了是谁。
+   */
   for (const rule of scopedDenies) {
     unenforceable.push({
       rule,
-      why: 'Codex 的权限粒度是沙箱级，无法按命令参数拦截；该规则在此运行时不生效',
+      why: '沙箱级权限无法按命令参数拦截；该规则在此运行时不生效',
     });
   }
 

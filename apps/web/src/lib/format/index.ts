@@ -306,6 +306,28 @@ export function featureLabel(feature: string): string {
 }
 
 /**
+ * Integration category (code / project management / collaboration …).
+ *
+ * ★ Same reason as the policy tables below: the page used to render the
+ *   server's `categoryLabel`, which comes from `CATEGORY_LABELS` in
+ *   `@apos/contracts` and is Chinese-only — every neighbouring table in that
+ *   file ships an `_EN` mirror, this one never did. So the English
+ *   integrations page had three Chinese headings sitting above fully
+ *   translated cards. The category code is already in the payload; the
+ *   wording belongs here.
+ *
+ *   与下面那几张 policy 表同一个理由：这一页原来直接印服务端的
+ *   `categoryLabel` —— 那张表只有中文，同文件里的邻居都带 `_EN` 镜像，
+ *   唯独它没有。于是英文界面上三个中文标题压在一排翻译好的卡片上。
+ *   分类的**代码**本来就在响应里，措辞该由界面决定。
+ */
+export function integrationCategoryLabel(category: string): string {
+  const key = `integ.category.${category}` as MessageKey;
+  const label = t(key);
+  return label === key ? category : label;
+}
+
+/**
  * Policy 规则里那些名词：条件的 fact、操作类型、环境。
  *
  * ★★ 这三张表原来是从 `@apos/domain` 直接 import 的中文常量

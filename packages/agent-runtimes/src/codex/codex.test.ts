@@ -148,6 +148,23 @@ describe('权限映射：沙箱级 vs 工具级', () => {
     expect(m.unenforceable[0]!.why).toContain('沙箱级');
   });
 
+  /**
+   * ★★ mapSandbox 是共用的：cli/adapter.ts 把它用在全部六个 headless CLI 上。
+   *   理由里写死某个运行时名字，OpenCode 的审计记录里就会相隔两行出现两个
+   *   运行时 —— 而那条记录正是事后用来还原「到底跑的是什么」的依据。
+   *   两个调用方都已经在标题行里写明了是谁。
+   *
+   *   mapSandbox is shared with every headless CLI, so the reason must not
+   *   name a runtime: both callers already name it on the heading line, and a
+   *   second, different name two lines down corrupts the one record an
+   *   auditor uses to reconstruct the run.
+   */
+  it('★ 无法执行的理由不写死运行时名字（这个映射被六个 CLI 共用）', () => {
+    const m = mapSandbox(perms({ deniedTools: ['Bash(rm *)'] }));
+    expect(m.unenforceable[0]!.why).not.toContain('Codex');
+    expect(m.unenforceable[0]!.why).not.toContain('codex');
+  });
+
   it('写工具的整体禁用能通过降级为 read-only 表达，不算无法执行', () => {
     const m = mapSandbox(perms({ deniedTools: ['Edit', 'Write'] }));
     expect(m.mode).toBe('read-only');

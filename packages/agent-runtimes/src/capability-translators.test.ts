@@ -105,4 +105,22 @@ describe('★ 降级必须可见', () => {
     const out = translate(unknown, ['workspace.write'], ['repository.push']);
     expect(out.degradations.some((d) => d.kind === 'unenforceable')).toBe(true);
   });
+
+  /**
+   * ★ 回落到最粗一档说的是**工具表**，不是警告里印的名字。
+   *   警告是给人读的：他配的是 opencode，警告却说「运行时 cli」——
+   *   那是一个他的 Agent 上并不存在的东西，读到的人会先去找它，
+   *   而不是去看那条禁令为什么没生效。
+   *
+   *   Falling back to the coarsest tier is about the tool table, not about the
+   *   name printed in the warning. Someone who configured `opencode` and reads
+   *   "runtime cli" goes looking for a runtime that is not on their agent.
+   */
+  it('★ 回落的警告写的是用户配的那个运行时，不是档位名 cli', () => {
+    const out = translate(capabilityTranslator('opencode'), ['workspace.write'], [
+      'repository.push',
+    ]);
+    const degraded = out.degradations.find((d) => d.kind === 'unenforceable');
+    expect(degraded?.detail).toContain('opencode');
+  });
 });
