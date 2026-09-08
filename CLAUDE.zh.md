@@ -58,7 +58,7 @@ APOS（Autonomous Project OS）—— 面向 Human–Agent 混合团队的项目
 | `lib/i18n/no-literals.test.ts` | 界面代码里没有中文字面量，例外要写明理由 |
 | `lib/i18n/messages/structure.test.ts` | 键住在它前缀该住的文件里；中英两侧同构；归属表里没有过期前缀 |
 
-四条盯的都是**沉默失效** —— 破坏它们在中文界面上看不出任何问题。完整说明见 [docs/tech/12-i18n.md](docs/tech/12-i18n.zh.md)。
+四条盯的都是**沉默失效** —— 破坏它们在中文界面上看不出任何问题。完整说明见 [docs/tech/12-i18n.md](docs/tech/12-i18n.zh.md)；把同一套纪律推到服务端的方案（共享目录包、文案描述符、按收件人渲染）见 [docs/tech/13-i18n-unified.zh.md](docs/tech/13-i18n-unified.zh.md)。
 
 ## 常用命令
 

@@ -58,7 +58,7 @@ Four tests stand guard:
 | `lib/i18n/no-literals.test.ts` | No Chinese literals in UI code; exceptions must state a reason |
 | `lib/i18n/messages/structure.test.ts` | Every key lives in the file its prefix says it should; the English and Chinese sides are structurally identical; no stale prefixes in the ownership table |
 
-All four are watching for **silent failure** — breaking any of them looks perfectly fine in the Chinese UI. Full write-up in [docs/tech/12-i18n.md](docs/tech/12-i18n.md).
+All four are watching for **silent failure** — breaking any of them looks perfectly fine in the Chinese UI. Full write-up in [docs/tech/12-i18n.md](docs/tech/12-i18n.md); the plan that extends the same discipline to the server side (shared catalog package, text descriptor, per-recipient rendering) is [docs/tech/13-i18n-unified.md](docs/tech/13-i18n-unified.md).
 
 ## Common Commands
 

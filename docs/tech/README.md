@@ -23,6 +23,7 @@ This directory is the technical implementation plan behind the [product feature 
 | 10 | [MVP delivery plan](10-mvp-plan.md) | Phased delivery, milestones, risks | ❌ |
 | 11 | [Workspace abstraction](11-workspace-abstraction.md) | Separating setup from delivery in an agent's working directory; baselines and changesets; the four backends | ❌ |
 | 12 | [Internationalization](12-i18n.md) ([ZH](12-i18n.zh.md)) | Message catalogs, server-side reason codes, enum ownership, the three tests that guard it | ✅ |
+| 13 | [One localization pipeline](13-i18n-unified.md) ([ZH](13-i18n-unified.zh.md)) | The shared catalog package, the text descriptor, where the locale comes from, the five-phase migration | ✅ |
 
 ---
 
